@@ -6,7 +6,7 @@ if (! defined ( 'IN_GAME' )) {
 
 // Handle enhancement items
 function item_enhance($itmn, &$data) {
-	global $log, $nosta, $upexp;
+	global $log, $nosta, $upexp ,$baseexp;
 	extract($data, EXTR_REFS);
 	
 	$itm = & ${'itm' . $itmn};

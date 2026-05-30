@@ -233,6 +233,7 @@ function openfile($filename){
 	$count=count($filedb);
 	if($filedb[$count-1]==''||$filedb[$count-1]=="\r"){unset($filedb[$count-1]);}
 	if(empty($filedb)){$filedb[0]='';}
+	if(!empty($filedb[0]) && strpos(trim($filedb[0]), "!defined('IN_GAME')") !== false)	$filedb[0] = '';
 	return $filedb;
 }
 
