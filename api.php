@@ -701,11 +701,11 @@
       /** 道具背包 */
       "itemBag" => array(
         /** 背包内物品 */
-        "item" => $itembag ? json_decode($itembag,true) : null,
+        "item" => $extrabag ? json_decode($extrabag,true) : null,
         /** 背包内物品数量 */
-        "num" => $itmnum,
+        "num" => $extrabag_num,
         /** 背包内物品上限 */
-        "limit" => $itmnumlimit,
+        "limit" => $extrabag_max,
         /** 是否装备中 */
         "isEquip" => strpos($arbsk,'^') !== false && $arbs && $arbe,
       ),

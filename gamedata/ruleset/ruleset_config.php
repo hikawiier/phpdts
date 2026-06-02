@@ -478,8 +478,8 @@ function can_create_ruleset_room($ruleset_id, $user_data) {
         $debug_info['config_exists_check'] = isset($local_ruleset_config[$ruleset_id]) ? 'pass' : 'fail';
 
         // 写入调试文件
-        file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
-            "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
+        //file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
+        //    "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
 
         return false;
     }
@@ -495,8 +495,8 @@ function can_create_ruleset_room($ruleset_id, $user_data) {
         $debug_info['groupid_check'] = ($user_data['groupid'] >= 2) ? 'pass' : 'fail';
 
         // 写入调试文件
-        file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
-            "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
+        //file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
+         //   "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
 
         return true;
     }
@@ -507,8 +507,8 @@ function can_create_ruleset_room($ruleset_id, $user_data) {
         $debug_info['credits_check'] = ($user_data['credits2'] >= $config['credits_cost']) ? 'pass' : 'fail';
 
         // 写入调试文件
-        file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
-            "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
+        //file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
+         //   "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
 
         return true;
     }
@@ -519,8 +519,8 @@ function can_create_ruleset_room($ruleset_id, $user_data) {
     $debug_info['credits_check'] = ($user_data['credits2'] >= $config['credits_cost']) ? 'pass' : 'fail';
 
     // 写入调试文件
-    file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
-        "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
+    //file_put_contents(GAME_ROOT.'./doc/etc/can_create_debug_'.date('Y-m-d_H-i-s').'.txt',
+    //    "can_create_ruleset_room调试信息:\n" . print_r($debug_info, true));
 
     return false;
 }

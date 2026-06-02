@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PHPDTS - 立体剪纸大逃杀</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <svg class="header-deco" viewBox="0 0 60 60" width="48" height="48">
+                <polygon points="30,8 6,52 54,52" fill="#ff7675" stroke="#2d3436" stroke-width="3" stroke-linejoin="round"/>
+                <circle cx="30" cy="24" r="14" fill="#ffeaa7" stroke="#2d3436" stroke-width="3"/>
+                <circle cx="23" cy="27" r="3" fill="#ff8787" opacity="0.5"/>
+                <circle cx="37" cy="27" r="3" fill="#ff8787" opacity="0.5"/>
+                <circle cx="26" cy="22" r="2" fill="#2d3436"/>
+                <circle cx="34" cy="22" r="2" fill="#2d3436"/>
+                <path d="M 27 30 Q 30 33 33 30" fill="none" stroke="#2d3436" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <h1>PHPDTS Battle Royale</h1>
+            <svg class="header-deco" viewBox="0 0 60 60" width="48" height="48" style="animation-delay: 0.4s;">
+                <ellipse cx="28" cy="42" rx="16" ry="11" fill="#ffffff" stroke="#2d3436" stroke-width="3"/>
+                <path d="M 18 34 Q 25 36 28 33 Q 33 42 20 44 Z" fill="#2d3436"/>
+                <circle cx="40" cy="30" r="10" fill="#ffffff" stroke="#2d3436" stroke-width="3"/>
+                <polygon points="32,24 31,14 39,22" fill="#2d3436" stroke="#2d3436" stroke-width="2" stroke-linejoin="round"/>
+                <polygon points="46,24 50,14 42,22" fill="#ffffff" stroke="#2d3436" stroke-width="3" stroke-linejoin="round"/>
+                <circle cx="37" cy="29" r="1.5" fill="#2d3436"/>
+                <circle cx="43" cy="29" r="1.5" fill="#2d3436"/>
+                <path d="M 39 32 Q 40 33 41 32" fill="none" stroke="#2d3436" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+        </header>
+
+        <main class="game-layout">
+            <div class="col-left">
+                <div class="panel panel-map" id="mapSection">
+                    <h2>地图</h2>
+                    <div id="mapInfo"></div>
+                    <div class="map-canvas-wrap">
+                        <canvas id="mapCanvas"></canvas>
+                        <div class="hex-tooltip" id="hexTooltip" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-right">
+                <div class="panel panel-log" id="logSection">
+                    <h2>游戏日志</h2>
+                    <div class="log-content" id="logContent">加载中...</div>
+                </div>
+                <div class="panel panel-itemfind" id="itemfindSection">
+                    <h2>发现物品</h2>
+                    <div id="itemFindArea"></div>
+                </div>
+                <div class="panel panel-memory" id="memorySection" style="display:none;">
+                    <h2>探索记忆</h2>
+                    <div id="memoryArea"></div>
+                </div>
+                <div class="panel-group-bottom">
+                    <div class="panel panel-inv" id="inventorySection">
+                        <h2>背包</h2>
+                        <div id="inventoryList"></div>
+                    </div>
+                    <div class="panel panel-eq" id="equipmentSection">
+                        <h2>装备</h2>
+                        <div id="equipment"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+    <div class="player-drawer" id="playerDrawer">
+        <div class="drawer-header">
+            <span>玩家信息</span>
+            <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+        </div>
+        <div class="drawer-body" id="playerInfo"></div>
+    </div>
+
+    <button class="drawer-toggle" id="drawerToggle" onclick="toggleDrawer()" title="玩家信息">☰</button>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

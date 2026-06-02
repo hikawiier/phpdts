@@ -313,7 +313,7 @@ namespace revcombat
 			if($action == 'corpse' || $action == 'pacorpse')
 			{
 				# 发现尸体
-				include_once GAME_ROOT . './include/game/battle.func.php';
+				include_once GAME_ROOT . './include/game/encounter.func.php';
 				findcorpse($edata);
 				return;
 			}

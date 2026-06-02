@@ -296,6 +296,8 @@ function load_gameinfo() {
 	global $now,$db,$gtablepre,$tablepre;
 	global $groomid,$gamenum,$gamestate,$lastupdate,$starttime,$winmode,$winner,$arealist,$areanum,$areatime,$areawarn,$validnum,$alivenum,$deathnum,$afktime,$optime,$weather,$hack,$combonum,$gamevars;
 	global $hdamage,$hplayer,$noisetime,$noisepls,$noiseid,$noiseid2,$noisemode;
+	global $groomnums,$groomownid,$gruleset;
+	global $rdown,$bdown,$ldown,$kdown;
 	$result = $db->query("SELECT * FROM {$gtablepre}game WHERE groomid = {$groomid}");
 	$gameinfo = $db->fetch_array($result);
 	if(!empty($gameinfo)) extract($gameinfo);

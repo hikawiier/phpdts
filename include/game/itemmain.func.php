@@ -445,13 +445,13 @@ function itemfind(&$data=NULL) {
 	if(strpos($itmk0,'TO')===0) {
 		trap($data);
 	}else{
-		if(CURSCRIPT == 'botservice')
+		/*if(CURSCRIPT == 'botservice')
 		{
 			echo "mode=itemfind\n";
 			echo "itm0=$itm0\n";
 			echo "itms0=$itms0\n";
 			echo "itmsk0=$itmsk0\n";
-		}
+		}*/
 		$mode = 'itemfind';
 		return;
 	}
@@ -485,8 +485,8 @@ function itemget(&$data=NULL)
 	//PORT
 	if(strpos($itmsk0,'^')!==false){
 		$keep_flag = false;
-		include_once GAME_ROOT . './include/game/itembag.func.php';
-		replace_itembag($keep_flag);
+		include_once GAME_ROOT . './include/game/extrabag.func.php';
+		replace_extrabag($keep_flag);
 		if(!$keep_flag){
 			return;
 		}
@@ -603,8 +603,8 @@ function itemdrop($item,&$data=NULL) {
 			$dflag=false;
 		}
 		if ($dflag){
-			include_once GAME_ROOT . './include/game/itembag.func.php';
-			drop_itembag();
+			include_once GAME_ROOT . './include/game/extrabag.func.php';
+			drop_extrabag();
 		}
 	}
 	if(($itmk=='XX')||(($itmk=='XY'))){
@@ -758,14 +758,14 @@ function itemadd(&$data=NULL)
 			return;
 		}
 	}
-	if (CURSCRIPT != 'botservice')
-	{
+	//if (CURSCRIPT != 'botservice')
+	//{
 		//$log .= '你的包裹已经满了。想要丢掉哪个物品？<br>';
 		include template('itemdrop0');
 		$cmd = ob_get_contents();
 		ob_clean();
-	}
-	else  echo "mode=itemdrop0\n";
+	//}
+	//else  echo "mode=itemdrop0\n";
 //	$cmd .= '<input type="hidden" name="mode" value="itemmain"><br><input type="radio" name="command" id="dropitm0" value="dropitm0" checked><a onclick=sl("dropitm0"); href="javascript:void(0);" >'."$itm0/$itme0/$itms0".'</a><br><br>';
 //
 //	for($i = 1;$i <= 6;$i++){

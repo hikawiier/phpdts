@@ -39,6 +39,7 @@ bot/bot_enable.bat
 # DTS Cache Files
 gamedata/bak/
 gamedata/templates/
+vex/cache/
 templates/default/lastgb.htm
 templates/default/lastnews.htm
 bot/lock/
@@ -112,3 +113,4 @@ img/NPCAvatar_Temp.psd
 /doc/etc/archive
 /test
 diff_copy.bat
+gamedata/adminlog.php

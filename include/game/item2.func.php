@@ -199,10 +199,10 @@ function newradar($m = 0){
 	global $pnum,$npc2num,$npc3num,$npc4num,$npc5num,$npc6num,$radarscreen,$typeinfo,$weather;
 	global $horizon;
 	
-	if((CURSCRIPT !== 'botservice') && (!$mode)) {
-		$log .= '仪器使用失败！<br>';
-		return;
-	}
+	//if((CURSCRIPT !== 'botservice') && (!$mode)) {
+	//	$log .= '仪器使用失败！<br>';
+	//	return;
+	//}
 	//echo $weather;
 	if($weather == 14){
 		$dice = rand(0,1);
@@ -222,24 +222,24 @@ function newradar($m = 0){
 	}
 	$tdheight = 20;
 	$screenheight = count($plsinfo)*$tdheight;
-	if (CURSCRIPT == 'botservice') 
-	{
-		if ($m==2)
-			$result = $db->query("SELECT type,sNo,pls,name FROM {$tablepre}players WHERE hp>0");
-		else  $result = $db->query("SELECT type,sNo,pls,name FROM {$tablepre}players WHERE hp>0 AND pls='{$pls}'");
-		$rows=$db->num_rows($result);
-		echo "radarresultnum=$rows\n";
-		$i=0;
-		while($data = $db->fetch_array($result)) 
-		{
-			$i++;
-			echo "radarresulttype$i={$data['type']}\n";
-			echo "radarresultsNo$i={$data['sNo']}\n";
-			echo "radarresultpls$i={$data['pls']}\n";
-			echo "radarresultname$i={$data['name']}\n";
-		}	
-	}
-	else
+	//if (CURSCRIPT == 'botservice') 
+//	{
+//		if ($m==2)
+//			$result = $db->query("SELECT type,sNo,pls,name FROM {$tablepre}players WHERE hp>0");
+//		else  $result = $db->query("SELECT type,sNo,pls,name FROM {$tablepre}players WHERE hp>0 AND pls='{$pls}'");
+//		$rows=$db->num_rows($result);
+//		echo "radarresultnum=$rows\n";
+//		$i=0;
+//		while($data = $db->fetch_array($result)) 
+//		{
+//			$i++;
+//			echo "radarresulttype$i={$data['type']}\n";
+//			echo "radarresultsNo$i={$data['sNo']}\n";
+//			echo "radarresultpls$i={$data['pls']}\n";
+//			echo "radarresultname$i={$data['name']}\n";
+//		}	
+//	}
+//	else
 	{
 		$result = $db->query("SELECT type,pls FROM {$tablepre}players WHERE hp>0");
 		while($cd = $db->fetch_array($result)) {

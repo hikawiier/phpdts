@@ -453,7 +453,7 @@ function platform_projectable_fields()
         $fields = array(
             'gd', 'race', 'sNo', 'icon', 'club', 'horizon', 'hp', 'mhp', 'sp', 'msp', 'ss', 'mss',
             'att', 'def', 'lvl', 'exp', 'money', 'rp', 'inf', 'rage', 'pose', 'tactic', 'killnum',
-            'wp', 'wk', 'wg', 'wc', 'wd', 'wf', 'getitem', 'itembag', 'itmnum', 'itmnumlimit',
+            'wp', 'wk', 'wg', 'wc', 'wd', 'wf', 'extrabag_put', 'extrabag', 'extrabag_num', 'extrabag_max',
             'wep', 'wepk', 'wepe', 'weps', 'wepsk', 'weppara', 'wep2', 'wep2k', 'wep2e', 'wep2s',
             'wep2sk', 'wep2para', 'arb', 'arbk', 'arbe', 'arbs', 'arbsk', 'arbpara',
             'arh', 'arhk', 'arhe', 'arhs', 'arhsk', 'arhpara', 'ara', 'arak', 'arae', 'aras',

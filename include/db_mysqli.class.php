@@ -256,6 +256,10 @@ class dbstuff {
 		$query = mysqli_num_rows ( $query );
 		return $query;
 	}
+
+	function escape_string($str) {
+		return mysqli_real_escape_string($this->con, $str);
+	}
 	
 	function num_fields($query) {
 		return mysqli_num_fields ( $query );

@@ -5,7 +5,7 @@ if(!defined('IN_GAME')) {
 }
 
 include_once GAME_ROOT.'./include/state.func.php';
-include_once GAME_ROOT.'./include/game/battle.func.php';
+include_once GAME_ROOT.'./include/game/encounter.func.php';
 include_once GAME_ROOT.'./include/game/itemmain.func.php';
 include_once GAME_ROOT.'./include/game/item.platform.php';
 include_once GAME_ROOT.'./include/game/revbattle.func.php';
@@ -711,7 +711,7 @@ function discover($schmode = 0,&$data=NULL)
 		$result = $db->query("SELECT * FROM {$tablepre}players WHERE pls='$pls' AND pid!='$pid'");
 		if(!$db->num_rows($result)){
 			$log .= '<span class="yellow">周围一个人都没有。</span><br>';
-			if(CURSCRIPT == 'botservice') echo "noenemy=1\n";
+			//if(CURSCRIPT == 'botservice') echo "noenemy=1\n";
 			$mode = 'command';
 			return;
 		}

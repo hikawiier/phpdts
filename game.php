@@ -156,7 +156,7 @@ if($action == 'corpse' || $action == 'pacorpse' && $gamestate<40){
 		$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='$cid' AND hp=0");
 		if($db->num_rows($result)>0){
 			$edata = $db->fetch_array($result);
-			include_once GAME_ROOT.'./include/game/battle.func.php';
+			include_once GAME_ROOT.'./include/game/encounter.func.php';
 			findcorpse($edata);
 			extract($edata,EXTR_PREFIX_ALL,'w');
 			init_battle_rev($pdata,$edata,1);

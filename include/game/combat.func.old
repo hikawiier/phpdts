@@ -313,14 +313,14 @@ function combat($active = 1, $wep_kind = '') {
 	$main = 'battle';
 	init_battle ( 1 );
 	
-	if (CURSCRIPT !== 'botservice')
-	{
+	//if (CURSCRIPT !== 'botservice')
+	//{
 		include template('battleresult');
 		//$cmd = '<br><br><input type="hidden" name="mode" value="command"><input type="radio" name="command" id="back" value="back" checked><a onclick=sl("back"); href="javascript:void(0);" >确定</a><br>';
 		$cmd = ob_get_contents();
 		ob_clean();
 		//$bid = $hp <= 0 ? $bid : 0;
-	}
+	//}
 	$action = '';
 	return;
 }

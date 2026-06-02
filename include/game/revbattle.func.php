@@ -56,7 +56,7 @@ namespace revbattle
 		if ($edata ['hp'] <= 0)
 		{
 			if($action != 'focus') $log .= "<span class=\"red\">" . $edata ['name'] . "</span>已经死亡，不能被攻击。<br>";
-			include_once GAME_ROOT . './include/game/battle.func.php';
+			include_once GAME_ROOT . './include/game/encounter.func.php';
 			$action = 'corpse'; $bid = $edata['pid'];
 			findcorpse($edata);
 			return;

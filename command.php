@@ -80,10 +80,10 @@ if($hp > 0){
 	//PORT
 	//判断背包内道具是否超限
 	if(strpos($arbsk,'^')!==false && $arbs && $arbe){
-		global $itmnumlimit;
-		$itmnumlimit = $arbe>=$arbs ? $arbs : $arbe;
-		include_once GAME_ROOT.'./include/game/itembag.func.php';
-		overnumlimit();
+		global $extrabag_max;
+		$extrabag_max = $arbe>=$arbs ? $arbs : $arbe;
+		include_once GAME_ROOT.'./include/game/extrabag.func.php';
+		extrabag_over_limit();
 	}
 
 	//判断冷却时间是否过去
@@ -377,11 +377,11 @@ if($hp > 0){
 					if($coldtimeon){$cmdcdtime=$weaponswapcoldtime;}
 				}elseif($sp_cmd == 'oneonone'){
 					$mode='oneonone';
-				}elseif($sp_cmd == 'sp_skpts'){
-					include_once GAME_ROOT.'./include/game/clubskills.func.php';
-					calcskills($skarr);
-					$p12[1]=1; $p12[2]=2;
-					$mode='sp_skpts';
+				//}elseif($sp_cmd == 'sp_skpts'){
+				//	include_once GAME_ROOT.'./include/game/clubskills.func.php';
+				//	calcskills($skarr);
+				//	$p12[1]=1; $p12[2]=2;
+				//	$mode='sp_skpts';
 				//妙手技能
 				}elseif($sp_cmd == 'sp_pickpocket_selected'){
 					if (!isset($choice)) {
@@ -783,11 +783,11 @@ if($hp > 0){
 				$mode = 'command';
 			}
 		} elseif($mode == 'senditem') {
-			include_once GAME_ROOT.'./include/game/battle.func.php';
+			include_once GAME_ROOT.'./include/game/encounter.func.php';
 			senditem();
-		} elseif($mode == 'combat') {
-			include_once GAME_ROOT.'./include/game/combat.func.php';
-			combat(1,$command);
+		//} elseif($mode == 'combat') {
+		//	include_once GAME_ROOT.'./include/game/combat.func.php';
+		//	combat(1,$command);
 		} elseif($mode == 'revcombat'){
 			chase_flag:
 			include_once GAME_ROOT.'./include/game/revbattle.func.php';
@@ -949,7 +949,7 @@ if($hp > 0){
 				$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='$cid' AND hp=0");
 				if($db->num_rows($result)>0){
 					$edata = $db->fetch_array($result);
-					include_once GAME_ROOT.'./include/game/battle.func.php';
+					include_once GAME_ROOT.'./include/game/encounter.func.php';
 					findcorpse($edata);
 				}
 			}
@@ -967,7 +967,7 @@ if($hp > 0){
 		}
 		//读取背包内道具
 		if(strpos($arbsk,'^')!==false && $arbs && $arbe){
-			include_once GAME_ROOT.'./include/game/itembag.func.php';
+			include_once GAME_ROOT.'./include/game/extrabag.func.php';
 			$itemlist = item_arr();
 		}
 		$endtime = $now;
@@ -1057,6 +1057,9 @@ $gamedata['innerHTML']['main'] = ob_get_contents();
 $log .= "<!-- DEBUG: 最终的 log 变量长度: " . strlen($log) . " -->";
 
 $gamedata['innerHTML']['log'] = $log;
+$log_dir = GAME_ROOT.'./vex/cache/';
+if (!is_dir($log_dir)) { mkdir($log_dir, 0777, true); }
+writeover($log_dir.'log_'.$groomid.'_'.$pid.'.php', $log);
 if(isset($error)){$gamedata['innerHTML']['error'] = $error;}
 $gamedata['clbpara'] = $clbpara;
 $gamedata['value']['teamID'] = $teamID;

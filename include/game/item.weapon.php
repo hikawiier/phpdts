@@ -68,8 +68,8 @@ function item_weapon($itmn, &$data) {
 
 	//PORT
 	if(strpos($itmsk,'^')!==false){
-		//global $itmnumlimit;
-		$itmnumlimit = $itme>=$itms ? $itms : $itme;
+		//global $extrabag_max;
+		$extrabag_max = $itme>=$itms ? $itms : $itme;
 	}
 	if (($noeqp && strpos(${$eqp.'k'}, $noeqp) === 0) || (empty(${$eqp.'s'}) && ${$eqp.'s'} !== $nosta)) {
 
