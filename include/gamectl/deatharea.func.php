@@ -279,7 +279,7 @@ function is_danger_area($area_id) {
  */
 function is_event_area($area_id) {
     global $event_areas;
-    return in_array($area_id, $event_areas);
+    return isset($event_areas) ? in_array($area_id, $event_areas) : 0 ;
 }
 
 ?>

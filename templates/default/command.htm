@@ -152,7 +152,7 @@
 		<input type="button" class="cmdbutton" id="aa" name="sp_shop" value="[A]商店" onclick="$('command').value='special';$('subcmd').name='sp_cmd';$('subcmd').value='sp_shop';postCmd('gamecmd','command.php');this.disabled=true;">
 		<br>
 	<!--{/if}-->
-	<!--{if in_array($pls,$depots)}-->
+	<!--{if isset($depots) && in_array($pls,$depots)}-->
 	<span tooltip="向安全箱中存入或取出道具">
 		<input type="button" class="cmdbutton" name="sp_depot" value="安全箱" onclick="$('command').value='special';$('subcmd').name='sp_cmd';$('subcmd').value='sp_depot';postCmd('gamecmd','command.php');this.disabled=true;">
 	</span>

@@ -17,6 +17,10 @@ function addnpc($type,$sub,$num,$time = 0,$anpcdata = NULL) {
 	$npcinit = get_npcinit();
 	$anpcinfo = get_addnpcinfo();
 	$anpc_namelist = Array();
+	# 唉 检查ruleset模式下NPC类型和子类型是否存在 / Check if NPC type and subtype exist
+	if(!isset($anpcinfo[$type]) || !isset($anpcinfo[$type]['sub'][$sub])){
+		return;
+	}
 	$anpc = array_merge($npcinit,$anpcinfo[$type]);
 	$anpc = array_merge($anpc,$anpc['sub'][$sub]);
 	if(!$anpc){

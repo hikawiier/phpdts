@@ -495,11 +495,20 @@ function player_save($data){
 
 function check_player_misc_states(&$data)
 {
-	# 转码clbpara
+	# 转码clbpara / Parse clbpara JSON
 	if(!empty($data['clbpara'])) $data['clbpara'] = get_clbpara($data['clbpara']);
-	# 刷新时效性状态
+	# 转码itmpara / Parse itmpara JSON fields
+	$itmpara_fields = array('weppara','wep2para','itmpara0','itmpara1','itmpara2',
+		'itmpara3','itmpara4','itmpara5','itmpara6',
+		'arbpara','arhpara','arapara','arfpara','artpara');
+	foreach ($itmpara_fields as $field) {
+		if (isset($data[$field])) {
+			$data[$field] = get_itmpara($data[$field]);
+		}
+	}
+	# 刷新时效性状态 / Refresh timed statuses
 	if(!empty($data['clbpara']['lasttimes'])) check_skilllasttimes($data);
-	# 刷新装备状态
+	# 刷新装备状态 / Refresh equipment states
 	include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 	reload_equip_items($data);
 	reload_set_items($data);

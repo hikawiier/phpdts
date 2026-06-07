@@ -66,7 +66,8 @@ function gamestate_try_add_area() {
     global $gamestate, $now, $areatime, $areahour;
     global $areawarn, $areawarntime;
 
-    if (($gamestate > 10) && ($now > $areatime)) {
+    // 防御：areatime=0 表示房间尚未初始化，跳过禁区增加
+    if (($gamestate > 10) && ($areatime > 0) && ($now > $areatime)) {
         while ($now > $areatime) {
             $o_areatime = $areatime;
             $areatime += $areahour * 60;

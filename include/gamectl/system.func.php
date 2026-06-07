@@ -452,6 +452,10 @@ function add_once_area($atime) {
 			storyputchat($now,'areaadd');
 			systemputchat($atime,'areaadd',$areaaddlist);
 			$str_arealist = implode(',',get_death_areas());
+			// 防御：禁区列表为空时跳过（如新房间尚未初始化禁区）
+			if (empty($str_arealist)) {
+				return;
+			}
 			$query = $db->query("SELECT * FROM {$tablepre}players WHERE pls IN ($str_arealist) AND hp>0");
 			while($sub = $db->fetch_array($query)) {
 				$pid = $sub['pid'];

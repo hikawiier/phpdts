@@ -46,7 +46,8 @@ if (!defined('IN_GAME')) {
 - **表前缀：** `$tablepre`（如`acbra3_`，私房间为`acbra3_s{id}_`）；`$gtablepre`为全局前缀（不变）
 - **数组语法：** 必须用`array()`（PHP 7.0兼容），禁止`[]`
 - **错误处理：** 致命错误用`gexit()`；游戏内消息用`$log .=`
-- **数据库查询：** 表名用`{$tablepre}players`；用户输入用`$db->escape_string()`
+- **数据库查询：** 表名用`{$tablepre}players`；字符串参数用`$db->escape_string()`；整型参数用`intval()`确保类型安全
+- **入口文件缓存：** 入口文件（`game.php`/`command.php`等）中同一请求内多次使用的查询结果，应提取到文件顶部一次执行并缓存，避免重复DB查询。如`game.php`中`gruleset`在`extract()`后立即查询缓存
 - **配置加载：** `require config('name', $version)` → 返回`gamedata/cache/name_version.php`路径，支持RuleSet覆盖
 - **玩家数据（遗留）：** `extract($pdata, EXTR_REFS)` 将数组展开为全局变量引用。仅限入口文件（`game.php`/`command.php`）使用，**新业务逻辑禁止此写法**。
 - **玩家数据（新设计）：** 函数接受 `&$data` 参数，直接通过 `$data['hp']`、`$data['clbpara']` 进行数组操作。代表：`check_player_misc_states(&$data)`、`quest_tick(&$data)`。

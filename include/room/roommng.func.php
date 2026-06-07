@@ -106,8 +106,8 @@ function roommng_create_new_room(&$udata, $ruleset_id = '')
 		}
 
 		// 临时调试：将调试信息写入文件
-		file_put_contents(GAME_ROOT.'./doc/etc/ruleset_debug_'.date('Y-m-d_H-i-s').'.txt',
-			"RuleSet权限检查调试信息:\n" . print_r($debug_info, true));
+		//file_put_contents(GAME_ROOT.'./doc/etc/ruleset_debug_'.date('Y-m-d_H-i-s').'.txt',
+		//	"RuleSet权限检查调试信息:\n" . print_r($debug_info, true));
 
 		if(!can_create_ruleset_room($ruleset_id, $udata))
 		{

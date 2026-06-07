@@ -6,31 +6,18 @@ require './include/core/common.inc.php';
 //$t_s=getmicrotime();
 //require_once GAME_ROOT.'./include/core/JSON.php';
 require GAME_ROOT.'./include/gamectl/game.func.php';
+require GAME_ROOT.'./include/gamectl/player_auth.func.php';
 
-//判断是否进入游戏
-if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
-
-//$result = $db->query("SELECT * FROM {$tablepre}players WHERE name = '$cuser' AND type = 0");
-$pdata = fetch_playerdata_by_name($cuser);
-
-if(!$pdata) { header("Location: valid.php");exit(); }
-
-//$pdata = $db->fetch_array($result);
-
-//判断是否密码错误
-if($pdata['pass'] != $cpass) {
-	$tr = $db->query("SELECT `password` FROM {$gtablepre}users WHERE username='$cuser'");
-	$tp = $db->fetch_array($tr);
-	$password = $tp['password'];
-	if($password == $cpass) {
-		$db->query("UPDATE {$tablepre}players SET pass='$password' WHERE name='$cuser'");
-	} else {
-		gexit($_ERROR['wrong_pw'],__file__,__line__);
-	}
-}
-
-//判断游戏状态和玩家状态，如果符合条件则忽略指令
-if($gamestate == 0) {
+// 玩家认证 / Player authentication
+$auth_result = auth_game_player();
+if ($auth_result['status'] == 'no_login') {
+	gexit($_ERROR['no_login'], __file__, __line__);
+} elseif ($auth_result['status'] == 'no_player') {
+	header("Location: valid.php");
+	exit();
+} elseif ($auth_result['status'] == 'wrong_pw') {
+	gexit($_ERROR['wrong_pw'], __file__, __line__);
+} elseif ($auth_result['status'] == 'gamestate_zero') {
 	$gamedata['url'] = 'end.php';
 	ob_clean();
 	$jgamedata = compatible_json_encode($gamedata);
@@ -38,44 +25,24 @@ if($gamestate == 0) {
 	ob_end_flush();
 	exit();
 }
+$pdata = $auth_result['pdata'];
 
-//初始化各变量
-$pdata['clbpara'] = get_clbpara($pdata['clbpara']);
-extract($pdata,EXTR_REFS);
-$log = $cmd = $main = '';
-$gamedata = array();
+// 公共初始化 / Common initialization
+require GAME_ROOT.'./include/gamectl/init_player.func.php';
+
+// 旧方案：将玩家数据展开为全局变量（仅限入口文件使用）
+extract($pdata, EXTR_REFS);
+
 init_playerdata();
+$log = init_player_log();
+$cmd = $main = '';
+$gamedata = array();
 
-//读取玩家互动信息
-$result = $db->query("SELECT lid,time,log FROM {$tablepre}log WHERE toid = '$pid' AND prcsd = 0 ORDER BY time,lid");
-$llist = '';
-while($logtemp = $db->fetch_array($result)){
-	$log .= date("H:i:s",$logtemp['time']).'，'.$logtemp['log'].'<br />';
-	$llist .= $logtemp['lid'].',';
-}
-if(!empty($llist)){
-	$llist = '('.substr($llist,0,-1).')';
-	$db->query("UPDATE {$tablepre}log SET prcsd=1 WHERE toid = '$pid' AND lid IN $llist");
-}
-//var_dump($_POST);
 if($hp > 0){
-	//显示枪声信息
-	if(($now <= $noisetime+$noiselimit)&&$noisemode&&($noiseid!=$pid)&&($noiseid2!=$pid)) {
-		if(($now-$noisetime) < 60) {
-			$noisesec = $now - $noisetime;
-			$log .= "<span class=\"yellow\">{$noisesec}秒前，{$plsinfo[$noisepls]}传来了{$noiseinfo[$noisemode]}。</span><br>";
-		} else {
-			$noisemin = floor(($now-$noisetime)/60);
-			$log .= "<span class=\"yellow\">{$noisemin}分钟前，{$plsinfo[$noisepls]}传来了{$noiseinfo[$noisemode]}。</span><br>";
-		}
-	}
-
-	if ($club==0 && !isset($clubavl))
-	{
-		include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
-		getclub($name,$c1,$c2,$c3);
-		$clubavl[0]=0; $clubavl[1]=$c1; $clubavl[2]=$c2; $clubavl[3]=$c3;
-	}
+	$log .= init_noise_display();
+	$rmcdtime = init_cooldown();
+	$log .= init_dizzy_check();
+	init_club_check();
 
 	//PORT
 	//判断背包内道具是否超限
@@ -86,20 +53,9 @@ if($hp > 0){
 		extrabag_over_limit();
 	}
 
-	//判断冷却时间是否过去
-	if($coldtimeon){
-		$cdover = $cdsec*1000 + $cdmsec + $cdtime;
-		$nowmtime = floor(getmicrotime()*1000);
-		$rmcdtime = $nowmtime >= $cdover ? 0 : $cdover - $nowmtime;
-	}
-
-	//如果身上存在时效性技能，检查技能是否超时
-	if($hp > 0 && !empty($clbpara['lasttimes'])) check_skilllasttimes($pdata);
-	//应用眩晕状态效果
+	//眩晕状态：跳过指令执行
 	if($hp > 0 && !empty($clbpara['skill']) && in_array('inf_dizzy',$clbpara['skill']))
 	{
-		$dizzy_times = (($clbpara['starttimes']['inf_dizzy'] + $clbpara['lasttimes']['inf_dizzy']) - $now)*1000;
-		$log .= '<span class="yellow">你现在处于眩晕状态，什么都做不了！</span><br>眩晕状态持续时间还剩：<span id="timer" class="yellow">'.$dizzy_times.'</span>秒<br><script type="text/javascript">demiSecTimerStarter('.$dizzy_times.');</script>';
 		goto cd_flag;
 	}
 

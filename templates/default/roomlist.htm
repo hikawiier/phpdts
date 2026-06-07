@@ -1,5 +1,5 @@
 <dialog id="roomlist" style="max-width: 90%;max-height: 80%; text-align: left;">
-<span class="yellow b"><div id="roomerror" style="padding-bottom: 5px;"></div></span>
+<div id="roomerror" class="yellow b" style="padding-bottom: 5px;"></div>
 <form method="post" name="roomact" onsubmit="return false;" >
 <input type="hidden" name="roomact" id="roomact" value="">
 
@@ -12,9 +12,10 @@
 		<input type="button" value="创建时光重现房间" onclick="showRulesetDialog();" >
 	<!--{/if}-->
 <!--{/if}-->
+	</span>
 	<br>
 	<div style="height:5px;">&nbsp;</div>
-		<table CellSpacing=0 CellPadding=0 class="infotable">
+		<table cellspacing="0" cellpadding="0" class="infotable">
 			<tr>
 				<td class="b1" width="60px">编号</td>
 				<td class="b1" width="100px">游戏模式</td>
@@ -32,7 +33,6 @@
 				</td>
 				<td class="b3" width="100px">
 					<!--{if !empty($rinfo['gruleset'])}-->
-						<!--{eval include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';}-->
 						<!--{eval $ruleset_config = get_ruleset_config($rinfo['gruleset']);}-->
 						<!--{if $ruleset_config}-->
 							<span class="yellow" title="$ruleset_config[description]">$ruleset_config[name]</span>
@@ -80,10 +80,11 @@
 		<!--{/if}-->
 		</table>
 </form>
-<img class="dialog-background" src="img/profile.gif" onclick="closeDialog($('roomlist'))">
+<img class="dialog-background" src="img/profile.gif" alt="" onclick="closeDialog($('roomlist'))">
 </dialog>
 
-<!-- RuleSet选择对话框 -->
+<!-- RuleSet选择对话框 不在房间里时才会显示 -->
+<!--{if $now_rooms < $max_rooms && !$groomid && (!empty($cuser) && !empty($cpass))}-->
 <dialog id="rulesetDialog" style="max-width: 600px; max-height: 70%; text-align: left;">
 	<div style="padding: 20px;">
 		<h3 class="yellow">选择时光重现版本</h3>
@@ -130,6 +131,7 @@
 		</div>
 	</div>
 </dialog>
+<!--{/if}-->
 
 <script type="text/javascript">
 function showRulesetDialog() {
