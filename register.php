@@ -2,9 +2,9 @@
 
 define('CURSCRIPT', 'register');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
-//include './include/user.func.php';
+//include './include/auth/user.func.php';
 include './gamedata/banlist.list';
 
 if(isset($cuser) && isset($cpass)){

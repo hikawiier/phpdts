@@ -21,7 +21,7 @@ $npcchaton = 1;
 //有台词的NPC（已废弃，只要登记过台词的NPC就会显示台词，需要关闭哪个NPC的台词功能请直接注释掉ta的台词）
 //$npccanchat = Array(1,5,6,7,9,10,12,13,15,21,22,24,92);
 //开启NPC不会因躲避禁区而移动到危险地图的功能？0为不开启，1为开启
-$npc_away_from_deepzones = 1;
+$npc_away_from_danger_areas = 1;
 //反挂机系统间隔时间，单位分钟
 $antiAFKertime = 20;
 //尸体保护时间，单位秒

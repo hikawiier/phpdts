@@ -15,7 +15,7 @@ if(!defined('IN_GAME')) {
 //It will not change for that live.
 //The majority of random content in this file is decided by one, or more of the above values.
 
-require_once './include/common.inc.php';
+require_once './include/core/common.inc.php';
 
 //-- All hail the Random Number God, may thy glory be! --
 //-- All shall rebel thy. --

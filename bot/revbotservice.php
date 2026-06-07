@@ -7,8 +7,8 @@ if(is_dir($gameRoot)) {
 	chdir($gameRoot);
 }
 
-require_once $gameRoot.'include/common.inc.php';
-require_once GAME_ROOT.'./include/game.func.php';
+require_once $gameRoot.'include/core/common.inc.php';
+require_once GAME_ROOT.'./include/gamectl/game.func.php';
 require_once GAME_ROOT.'./bot/revbot.func.php';
 
 $bot_respawn_chance = isset($_GET['respawn_chance']) ? (int)$_GET['respawn_chance'] : 35;

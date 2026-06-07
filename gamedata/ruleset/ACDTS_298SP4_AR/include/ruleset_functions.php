@@ -152,7 +152,7 @@ function ruleset_should_randomize_move() {
  */
 function ruleset_get_random_npc_location($plsnum) {
     $rmap = rand(1, $plsnum-1);
-    while ($rmap == 34) { // 排除地点34
+    while (is_event_area($rmap)) { // 排除特殊事件区域
         $rmap = rand(1, $plsnum-1);
     }
     return $rmap;
@@ -162,20 +162,18 @@ function ruleset_get_random_npc_location($plsnum) {
  * 获取随机移动落点
  */
 function ruleset_get_random_move_destination($current_pls, $plsinfo, $arealist, $areanum, $hack) {
-    $safe_pls = array();
+    $safe_areas = array();
     $plsnum = sizeof($plsinfo);
 
     for($i = 1; $i < $plsnum; $i++) {
-        if($i == $current_pls || $i == 34) continue;
-        if(!$hack && array_search($i, $arealist) <= $areanum) continue;
-        $safe_pls[] = $i;
+        if($i == $current_pls || is_event_area($i)) continue;
+        if(is_death_area($i)) continue;
+        $safe_areas[] = $i;
     }
-
-    if(empty($safe_pls)) {
+    if(empty($safe_areas)) {
         return $current_pls;
     }
-
-    return $safe_pls[array_rand($safe_pls)];
+    return $safe_areas[array_rand($safe_areas)];
 }
 
 /**

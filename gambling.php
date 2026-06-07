@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'gambling');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 $gbinfo = '';
 if(!$cuser||!$cpass) { $gbinfo .= $_ERROR['no_login']; }

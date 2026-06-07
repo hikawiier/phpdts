@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'valid');
 
-require './include/common.inc.php';
-require './include/user.func.php';
+require './include/core/common.inc.php';
+require './include/auth/user.func.php';
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
 if($gamestate < 20) { gexit($_ERROR['no_start'],__file__,__line__); }

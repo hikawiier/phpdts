@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'winner');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 if(!isset($command)){$command = 'ref';}
 if($command == 'info') {
@@ -12,11 +12,11 @@ if($command == 'info') {
 	$pdata['gsdate'] = date("m/d/Y H:i:s",$pdata['gstime']);
 	$pdata['gedate'] = date("m/d/Y H:i:s",$pdata['getime']);
 	extract($pdata);
-	include GAME_ROOT.'./include/game.func.php';
+	include GAME_ROOT.'./include/gamectl/game.func.php';
 	init_playerdata();
 	init_profile();
 } elseif($command == 'news') {
-	//include  GAME_ROOT.'./include/news.func.php';
+	//include  GAME_ROOT.'./include/gamectl/news.func.php';
 	$hnewsfile = GAME_ROOT."./gamedata/bak/{$gnum}_newsinfo.html";
 	if(file_exists($hnewsfile)){
 		$hnewsinfo = readover($hnewsfile);

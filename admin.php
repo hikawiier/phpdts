@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'admin');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 define('IN_ADMIN', TRUE);
 require GAME_ROOT.'./gamedata/admincfg.php';
 require GAME_ROOT.'./include/admin/admin.lang.php';

@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'user_profile');
 
-require './include/common.inc.php';
-//require './include/user.func.php';
+require './include/core/common.inc.php';
+//require './include/auth/user.func.php';
 
 
 $_REQUEST = gstrfilter($_REQUEST);
@@ -36,7 +36,7 @@ $nickinfo = titles_get_desc($nick);
 $select_icon = $icon;
 $winning_rate=$validgames?round($wingames/$validgames*100)."%":'0%';
 
-include_once GAME_ROOT.'./include/game/achievement.func.php';
+include_once GAME_ROOT.'./include/meta/achievement.func.php';
 $ach=$udata['achievement'];
 $n=$udata['username'];
 //本人访问账户页面时，初始化每日任务相关参数
@@ -65,7 +65,7 @@ if(!empty($udata['achrev'])) $udata['achrev'] = json_decode($udata['achrev'],tru
 if(!empty($udata['achievement']) && empty($udata['achrev']))
 {
 	global $achievement_count;
-	include_once GAME_ROOT.'./include/game/achievement.func.php';
+	include_once GAME_ROOT.'./include/meta/achievement.func.php';
 	$alist = get_achlist();
 	$new_ach = Array(); $cpl = Array(); $prc = Array();
 	foreach($alist as $i => $iarr)

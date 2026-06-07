@@ -34,11 +34,10 @@
         <main class="game-layout">
             <div class="col-left">
                 <div class="panel panel-map" id="mapSection">
-                    <h2>地图</h2>
+                    <h2>战场地图</h2>
                     <div id="mapInfo"></div>
-                    <div class="map-canvas-wrap">
-                        <canvas id="mapCanvas"></canvas>
-                        <div class="hex-tooltip" id="hexTooltip" style="display:none;"></div>
+                    <div class="map-grid-wrap">
+                        <div class="map-grid" id="mapGrid"></div>
                     </div>
                 </div>
             </div>
@@ -80,6 +79,12 @@
 
     <button class="drawer-toggle" id="drawerToggle" onclick="toggleDrawer()" title="玩家信息">☰</button>
 
+    <script src="js/data.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/inventory.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/log.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

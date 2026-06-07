@@ -173,7 +173,7 @@
                         <label for="deploy_pls_panel">部署位置：</label>
                         <select id="deploy_pls_panel">
                             <!--{loop $plsinfo $pls_id $pls_name}-->
-                            <!--{if $pls_id > 0 && !in_array($pls_id, $deepzones) && $pls_id < 100}-->
+                            <!--{if $pls_id > 0 && !in_array($pls_id, $danger_areas) && $pls_id < 100}-->
                             <option value="$pls_id" <!--{if $pls_id == $pls}-->selected<!--{/if}-->>$pls_name</option>
                             <!--{/if}-->
                             <!--{/loop}-->

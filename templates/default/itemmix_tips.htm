@@ -3,7 +3,7 @@
 		<div class="b1" style="height:20px"><span>合成笔记</span></div>
 		<div class="b3" style="min-height:380px;display: flex;position:relative;justify-content: center;">
 			<div style="min-width: 500px;max-width:700px;max-height:400px;text-align:left;word-break:break-all;overflow:auto;">
-				<!--{eval include_once GAME_ROOT.'./include/game/itemplace.func.php';$mixhint = init_itemmix_tips();}-->
+				<!--{eval include_once GAME_ROOT.'./include/game/item/itemplace.func.php';$mixhint = init_itemmix_tips();}-->
 				<form method="post" id="maincmd" name="maincmd">
 					<input type="hidden" name="itemindex" id="itemindex" value="">
 				{$mixhint}
@@ -13,7 +13,7 @@
 	</div>
 
 	<!--{if !empty($itemindex)}-->
-	<!--{eval include_once GAME_ROOT.'./include/game/itemplace.func.php';$mixhint2 = init_itemmix_tips($itemindex);}-->
+	<!--{eval include_once GAME_ROOT.'./include/game/item/itemplace.func.php';$mixhint2 = init_itemmix_tips($itemindex);}-->
 	<dialog id="itemmix_tips" style="min-width: fit-content; min-height: fit-content;max-width: 400px;max-height: 600px;">
 		<div id="tipsinfo">
 			<div class="b3" style="mdisplay: flex;position:relative;justify-content: center;">
@@ -45,7 +45,7 @@
 		<div class="b1" style="height:20px"><span>元素笔记</span></div>
 		<div class="b3" style="min-height:380px;display: flex;position:relative;justify-content: center;">
 			<div style="min-width: 500px;max-width:720px;max-height:400px;text-align:left;word-break:break-all;overflow:auto;">
-				<!--{eval include_once GAME_ROOT.'./include/game/elementmix.func.php';$smhint = emix_init_elements_info($pdata);}-->
+				<!--{eval include_once GAME_ROOT.'./include/game/club/elementmix.func.php';$smhint = emix_init_elements_info($pdata);}-->
 				<!--{loop Array('element0','element1','element2','element3','element4','element5') $ekey $enum}-->
 					<table cellspacing="0" cellpadding="0" class="infotable">
 						<tr>

@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'end');
 
-require './include/common.inc.php';
-require './include/game.func.php';
+require './include/core/common.inc.php';
+require './include/gamectl/game.func.php';
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); } 
 $result = $db->query("SELECT * FROM {$tablepre}players WHERE name = '$cuser' AND type = 0");
 if(!$db->num_rows($result)) { header("Location: index.php");exit(); }

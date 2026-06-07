@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 define('CURSCRIPT', 'api');
 
@@ -8,8 +8,8 @@ define('CURSCRIPT', 'api');
 # 大部分传向前端的游戏数据都在 common.inc.php 和 game.func.php 声明过了
 # 但是，类似的东西（比如$upexp，存在 state.func.php里） 还是东一块西一块的 ，如果发现要用但是没有的时候，把它们从其他文件清理出来，统一到上面两个文件里处理，未来再统一转移到一个规范文件里
 
-require_once './include/common.inc.php';
-require_once './include/game.func.php';
+require_once './include/core/common.inc.php';
+require_once './include/gamectl/game.func.php';
 
 # 复制command.php中的登录验证逻辑，确保API请求必须来自已登录的玩家
 if (!$cuser || !$cpass) {
@@ -34,17 +34,21 @@ if ($pdata['pass'] != $cpass) {
 
 header('Content-Type: application/json');
 
-$allowed_origins = array(
-    'http://localhost',
-    'http://localhost:80',
-    'http://localhost:8080',
-    'http://127.0.0.1',
-);
-
+// CORS：生产环境只允许同源，开发环境可通过配置扩展
 $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '';
-if (in_array($origin, $allowed_origins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-    header('Access-Control-Allow-Credentials: true');
+if ($origin) {
+    $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+    $self_origin = $scheme . '://' . $_SERVER['HTTP_HOST'];
+    $is_same_origin = (strpos($origin, $self_origin) === 0);
+
+    // 如需允许额外的开发地址，在此数组中添加
+    $extra_origins = array();
+    // $extra_origins[] = 'http://localhost:3000';
+
+    if ($is_same_origin || in_array($origin, $extra_origins)) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Access-Control-Allow-Credentials: true');
+    }
 }
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
@@ -408,17 +412,14 @@ function handle_player_inventory() {
 }
 
 function handle_game_map() {
-    global $pdata, $arealist, $areanum, $plsinfo;
-
-    $danger_areas = array();
-    if ($arealist && is_array($arealist)) {
-        $danger_areas = array_slice($arealist, 0, $areanum);
-        $danger_areas = array_map('intval', $danger_areas);
-    }
+    global $pdata, $arealist, $areanum, $plsinfo, $hack, $areaadd;
 
     api_response('success', array(
         'currentLocation' => (int)$pdata['pls'],
-        'dangerAreas' => $danger_areas,
+        'arealist' => $arealist,
+        'areanum' => $areanum,
+        'areaadd' => $areaadd,
+        'hack' => $hack,
         'totalAreas' => count($plsinfo)
     ));
 }

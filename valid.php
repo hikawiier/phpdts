@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'valid');
 
-require './include/common.inc.php';
-//require './include/user.func.php';
+require './include/core/common.inc.php';
+//require './include/auth/user.func.php';
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
 if($gamestate < 20) { gexit($_ERROR['no_start'],__file__,__line__); }
@@ -21,7 +21,7 @@ if($gamestate >= 30 && $udata['groupid'] < 6 && $cuser != $gamefounder) {
 }
 
 # 入场时可选内定称号表 t1-随机选3 t2-固定出现
-include_once GAME_ROOT.'./include/game/clubslct.func.php';
+include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
 $t1_list = valid_getclublist_t1($udata);
 $t2_list = valid_getclublist_t2($udata);
 
@@ -34,7 +34,7 @@ if($mode == 'enter') {
 	// 加入游戏时，检查是否需要转化新版成就数据结构
 	if(!empty($udata['achievement']) && empty($udata['achrev']))
 	{
-		include_once GAME_ROOT.'./include/game/achievement.func.php';
+		include_once GAME_ROOT.'./include/meta/achievement.func.php';
 		$alist = get_achlist();
 		$new_ach = Array();$cpl = Array(); $prc = Array();
 		foreach($alist as $i => $iarr)
@@ -331,7 +331,7 @@ if($mode == 'enter') {
 	}
 
 	# 初始化套装信息
-	include_once GAME_ROOT.'./include/game/itemmain.func.php';
+	include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 	reload_set_items($ndata);
 
 	# 初始化称号技能

@@ -2,12 +2,12 @@
 
 define('CURSCRIPT', 'news');
 
-require './include/common.inc.php';
-require './include/game.func.php';
+require './include/core/common.inc.php';
+require './include/gamectl/game.func.php';
 //$t_s=getmicrotime();
-//require_once GAME_ROOT.'./include/JSON.php';
-//require_once GAME_ROOT.'./include/news.func.php';
-//include_once GAME_ROOT.'./include/system.func.php';
+//require_once GAME_ROOT.'./include/core/JSON.php';
+//require_once GAME_ROOT.'./include/gamectl/news.func.php';
+//include_once GAME_ROOT.'./include/gamectl/system.func.php';
 
 /*
 $newsfile = GAME_ROOT.'./gamedata/newsinfo.php';

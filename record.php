@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'record');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 include template('record');
 

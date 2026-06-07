@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'valid');
 
-require_once './include/common.inc.php';
+require_once './include/core/common.inc.php';
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
 if($gamestate < 20) { gexit($_ERROR['no_start'],__file__,__line__); }

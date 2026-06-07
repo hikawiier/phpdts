@@ -4,9 +4,9 @@ if(!defined('IN_GAME')) {
     define('IN_GAME', true);
 }
 
-include_once './include/common.inc.php';
-include_once GAME_ROOT.'./include/game.func.php';
-include_once GAME_ROOT.'./include/game/club22.func.php';
+include_once './include/core/common.inc.php';
+include_once GAME_ROOT.'./include/gamectl/game.func.php';
+include_once GAME_ROOT.'./include/game/club/club22.func.php';
 
 // 检查用户是否登录
 if(empty($cuser)) {

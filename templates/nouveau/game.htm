@@ -65,7 +65,7 @@
                     <!--{/loop}-->
                 <!--{else}-->
                     <!--{loop $plsinfo $key $value}-->
-                    <div class="nv-map-node <!--{if $pls == $key}-->is-current<!--{/if}--> <!--{if array_search($key,$arealist) <= $areanum && !$hack}-->is-danger<!--{elseif array_search($key,$arealist) == $areanum + 1 && !$hack}-->is-warning<!--{/if}-->">
+                    <div class="nv-map-node <!--{if $pls == $key}-->is-current<!--{/if}--> <!--{if is_death_area($key)}-->is-danger<!--{elseif array_search($key,$arealist) == $areanum + 1 && !$hack}-->is-warning<!--{/if}-->">
                         <span>$value</span>
                         <span>$xyinfo[$key]</span>
                     </div>

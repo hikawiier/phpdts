@@ -9,7 +9,7 @@ if(!defined('IN_GAME')) {
 # 格式化显示从数据库中读出的待审核的配方文件
 function parse_queue_vnmix_info($carr)
 {
-	include_once GAME_ROOT.'./include/game/itemplace.func.php';
+	include_once GAME_ROOT.'./include/game/item/itemplace.func.php';
 	// 格式化素材来源
 	for($i=0;$i<5;$i++)
 	{

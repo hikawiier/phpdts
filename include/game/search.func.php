@@ -4,14 +4,14 @@ if(!defined('IN_GAME')) {
 	exit('Access Denied');
 }
 
-include_once GAME_ROOT.'./include/state.func.php';
+include_once GAME_ROOT.'./include/gamectl/state.func.php';
 include_once GAME_ROOT.'./include/game/encounter.func.php';
-include_once GAME_ROOT.'./include/game/itemmain.func.php';
-include_once GAME_ROOT.'./include/game/item.platform.php';
-include_once GAME_ROOT.'./include/game/revbattle.func.php';
-include_once GAME_ROOT.'./include/game/revbattle.calc.php';
-include_once GAME_ROOT.'./include/game/revcombat.func.php';
-include_once GAME_ROOT.'./include/game/revevent.func.php';
+include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
+include_once GAME_ROOT.'./include/game/item/type/platform.php';
+include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
+include_once GAME_ROOT.'./include/game/combat/revbattle.calc.php';
+include_once GAME_ROOT.'./include/game/combat/revcombat.func.php';
+include_once GAME_ROOT.'./include/game/event/revevent.func.php';
 include_once GAME_ROOT.'./include/game/quest.func.php';
 
 function check_can_move($pls,$pgroup,$moveto)
@@ -41,7 +41,7 @@ function check_can_move($pls,$pgroup,$moveto)
 			$log .= '请选择正确的移动地点。<br>';
 			return 0;
 		}
-		elseif(array_search($moveto,$arealist) <= $areanum && !$hack)
+		elseif(is_death_area($moveto))
 		{
 			$log .= $plsinfo[$moveto].'是禁区，还是离远点吧！<br>';
 			return 0;
@@ -88,7 +88,7 @@ function move($moveto = 99,&$data=NULL)
 			$log .= '请选择正确的移动地点。<br>';
 			return;
 		}
-		elseif(array_search($moveto,$arealist) <= $areanum && !$hack)
+		elseif(is_death_area($moveto))
 		{
 			$log .= $plsinfo[$moveto].'是禁区，还是离远点吧！<br>';
 			return;
@@ -144,7 +144,7 @@ function move($moveto = 99,&$data=NULL)
 
 	# 如果是种火歌者，处理种火相关逻辑
 	if($club == 22) {
-		include_once GAME_ROOT.'./include/game/club22.func.php';
+		include_once GAME_ROOT.'./include/game/club/club22.func.php';
 		// 移动跟随状态的种火
 		FireseedFollow($pls);
 		// 处理探物和索敌逻辑
@@ -176,7 +176,7 @@ function search(&$data=NULL)
 	}
 	else
 	{
-		if(array_search($pls,$arealist) <= $areanum && !$hack)
+		if(is_death_area($pls))
 		{
 			$log .= $plsinfo[$pls].'是禁区，还是赶快逃跑吧！<br>';
 			return;
@@ -204,7 +204,7 @@ function search(&$data=NULL)
 
 	# 如果是种火歌者，处理种火相关逻辑
 	if($club == 22) {
-		include_once GAME_ROOT.'./include/game/club22.func.php';
+		include_once GAME_ROOT.'./include/game/club/club22.func.php';
 		FireseedSearch($pls);
 		FireseedDrainNPC($pls);
 	}
@@ -309,8 +309,8 @@ function pre_move_search_events(&$data,$act)
 		}
 		else
 		{
-			$safepls = get_safe_plslist(0);
-			$pls = $safepls[array_rand($safepls)];
+			$safe_areas = get_safe_areas_ex(0);
+			$pls = $safe_areas[array_rand($safe_areas)];
 			$moveto_info = $plsinfo[$pls];
 		}
 		$log = ($log . "龙卷风把你吹到了<span class=\"yellow\">$moveto_info</span>！<br>");
@@ -410,8 +410,8 @@ function pre_move_search_events(&$data,$act)
 			}
 			else
 			{
-				$safepls = get_safe_plslist(0);
-				$pls = $safepls[array_rand($safepls)];
+				$safe_areas = get_safe_areas_ex(0);
+				$pls = $safe_areas[array_rand($safe_areas)];
 				$moveto_info = $plsinfo[$pls];
 			}
 			$meta_act = $act == 'move' ? "走在前往{$plsinfo[$moveto]}的路上" : "在附近探索";
@@ -553,7 +553,7 @@ function move_search_events(&$data,$act)
 	# 「佣兵」效果判定：召唤过佣兵的情况下，每行动一次+1计数
 	if(!empty(get_skillpara('c11_merc','id',$clbpara)))
 	{
-		include_once GAME_ROOT.'./include/game/revclubskills_extra.func.php';
+		include_once GAME_ROOT.'./include/game/club/revclubskills_extra.func.php';
 		$sk = 'c11_merc';
 		# 检查是否有需要付工资的佣兵
 		$mids = get_skillpara($sk,'id',$clbpara);
@@ -641,7 +641,7 @@ function discover($schmode = 0,&$data=NULL)
 			unset($clbpara['pls_bgmbook']);
 	}
 
-	include_once GAME_ROOT. './include/game/aievent.func.php';//AI事件
+	include_once GAME_ROOT. './include/game/event/aievent.func.php';//AI事件
 	$aidata = false;//用于判断天然呆AI（冴冴这样的）是否已经来到你身后并且很生气
 	aievent(20);//触发AI事件的概率
 	if(is_array($aidata))
@@ -653,9 +653,9 @@ function discover($schmode = 0,&$data=NULL)
 
 	$event_dice = rand(0,99);
 	if($data['pass'] == 'bot') $event_obbs = -1;
-	if(($event_dice < $event_obbs)||(($art!="Untainted Glory")&&($pls==34)&&($gamestate != 50))){
+	if(($event_dice < $event_obbs)||(($art!="Untainted Glory")&&(is_event_area($pls))&&($gamestate != 50))){
 		//echo "进入事件判定<br>";
-		include_once GAME_ROOT.'./include/game/event.func.php';
+		include_once GAME_ROOT.'./include/game/event/event.func.php';
 		$event_flag = event();
 		//触发了事件，中止探索推进
 		if($event_flag)

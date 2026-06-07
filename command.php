@@ -2,10 +2,10 @@
 
 define('CURSCRIPT', 'game');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 //$t_s=getmicrotime();
-//require_once GAME_ROOT.'./include/JSON.php';
-require GAME_ROOT.'./include/game.func.php';
+//require_once GAME_ROOT.'./include/core/JSON.php';
+require GAME_ROOT.'./include/gamectl/game.func.php';
 
 //判断是否进入游戏
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
@@ -72,7 +72,7 @@ if($hp > 0){
 
 	if ($club==0 && !isset($clubavl))
 	{
-		include_once GAME_ROOT.'./include/game/clubslct.func.php';
+		include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
 		getclub($name,$c1,$c2,$c3);
 		$clubavl[0]=0; $clubavl[1]=$c1; $clubavl[2]=$c2; $clubavl[3]=$c3;
 	}
@@ -154,7 +154,7 @@ if($hp > 0){
 				search();
 				if($coldtimeon){$cmdcdtime=$searchcoldtime;}
 			} elseif(strpos($command,'itm') === 0) {
-				include_once GAME_ROOT.'./include/game/item.func.php';
+				include_once GAME_ROOT.'./include/game/item/item.func.php';
 				$item = substr($command,3);
 				itemuse($item);
 				if($coldtimeon){$cmdcdtime=$itemusecoldtime;}
@@ -170,7 +170,7 @@ if($hp > 0){
 				start_fishing($pdata);
 				if($mode == 'fishing') {
 					// 如果成功开始钓鱼，同时应用休息效果
-					include_once GAME_ROOT.'./include/state.func.php';
+					include_once GAME_ROOT.'./include/gamectl/state.func.php';
 					rest('rest', $pdata);
 				}
 			} elseif($command == 'itemmain') {
@@ -182,7 +182,7 @@ if($hp > 0){
 						$main = 'itemmix_tips';
 					}
 					if($club == 20){
-						include_once GAME_ROOT.'./include/game/elementmix.calc.php';
+						include_once GAME_ROOT.'./include/game/club/elementmix.calc.php';
 						$emax = emix_calc_maxenum();
 						if($clbstatusa)
 						{
@@ -298,7 +298,7 @@ if($hp > 0){
                         if ($choice_position < 1 || $choice_position > 6)
                             $log .= '<span class="red">无此物品。</span><br />';
                         else {
-                            include_once GAME_ROOT . './include/game/club21.func.php';
+                            include_once GAME_ROOT . './include/game/club/club21.func.php';
                             item_extract_trait($choice, $choice_position);
                         }
                         $mode = 'command';
@@ -332,7 +332,7 @@ if($hp > 0){
                         elseif ($choice == $choice2)
                             $log .= '<span class="red">你选择了相同的代码片段。</span><br />';
                         else {
-                            include_once GAME_ROOT . './include/game/club21.func.php';
+                            include_once GAME_ROOT . './include/game/club/club21.func.php';
                             item_add_trait($choice, $choice2);
                         }
                         $mode = 'command';
@@ -363,7 +363,7 @@ if($hp > 0){
                         if ($choice < 1 || $choice > 6 )
                             $log .= '<span class="red">无此物品。</span><br />';
                         else {
-                            include_once GAME_ROOT . './include/game/club21.func.php';
+                            include_once GAME_ROOT . './include/game/club/club21.func.php';
                             consume_trait($choice);
                         }
                         $mode = 'command';
@@ -388,12 +388,12 @@ if($hp > 0){
 						$mode = 'command';
 					} else {
 						$choice = (int)($choice);
-						include_once GAME_ROOT . './include/game/revclubskills_extra.func.php';
+						include_once GAME_ROOT . './include/game/club/revclubskills_extra.func.php';
 						skill_tl_pickpocket_act($choice);
  					}
 					$mode = 'command';
 				}elseif($sp_cmd == 'sp_fireseed_deploy' && $club == 22){
-					include_once GAME_ROOT.'./include/game/club22.func.php';
+					include_once GAME_ROOT.'./include/game/club/club22.func.php';
 					if(isset($fireseed_id) && isset($deploy_mode)){
 						$deploy_pls = isset($deploy_pls) ? intval($deploy_pls) : $pls;
 						$log .= "<span class='yellow'>DEBUG: 部署位置 $deploy_pls</span><br>";
@@ -403,7 +403,7 @@ if($hp > 0){
 					}
 					$mode = 'command';
 				}elseif($sp_cmd == 'sp_fireseed_getitem' && $club == 22){
-					include_once GAME_ROOT.'./include/game/club22.func.php';
+					include_once GAME_ROOT.'./include/game/club/club22.func.php';
 					if(isset($fireseed_item_id) && isset($item_id)){
 						// 从种火物品池中获取物品
 						if(isset($clbpara['fireseed'][$fireseed_item_id]['items'][$item_id])){
@@ -425,7 +425,7 @@ if($hp > 0){
 								$log .= '<span class="lime">你从种火「'.$clbpara['fireseed'][$fireseed_item_id]['name'].'」处取回了探索到的物品！</span><br>';
 
 								// 调用itemfind函数触发物品发现流程
-								include_once GAME_ROOT.'./include/game/itemmain.func.php';
+								include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 								itemfind($pdata);
 							}else{
 								// itm0已被占用，将物品放入地图并添加到玩家视野
@@ -436,7 +436,7 @@ if($hp > 0){
 								unset($clbpara['fireseed'][$fireseed_item_id]['items'][$item_id]);
 
 								// 将物品添加到玩家视野
-								include_once GAME_ROOT.'./include/game.func.php';
+								include_once GAME_ROOT.'./include/gamectl/game.func.php';
 								check_add_searchmemory($new_item_id, 'itm', $item['itm'], $pdata);
 
 								// 保存更新后的clbpara数据到数据库
@@ -456,7 +456,7 @@ if($hp > 0){
 						$mode = 'command';
 					}
 				}elseif($sp_cmd == 'sp_fireseed_enhance' && $club == 22){
-					include_once GAME_ROOT.'./include/game/club22.func.php';
+					include_once GAME_ROOT.'./include/game/club/club22.func.php';
 					if(isset($enhance_fireseed_id) && isset($enhance_item)){
 						$enhance_result = FireseedEnhance($enhance_fireseed_id, $enhance_item);
 						if($enhance_result) {
@@ -502,7 +502,7 @@ if($hp > 0){
 					if($cls_cmd == 'wthchange'){console_wthchange($cwth);}
 					elseif($cls_cmd == 'dbutton'){console_dbutton();}
 					elseif($cls_cmd == 'radar'){
-						include_once GAME_ROOT.'./include/game/item2.func.php';
+						include_once GAME_ROOT.'./include/game/item/item2.func.php';
 						newradar(2);
 					}elseif($cls_cmd == 'search'){
 						$cls_cmd_kind = substr($csc,7);
@@ -600,7 +600,7 @@ if($hp > 0){
 			} elseif ($command == 'choose_fish') {
 				// 处理鱼篓子物品选择
 				if (isset($clbpara['fish_basket'])) {
-					include_once GAME_ROOT.'./include/game/item.nouveau_booster1.php';
+					include_once GAME_ROOT.'./include/game/item/type/nouveau_booster1.php';
 					item_nouveau_booster1($clbpara['fish_basket']['position'], $pdata);
 				} else {
 					$log .= '出现了错误，请重新使用鱼篓子。<br>';
@@ -621,11 +621,11 @@ if($hp > 0){
 				}
 			}
 		} elseif($mode == 'item') {
-			include_once GAME_ROOT.'./include/game/item2.func.php';
+			include_once GAME_ROOT.'./include/game/item/item2.func.php';
 			$item = substr($command,3);
 			use_func_item($usemode,$item);
 		} elseif($mode == 'itemmain') {
-			include_once GAME_ROOT.'./include/game/itemmain.func.php';
+			include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 			if($command == 'itemget') {
 				itemget();
 			} elseif($command == 'itemadd') {
@@ -637,7 +637,7 @@ if($hp > 0){
 				itemmove($from,$to);
 			} elseif(strpos($command,'split_itm') === 0) {
 				$split_item = substr($command,9);
-				include_once GAME_ROOT . './include/game/elementmix.func.php';
+				include_once GAME_ROOT . './include/game/club/elementmix.func.php';
 				split_item_to_elements($split_item);
 			} elseif(strpos($command,'drop') === 0) {
 				$drop_item = substr($command,4);
@@ -668,13 +668,13 @@ if($hp > 0){
 							if ($mixmask&(1<<($i-1)))
 								$mixlist[] = $i;
 					}
-					include_once GAME_ROOT.'./include/game/itemmix.func.php';
+					include_once GAME_ROOT.'./include/game/item/itemmix.func.php';
 					if (isset($itemselect))
 						itemmix_rev($mixlist,$itemselect);
 					else  itemmix_rev($mixlist);
 				}
 			} elseif($command == 'elementmix') {
-				include_once GAME_ROOT.'./include/game/elementmix.func.php';
+				include_once GAME_ROOT.'./include/game/club/elementmix.func.php';
 				$itmemax = $change_emax ? (int)$emixitmemax : 100;
 				$itmer = $change_emr ? (int)$emixitmer : 55;
 				elements_mix_prepare($emixlist,$emixnums,$itmemax,$itmer);
@@ -705,7 +705,7 @@ if($hp > 0){
 					$log.="<span class='red'>你身上没有背包，或是没有将背包装备上！<br>";
 				}
 			} elseif(strpos($command,'changewep') !==false) {
-				include_once GAME_ROOT.'./include/game/itemmain.func.php';
+				include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 				change_subwep();
 				$mode = 'command';
 			}
@@ -771,7 +771,7 @@ if($hp > 0){
 			} elseif(strpos($command,'clubsel') === 0) {
 				# 后续更新中，将停用在游戏内直接选择称号的方式
 				$clubchosen = (int)str_replace('clubsel','',$command);
-				include_once GAME_ROOT.'./include/game/clubslct.func.php';
+				include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
 				$retval=selectclub($clubchosen);
 				if ($retval==0)
 					$log.="称号选择成功。<br>";
@@ -790,11 +790,11 @@ if($hp > 0){
 		//	combat(1,$command);
 		} elseif($mode == 'revcombat'){
 			chase_flag:
-			include_once GAME_ROOT.'./include/game/revbattle.func.php';
+			include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
 			if(!isset($message)) $message = '';
 			\revbattle\revbattle_prepare($command,$message);
 		} elseif($mode == 'rest') {
-			include_once GAME_ROOT.'./include/state.func.php';
+			include_once GAME_ROOT.'./include/gamectl/state.func.php';
 			// 如果在休息状态下点击钓鱼按钮，则进入钓鱼状态
 			if($command == 'fishing') {
 				include_once GAME_ROOT.'./include/game/fishing.func.php';
@@ -810,7 +810,7 @@ if($hp > 0){
 			include_once GAME_ROOT.'./include/game/fishing.func.php';
 			fishing_command($command, $pdata);
 			// 在钓鱼的同时也应用休息效果
-			include_once GAME_ROOT.'./include/state.func.php';
+			include_once GAME_ROOT.'./include/gamectl/state.func.php';
 			rest($command, $pdata);
 //		} elseif($mode == 'chgpassword') {
 //			include_once GAME_ROOT.'./include/game/special.func.php';
@@ -820,7 +820,7 @@ if($hp > 0){
 //			chgword($newmotto,$newlastword,$newkillmsg);
 		} elseif($mode == 'corpse') {
 			if($command == 'fireseed_recruit' && $club == 22) {
-				include_once GAME_ROOT.'./include/game/club22.func.php';
+				include_once GAME_ROOT.'./include/game/club/club22.func.php';
 				$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='$bid' AND hp=0");
 				if($db->num_rows($result) > 0) {
 					$npc = $db->fetch_array($result);
@@ -828,7 +828,7 @@ if($hp > 0){
 				}
 				$mode = 'command';
 			} else {
-				include_once GAME_ROOT.'./include/game/itemmain.func.php';
+				include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 				getcorpse($command);
 			}
 		} elseif($mode == 'team') {
@@ -841,7 +841,7 @@ if($hp > 0){
 				if($command == 'shop') {
 					$mode = 'sp_shop';
 				} else {
-					include_once GAME_ROOT.'./include/game/itemmain.func.php';
+					include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 					itembuy($command,$shoptype,$buynum);
 				}
 			}else{
@@ -880,7 +880,7 @@ if($hp > 0){
 			}
 		} elseif($mode == 'deathnote') {
 			if($dnname){
-				include_once GAME_ROOT.'./include/game/item2.func.php';
+				include_once GAME_ROOT.'./include/game/item/item2.func.php';
 				deathnote($name,$item,$dnname,$dndeath,$dngender,$dnicon);
 			} else {
 				$log .= '嗯，暂时还不想杀人。<br>你合上了■DeathNote■。<br>';
@@ -917,7 +917,7 @@ if($hp > 0){
 					}
 				} elseif(strpos($command,'actskill_')!==false) {
 					# 其他特殊技能按钮
-					include_once GAME_ROOT.'./include/game/revclubskills_extra.func.php';
+					include_once GAME_ROOT.'./include/game/club/revclubskills_extra.func.php';
 					if($sk == 'c4_roar' || $sk == 'c4_sniper'){skill_c4_unlock($sk);}
 					elseif($sk == 'c11_merc'){
 						if(isset(${$sk.'mkey'}) && isset(${$sk.'fire'}) && ${$sk.'fire'} == ${$sk.'mkey'}){

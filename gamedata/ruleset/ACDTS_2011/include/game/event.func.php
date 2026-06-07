@@ -116,7 +116,7 @@ function event(){
 				$log = ($log . "在弹幕的狂风中，你有惊无险地回避着弹幕，总算擦弹成功了。<BR>");
 				if($dice2 == 40){
 					$log = ($log . "咦，头顶上……好像有一名少女被弹幕击中了……？<BR>“对不起、对不起！”伴随着焦急的道歉声，少女以及她乘坐的机体向你笔直坠落下来。<br>你还来不及反应，重达数十吨的机体便直接落在了你的头上。<br>");
-					include_once GAME_ROOT . './include/state.func.php';
+					include_once GAME_ROOT . './include/gamectl/state.func.php';
 					death('gradius');
 					return;
 				}
@@ -195,9 +195,9 @@ function event(){
 //		naddnews($now,'death13',$name,0);
 //		$alivenum--;
 //		$deathnum++;
-//		include_once GAME_ROOT.'./include/system.func.php';
+//		include_once GAME_ROOT.'./include/gamectl/system.func.php';
 //		save_gameinfo();
-		include_once GAME_ROOT . './include/state.func.php';
+		include_once GAME_ROOT . './include/gamectl/state.func.php';
 		death('event');
 	}
 	return;

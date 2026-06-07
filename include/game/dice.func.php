@@ -10,7 +10,7 @@ if(!defined('IN_GAME')) {
 // So basically, replace all $dice rands and implement new dice items.
 // Let's roll.
 
-require_once './include/common.inc.php';
+require_once './include/core/common.inc.php';
 
 function diceroll($dice){
     global $rp, $nick;

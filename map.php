@@ -2,14 +2,14 @@
 
 define('CURSCRIPT', 'map');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 $mapvcoordinate = Array('A','B','C','D','E','F','G','H','I','J');
 
 for($i=0;$i<count($plsinfo);$i++){
 	if($hack || array_search($i,$arealist) > ($areanum + $areaadd)){
 		$plscolor[$i] = 'mapspanlime';
-	} elseif(array_search($i,$arealist) <= $areanum) {
+	} elseif(is_death_area($i)) {
 		$plscolor[$i] = 'mapspanred';
 	} else {
 		$plscolor[$i] = 'mapspanyellow';

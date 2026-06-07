@@ -45,7 +45,7 @@ function bot_player_valid($vnums)
 			{
 				if(isset($$key)) $ndata[$key] = $$key; 
 			}
-			include_once GAME_ROOT.'./include/game/clubslct.func.php';
+			include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
 			if(!empty($club)) changeclub($club,$ndata);
 			$ndata['clbpara']['botphase'] = 0; $ndata['clbpara']['botact']['sitm'] = 0;
 			$ndata = player_format_with_db_structure($ndata);
@@ -101,7 +101,7 @@ function bot_pre_act_check(&$pa)
 	global $noisepls;
 	global $bot_moveto_phase,$bot_action_phase;
 
-	$plslist = get_safe_plslist();
+	$plslist = get_safe_areas_ex();
 
 	# -1.存在异常状态，花1点技能点解除下异常状态
 	if(!empty($pa['inf']) && $pa['skillpoint'])
@@ -224,7 +224,7 @@ function bot_end_act_check(&$pa)
 function bot_use_items(&$pa)
 {
 	global $bot_can_get_itemlist,$bot_stfid;
-	include_once GAME_ROOT.'./include/game/item.func.php';
+	include_once GAME_ROOT.'./include/game/item/item.func.php';
 
 	$equip_list = get_equip_list();
 	$e1 = get_equip_list(1);

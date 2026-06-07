@@ -4,7 +4,7 @@ if(!defined('IN_ADMIN')) {
 }
 
 // 引入主从同步功能
-include_once './include/masterslave.func.php';
+include_once './include/db/masterslave.func.php';
 if(!isset($urcmd)){$urcmd = '';}
 if($urcmd){
 	if(!isset($start)){$start = 0;}
@@ -77,7 +77,7 @@ if($urcmd == 'ban' || $urcmd == 'unban' || $urcmd == 'del' || $urcmd == 'sendmes
 		}
 		if($operlist){
 			if($urcmd == 'sendmessage'){
-				include_once './include/messages.func.php';
+				include_once './include/gamectl/messages.func.php';
 				foreach($operlist as $receiver){
 					message_create($receiver, $stitle, $scontent, $senclosure, $from='sys');
 				}

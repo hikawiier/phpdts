@@ -30,7 +30,7 @@ set_time_limit() 函数用于设置脚本的最大执行时间。将参数设置
 
 define('CURSCRIPT', 'devtools');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 if(!$udata) { gexit($_ERROR['no_login'],__file__,__line__); }
 if($udata['password'] != $cpass) { gexit($_ERROR['wrong_pw'], __file__, __line__); }

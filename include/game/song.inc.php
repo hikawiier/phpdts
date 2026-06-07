@@ -1,5 +1,5 @@
  <?php
- //require_once './include/common.inc.php';
+ //require_once './include/core/common.inc.php';
 
  
  
@@ -20,7 +20,7 @@
 
 	//$log.=$sn.'_'.$now.'_'.$pls.'_'.$name."<br>";
 	$r=$arte;
-	include_once GAME_ROOT.'./include/game/revcombat.func.php';
+	include_once GAME_ROOT.'./include/game/combat/revcombat.func.php';
 	
 		if ($ss>=$r){
 		$ss-=$r;

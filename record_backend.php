@@ -1,7 +1,7 @@
 <?php
 define('CURSCRIPT', 'record_backend');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 try {
     $jsonData = file_get_contents('php://input');

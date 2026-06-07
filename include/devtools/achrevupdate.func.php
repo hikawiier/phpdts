@@ -28,7 +28,7 @@ function achrev_update()
 		# 存在旧成就数据，且新成就数据为空时，将旧字段数据迁移至新字段内
 		if(!empty($udata['achievement']) && empty($udata['achrev']))
 		{
-			include_once GAME_ROOT.'./include/game/achievement.func.php';
+			include_once GAME_ROOT.'./include/meta/achievement.func.php';
 			$n = $udata['username'];
 			$new_ach = Array(); $cpl = Array(); $prc = Array();
 			foreach($alist as $i => $iarr)

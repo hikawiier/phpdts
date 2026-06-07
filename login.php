@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'login');
 
-require './include/common.inc.php';
-require './include/masterslave.func.php';
+require './include/core/common.inc.php';
+require './include/db/masterslave.func.php';
 
 //error_reporting(E_ERROR);
 //set_magic_quotes_runtime(0);
@@ -15,7 +15,7 @@ require './include/masterslave.func.php';
 //if(PHP_VERSION < '4.3.0') {
 //	exit('PHP version must >= 4.3.0!');
 //}
-//require GAME_ROOT.'./include/global.func.php';
+//require GAME_ROOT.'./include/core/global.func.php';
 //require GAME_ROOT.'./config.inc.php';
 //
 //$now = time() + $moveut*3600 + $moveutmin*60;   
@@ -38,7 +38,7 @@ if($mode == 'quit') {
 	exit();
 
 }
-//include './include/user.func.php';
+//include './include/auth/user.func.php';
 include './gamedata/banlist.list';
 //require GAME_ROOT.'./include/db_'.$database.'.class.php';
 //$db = new dbstuff;
@@ -48,7 +48,7 @@ include './gamedata/banlist.list';
 //require GAME_ROOT.'./gamedata/system.php';
 //require GAME_ROOT.'./gamedata/resources.php';
 
-//include GAME_ROOT.'./include/user.func.php';
+//include GAME_ROOT.'./include/auth/user.func.php';
 
 //ob_start();
 //if($gzipcompress && function_exists('ob_gzhandler') && CURSCRIPT != 'wap') {

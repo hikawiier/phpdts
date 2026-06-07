@@ -19,7 +19,7 @@ $hotkeyon = 1;
 //开启NPC台词功能？0为不开启，1为开启
 $npcchaton = 1;
 //开启NPC不会因躲避禁区而移动到危险地图的功能？0为不开启，1为开启
-$npc_away_from_deepzones = 1;
+$npc_away_from_danger_areas = 1;
 //反挂机系统间隔时间，单位分钟
 $antiAFKertime = 20;
 //尸体保护时间，单位秒

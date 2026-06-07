@@ -29,7 +29,7 @@ if($command == 'wthedit'){
 		save_gameinfo();
 		adminlog('hackedit',$ihack);
 		addnews($now,'syshackchg',$ihack);		
-		//include_once GAME_ROOT.'./include/system.func.php';
+		//include_once GAME_ROOT.'./include/gamectl/system.func.php';
 		//movehtm();
 	}
 }elseif(strpos($command, 'gsedit')===0){
@@ -65,7 +65,7 @@ if($command == 'wthedit'){
 		adminlog('gsedit',$igamestate);
 	}else{
 		$cmd_info = "第 $gamenum 局大逃杀紧急中止";
-		//include_once GAME_ROOT.'./include/system.func.php';
+		//include_once GAME_ROOT.'./include/gamectl/system.func.php';
 		gameover($now,'end6');
 		save_gameinfo();
 		adminlog('gameover');
@@ -110,7 +110,7 @@ if($starttime){
 
 $arealiststr = $nextarealiststr = '';
 $col = 0;
-$areaarr = array_slice($arealist,0,$areanum+1);
+$areaarr = get_death_areas();
 foreach($areaarr as $val){
 	if($col == 4){
 		$arealiststr .= $plsinfo[$val].'<br>';
@@ -121,7 +121,7 @@ foreach($areaarr as $val){
 	}	
 }
 $col = 0;
-$nareaarr = array_slice($arealist,0,$areanum+$areaadd);
+$nareaarr = get_death_areas_with_future();
 foreach($nareaarr as $val){
 	if($col == 4){
 		$nextarealiststr .= $plsinfo[$val].'<br>';

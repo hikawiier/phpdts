@@ -66,7 +66,7 @@
 			$log.="<span class='red'>你所在的位置没有安全箱！建议你不要胡思乱想！</span><br>";
 			return;
 		}
-		if(array_search($pls,$arealist) <= $areanum && !$hack)
+		if(is_death_area($pls))
 		{
 			$log.="<span class='red'>你所在的位置是禁区！还想着存东西，命不要啦！</span><br>";
 			return;
@@ -124,7 +124,7 @@
 			$log.="<span class='red'>你所在的位置没有安全箱！建议你不要胡思乱想！</span><br>";
 			return;
 		}
-		if(array_search($pls,$arealist) <= $areanum && !$hack)
+		if(is_death_area($pls))
 		{
 			$log.="<span class='red'>你所在的位置是禁区！还想着取东西，命不要啦！</span><br>";
 			return;
@@ -154,7 +154,7 @@
 		$log.="你成功将道具<span class='yellow'>{$itm0}</span>从安全箱中取了出来！<br>同时被迫支付了保管费<span class='yellow'>{$loaditem_cost}</span>元……你感觉自己的心在滴血。<br>";
 		$money -= $loaditem_cost;
 		$db->query("DELETE FROM {$tablepre}itemdepot WHERE iid='$iid'");
-		include_once GAME_ROOT.'./include/game/itemmain.func.php';
+		include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 		itemget();
 	}
 

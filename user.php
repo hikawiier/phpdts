@@ -2,9 +2,9 @@
 
 define('CURSCRIPT', 'user');
 
-require './include/common.inc.php';
-require './include/masterslave.func.php';
-//require './include/user.func.php';
+require './include/core/common.inc.php';
+require './include/db/masterslave.func.php';
+//require './include/auth/user.func.php';
 
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }

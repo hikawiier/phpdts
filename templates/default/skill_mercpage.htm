@@ -72,7 +72,7 @@
                     花费<span class="yellow">{$movepaid}</span>元，将佣兵移动到
                     <select name="c11_merc{$mkey}moveto" id="c11_mercmoveto" style="width: 45px;">
                         <!--{loop range(0,count($arealist)-1) $pl}-->
-                            <!--{if array_search($pl,$arealist) > $areanum || $hack}-->
+                            <!--{if is_safe_area($pl)}-->
                                 <option value="$pl" <!--{if $nowmerc['pls']==$pl}-->selected<!--{/if}-->>$plsinfo[$pl]<br />
                             <!--{/if}-->
                         <!--{/loop}-->

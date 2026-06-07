@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'messages');
 
-require './include/common.inc.php';
-require_once './include/messages.func.php';
+require './include/core/common.inc.php';
+require_once './include/gamectl/messages.func.php';
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
 if(!$udata) { gexit($_ERROR['login_check'],__file__,__line__); }

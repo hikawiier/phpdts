@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'rank');
 
-require './include/common.inc.php';
-require './include/game.func.php';
+require './include/core/common.inc.php';
+require './include/gamectl/game.func.php';
 
 
 $result = $db->query("SELECT COUNT(*) FROM {$gtablepre}users");

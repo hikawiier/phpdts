@@ -3,8 +3,8 @@
 	if(!defined('IN_GAME')) {
 		exit('Access Denied');
 	}
-	include_once GAME_ROOT . './include/game/titles.func.php';
-	include_once GAME_ROOT . './include/system.func.php';
+	include_once GAME_ROOT . './include/pregame/titles.func.php';
+	include_once GAME_ROOT . './include/gamectl/system.func.php';
 
 	# 子面板 —— 控制模块
 	$console_tips = Array
@@ -243,12 +243,12 @@
 			$itm0 = '奇怪的按钮';$itmk0 = 'Z';
 			$itme0 = $itms0 = 1;$itmsk0 = '';
 			$clbpara['nobutton'] = 1;
-			include_once GAME_ROOT . './include/game/itemmain.func.php';
+			include_once GAME_ROOT . './include/game/item/itemmain.func.php';
 			itemget();
 		} 
 		else 
 		{
-			include_once GAME_ROOT . './include/state.func.php';
+			include_once GAME_ROOT . './include/gamectl/state.func.php';
 			$log .= '<span class="red">呜哇，按钮爆炸了！</span><br><br>';
 			death ( 'button', '', 0, 'dangerbutton');
 		}

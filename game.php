@@ -1,8 +1,8 @@
 <?php
 
 define('CURSCRIPT', 'game');
-require './include/common.inc.php';
-require GAME_ROOT.'./include/game.func.php';
+require './include/core/common.inc.php';
+require GAME_ROOT.'./include/gamectl/game.func.php';
 
 
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
@@ -169,7 +169,7 @@ elseif($action == 'chase' || $action == 'pchase' || $action == 'dfight'){
 	$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='$enemyid' AND hp>0 AND pls='$pls'");
 	if($db->num_rows($result)>0){
 		$edata = $db->fetch_array($result);
-		include_once GAME_ROOT.'./include/game/revbattle.func.php';
+		include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
 		\revbattle\findenemy_rev($edata);
 		$main = 'battle_rev';
 	}
@@ -180,7 +180,7 @@ elseif($action == 'neut'){
 		$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='$nid' AND hp>0");
 		if($db->num_rows($result)>0){
 			$edata = $db->fetch_array($result);
-			include_once GAME_ROOT.'./include/game/revbattle.func.php';
+			include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
 			\revbattle\findneut($edata,1);
 			extract($edata,EXTR_PREFIX_ALL,'w');
 			init_battle_rev($pdata,$edata,1);
@@ -210,7 +210,7 @@ if($hp > 0 && !empty($clbpara['skill']) && in_array('inf_dizzy',$clbpara['skill'
 }
 if ($club==0)
 {
-	include_once GAME_ROOT.'./include/game/clubslct.func.php';
+	include_once GAME_ROOT.'./include/pregame/clubslct.func.php';
 	getclub($name,$c1,$c2,$c3);
 	$clubavl[0]=0; $clubavl[1]=$c1; $clubavl[2]=$c2; $clubavl[3]=$c3;
 }
@@ -262,6 +262,12 @@ if(isset($opendialog))
 		dialogElement.showModal();
 	}
 	</script>";
+}
+
+// VEX 前端 API 代理 / VEX frontend API proxy
+if (isset($_GET['vex_api']) && $_GET['vex_api'] == '1') {
+	include './api_v2.php';
+	exit;
 }
 
 //if (!strstr($_SERVER['HTTP_REFERER'], 'php') && $_SERVER['HTTP_REFERER'] != '') {

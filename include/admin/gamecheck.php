@@ -4,7 +4,7 @@ if(!defined('IN_ADMIN')) {
 }
 
 if($gamestate >= 20){
-	require_once GAME_ROOT.'./include/system.func.php';
+	require_once GAME_ROOT.'./include/gamectl/system.func.php';
 	
 	$result = $db->query("SELECT pid FROM {$tablepre}players WHERE type=0");
 	$validnum = $db->num_rows($result);

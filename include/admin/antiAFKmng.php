@@ -3,7 +3,7 @@ if(!defined('IN_ADMIN')) {
 	exit('Access Denied');
 }
 
-require_once GAME_ROOT.'./include/system.func.php';
+require_once GAME_ROOT.'./include/gamectl/system.func.php';
 $antiAFKintv = 3;
 if($command == 'kill'){
 	kill_all_AFKer($timelimit);

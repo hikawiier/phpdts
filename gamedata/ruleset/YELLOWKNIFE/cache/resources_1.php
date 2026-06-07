@@ -1160,7 +1160,8 @@ $r_elements_info = Array
 	5 =>'<span class="mtgblack">夜静静</span>',
 );
 //NPC在躲避禁区、追杀玩家时不会进入的危险区（默认：无月之影、SCP、雏菊、英灵殿）
-$deepzones = Array(0,32,33,34);
+$danger_areas = Array(0,32,33,34);
+$event_areas = Array(34);
 //安全箱位置
 $depots = Array(5,28);
 $shops = Array(0,14,27);

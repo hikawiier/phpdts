@@ -2,8 +2,8 @@
 
 define('CURSCRIPT', 'vnworld');
 
-require './include/common.inc.php';
-require './include/game/itemplace.func.php';
+require './include/core/common.inc.php';
+require './include/game/item/itemplace.func.php';
 require config('vnworld',$gamecfg);
 
 /*** 登陆检测 ***/

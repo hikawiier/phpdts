@@ -5,7 +5,7 @@ if(!defined('IN_ADMIN')) {
 if($mygroup < 9){
 	exit($_ERROR['no_power']);
 }
-require_once GAME_ROOT.'./include/system.func.php';
+require_once GAME_ROOT.'./include/gamectl/system.func.php';
 $sqldir = GAME_ROOT.'./gamedata/sql/';
 foreach(Array('log','chat','mapitem','newsinfo') as $v){
 	

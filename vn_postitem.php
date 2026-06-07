@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'vn_postitem');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 include config('vnworld',$gamecfg);
 include_once GAME_ROOT.'./include/vnworld/vnmix.func.php';
 

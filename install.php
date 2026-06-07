@@ -594,7 +594,7 @@ if(!$action) {
 			}
 
 			include './config.inc.php';
-			include './include/db_'.$database.'.class.php';
+			include './include/db/db_'.$database.'.class.php';
 			$db = new dbstuff;
 			$db->connect($dbhost, $dbuser, $dbpw, $dbname, $pconnect);
 
@@ -722,7 +722,7 @@ if(!$action) {
 	}
 
 	include './config.inc.php';
-	include './include/db_'.$database.'.class.php';
+	include './include/db/db_'.$database.'.class.php';
 	$db = new dbstuff;
 	$db->connect($dbhost, $dbuser, $dbpw, $dbname, $pconnect);
 
@@ -1148,7 +1148,7 @@ if(!$action) {
 		$dbcharset = $charset;
 	}
 
-	include './include/db_'.$database.'.class.php';
+	include './include/db/db_'.$database.'.class.php';
 	$db = new dbstuff;
 	$db->connect($dbhost, $dbuser, $dbpw, $dbname, $pconnect);
 	$db->select_db($dbname);

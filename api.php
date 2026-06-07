@@ -1,8 +1,8 @@
 <?php
-  include_once './include/common.inc.php';
-  include_once GAME_ROOT.'./include/game/itemplace.func.php';
+  include_once './include/core/common.inc.php';
+  include_once GAME_ROOT.'./include/game/item/itemplace.func.php';
   include_once GAME_ROOT.'./include/game/depot.func.php';
-  include_once GAME_ROOT.'./include/game/elementmix.func.php';
+  include_once GAME_ROOT.'./include/game/club/elementmix.func.php';
   /** 获取对尸体的行动 */
   function getCorpseAction() {
     $list = array();
@@ -376,7 +376,7 @@
     }
     $options = array();
     foreach ($arealist as $pl) {
-      if (array_search($pl, $arealist) > $areanum || $hack) {
+      if (is_safe_area($pl)) {
         $options[] = $pl;
       }
     }

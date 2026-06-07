@@ -3,11 +3,14 @@ if (!defined('IN_GAME')) {
 	exit('Access Denied');
 }
 
+// NPC系统依赖 / NPC system dependency
+include_once GAME_ROOT.'./include/game/npc.func.php';
+
 // QUEST system core helpers / QUEST系统核心函数
 
-include_once GAME_ROOT.'./include/resources.func.php';
-include_once GAME_ROOT.'./include/game/itemmain.func.php';
-include_once GAME_ROOT.'./include/system.func.php';
+include_once GAME_ROOT.'./include/gamectl/resources.func.php';
+include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
+include_once GAME_ROOT.'./include/gamectl/system.func.php';
 
 // 初始化任务容器 / Initialize quest container
 function quest_init_state(&$clbpara)

@@ -3,7 +3,7 @@
 
 define('CURSCRIPT', 'index');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 
 $timing = 0;

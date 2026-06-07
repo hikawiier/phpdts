@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'stat');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 
 $k=(int)$_GET['lim'];
 

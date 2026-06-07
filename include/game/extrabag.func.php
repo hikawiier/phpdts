@@ -264,7 +264,7 @@ function item_out($iid){
 	unset($item_list[$iid]);
 	$extrabag_num = sizeof(array_keys($item_list));
 	$extrabag = json_encode_comp($item_list);
-	include_once GAME_ROOT.'./include/game/itemmain.func.php';
+	include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 	itemget();	
 }
 //背包内道具数量超过可携带道具数量限制时的处理

@@ -2,7 +2,7 @@
 
 define('CURSCRIPT', 'announce');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 include template('announce');
 
 ?>

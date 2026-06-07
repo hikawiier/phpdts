@@ -76,7 +76,7 @@ function chgpassword($oldpswd,$newpswd,$newpswd2){
 		$db->query("UPDATE {$gtablepre}users SET `password` ='$newpswd' WHERE username='$name'");
 		$log .= '<span class="yellow">密码已修改！</span><br />';
 		
-		//include_once GAME_ROOT.'./include/global.func.php';
+		//include_once GAME_ROOT.'./include/core/global.func.php';
 		
 		gsetcookie('pass',$newpswd);
 		$mode = 'command';
@@ -327,9 +327,9 @@ function syncro($sb){
 	if ($r>0) {addnews($now,'syncmix',$name,$itm0,$nick);}
 	else {addnews($now,'overmix',$name,$itm0,$nick);}
 			//检查成就
-			include_once GAME_ROOT.'./include/game/achievement.func.php';
+			include_once GAME_ROOT.'./include/meta/achievement.func.php';
 			check_mixitem_achievement_rev($name,$itm0);
-	include_once GAME_ROOT.'./include/game/itemmain.func.php';
+	include_once GAME_ROOT.'./include/game/item/itemmain.func.php';
 	itemget();
 	return;
 }

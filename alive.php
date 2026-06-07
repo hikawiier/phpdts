@@ -2,8 +2,10 @@
 
 define('CURSCRIPT', 'alive');
 
-require './include/common.inc.php';
+require './include/core/common.inc.php';
 require './include/game/special.func.php';
+include_once GAME_ROOT.'./include/game/npc.func.php';
+include_once GAME_ROOT.'./include/meta/gambling.func.php';
 //extract(gkillquotes($_POST));
 //unset($_GET);
 
@@ -41,32 +43,17 @@ while($apdata = $db->fetch_array($result))
 $adata = Array(); if(!isset($gbmode)) $gbmode = 'none';
 if($gamblingon){
 	global $gshoplist,$credits2_values,$no_self_sponsored,$sponsor_title,$gnpctype,$gnpcsub;
-	//初始化赌局变量
+	// 初始化赌局变量 / Initialize gambling variables
 	$gbinfo = '';
-	$gbingdata = $gbeddata = $gambled = Array();
-	$gbpool = 0;
+	$gambled = Array();
 	$nowodds = odds();
-	//读取赌局信息
-	$result2 = $db->query("SELECT * FROM {$tablepre}gambling WHERE 1");
-	$gbnum = $db->num_rows($result2);
-	if($gbnum){
-		while($gbdata = $db->fetch_array($result2)) {
-			$gbingdata[$gbdata['bid']][$gbdata['uid']] = $gbdata;
-			$gbeddata[$gbdata['uid']] = $gbdata;
-			$gbpool += $gbdata['wager'];
-		}
-	}
+	// 加载全部赌局记录 / Load all gambling records
+	list($gbingdata, $gbeddata, $gbpool, $gbnum) = gambling_load_all_records();
+	// 为每个存活玩家填充赌局信息 / Populate gambling info for each alive player
 	foreach($alivedata as &$ad){
-		$ad['gbnum'] = gbnum($ad);
-		$ad['gbsum'] = gbsum($ad);
-//		if($gbnum && isset($gbingdata[$ad['pid']])){
-//			$ad['gbnum'] = count($gbingdata[$ad['pid']]);
-//			$ad['gbsum'] = 0;
-//			foreach($gbingdata[$ad['pid']] as $gad){
-//				$ad['gbsum'] += $gad['wager'];
-//			}			
-//		}else{$ad['gbnum'] = 0;$ad['gbsum'] = 0;}
-//		$ad['odds'] = podds($ad);
+		gambling_populate_player_info($ad, $gbingdata, $gbnum);
+		// $ad['gbnum'] = gbnum($ad);
+		// $ad['gbsum'] = gbsum($ad);
 	}
 	//判断是否满足下注条件
 	if($cuser && $cpass)
@@ -286,42 +273,4 @@ if(!isset($alivemode)){
 }
 
 //include template('alive');
-
-function gbnum($pdata){
-	global $gbnum,$gbingdata;
-	if($gbnum && isset($gbingdata[$pdata['pid']])){
-		return count($gbingdata[$pdata['pid']]);
-	}else{return 0;}
-}
-
-function gbsum($pdata){
-	global $gbnum,$gbingdata;
-	if($gbnum && isset($gbingdata[$pdata['pid']])){
-		$gbsum = 0;
-		foreach($gbingdata[$pdata['pid']] as $gad){
-			$gbsum += $gad['wager'];
-		}
-		return $gbsum;
-	}else{return 0;}
-}
-
-function odds(){//判断赔率的
-	global $validnum,$alivenum,$deathnum,$startime,$areanum,$areaadd,$now,$starttime;
-	
-//	$areaodds = 2/(1+$areanum/$areaadd);//0禁赔率奖励为2，1禁赔率奖励为1，逐步降低
-	$pasttime = $now - $starttime;
-	if($pasttime <= 180){$timeodds = 5;}//前3分钟系数为5；
-	else{$timeodds = 5/($pasttime/180);}//系数趋近于0；
-	
-	$timeodds = round($timeodds * 100000)/100000;
-//	$validodds = $validnum/100;//激活赔率；
-//	$deathodds = $deathnum/400;//死亡赔率，增长很慢
-//	$winrate = $pdata['validgames'] ? $pdata['wingames']/$pdata['validgames'] : 0;
-//	$wrodds = 4*(0.5-$winrate);$wrodds = $wrodds < 0 ? 1 : $wrodds + 1;//胜率赔率倍数，0胜率是5，超过50%为1；
-//	$gbsum = gbsum($pdata);
-//	$wagerodds = (100-$gbsum)/100; $wagerodds = $wagerodds < 0 ? 1 : $wagerodds + 1;//投注的影响，0投注是2，超过100投注是1；
-//	$odds = round((1 + $areaodds + $validodds + $deathodds)*$wrodds*$wagerodds*1000)/1000;
-
-	return $timeodds;
-}
 ?>
