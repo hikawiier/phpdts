@@ -3,50 +3,31 @@
 define('CURSCRIPT', 'game');
 require './include/core/common.inc.php';
 require GAME_ROOT.'./include/gamectl/game.func.php';
-
-
+require GAME_ROOT.'./include/game/render.func.php';
 require GAME_ROOT.'./include/gamectl/player_auth.func.php';
+require GAME_ROOT.'./include/core/entrypoint.php';
 
-if(isset($mode) && $mode == 'quit') {
-
+// 退出登录快速路径 / Quit fast path
+if (isset($mode) && $mode == 'quit') {
 	gsetcookie('user','');
 	gsetcookie('pass','');
 	header("Location: index.php");
 	exit();
-
 }
 
-// 玩家认证 / Player authentication
-$auth_result = auth_game_player();
-if ($auth_result['status'] == 'no_login') {
-	gexit($_ERROR['no_login'], __file__, __line__);
-} elseif ($auth_result['status'] == 'no_player') {
-	header("Location: valid.php" . '?' . $_SERVER['QUERY_STRING']);
-	exit();
-} elseif ($auth_result['status'] == 'wrong_pw') {
-	gexit($_ERROR['wrong_pw'], __file__, __line__);
-} elseif ($auth_result['status'] == 'gamestate_zero') {
-	header("Location: end.php");
-	exit();
-}
-$pdata = $auth_result['pdata'];
+// [A] 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
+$pdata = game_entrypoint('game');
 
+// [B] 公共初始化 / Common initialization
 require GAME_ROOT.'./include/gamectl/init_player.func.php';
 
 // 旧方案：将玩家数据展开为全局变量（仅限入口文件使用）
 extract($pdata, EXTR_REFS);
 
-// 缓存当前房间的 RuleSet ID，避免重复查询
-$ruleset_id = '';
-if (!empty($groomid)) {
-	$result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = ".intval($groomid));
-	if ($db->num_rows($result)) {
-		$room_data = $db->fetch_array($result);
-		$ruleset_id = $room_data['gruleset'];
-	}
-}
+// 使用 common.inc.php 中 load_gameinfo() 已加载的 $gruleset，不再重复查询 DB
+// RuleSet ID 已缓存在全局变量中 / Ruleset ID cached from load_gameinfo()
+$ruleset_id = isset($gruleset) ? $gruleset : '';
 
-// 公共初始化
 init_playerdata();
 $log = init_player_log();
 
@@ -72,8 +53,9 @@ if($hp <= 0){
 		if($db->num_rows($result)) { $kname = $db->result($result,0); }
 	}
 
-	// 检查是否需要显示RuleSet结束剧情
-	if(!empty($ruleset_id) && empty($clbpara['ruleset_ending_shown'])) {
+	// 检查是否需要显示RuleSet结束剧情（仅支持对话的模板启用）
+	// Check RuleSet ending story (only for dialogue-enabled templates)
+	if (is_rich_template_enabled() && !empty($ruleset_id) && empty($clbpara['ruleset_ending_shown'])) {
 			include_once GAME_ROOT.'./gamedata/ruleset/story_config.php';
 			$story = get_ruleset_story($ruleset_id, 'ending');
 			if ($story) {
@@ -120,7 +102,7 @@ if(($action == 'corpse' || $action == 'pacorpse') && $gamestate < 40){
 }
 elseif($action == 'chase' || $action == 'pchase' || $action == 'dfight'){
 	$enemyid = $bid;
-	$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='".intval($enemyid)."' AND hp>0 AND pls='$pls'");
+	$result = $db->query("SELECT * FROM {$tablepre}players WHERE pid='".intval($enemyid)."' AND hp>0 AND pls='".intval($pls)."'");
 	if($db->num_rows($result)>0){
 		$edata = $db->fetch_array($result);
 		include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
@@ -143,6 +125,10 @@ elseif($action == 'neut'){
 	}
 }
 if($hp > 0 && $coldtimeon && $showcoldtimer && $rmcdtime){$log .= "行动冷却时间：<span id=\"timer\" class=\"yellow\">0.0</span>秒<script type=\"text/javascript\">demiSecTimerStarter($rmcdtime);</script><br>";}
+// 对话面板 & RuleSet剧情：仅在支持对话的模板（u_templateid = 0 或 2）时启用
+// Dialogue panel & RuleSet story: only for dialogue-enabled templates (u_templateid = 0 or 2)
+if (is_rich_template_enabled()) {
+
 // 检查是否有对话需要显示，但如果刚刚处理了对话选择，则不显示
 // 通过检查 $_POST['command'] 是否包含 'dialogue_choice' 来判断
 $just_made_choice = isset($_POST['command']) && strpos($_POST['command'], 'dialogue_choice') === 0;
@@ -187,13 +173,14 @@ if(isset($opendialog))
 	</script>";
 }
 
+} // end is_rich_template_enabled()
+
 // VEX 前端 API 代理 / VEX frontend API proxy
 if (isset($_GET['vex_api']) && $_GET['vex_api'] == '1') {
 	include './api_v2.php';
 	exit;
 }
 
-//if (!strstr($_SERVER['HTTP_REFERER'], 'php') && $_SERVER['HTTP_REFERER'] != '') {
 init_profile();
 if (isset($_GET['is_new'])) {
 	include './api.php';

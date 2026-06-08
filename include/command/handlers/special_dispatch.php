@@ -6,11 +6,12 @@ if (!defined('IN_GAME')) {
 // ================================================================
 // 特殊技能分发 / Special skill dispatch
 // 处理 command=special → sp_cmd 的14个 elseif 分支
+//
+// $post = gstrfilter($_POST)，POST 参数统一入口。
+// 子分支需要 POST 参数（如 choice）时从此数组取值。
 // ================================================================
-
-function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
+function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime, &$pdata, $post) {
     global $log, $club, $coldtimeon, $weaponswapcoldtime;
-    global $choice;
 
     // sp_word: 获取词语 / Get word
     if ($sp_cmd == 'sp_word') {
@@ -33,7 +34,7 @@ function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
         $position = 0;
         if ($club == 7) {
             foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
-                if (strpos(${'itmk' . $imn}, 'B') === 0 && ${'itme' . $imn} > 0) {
+                if (strpos($pdata['itmk' . $imn], 'B') === 0 && $pdata['itme' . $imn] > 0) {
                     $position = $imn;
                     break;
                 }
@@ -45,7 +46,7 @@ function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
             }
         } elseif ($club == 8) {
             foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
-                if (${'itm' . $imn} == '毒药' && ${'itmk' . $imn} == 'Y' && ${'itme' . $imn} > 0) {
+                if ($pdata['itm' . $imn] == '毒药' && $pdata['itmk' . $imn] == 'Y' && $pdata['itme' . $imn] > 0) {
                     $position = $imn;
                     break;
                 }
@@ -63,7 +64,7 @@ function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
         if ($position) {
             $position = 0;
             foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
-                if (strpos(${'itmk' . $imn}, 'T') === 0 && ${'itme' . $imn} > 0) {
+                if (strpos($pdata['itmk' . $imn], 'T') === 0 && $pdata['itme' . $imn] > 0) {
                     $position = $imn;
                     break;
                 }
@@ -80,6 +81,7 @@ function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
 
     // sp_trapadtskselected: 陷阱改造执行 / Trap modification execute
     if ($sp_cmd == 'sp_trapadtskselected') {
+        $choice = isset($post['choice']) ? $post['choice'] : null;
         if (!isset($choice) || $choice == 'menu') {
             $mode = 'command';
         } else {
@@ -116,6 +118,7 @@ function cmd_handle_special_dispatch($sp_cmd, &$mode, &$cmdcdtime) {
 
     // sp_pickpocket_selected: 妙手 / Pickpocket
     if ($sp_cmd == 'sp_pickpocket_selected') {
+        $choice = isset($post['choice']) ? $post['choice'] : null;
         if (!isset($choice)) {
             $mode = 'command';
         } else {

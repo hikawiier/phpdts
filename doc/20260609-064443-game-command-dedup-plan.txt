@@ -1,0 +1,194 @@
+# game.php / command.php 公共初始化消除重复 — 设计方案
+
+> 日期：2026-06-09 | 状态：待执行 | 预估工时：2 天
+
+---
+
+## 一、问题诊断
+
+`game.php`（191行）和 `command.php`（187行）是项目的两个核心 HTTP 入口文件。PHPDTS 已在 Phase 2 重构中通过 `include/core/entrypoint.php` 统一了认证流程，但两个文件仍存在显著的初始化逻辑重复。
+
+### 1.1 重复代码量化
+
+对两个文件逐行 diff 后，确认以下重复块：
+
+| 重复块 | game.php 行号 | command.php 行号 | 内容 | 重复行数 |
+|--------|:------------:|:----------------:|------|:--------:|
+| Block 1: require 链 | L3-8 | L3-8 | 6 个 require 完全相同 | 6 |
+| Block 2: init 链 | L31-40 | L17-31 | `init_playerdata()` + `init_player_log()` + 存活检查 | **15-17** |
+| Block 3: 对话检查 | L130-165 | L82-87 | `is_rich_template_enabled()` 内的对话触发逻辑 | **10-35** |
+| Block 4: is_new 代理 | L185-189 | L181-184 | `if (isset($_GET['is_new'])) include './api.php'` | 3 |
+| Block 5: init_profile | L184 | L101 | `init_profile()` 调用 | 1 |
+
+**总计约 55 行重复代码，分布在两个文件共约 110 行中。**
+
+### 1.2 技术约束
+
+**约束 A：`extract()` 必须在入口文件全局作用域执行**
+`extract($pdata, EXTR_REFS)` 产生 `$hp`、`$sp`、`$wep`、`$state` 等全局变量，模板系统依赖这些变量。PHP 函数内的 `extract()` 作用域在函数返回后丢失，因此 `extract()` 不能移入任何函数。
+
+**约束 B：`init_playerdata()` 通过 `global` 读写**
+该函数内部声明 `global $pdata`，需在入口文件设置 `$pdata` 后才能调用。不能在 `game_entrypoint()` 返回前调用。
+
+**约束 C：对话/RuleSet 剧情检查逻辑不完全相同**
+- game.php 需要 RuleSet 开场/结束剧情检查（`$ruleset_id`、`$hp<=0`）
+- command.php 仅检查对话，格式为 `$just_made_choice = strpos(...)`（无 `$_POST` 包装）
+
+**约束 D：`$clbpara` 引用语义复杂**
+`init_playerdata()` 末尾执行 `$clbpara = get_clbpara($clbpara)`，将 `EXTR_REFS` 建立的引用替换为解码后的数组值，此后对 `$clbpara` 的修改不会自动回写 `$pdata['clbpara']`。这是现有代码的固有行为（非本次引入），我们的重构**必须原样保留**这一行为。
+
+---
+
+## 二、设计方案
+
+### 2.1 总体策略
+
+**二函数、四步改**：在 `include/game/render.func.php` 中新增两个函数，然后逐块替换两个入口文件。
+
+选择 `render.func.php` 作为宿主文件理由：
+- 已容纳 `is_rich_template_enabled()`、`init_bgm()`、`render_bgm_player()` 等 UI/初始化函数
+- 对话检查与 BGM/模板功能开关属于同一关注域
+- 避免新增文件增加 include 开销
+
+### 2.2 新增函数一：`run_common_init()`
+
+**位置**：`include/game/render.func.php` 末尾
+
+**函数签名**：
+
+```php
+/**
+ * 公共初始化链 — game.php 与 command.php 共享
+ * Common init chain — shared by game.php and command.php
+ *
+ * 前置条件：extract($pdata, EXTR_REFS) 已在入口文件全局作用域执行。
+ * Precondition: extract($pdata, EXTR_REFS) must be executed at global scope in the entry file.
+ *
+ * @return array{log: string, rmcdtime: int}
+ */
+function run_common_init(): array
+```
+
+**封装内容**（直接对应原始代码）：
+
+| 原代码 | 行为 |
+|--------|------|
+| `init_playerdata()` | 全局变量：计算 `$upexp`/`$lvlupexp`/`$iconImg`/`$fog`，解码 `$clbpara` |
+| `$log = init_player_log()` | 从 `log` 表读取未处理日志，拼接 HTML |
+| `if ($hp > 0) { $log .= init_noise_display(); }` | 枪声提示 |
+| `$rmcdtime = init_cooldown()` | 冷却剩余时间（毫秒） |
+| `$log .= init_dizzy_check()` | 眩晕状态检查 |
+| `init_club_check()` | 社团选择就绪检查（设置 `$clubavl`） |
+
+**关键细节**：与 `game.php` 的对齐——所有存活检查内容放在 `$hp > 0` 内。
+
+### 2.3 新增函数二：`resolve_dialogue_trigger()`
+
+**位置**：`include/game/render.func.php` 末尾
+
+**函数签名**：
+
+```php
+/**
+ * 对话触发统一检查 — game.php 与 command.php 共享核心逻辑
+ * Dialogue trigger check — shared core logic between game.php and command.php
+ *
+ * @param array  $pdata      玩家数据（player_save 需要）
+ * @param array  $clbpara    已解码的 clbpara
+ * @param string $command    当前指令名
+ * @param string $ruleset_id RuleSet ID（game.php 传入；command.php 传空字符串）
+ * @param bool   $check_stories  是否启用 RuleSet 开场/结束剧情检查（仅 game.php）
+ * @param bool   $is_death   是否处于死亡画面（仅 game.php，$hp<=0 时）
+ * @return array{opendialog: string|null, dialogue_id: string|null}
+ */
+function resolve_dialogue_trigger(
+    array $pdata,
+    array $clbpara,
+    string $command,
+    string $ruleset_id = '',
+    bool $check_stories = false,
+    bool $is_death = false
+): array
+```
+
+**封装内容**：
+
+```
+if (!is_rich_template_enabled()) → 返回 null
+
+Priority 1: 结束剧情 ($check_stories && $is_death && $ruleset_id 无结束标记)
+    → player_save($pdata) → 注入 $dialogues/$dialogue_log → 返回 ruleset_ending
+Priority 2: 开场剧情 ($check_stories && !$just_made_choice && opening_story 存在 且 无标记)
+    → player_save($pdata) → 注入 $dialogues/$dialogue_log → 返回 ruleset_opening
+Priority 3: 普通对话 (!$just_made_choice && !empty($clbpara['dialogue']))
+    → 返回 'dialogue'
+Priority 4: 强制不可跳过的对话 (!$just_made_choice && !empty($clbpara['noskip_dialogue']))
+    → 返回 noskip_dialogue 的值
+```
+
+---
+
+## 三、文件变更清单
+
+| 文件 | 操作 | 行数变化 | 说明 |
+|------|------|:--------:|------|
+| `include/game/render.func.php` | 追加 2 个函数 | 206 → **~290** | `run_common_init()` + `resolve_dialogue_trigger()` |
+| `game.php` | 替换重复块 | 191 → **~105** | 删除 L31-40 和 L128-176 的散落逻辑 |
+| `command.php` | 替换重复块 | 187 → **~120** | 删除 L20-24 和 L82-87 的散落逻辑 |
+| `include/core/entrypoint.php` | 不变 | 55 | — |
+
+**净减少：** ~158 行重复代码，由 ~10 行调用替代。
+
+---
+
+## 四、实施步骤
+
+### Step 1：在 render.func.php 末尾新增 `run_common_init()`（25 行）
+
+在 `render.func.php` 的最后一个函数 `init_clubskillsdata()` 之后、`?>` 之前加入。
+
+### Step 2：在 render.func.php 末尾新增 `resolve_dialogue_trigger()`（80 行）
+
+在 `run_common_init()` 之后加入。
+
+### Step 3：重构 game.php
+
+- L31-40 → `$init = run_common_init(); $log = $init['log']; $rmcdtime = $init['rmcdtime'];`
+- 删除 L128-165 的对话检查块，替换为 `$dialogue = resolve_dialogue_trigger(...)` 调用
+- 保留 L166-174 的 JS `showModal()` 发射
+
+### Step 4：重构 command.php
+
+- L20-21 → `$init = run_common_init(); $log = $init['log']; $rmcdtime = $init['rmcdtime'];`
+- 删除 L82-87 的对话检查块，替换为 `$dialogue = resolve_dialogue_trigger(...)` 调用
+
+### Step 5：语法验证
+
+```bash
+php -l game.php
+php -l command.php
+php -l include/game/render.func.php
+```
+
+---
+
+## 五、风险评估与缓解
+
+| 风险 | 概率 | 缓解措施 |
+|------|:----:|----------|
+| `init_playerdata()` 的 `global $pdata` 找不到对象 | 低 | 函数调用时 `$pdata` 已在入口文件全局作用域存在 |
+| `$clbpara` 引用解绑导致数据丢失 | 低 | 与现有代码行为完全一致 |
+| `player_save($pdata)` 在函数内调用问题 | 低 | `$pdata` 以值传入；`player_save()` 接收 `$data` 参数读取 `pid` |
+| 对话不触发 | 中 | 函数返回 `$opendialog`/`$dialogue_id`；调用方原样使用 |
+| 大括号/缩进错位导致语法错误 | 低 | 逐段替换，每步 `php -l` 验证 |
+
+---
+
+## 六、与现有重构的关系
+
+| 重构阶段 | 内容 | 状态 |
+|----------|------|:----:|
+| Phase 1 | 提取 `entrypoint.php` 统一认证 | ✅ 已完成 |
+| Phase 2 | `command.php` 路由拆分（974→67行） | ✅ 已完成 |
+| **本次** | **消除两个入口文件的公共初始化+对话检查重复** | **待执行** |
+| Phase 3（未来） | `$pdata` 对象化，消除 `extract()` | 远期规划 |

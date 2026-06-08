@@ -1,7 +1,7 @@
 {template header}
 <div id="notice"></div>
 <div id="ingamebgm" style="display:none">
-	<!--{eval $bgm = init_bgm(1)}-->
+	<!--{eval $bgm_data = init_bgm(1); $bgm = render_bgm_player($bgm_data);}-->
 	$bgm
 </div>
 <script type="text/javascript">

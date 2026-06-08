@@ -33,6 +33,80 @@ if(isset($slave_level) && $slave_level == 3 && !empty($master_dbhost) && !empty(
 }
 unset($dbhost, $dbuser, $dbpw, $dbname, $pconnect);
 
+// CSRF Token 保护 / CSRF Token protection
+// 为 HTML 渲染页面生成 CSRF Token，AJAX 请求通过 cookie 中携带的 token 验证
+$csrf_exempt_scripts = array('chat', 'login', 'register', 'install');
+if (!in_array(CURSCRIPT, $csrf_exempt_scripts)) {
+	// 从 Cookie 读取或生成新的 CSRF Token
+	$csrf_cookie_key = $gtablepre . 'csrf_token';
+	if (!empty($_COOKIE[$csrf_cookie_key])) {
+		$csrf_token = $_COOKIE[$csrf_cookie_key];
+	} else {
+		$csrf_token = bin2hex(random_bytes(32));
+		gsetcookie('csrf_token', $csrf_token, 86400 * 30, 0); // 30天有效期
+	}
+	// POST 请求验证 CSRF Token（宽松模式：无 token 时放行以保持向后兼容）
+	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+		$client_token = '';
+		if (!empty($_POST['csrf_token'])) {
+			$client_token = $_POST['csrf_token'];
+		} elseif (!empty($_SERVER['HTTP_X_CSRF_TOKEN'])) {
+			$client_token = $_SERVER['HTTP_X_CSRF_TOKEN'];
+		}
+		// 只有当客户端发送了 token 时才验证；未发送 token 的旧前端请求放行
+		if ($client_token !== '' && !hash_equals($csrf_token, $client_token)) {
+			gexit('CSRF token validation failed', __file__, __line__);
+		}
+	}
+}
+
+// 请求速率限制 / Request rate limiting
+// 基于 IP + 用户名的文件级速率限制，防止自动化脚本暴力请求
+// 暂时不需要这样的功能
+/*
+if (!in_array(CURSCRIPT, array('chat', 'install'))) {
+	$rate_cfg = array(
+		'max_requests' => 300,  // 每分钟最大请求数
+		'window'       => 60,   // 时间窗口（秒）
+	);
+	$client_ip = isset($cuser) ? $cuser : (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0');
+	$rate_key = md5($client_ip);
+	$rate_dir = GAME_ROOT . './gamedata/cache/rate_limit/';
+	$rate_file = $rate_dir . $rate_key . '.json';
+
+	if (!is_dir($rate_dir)) {
+		mkdir($rate_dir, 0777, true);
+	}
+
+	$rate_data = array('requests' => array());
+	if (file_exists($rate_file)) {
+		$raw = file_get_contents($rate_file);
+		$decoded = json_decode($raw, true);
+		if (is_array($decoded)) {
+			$rate_data = $decoded;
+		}
+	}
+
+	// 清理过期记录
+	$cutoff = time() - $rate_cfg['window'];
+	$rate_data['requests'] = array_values(array_filter($rate_data['requests'], function($t) use ($cutoff) {
+		return $t > $cutoff;
+	}));
+
+	if (count($rate_data['requests']) >= $rate_cfg['max_requests']) {
+		if (CURSCRIPT === 'command' || isset($_GET['is_new']) || isset($_GET['vex_api'])) {
+			ob_clean();
+			echo compatible_json_encode(array('error' => 'Rate limit exceeded'));
+			exit();
+		} else {
+			gexit('请求过于频繁，请稍后再试。', __file__, __line__);
+		}
+	}
+
+	$rate_data['requests'][] = time();
+	file_put_contents($rate_file, json_encode($rate_data));
+}*/
+
 require GAME_ROOT.'./gamedata/system.php';
 require GAME_ROOT.'./include/gamectl/init.func.php';
 require GAME_ROOT.'./include/gamectl/news.func.php';
@@ -144,9 +218,9 @@ if(CURSCRIPT !== 'chat')
 
 	// 按房间粒度的数据库行锁，替代进程级文件锁 / Room-level DB row lock replacing process-level file lock
 	$lock_name = 'game_state_' . intval($groomid);
-	$lock_result = $db->query("SELECT GET_LOCK('$lock_name', 5)");
+	$lock_result = $db->query("SELECT GET_LOCK('$lock_name', 5) AS lock_acquired");
 	$lock_row = $db->fetch_array($lock_result);
-	$lock_acquired = ($lock_row && $lock_row[0] == 1);
+	$lock_acquired = ($lock_row && $lock_row['lock_acquired'] == 1);
 	
 	load_gameinfo();
 	$lostfocus = false;

@@ -4,26 +4,12 @@ define('CURSCRIPT', 'game');
 
 require './include/core/common.inc.php';
 require GAME_ROOT.'./include/gamectl/game.func.php';
+require GAME_ROOT.'./include/game/render.func.php';
 require GAME_ROOT.'./include/gamectl/player_auth.func.php';
+require GAME_ROOT.'./include/core/entrypoint.php';
 
-// [A] 玩家认证 / Player authentication
-$auth_result = auth_game_player();
-if ($auth_result['status'] == 'no_login') {
-	gexit($_ERROR['no_login'], __file__, __line__);
-} elseif ($auth_result['status'] == 'no_player') {
-	header("Location: valid.php");
-	exit();
-} elseif ($auth_result['status'] == 'wrong_pw') {
-	gexit($_ERROR['wrong_pw'], __file__, __line__);
-} elseif ($auth_result['status'] == 'gamestate_zero') {
-	$gamedata['url'] = 'end.php';
-	ob_clean();
-	$jgamedata = compatible_json_encode($gamedata);
-	echo $jgamedata;
-	ob_end_flush();
-	exit();
-}
-$pdata = $auth_result['pdata'];
+// [A] 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
+$pdata = game_entrypoint('command');
 
 // [B] 公共初始化 / Common initialization
 require GAME_ROOT.'./include/gamectl/init_player.func.php';
@@ -65,7 +51,14 @@ if ($hp > 0) {
 		\revbattle\revbattle_prepare($command, $message);
 	} else {
 		// 正常指令分发 / Normal command dispatch
-		$mode = cmd_router_dispatch($command, $mode, $pdata, $cmdcdtime);
+		//
+		// $post: POST 参数统一入口。
+		// common.inc.php 以 extract(gstrfilter($_POST)) 将 POST 变量注入全局作用域，
+		// 但函数内部无法直接访问。此处将过滤后的 POST 数据打包为 $post 关联数组，
+		// 通过参数链传入各路由函数。后续需要读取 POST 参数的函数，统一从 $post 取值，
+		// 避免在函数内部重复 global 声明或手工 gstrfilter()。
+		$post = gstrfilter($_POST);
+		$mode = cmd_router_dispatch($command, $mode, $pdata, $cmdcdtime, $post);
 	}
 
 	// [D] 后处理 / Post-processing: corpse/cooldown/extrabag
@@ -75,18 +68,25 @@ if ($hp > 0) {
 
 // [E] 响应组装 / Response assembly: BGM/dialogue/template/JSON output
 
-// BGM 播放器 / BGM player
-$bgm_player = init_bgm();
-if (!empty($bgm_player)) {
-	$gamedata['innerHTML']['ingamebgm'] = $bgm_player;
-}
+// BGM 播放器 & 对话面板功能开关：仅在 u_templateid = 0 或 2 时启用
+// Feature toggle for BGM player & dialogue panel: only for u_templateid = 0 or 2
+if (is_rich_template_enabled()) {
 
-// 对话框检查 / Dialogue check
-$just_made_choice = strpos($command, 'dialogue_choice') === 0;
-if (!$just_made_choice && !empty($clbpara['dialogue'])) {
-	$opendialog = 'dialogue';
-	$dialogue_id = $clbpara['dialogue'];
-}
+	// BGM 播放器 / BGM player
+	$bgm_data = init_bgm();
+	$bgm_player = render_bgm_player($bgm_data);
+	if (!empty($bgm_player)) {
+		$gamedata['innerHTML']['ingamebgm'] = $bgm_player;
+	}
+
+	// 对话框检查 / Dialogue check
+	$just_made_choice = strpos($command, 'dialogue_choice') === 0;
+	if (!$just_made_choice && !empty($clbpara['dialogue'])) {
+		$opendialog = 'dialogue';
+		$dialogue_id = $clbpara['dialogue'];
+	}
+
+} // end is_rich_template_enabled()
 
 // 指令执行结果 / Command execution result
 $gamedata['innerHTML']['notice'] = ob_get_contents();
@@ -104,7 +104,7 @@ if ($hp <= 0) {
 	$dtime = date("Y年m月d日H时i分s秒", $endtime);
 	$kname = '';
 	if ($bid) {
-		$result = $db->query("SELECT name FROM {$tablepre}players WHERE pid='$bid'");
+		$result = $db->query("SELECT name FROM {$tablepre}players WHERE pid='".intval($bid)."'");
 		if ($db->num_rows($result)) {
 			$kname = $db->result($result, 0);
 		}

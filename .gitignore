@@ -114,3 +114,4 @@ img/NPCAvatar_Temp.psd
 /test
 diff_copy.bat
 gamedata/adminlog.php
+/gamedata/cache/rate_limit

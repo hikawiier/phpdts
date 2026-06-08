@@ -10,7 +10,11 @@ if (!defined('IN_GAME')) {
 
 // 主分发函数 / Main dispatch function
 // 返回最终 mode；若内部触发追击则返回 'revcombat'
-function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime) {
+//
+// 参数说明：
+//   $post = gstrfilter($_POST)，包含所有过滤后的 POST 参数。
+//   子函数需要 POST 数据时从 $post 取值，不要 global 声明 POST 变量。
+function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime, $post) {
     global $club, $clbpara, $log, $pls, $plsinfo, $hospitals;
     global $itemcmd, $sp_cmd, $main, $state;
 
@@ -81,7 +85,7 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime) {
         // 特殊技能 / Special skills
         if ($command == 'special') {
             include_once GAME_ROOT . './include/command/handlers/special_dispatch.php';
-            cmd_handle_special_dispatch($sp_cmd, $mode, $cmdcdtime);
+            cmd_handle_special_dispatch($sp_cmd, $mode, $cmdcdtime, $pdata, $post);
             return $mode;
         }
 
@@ -322,7 +326,7 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime) {
 
     // ---- $mode == 'revskpts' 分支 ----
     if ($mode == 'revskpts') {
-        return _dispatch_revskpts_mode($command, $pdata);
+        return _dispatch_revskpts_mode($command, $pdata, $post);
     }
 
     // ---- $mode == 'sp_pbomb' 分支 ----
@@ -341,6 +345,7 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime) {
 // ================================================================
 
 // itemmain 模式分发 / itemmain mode dispatch
+// TODO: 后续可改为接收 $post 参数并消除下方 global 的 POST 变量（mitm1~6 等）
 function _dispatch_itemmain_mode($command, $mode) {
     global $log, $club, $arbs, $arbe, $arbsk;
     global $merge1, $merge2, $from, $to, $mixmask, $itemselect, $mitm1, $mitm2, $mitm3, $mitm4, $mitm5, $mitm6;
@@ -499,7 +504,13 @@ function _dispatch_special_mode($command, &$pdata) {
 }
 
 // revskpts 模式分发（技能升级/切换/激活）
-function _dispatch_revskpts_mode($command, &$pdata) {
+//
+// 参数：
+//   $command - 前端发来的指令名，如 swtskill_c10_inspire / actskill_c11_merc
+//   &$pdata  - 玩家数据引用
+//   $post    - 过滤后的 POST 数组，从中读取动态参数（*upgpara, *mkey 等）
+//             由 command.php 入口统一构造，无需再次 gstrfilter()
+function _dispatch_revskpts_mode($command, &$pdata, $post) {
     global $log, $cskills;
 
     $sk = substr($command, 9);
@@ -507,26 +518,31 @@ function _dispatch_revskpts_mode($command, &$pdata) {
 
     if (strpos($command, 'upgskill_') !== false) {
         if (isset($cskills[$sk]['num_input'])) {
-            $nums = isset(${$command . '_nums'}) ? (int)${$command . '_nums'} : 1;
+            $nums = isset($post[$command . '_nums']) ? (int)$post[$command . '_nums'] : 1;
             upgclbskills($sk, $nums);
         } else {
             upgclbskills($sk);
         }
     } elseif (strpos($command, 'swtskill_') !== false) {
-        if (isset(${$sk . 'upgpara'}) && isset($cskills[$sk]['choice']) && in_array(${$sk . 'upgpara'}, $cskills[$sk]['choice'])) {
-            switchclbskills($sk, ${$sk . 'upgpara'});
+        $upgpara = isset($post[$sk . 'upgpara']) ? $post[$sk . 'upgpara'] : null;
+        if (isset($upgpara) && isset($cskills[$sk]['choice']) && in_array($upgpara, $cskills[$sk]['choice'])) {
+            switchclbskills($sk, $upgpara);
         }
     } elseif (strpos($command, 'actskill_') !== false) {
         include_once GAME_ROOT . './include/game/club/revclubskills_extra.func.php';
         if ($sk == 'c4_roar' || $sk == 'c4_sniper') {
             skill_c4_unlock($sk);
         } elseif ($sk == 'c11_merc') {
-            if (isset(${$sk . 'mkey'}) && isset(${$sk . 'fire'}) && ${$sk . 'fire'} == ${$sk . 'mkey'}) {
-                skill_merc_fire($sk, ${$sk . 'mkey'});
-            } elseif (isset(${$sk . 'mkey'}) && isset(${$sk . 'chase'})) {
-                skill_merc_chase($sk, ${$sk . 'mkey'});
-            } elseif (isset(${$sk . 'mkey'}) && isset(${$sk . ${$sk . 'mkey'} . 'moveto'})) {
-                skill_merc_move($sk, ${$sk . 'mkey'}, ${$sk . ${$sk . 'mkey'} . 'moveto'});
+            $mkey   = isset($post[$sk . 'mkey']) ? $post[$sk . 'mkey'] : null;
+            $fire   = isset($post[$sk . 'fire']) ? $post[$sk . 'fire'] : null;
+            $chase  = isset($post[$sk . 'chase']) ? $post[$sk . 'chase'] : null;
+            $moveto = isset($mkey) ? (isset($post[$sk . $mkey . 'moveto']) ? $post[$sk . $mkey . 'moveto'] : null) : null;
+            if (isset($mkey) && isset($fire) && $fire == $mkey) {
+                skill_merc_fire($sk, $mkey);
+            } elseif (isset($mkey) && isset($chase)) {
+                skill_merc_chase($sk, $mkey);
+            } elseif (isset($mkey) && isset($moveto)) {
+                skill_merc_move($sk, $mkey, $moveto);
             }
         }
     }
