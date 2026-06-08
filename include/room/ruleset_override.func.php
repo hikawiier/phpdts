@@ -46,10 +46,12 @@ function init_ruleset_override() {
 
     $ruleset_id = get_current_ruleset_id();
     if (!empty($ruleset_id)) {
-        include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';
-        $current_ruleset_config = get_ruleset_config($ruleset_id);
-        error_log("RuleSet Override: 房间 " . $GLOBALS['groomid'] . " 使用 RuleSet: $ruleset_id");
-    }
+		include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';
+		$current_ruleset_config = get_ruleset_config($ruleset_id);
+		if (!empty($GLOBALS['errorinfo'])) {
+			error_log("RuleSet Override: 房间 " . $GLOBALS['groomid'] . " 使用 RuleSet: $ruleset_id");
+		}
+	}
 }
 
 /**
@@ -60,10 +62,12 @@ function load_ruleset_override_functions() {
     $ruleset_id = get_current_ruleset_id();
 
     if ($ruleset_id == 'ACDTS_298SP4_AR') {
-        // 加载全随机模式的覆盖函数
-        include_once GAME_ROOT.'./gamedata/ruleset/ACDTS_298SP4_AR/include/ruleset_functions.php';
-        error_log("RuleSet Override: 已加载 $ruleset_id 的覆盖函数");
-    }
+		// 加载全随机模式的覆盖函数
+		include_once GAME_ROOT.'./gamedata/ruleset/ACDTS_298SP4_AR/include/ruleset_functions.php';
+		if (!empty($GLOBALS['errorinfo'])) {
+			error_log("RuleSet Override: 已加载 $ruleset_id 的覆盖函数");
+		}
+	}
 }
 
 /**

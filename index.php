@@ -2,6 +2,7 @@
 
 
 define('CURSCRIPT', 'index');
+define('REQUIRED_CONFIGS', array('gamecfg'));
 
 require './include/core/common.inc.php';
 
