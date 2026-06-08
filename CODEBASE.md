@@ -65,6 +65,54 @@ command.php: extract($pdata, EXTR_REFS) → 全局变量 → 指令执行 → pl
 
 **`$clbpara` 规范：** `$clbpara` 是 `$pdata['clbpara']` 经 `extract()` 产生的全局别名，本质为 `players.clbpara` 字段的 JSON 数组。必须通过 API（`get_clbpara()` / `check_player_misc_states()` / `player_save()`）操作；禁止直接 `json_encode` 后 `UPDATE` 数据库。
 
+### `$gamedata` — AJAX 响应协议
+
+`$gamedata` 是各入口文件局部定义的多维关联数组，经 `compatible_json_encode()` 序列化后作为 AJAX 响应返回前端，是前后端通信的核心数据载体。
+
+**生命周期：**
+
+```
+入口文件初始化为空数组
+    ↓
+业务逻辑逐步填充各键值
+    ↓
+compatible_json_encode() → JSON 字符串
+    ↓
+echo 输出 → 前端 parseJSON() 消费
+```
+
+**使用入口：**
+
+| 文件 | 用途 |
+|------|------|
+| [command.php](command.php) | 游戏指令响应（最完整结构） |
+| [user.php](user.php) | 用户设置页响应 |
+| [register.php](register.php) | 注册响应 |
+| [messages.php](messages.php) | 站内信操作响应 |
+
+**`command.php` 中的结构（最完整）：**
+
+| 键 | 类型 | 来源 | 说明 |
+|----|------|------|------|
+| `url` | string\|null | 直接赋值 | 页面跳转 URL（游戏结束=`end.php`） |
+| `timer` | int | `$rmcdtime` | 冷却计时器（毫秒） |
+| `locationId` | int | `$pls` | 当前位置编号 |
+| `clbpara` | array | `$clbpara` | 社团参数，完整传递给前端 JS |
+| `value.teamID` | string | `$teamID` | 队伍 ID |
+| `innerHTML.ingamebgm` | string | `init_bgm()` | BGM 播放器 HTML |
+| `innerHTML.notice` | string | `ob_get_contents()` | 指令执行的即时反馈 |
+| `innerHTML.cmd` | string | 模板渲染 | 指令面板（death/itemfind/fishing/rest/command 等模板） |
+| `innerHTML.pls` | string | `$plsinfo[$pls]` | 当前位置名称 |
+| `innerHTML.anum` | int | `$alivenum` | 存活玩家数 |
+| `innerHTML.main` | string | `profile` 模板 | 角色资料面板 |
+| `innerHTML.log` | string | `$log` | 游戏日志（同时写入 `vex/cache/`） |
+| `innerHTML.error` | string\|null | `$error` | 错误信息（条件性） |
+| `innerHTML.chattype` | string | 直接生成 | 聊天类型选择器 HTML |
+
+**前端消费：** `innerHTML` 子键名直接对应页面 DOM 元素的 `id`，前端遍历后执行 `$(id).innerHTML = value` 注入。旧前端通过 `game.js` 处理；当 `$_GET['is_new']` 存在时，走 [api.php](api.php) 输出完全不同的 JSON 结构。
+
+**序列化：** `compatible_json_encode()`（[global.func.php](include/core/global.func.php)），PHP < 5.2 用自定义 JSON 类，>= 5.4 用 `JSON_UNESCAPED_UNICODE`。
+
 ---
 
 ## 二、入口文件
@@ -205,29 +253,68 @@ command.php: extract($pdata, EXTR_REFS) → 全局变量 → 指令执行 → pl
 | [include/game/setitems.func.php](include/game/setitems.func.php) | 套装系统 |
 | `fishing.func.php` / `fortune.func.php` / `dice.func.php` / `depot.func.php` / `console.func.php` / `song.inc.php` | 钓鱼/运势/骰子/仓库/控制台/歌曲 |
 
+### 指令路由层（`include/command/`，2026-06 重构自 command.php）
+
+| 文件 | 功能 |
+|------|------|
+| [include/command/router.php](include/command/router.php) | **主路由分发函数** `cmd_router_dispatch()` + `_dispatch_itemmain_mode()` / `_dispatch_special_mode()` / `_dispatch_revskpts_mode()` 内部辅助 |
+| [include/command/router_helpers.php](include/command/router_helpers.php) | 辅助函数：`resolve_pre_checks()`（眩晕/追击/对话框/冷却预检查）、`cmd_router_post_process()`（尸体/冷却/背包后处理）、`cmd_router_assemble_response()`（BGM/对话框/模板/JSON响应组装）、`check_extrabag_overflow()` |
+| [include/command/handlers/basic_commands.php](include/command/handlers/basic_commands.php) | 基础指令：移动/探索/物品使用/休息/钓鱼/唱歌 + itm0阻塞检查 |
+| [include/command/handlers/itemmain_entry.php](include/command/handlers/itemmain_entry.php) | itemmain入口分发（itemmix/elementmix分流 + club20特殊逻辑） |
+| [include/command/handlers/special_dispatch.php](include/command/handlers/special_dispatch.php) | 特殊技能分发：sp_trapadtsk/club21/club22/sp_pickpocket/sp_weapon/sp_pbomb/oneonone |
+| [include/command/handlers/dialogue_handler.php](include/command/handlers/dialogue_handler.php) | 对话处理：dialogue_choice + end_dialogue |
+| [include/command/handlers/console_handler.php](include/command/handlers/console_handler.php) | 控制台指令：wthchange/dbutton/radar/search/areactrl |
+| [include/command/handlers/team_handler.php](include/command/handlers/team_handler.php) | 队伍指令：teamquit/teamcheck |
+| [include/command/handlers/misc_commands.php](include/command/handlers/misc_commands.php) | 杂项指令：choose_fish/memory（记忆→焦点物品/敌人） |
+
+> **重构说明：** `command.php` 原有 974 行巨型分发树已拆分为以上 9 个文件。club21/club22 的指令分发入口（`club21_cmd_entry()` / `club22_cmd_entry()` + `fireseed_handle_getitem()`）已移至各自社团文件。所有 `goto` 语句已消除。
+
 ### 已废弃文件（`include/deprecated/`，不需要阅读）
 
 旧版战斗、属性、社团技能、物品系统、加密、微博日志等`.old`文件。
 
 ---
 
-## 五、command.php 的 `$mode` 分发机制
+## 五、command.php 的 `$mode` 分发机制（2026-06 重构）
 
-`command.php`是核心指令处理文件：加载`common.inc.php` → 提取`$pdata` → 处理冷却/眩晕/对话框检查 → 按`$mode`分发。
+`command.php`是核心指令处理文件，重构后流程如下：
 
-| `$mode` | 处理文件 | 说明 |
+```
+[A] 认证 → auth_game_player()
+[B] 初始化 → extract($pdata) + init_playerdata() + init_player_log()
+[C] 预检查 → resolve_pre_checks() 处理眩晕/追击/对话框/冷却/物品索引
+     ├── skip_cmd → 跳过指令
+     ├── chase_action → 直接进入 revbattle
+     └── 正常路径 → cmd_router_dispatch() 统一分发
+[D] 后处理 → cmd_router_post_process()（尸体/冷却/背包）
+[E] 响应组装 → cmd_router_assemble_response()（BGM/模板/JSON输出）
+```
+
+**重构后文件结构：**
+- [command.php](command.php) — 入口骨架（67行），仅含认证→初始化→预检查→路由→后处理→响应组装流程
+- [include/command/router.php](include/command/router.php) — `cmd_router_dispatch()` 统一处理所有 mode 分发（原 96-839 行）
+- [include/command/router_helpers.php](include/command/router_helpers.php) — 预检查/后处理/响应组装辅助函数
+- [include/command/handlers/](include/command/handlers/) — 9个 handler 文件，按功能拆分指令处理逻辑
+
+| `$mode` | 处理位置 | 说明 |
 |---------|----------|------|
-| `command` | `command.php`内部 | 基础指令：move、search、itemuse、rest等 |
-| `revcombat` | `include/game/combat/revcombat.func.php` | 战斗 |
-| `itemmain` | `include/game/item/itemmain.func.php` | 物品主菜单 |
-| `itemmix` | `include/game/item/itemmix.func.php` | 物品合成 |
-| `elementmix` | `include/game/club/elementmix.func.php` | 元素合成 |
-| `corpse` | `command.php`内部 | 尸体搜索 |
-| `search` | `include/game/search.func.php` | 探索 |
-| `fishing` | `include/game/fishing.func.php` | 钓鱼 |
-| `special` | `include/game/special.func.php` | 特殊技能 |
+| `command` | `router.php` → `basic_commands/itemmain_entry/special_dispatch/dialogue_handler/console_handler/team_handler/misc_commands` | 基础指令：move、search、itemuse、rest、fishing、song、itemmain、special、team、consle*、dialogue、memory 等 |
+| `revcombat` | `include/game/combat/revbattle.func.php` | 战斗前端渲染 |
+| `itemmain` | `router.php` → `_dispatch_itemmain_mode()` | 物品主菜单（itemget/add/merge/move/drop/off/swap/itemmix/elementmix/itemencase/iteminfo/usebagitm/changewep） |
+| `quest` | `include/game/quest.func.php` | 任务接受/拒绝/取消 |
+| `special` | `router.php` → `_dispatch_special_mode()` | 特殊技能模式：pose/tac/hor/inf/chkp/shop/clubsel |
+| `senditem` | `include/game/encounter.func.php` | 送物品 |
 | `rest` | `include/gamectl/state.func.php` | 休息 |
-| `battle` | `include/game/combat/revbattle.func.php` | 战斗前端渲染 |
+| `fishing` | `include/game/fishing.func.php` | 钓鱼 |
+| `corpse` | `router.php` 内部 | 尸体搜索 + club22 种火收纳 |
+| `team` | `include/game/team.func.php` | 队伍创建/加入/退出 |
+| `shop` | `router.php` 内部 | 商店购买 |
+| `depot` | `include/game/depot.func.php` | 仓库存取 |
+| `deathnote` | `include/game/item/item2.func.php` | 死亡笔记 |
+| `oneonone` | `include/game/special.func.php` | 约战 |
+| `revskpts` | `router.php` → `_dispatch_revskpts_mode()` | 技能升级/切换/激活 |
+| `sp_pbomb` | `include/game/special.func.php` | 炸弹引爆 |
+| `item` | `include/game/item/item2.func.php` | 物品函数调用 |
 
 ---
 
@@ -352,7 +439,10 @@ gamedata/ruleset/
 | 积分结算 | [include/meta/credits.func.php](include/meta/credits.func.php) |
 | 赌局系统 | [include/meta/gambling.func.php](include/meta/gambling.func.php) |
 | 反挂机 | [include/gamectl/antiafk.func.php](include/gamectl/antiafk.func.php) |
-| 指令处理 | [command.php](command.php) |
+| 指令处理入口 | [command.php](command.php) |
+| 指令路由分发 | [include/command/router.php](include/command/router.php) |
+| 路由辅助函数 | [include/command/router_helpers.php](include/command/router_helpers.php) |
+| 指令 handler | [include/command/handlers/](include/command/handlers/) |
 | 战斗逻辑 | [include/game/combat/revcombat.func.php](include/game/combat/revcombat.func.php) |
 | 战斗伤害计算 | [include/game/combat/revattr.func.php](include/game/combat/revattr.func.php) |
 | 物品使用 | [include/game/item/item.func.php](include/game/item/item.func.php) → [itemmain.func.php](include/game/item/itemmain.func.php) |

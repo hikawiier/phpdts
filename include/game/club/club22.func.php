@@ -4,6 +4,117 @@ if(!defined('IN_GAME')) exit('Access Denied');
 
 include_once GAME_ROOT.'./gamedata/cache/club22cfg.php';
 
+// ================================================================
+// club22_cmd_entry：枫火歌者指令统一入口 / Fireseed Singer command entry
+// 由 include/command/handlers/special_dispatch.php 调用
+// ================================================================
+function club22_cmd_entry($sp_cmd, &$mode) {
+    global $log, $club;
+
+    if ($club != 22) {
+        $log .= '<span class="red">你不懂得如何使用枫火歌者的能力！</span><br />';
+        $mode = 'command';
+        return;
+    }
+
+    include_once GAME_ROOT . './include/game/club/club22.func.php';
+
+    if ($sp_cmd == 'sp_fireseed_deploy') {
+        global $fireseed_id, $deploy_mode, $deploy_pls, $pls;
+        if (isset($fireseed_id) && isset($deploy_mode)) {
+            $deploy_pls = isset($deploy_pls) ? intval($deploy_pls) : $pls;
+            $log .= "<span class='yellow'>DEBUG: 部署位置 $deploy_pls</span><br>";
+            FireseedDeploy($fireseed_id, $deploy_mode, $deploy_pls);
+        } else {
+            $log .= '<span class="red">请选择要部署的种火和部署模式！</span><br>';
+        }
+        $mode = 'command';
+
+    } elseif ($sp_cmd == 'sp_fireseed_getitem') {
+        fireseed_handle_getitem();
+
+    } elseif ($sp_cmd == 'sp_fireseed_enhance') {
+        global $enhance_fireseed_id, $enhance_item;
+        if (isset($enhance_fireseed_id) && isset($enhance_item)) {
+            $enhance_result = FireseedEnhance($enhance_fireseed_id, $enhance_item);
+            if ($enhance_result) {
+                global $log;
+                $log .= "<span id='HsUipfcGhU'></span>";
+                $log .= '<span class="lime">种火强化成功！</span><br>';
+                $mode = 'command';
+            }
+        } else {
+            $log .= '<span class="red">请选择要强化的种火和焰火物品！</span><br>';
+        }
+        $mode = 'command';
+
+    } elseif ($sp_cmd == 'sp_save_fireseed_select') {
+        global $select_type, $fireseed_id, $clbpara;
+        if (isset($select_type) && isset($fireseed_id)) {
+            if (!isset($clbpara['fireseed_ui_state'])) {
+                $clbpara['fireseed_ui_state'] = array();
+            }
+            $clbpara['fireseed_ui_state'][$select_type] = $fireseed_id;
+            $log .= "<!-- 种火选择状态已保存: {$select_type} = {$fireseed_id} -->";
+        }
+        $mode = 'command';
+    }
+}
+
+// 种火取物：处理从种火物品池中取出物品 / Fireseed getitem handler
+function fireseed_handle_getitem() {
+    global $log, $clbpara, $db, $tablepre, $pls, $pdata;
+    global $fireseed_item_id, $item_id, $itm0, $itmk0, $itme0, $itms0, $itmsk0, $itmpara0;
+
+    if (!isset($fireseed_item_id) || !isset($item_id)) {
+        $log .= '<span class="red">请选择要获取物品的种火和物品！</span><br>';
+        global $mode;
+        $mode = 'command';
+        return;
+    }
+
+    if (!isset($clbpara['fireseed'][$fireseed_item_id]['items'][$item_id])) {
+        $log .= '<span class="red">指定的物品不存在！</span><br>';
+        global $mode;
+        $mode = 'command';
+        return;
+    }
+
+    $item = $clbpara['fireseed'][$fireseed_item_id]['items'][$item_id];
+
+    if (empty($itm0)) {
+        // 将物品放入itm0（发现物品栏位）
+        $itm0 = $item['itm'];
+        $itmk0 = $item['itmk'];
+        $itme0 = $item['itme'];
+        $itms0 = $item['itms'];
+        $itmsk0 = $item['itmsk'];
+        $itmpara0 = isset($item['itmpara']) ? $item['itmpara'] : '';
+
+        unset($clbpara['fireseed'][$fireseed_item_id]['items'][$item_id]);
+
+        $log .= '<span class="lime">你从种火「' . $clbpara['fireseed'][$fireseed_item_id]['name'] . '」处取回了探索到的物品！</span><br>';
+
+        include_once GAME_ROOT . './include/game/item/itemmain.func.php';
+        itemfind($pdata);
+    } else {
+        // itm0已被占用，将物品放入地图并添加到玩家视野
+        $item_para = isset($item['itmpara']) ? $item['itmpara'] : '';
+        $db->query("INSERT INTO {$tablepre}mapitem (itm, itmk, itme, itms, itmsk, itmpara, pls) VALUES ('{$db->escape_string($item['itm'])}', '{$db->escape_string($item['itmk'])}', '{$item['itme']}', '{$item['itms']}', '{$db->escape_string($item['itmsk'])}', '{$db->escape_string($item_para)}', '$pls')");
+        $new_item_id = $db->insert_id();
+
+        unset($clbpara['fireseed'][$fireseed_item_id]['items'][$item_id]);
+
+        include_once GAME_ROOT . './include/gamectl/game.func.php';
+        check_add_searchmemory($new_item_id, 'itm', $item['itm'], $pdata);
+
+        $log .= '<span class="lime">你从种火「' . $clbpara['fireseed'][$fireseed_item_id]['name'] . '」处取回了探索到的物品「' . $item['itm'] . '」！</span><br>';
+        $log .= '<span class="yellow">由于你的双手已经拿着其他物品，取回的物品出现在了你的视野中。</span><br>';
+        global $mode;
+        $mode = 'command';
+    }
+}
+
 /**
  * 获取种火的实时数据
  *

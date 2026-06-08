@@ -1,0 +1,587 @@
+================================================================================
+  common.inc.php — 全面技术评估与优化方案
+  Comprehensive Technical Evaluation & Optimization Plan
+================================================================================
+  评估日期: 2026-06-09
+  文件路径: include/core/common.inc.php (161 行)
+  项目: PHPDTS (PHP 大逃杀网页游戏)
+  目标版本: PHP 7.0+ / 原生 PHP / MySQL
+================================================================================
+
+
+一、文件定位与角色
+
+  common.inc.php 是整个 PHPDTS 项目的「唯一入口初始化器」——除 install.php
+  外，所有入口文件（game.php / command.php / valid.php / admin.php / index.php
+  等 20+ 个文件）均通过 `require './include/core/common.inc.php'` 启动。
+
+  它将 4 个关注层压缩到 161 行中：
+    ┌──────────────────────────────────────┐
+    │ 1. 基础设施（常量/输入过滤/错误处理）  │  L3-L15
+    │ 2. 数据库连接与配置加载               │  L17-L48
+    │ 3. 用户认证与会话初始化                │  L50-L99
+    │ 4. 游戏状态机调度                      │  L128-L160
+    └──────────────────────────────────────┘
+
+  这决定了：对该文件的任何修改都会波及整个项目。评估必须极其谨慎。
+
+
+二、代码质量评估
+
+  2.1 优点
+  ────────
+  ◆ IN_GAME 守卫：所有被加载的函数库都有 IN_GAME 检查，有效防止直接访问。
+  ◆ EXTR_SKIP 防覆盖：POST/GET 提取时使用 EXTR_SKIP，部分缓解了 extract() 风险。
+  ◆ 密码销毁：$dbpw / $dbuser 在连接后立即 unset()，减少了凭证泄漏面。
+  ◆ 中英双语注释：成熟项目的良好实践。
+  ◆ 状态机模式：L138-L149 的过渡函数数组 + foreach 调度是清晰的模式。
+  ◆ ob_start() 缓冲：允许后续代码自由 echo 而不影响 header 输出，合理设计。
+
+  2.2 问题
+  ────────
+  ◆ [严重] extract() 滥用
+    L11: extract(gstrfilter($_COOKIE))   — 无 EXTR_SKIP，可覆盖任意已定义变量
+    L12: extract(gstrfilter($_POST), EXTR_SKIP)
+    L13: extract(gstrfilter($_GET), EXTR_SKIP)
+    Cookie 行缺少 EXTR_SKIP 标志，是最危险的输入源。攻击者可通过 Cookie 键名
+    覆盖 $db、$tablepre、$cuser 等关键变量（尽管 gstrfilter 限制了字符集）。
+
+  ◆ [严重] gstrfilter() 破坏性过滤
+    gstrfilter() 在 global.func.php 中直接 strip 单引号和反斜杠：
+      $str = str_replace("'","",$str);
+      $str = str_replace("\\","",$str);
+    这不是转义而是删除，可能破坏合法输入（如用户名 O'Connor → OConnor）。
+    正确的做法应该是保留原始数据，仅在输出/SQL 阶段分别处理。
+
+  ◆ [中等] 混合使用 include_once / require
+    L8:  require   (global.func.php)
+    L116: include_once (ruleset_override.func.php)
+    L156: include_once (messages.func.php)
+    没有统一标准。如果某个文件被重复加载应该报错（require_once），
+    如果只需加载一次且不该缺失也用 require_once。
+
+  ◆ [中等] 变量来源不可追踪
+    L20: $now = time() + $moveut*3600 + $moveutmin*60;
+    $moveut / $moveutmin 来自 config.inc.php（L49-L53），但在本文件中
+    没有 `global` 声明或 require 后立即使用的明确上下文，阅读者难以追踪。
+
+  ◆ [低] 注释掉的死代码
+    L46: // $gtablepre 已在数据库连接时设置，这里不再重新赋值
+    这种注释本身说明了"这里是存在过 bug 的证据"，应该在 git 历史中查看而非
+    保留在源码中。
+
+  ◆ [低] 变量变量（variable variables）
+    L52-L53:
+      $cuser = & ${$gtablepre.'user'};
+      $cpass = & ${$gtablepre.'pass'};
+    这是 Discuz! 兼容层遗留。IDE 无法静态分析，增加维护难度。
+
+
+三、性能瓶颈分析
+
+  3.1 每请求无条件执行的昂贵操作
+  ────────────────────────────────────
+  ◆ [严重] 全房间列表查询（L56-L60）
+    $result = $db->query("SELECT * FROM {$gtablepre}game WHERE groomid>0");
+    while($roominfo = $db->fetch_array($result)) { ... }
+    每条请求（包括 chat.php 的每秒轮询）都查询所有子房间。假设有 100 个子房间，
+    每秒 10 次聊天轮询 = 1000 行/秒的无效数据传输。
+    影响：chat.php（高频轮询）和 index.php（首页）受影响最严重。
+
+  ◆ [严重] 进程级文件锁（L130-L131）
+    $plock = fopen(GAME_ROOT.'./gamedata/process.lock','ab');
+    flock($plock, LOCK_EX);
+    串行化了所有非聊天请求。在高并发场景下，这成为绝对瓶颈。
+    游戏状态机所有过渡检查都在锁内执行，包括多次 DB 查询。
+
+  ◆ [中等] 8 个 config() 调用（L102-L109）
+    每个 config() 调用至少执行 2 次 file_exists()（检查 RuleSet 缓存 + 主缓存），
+    加上一次 require。8 个配置 = 最低 16 次文件系统调用/请求。
+    实测影响：在机械硬盘或网络文件系统上可能增加 5-20ms/请求。
+
+  ◆ [中等] roommng_verify_db_game_structure()（L124-L126）
+    每请求执行多次 DESCRIBE + SHOW INDEX 查询来检查表结构是否存在。
+    这是典型的"应该在安装/升级脚本中执行，而非运行时检查"的逻辑。
+    影响：每次请求额外 8 次 DDL 级别查询。
+
+  ◆ [中等] error_log() 写入（ruleset_override.func.php L52, L66）
+    每次请求写入 error_log，在高频场景下会产生大量 I/O。
+
+  ◆ [低] gstrfilter 全量处理
+    COOKIE/POST/GET/REQUEST/FILES 五个超全局数组全部递归过滤。
+    对于包含大量字段的 POST 请求（如物品合成数据），额外的递归遍历耗时显著。
+
+  3.2 优化优先级排序
+  ──────────────────
+  影响最大的 3 项：
+    1. 文件锁 → 预计减少 80% 的请求等待时间（高并发下）
+    2. 全房间列表查询 → 减少 index.php / chat.php 单次响应时间 10-50ms
+    3. roommng_verify_db_game_structure() → 减少每次请求 8 次 DB 查询
+
+
+四、安全隐患分析
+
+  4.1 关键漏洞
+  ────────────
+  ◆ [严重] Cookie extract() 无 EXTR_SKIP（L11）
+    见 2.2 节。可能的攻击向量：
+    - Cookie: IN_GAME=0 → 关闭守卫（虽然此时尚未检查）
+    - Cookie: gamestate=40 → 可能干扰状态机
+    缓解因素：gstrfilter() 过滤了单引号和反斜杠，htmlspecialchars 限制了 <>&
+    但变量覆盖的风险依然存在。
+
+  ◆ [严重] 明文密码在 Cookie 中传输（L52-L53）
+    $cuser = & ${$gtablepre.'user'};   // acbra3_user
+    $cpass = & ${$gtablepre.'pass'};   // acbra3_pass
+    密码以明文形式存储在 Cookie 中（fetch_userdata_by_username 验证）。
+    整个系统的用户会话安全完全依赖于 Cookie 中明文的用户名和密码。
+
+  ◆ [严重] 无 CSRF 保护
+    command.php 的 AJAX 请求完全依赖 Cookie 中的 user/pass 验证身份，
+    没有任何 CSRF token 机制。攻击者可通过钓鱼页面诱导玩家执行游戏操作。
+
+  ◆ [中等] config.inc.php 暴露敏感信息
+    $dbpw / $dbuser / $salt / $authkey 在 extract() 执行前通过 require
+    加载到全局作用域。尽管 $dbpw 随后被 unset，但在文件锁内的代码块中，
+    如果有任何调试输出或错误信息泄漏，这些值可能被暴露。
+
+  ◆ [中等] $gamefounder 未验证即比较
+    config.inc.php 中 $gamefounder = 'Amarillo_NMC' 硬编码。
+    Cookie 中提取的 $cuser 与 $gamefounder 比较时使用 ==（非严格比较），
+    如果 $gamefounder 为空字符串，任意用户可能被误认为创始人。
+
+  ◆ [低] 文件锁的 TOCTOU 问题
+    flock() 在 Windows 上使用强制锁（mandatory lock），在其他平台上
+    使用建议锁（advisory lock）。如果某处代码未获取锁就修改 gameinfo，
+    会破坏数据一致性。
+
+  ◆ [低] $errorinfo = 0 关闭所有错误提示但不记录日志
+    生产环境错误静默吞噬，问题排查困难。
+
+
+五、可维护性评估
+
+  5.1 维护难点
+  ────────────
+  ◆ 全局状态泛滥
+    本文件定义/修改了 30+ 个全局变量（$cuser, $tablepre, $gtablepre, $groomid,
+    $now, $gamestate, $areanum...），任何后续 require 的文件都可以读写这些变量。
+    修改一个变量的影响范围完全不可知。
+
+  ◆ 隐式依赖链
+    例如：L88 $groomid 来自 $udata['roomid']
+    → L92 查询 game 表
+    → L99 $tablepre 拼接子房间前缀
+    → L102-L109 8 个 config() 加载
+    → L113 init_ruleset_override() 需要 $groomid
+    任何一个中间变量出问题，后续全部崩溃。但没有任何显式断言。
+
+  ◆ 加载顺序耦合
+    文件加载顺序有严格约束：
+    - global.func.php 必须在所有其他函数库之前（定义 gstrfilter/gexit/config）
+    - config.inc.php 必须在 DB 之前（定义 $database/$dbhost）
+    - config('resources') 必须在 config('gamecfg') 之前（gamecfg 引用 resources 的变量）
+    - init_ruleset_override() 必须在所有 config() 之后
+    这些约束没有任何文档或代码层面的强制措施（如接口检查）。
+
+  ◆ 测试不可能
+    文件中的逻辑直接操作全局变量和数据库连接，没有任何依赖注入点。
+    单元测试必须启动完整 PHP 环境 + MySQL 数据库。
+
+
+六、扩展性评估
+
+  6.1 现状
+  ────────
+  ◆ 添加新的入口文件：只需 `define('CURSCRIPT', 'xxx')` + require common.inc.php。
+    这是好的设计 —— 入口文件很薄。
+  ◆ 添加新的配置：只需在 L102-L109 添加一个 config() 调用。
+    简单但有性能代价。
+  ◆ RuleSet 系统：通过 ruleset_override.func.php 实现了基本的动态覆盖，
+    但覆盖范围仅限于缓存文件和少量函数的 if/else 分支。
+
+  6.2 限制
+  ────────
+  ◆ 无法注册中间件或钩子（hooks）
+  ◆ 无法在不修改核心文件的情况下扩展初始化流程
+  ◆ 模板系统与初始化流程紧耦合
+  ◆ 状态机过渡函数是硬编码数组，添加新状态需要修改核心文件
+
+
+七、模块交互分析
+
+  7.1 common.inc.php 的依赖图
+  ───────────────────────────
+  直接 require 的文件（按加载顺序）：
+    1. global.func.php      → 定义 gstrfilter, gexit, config, template, 
+                                gameerrorhandler, language, output 等
+    2. user.func.php        → 定义 fetch_userdata_by_username
+    3. config.inc.php       → 定义 $dbhost, $dbuser, $dbpw, $tablepre, 
+                                $authkey, $salt, $database 等
+    4. db_mysqli.class.php  → 定义 class dbstuff
+    5. system.php           → 定义 $gameversion, $gamecfg, $startmode 等
+    6. init.func.php        → 定义 init_icon_states
+    7. news.func.php        → 定义 addnews, systemputchat
+    8. resources.func.php   → 定义 get_equip_list, get_ruleset_plain_resource_file
+    9. roommng.func.php     → 定义 roommng_verify_db_game_structure, 
+                                roommng_create_new_room
+    10. revclubskills.func.php → 定义 check_skill_unlock 等
+    11. dice.func.php       → 骰子函数
+    12. titles.func.php     → 头衔函数
+    13. ruleset_override.func.php → RuleSet 覆盖
+    14. system.func.php     → 定义 rs_game, gameover, save_gameinfo, load_gameinfo
+    15. deatharea.func.php  → 定义 is_death_area, is_safe_area 等
+    16. gamestate.func.php  → 定义 7 个 gamestate_try_* 函数
+    17. messages.func.php   → 定义 message_check_new
+
+  间接依赖（通过上述文件）
+    - credits.func.php     (← system.func.php)
+    - gambling.func.php    (← credits.func.php，若需要)
+    - antiafk.func.php     (← gamestate.func.php)
+    - master* 配置变量     (← config.inc.php)
+    - 8 个 gamedata/cache/*.php  (← config() 调用)
+
+  7.2 问题交互
+  ────────────
+  ◆ gamestate.func.php（L138 require）中 7 个过渡函数全部操作全局变量。
+    这些全局变量（$gamestate, $starttime, $areanum, $alivenum...）
+    由 L132 load_gameinfo() 从数据库加载。如果 load_gameinfo 未能
+    正确设置某个变量，状态机静默跳过过渡，导致游戏卡死。
+
+  ◆ system.func.php 在 L119 require，但 rs_game() 在 gamestate.func.php
+    的 gamestate_try_prepare() 中被调用（在锁内），形成了：
+    common.inc.php → 加载 system.func.php → 定义 rs_game()
+    common.inc.php → 加载 gamestate.func.php → 定义过渡函数（不执行）
+    common.inc.php → 在锁内 → 逐个调用过渡函数 → gamestate_try_prepare() → rs_game()
+    如果 rs_game() 失败（如 SQL 错误），整个请求在锁内崩溃。
+
+  ◆ chat.php 定义 CURSCRIPT = 'chat' 后 skips：
+    - 文件锁（L128-L131）
+    - load_gameinfo()
+    - 状态机调度
+    - messages.func.php
+    但仍然执行了昂贵的全房间列表查询和 config 加载。
+    这是一个未完成的优化 —— skip 了部分但未 skip 全部。
+
+
+八、优化方案：分阶段迭代计划
+
+  总原则：渐进式重构，每阶段保持向后兼容，可独立回滚。
+
+  ═══════════════════════════════════════════════════════
+  阶段 1：安全性加固（1-2 天，低风险）
+  ═══════════════════════════════════════════════════════
+
+  目标：消除已知安全漏洞，不改变任何业务逻辑。
+
+  1.1 Cookie 提取添加 EXTR_SKIP
+  ─────────────────────────────
+  位置: L11
+  修改前:
+    extract(gstrfilter($_COOKIE));
+  修改后:
+    extract(gstrfilter($_COOKIE), EXTR_SKIP);
+
+  风险评估: 极低。如果 cookie 中存在与已定义变量同名的键，
+  旧代码会覆盖，新代码会跳过。可能暴露的 bug 是：某些代码
+  依赖 Cookie 覆盖（这是 bug 本身，应修复而非保留）。
+
+  1.2 严格比较创始人
+  ──────────────────
+  在需要比较 $cuser == $gamefounder 的地方使用 === 和显式类型转换。
+
+  1.3 添加基本 CSRF Token 机制
+  ─────────────────────────────
+  - common.inc.php 中为每个 session 生成 csrf_token 存入 $clbpara
+  - command.php 中验证 POST 的 csrf_token
+  - 风险评估：中等。需要同时修改前端 JS 和后端验证逻辑。
+
+  预期效果: 消除 Cookie 变量覆盖、CSRF 攻击面。
+
+
+  ═══════════════════════════════════════════════════════
+  阶段 2：性能优化 — 低风险项（2-3 天）
+  ═══════════════════════════════════════════════════════
+
+  目标：减少每请求不必要的 I/O，不影响任何业务逻辑。
+
+  2.1 缓存全房间列表查询
+  ──────────────────────
+  修改 L56-L60：将房间列表查询结果写入文件缓存
+  （如 gamedata/cache/roomlist.php），仅在以下情况刷新：
+  - 缓存文件不存在或过期（TTL=60 秒）
+  - 新房间创建时主动失效（在 roommng_create_new_room 中 touch）
+
+  预期效果:
+  - index.php / chat.php 减少 1 次全表扫描/请求
+  - 100 子房间情境下，减少 100×N 行/秒 的数据传输
+
+  2.2 移除运行时表结构检查
+  ────────────────────────
+  修改 L124-L126：删除 roommng_verify_db_game_structure() 调用。
+  该函数的逻辑迁移到 install.php 或独立的管理脚本中。
+  如果必须保留运行时检查，改为检查一个 .lock 文件
+
+  预期效果:
+  - 每次请求减少 8 次 DESCRIBE/SHOW INDEX 查询
+  - 减少 DB 服务器负载
+
+  2.3 config() 调用延迟加载
+  ──────────────────────────
+  当前 8 个 config() 无条件加载。分析哪些入口文件实际需要哪些配置：
+
+  | 入口文件   | 需要的配置                              |
+  |-----------|----------------------------------------|
+  | chat.php  | 只需 resources（表情）、audio（BGM）    |
+  | index.php | 只需 gamecfg（显示参数）               |
+  | game.php  | 全部                                    |
+  | command.php| 全部                                   |
+
+  实现方式：入口文件在 require common.inc.php 前定义
+  REQUIRED_CONFIGS 常量（数组），common.inc.php 按需加载。
+
+  预期效果:
+  - chat.php 减少 6 次 file_exists + 6 次 require
+  - index.php 减少 7 次 file_exists + 7 次 require
+
+  2.4 关闭 RuleSet 系统的 error_log
+  ─────────────────────────────────
+  修改 ruleset_override.func.php L52, L66：error_log() 改为
+  条件性执行（仅在 debug 模式或 $errorinfo 开启时）。
+
+  预期效果: 消除高并发下的 I/O 瓶颈。
+
+
+  ═══════════════════════════════════════════════════════
+  阶段 3：性能优化 — 中风险项（3-5 天）
+  ═══════════════════════════════════════════════════════
+
+  目标：解决核心并发瓶颈，需要更多测试。
+
+  3.1 文件锁替换为数据库行锁
+  ──────────────────────────
+  当前: flock($plock, LOCK_EX) 锁住整个 PHP 进程
+  方案: 使用 MySQL GET_LOCK('game_state_{$groomid}', 5) 替代
+
+  优势:
+  - 按房间粒度锁，不同房间并行
+  - 超时机制（5 秒），防止死锁
+  - 跨进程有效（包括多台 PHP-FPM worker）
+
+  风险评估: 中高。锁的语义从"阻塞"变为"超时返回 false"，
+  所有调用 load_gameinfo() / save_gameinfo() 的代码需要处理锁获取失败。
+
+  3.2 chat.php 完全跳过非必要初始化
+  ────────────────────────────────
+  当前 chat.php 仍然执行 config 加载和全房间查询。
+  方案：在 L128 if(CURSCRIPT !== 'chat') 之前，提前退出。
+  具体实现：
+  - 将 CURSCRIPT === 'chat' 的判断提前到 L8（require user.func.php 之后）
+  - 只保留 ob_start() + Cookie 提取 + DB 连接
+  - 其余全部跳过
+
+  预期效果: chat.php 响应时间从 ~30ms 降到 ~5ms。
+
+
+  ═══════════════════════════════════════════════════════
+  阶段 4：代码结构重构（5-7 天）
+  ═══════════════════════════════════════════════════════
+
+  目标：提高可维护性和可测试性，不改变外部行为。
+
+  4.1 拆分 common.inc.php 为 Bootstrap 类
+  ──────────────────────────────────────
+  创建 include/core/Bootstrap.php：
+
+    class Bootstrap {
+        private $start_time;
+        private $config;
+        private $db;
+        private $container = [];
+
+        public function __construct($entry_script) { ... }
+        public function initConstants() { ... }        // L3-L5
+        public function initErrorHandling() { ... }     // L7-L15
+        public function initDatabase() { ... }          // L17-L34
+        public function initSystemConfig() { ... }      // L36-L48
+        public function initUserSession() { ... }       // L50-L99
+        public function loadGameConfigs() { ... }       // L102-L121
+        public function runStateMachine() { ... }       // L128-L160
+        public function boot() { ... }                  // 编排上述方法
+    }
+
+  优势：
+  - 每个步骤可独立测试
+  - 变量作用域清晰（$this->db 而非全局 $db）
+  - 子类可覆盖特定步骤（如测试子类用 mock DB）
+
+  兼容性考虑：
+  - 入口文件改为 `$app = new Bootstrap(CURSCRIPT); $app->boot();`
+  - 现有全局变量通过 __get() 或显式 export 方法保持兼容
+  - 渐进式迁移：先共存，再逐步移除全局变量引用
+
+  4.2 提取配置加载器
+  ──────────────────
+  创建 include/core/ConfigLoader.php：
+  - 管理 8 个 config() 的加载、缓存、RuleSet 覆盖
+  - 支持批量加载和延迟加载
+  - 使用静态缓存避免重复 file_exists()
+
+  4.3 提取 GameInfo 数据类
+  ─────────────────────────
+  创建 include/core/GameInfo.php：
+  - 封装 $gamestate, $areanum, $alivenum 等 20+ 个运行状态变量
+  - 提供 load() / save() / get() / set() 方法
+  - 替代 load_gameinfo() / save_gameinfo() 全局函数
+
+  4.4 定义加载阶段常量
+  ────────────────────
+  让入口文件声明自己的需求级别：
+    define('BOOT_LEVEL', BOOT_LEVEL_FULL);        // game.php
+    define('BOOT_LEVEL', BOOT_LEVEL_CHAT_ONLY);    // chat.php
+    define('BOOT_LEVEL', BOOT_LEVEL_NO_STATE);     // index.php
+
+
+  ═══════════════════════════════════════════════════════
+  阶段 5：长期架构演进（持续，与阶段 4 可并行）
+  ═══════════════════════════════════════════════════════
+
+  5.1 引入 PSR-4 自动加载
+  ───────────────────────
+  使用 Composer autoload 替代手动 require 链。
+  composer.json:
+    {
+      "autoload": {
+        "classmap": ["include/core/", "include/gamectl/", ...]
+      }
+    }
+  与现有 autoload.php（Yii 相关）区分，后者用于独立功能。
+
+  5.2 引入中间件/钩子系统
+  ─────────────────────────
+  在 Bootstrap 中插入钩子点：
+    - bootstrap.before_db
+    - bootstrap.after_config
+    - bootstrap.before_state_machine
+    - bootstrap.after_response
+  RuleSet 系统和其他扩展通过钩子注册而非硬编码 if/else。
+
+  5.3 会话安全升级
+  ────────────────
+  - 用 PHP session 或 JWT 替代 Cookie 中的明文 user/pass
+  - 实现 session 过期和 refresh token 机制
+  注意：这是破坏性变更，需要前端配合修改。
+
+
+九、测试验证策略
+
+  9.1 回归测试（每阶段必须）
+  ──────────────────────────
+  手工测试 CheckList（覆盖所有入口文件）：
+  □ game.php  — 游戏主界面正常渲染
+  □ command.php — move/search/itemuse/rest 指令正常
+  □ valid.php — 新玩家入场正常
+  □ chat.php — 聊天轮询正常
+  □ index.php — 首页房间列表正常
+  □ admin.php — 后台各功能正常
+  □ end.php / winner.php — 结算页面正常
+
+  9.2 性能测试
+  ────────────
+  使用 Apache Bench（ab）或类似工具：
+    # 基准测试（优化前）
+    ab -n 1000 -c 10 http://localhost:8080/chat.php
+    ab -n 1000 -c 10 http://localhost:8080/index.php
+    ab -n 500 -c 5 http://localhost:8080/game.php
+
+    # 优化后同条件对比，目标：
+    # - chat.php: 响应时间降低 60-80%
+    # - index.php: 响应时间降低 30-50%
+    # - game.php: 响应时间降低 10-20%
+
+  9.3 安全测试
+  ────────────
+  □ Cookie 注入测试：发送伪造 Cookie 尝试覆盖 gamestate / mode 等变量
+  □ SQL 注入测试：通过 POST/GET 参数注入 SQL 片段
+  □ CSRF 测试：跨域 POST 到 command.php
+
+  9.4 兼容性测试
+  ──────────────
+  □ PHP 7.0 / 7.4 / 8.0 三个版本
+  □ RuleSet 房间（ACDTS_298SP4_AR, ACBRA_2009 等）
+  □ 子房间 + 主房间并存
+
+
+十、上线部署建议
+
+  10.1 灰度发布策略
+  ────────────────
+  1. 每阶段修改先部署到测试环境，运行完整 CheckList
+  2. 部署到生产环境的单个子房间（通过 groomid 判断是否走新代码）
+  3. 监控 24 小时无异常后全量部署
+  4. 每阶段间隔至少 3 天，确保有足够时间发现问题
+
+  10.2 回滚方案
+  ────────────
+  - 阶段 1-2：单文件修改，可通过 git revert 快速回滚
+  - 阶段 3-4：多文件修改，建议使用 feature flag：
+    if (defined('USE_NEW_BOOTSTRAP') && USE_NEW_BOOTSTRAP) {
+      // new code
+    } else {
+      // old code
+    }
+  - 阶段 5：破坏性变更，需要完整的蓝绿部署方案
+
+  10.3 监控指标
+  ────────────
+  - PHP 错误日志（确保 error_log 级别覆盖到所有异常）
+  - MySQL 慢查询日志（关注 roommng_verify_* 等被移除的查询是否有替代）
+  - 响应时间 P50/P95/P99（对比优化前后）
+  - 游戏功能完整性（活跃玩家数、指令成功率）
+
+  10.4 数据库备份
+  ──────────────
+  阶段 1-4 不涉及数据库结构变更，无需备份。
+  阶段 5 的会话升级可能涉及 users 表字段变更，需要：
+    - 全量数据库 dump
+    - 在测试环境验证迁移脚本
+    - 生产环境在低峰期执行
+
+
+十一、风险矩阵
+
+  ┌──────────────┬──────────┬──────────┬──────────┐
+  │ 阶段          │ 收益     │ 风险     │ 回滚难度 │
+  ├──────────────┼──────────┼──────────┼──────────┤
+  │ 1.安全性加固  │ 高       │ 低       │ 低       │
+  │ 2.性能优化(低)│ 中高     │ 低       │ 低       │
+  │ 3.性能优化(中)│ 高       │ 中       │ 中       │
+  │ 4.代码重构    │ 中高     │ 中高     │ 中       │
+  │ 5.架构演进    │ 高       │ 高       │ 高       │
+  └──────────────┴──────────┴──────────┴──────────┘
+
+  建议严格按照阶段顺序执行，每阶段完成后稳定运行至少 3 天再进入下一阶段。
+  阶段 1-2 可以合并为一个发布周期（因为它们都是低风险、单文件级别的修改）。
+
+
+十二、总结
+
+  common.inc.php 是一个典型的「历史遗留核心文件」——在 161 行代码中承载了
+  过多的职责，但同时也体现了成熟 PHP 项目的务实设计理念（ob_start 缓冲、
+  extract + EXTR_SKIP、状态机模式等）。
+
+  核心问题可以归纳为三个：
+    1. 进程级文件锁 → 串行化瓶颈
+    2. 全局状态泛滥 → 维护噩梦
+    3. 明文 Cookie 认证 → 安全红线
+
+  优化方案的核心理念是「尊重历史、渐进改善」：
+  - 优先修复安全问题（阶段 1），这是底线
+  - 然后解除性能瓶颈（阶段 2-3），这是用户能直接感知的
+  - 最后改善代码结构（阶段 4-5），这是长期健康发展的基础
+
+  每个阶段都设计了独立的回滚路径，确保在任何环节出问题时都能快速恢复服务。
+
+================================================================================
+  文档结束
+================================================================================

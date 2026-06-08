@@ -4,7 +4,113 @@
 		exit('Access Denied');
 	}
 
-	//提取代码片段逻辑
+	// ================================================================
+// club21_cmd_entry：码语行人指令统一入口 / Cipher Walker command entry
+// 由 include/command/handlers/special_dispatch.php 调用
+// ================================================================
+function club21_cmd_entry($sp_cmd, &$mode) {
+    global $log, $club, $pdata;
+    global $choice, $choice2;
+
+    if ($club != 21) {
+        $log .= '<span class="red">你不懂得如何使用码语行人的能力！</span><br />';
+        $mode = 'command';
+        return;
+    }
+
+    if ($sp_cmd == 'sp_extract_trait') {
+        $position = 0;
+        foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
+            if (strpos(${'itmk' . $imn}, 'D') === 0 || strpos(${'itmk' . $imn}, 'W') === 0) {
+                $position = $imn;
+                break;
+            }
+        }
+        if (!$position) {
+            $log .= '<span class="red">你没有武器或者装备，无法提取要素！</span><br />';
+            $mode = 'command';
+        } else {
+            $mode = 'sp_extract_trait';
+        }
+
+    } elseif ($sp_cmd == 'sp_extract_trait_selected') {
+        if (!isset($choice) || $choice == 'menu') {
+            $mode = 'command';
+        } else {
+            $choice_position = (int)(substr($choice, -1));
+            if ($choice_position < 1 || $choice_position > 6) {
+                $log .= '<span class="red">无此物品。</span><br />';
+            } else {
+                include_once GAME_ROOT . './include/game/club/club21.func.php';
+                item_extract_trait($choice, $choice_position);
+            }
+            $mode = 'command';
+        }
+
+    } elseif ($sp_cmd == 'sp_add_trait') {
+        $position = 0;
+        foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
+            if (strpos(${'itmk' . $imn}, '🥚') === 0) {
+                $position = $imn;
+                break;
+            }
+        }
+        if (!$position) {
+            $log .= '<span class="red">你没有代码片段，无法插入代码片段！</span><br />';
+            $mode = 'command';
+        } else {
+            $mode = 'sp_add_trait';
+        }
+
+    } elseif ($sp_cmd == 'sp_add_trait_selected') {
+        if (!isset($choice) || $choice == 'menu') {
+            $mode = 'command';
+        } else {
+            $choice = (int)($choice);
+            $choice2 = (int)($choice2);
+            if ($choice < 1 || $choice > 6 || $choice2 < 1 || $choice2 > 6) {
+                $log .= '<span class="red">无此物品。</span><br />';
+            } elseif ($choice == $choice2) {
+                $log .= '<span class="red">你选择了相同的代码片段。</span><br />';
+            } else {
+                include_once GAME_ROOT . './include/game/club/club21.func.php';
+                item_add_trait($choice, $choice2);
+            }
+            $mode = 'command';
+        }
+
+    } elseif ($sp_cmd == 'sp_consume_trait') {
+        $position = 0;
+        foreach (array(1, 2, 3, 4, 5, 6) as $imn) {
+            if (strpos(${'itmk' . $imn}, '🥚') === 0) {
+                $position = $imn;
+                break;
+            }
+        }
+        if (!$position) {
+            $log .= '<span class="red">你没有代码片段，无法消耗代码片段！</span><br />';
+            $mode = 'command';
+        } else {
+            $mode = 'sp_consume_trait';
+        }
+
+    } elseif ($sp_cmd == 'sp_consume_trait_selected') {
+        if (!isset($choice) || $choice == 'menu') {
+            $mode = 'command';
+        } else {
+            $choice = (int)($choice);
+            if ($choice < 1 || $choice > 6) {
+                $log .= '<span class="red">无此物品。</span><br />';
+            } else {
+                include_once GAME_ROOT . './include/game/club/club21.func.php';
+                consume_trait($choice);
+            }
+            $mode = 'command';
+        }
+    }
+}
+
+//提取代码片段逻辑
 	function item_extract_trait($which, $item_position)
 	{
 		include_once GAME_ROOT.'./gamedata/club21cfg.php';

@@ -1,0 +1,271 @@
+# PHPDTS 阶段二：command.php 架构重构方案
+# 
+# 日期：2026-06-08
+# 状态：待执行
+# 工时估算：5 天
+
+================================================================
+一、现状诊断
+================================================================
+
+1.1 当前结构量化
+
+指标                          当前          目标
+总行数                        973           ~350
+$mode == 'command' 内 elseif  20            0（路由表消除）
+$command == 'special' 内 elseif 14          0（提取到 special_dispatch.php）
+$mode 分发总分支数             24            ~12
+嵌套最大深度                  4             2
+goto 语句                     3             0
+club21/club22 代码行数         ~130          0
+
+1.2 问题地图
+
+command.php (973行)
+│
+├── [A] 认证+初始化 (1-38) — 简洁，保持不变
+├── [B] 预执行检查 (40-95) — 含 goto cd_flag, goto chase_flag
+│
+├── [C] ★ $mode == 'command' 巨型分支 (96-533)
+│   ├── [C1] 基础指令 (103-122): move/search/itm/rest/fishing
+│   ├── [C2] itemmain 分发 (131-149) — 混有 club20 逻辑
+│   ├── [C3] song (150-154)
+│   ├── [C4] ★ special 分发 (155-432) — 14 个 elseif
+│   │   ├── sp_word/sp_adtsk/sp_weapon/oneonone/sp_pbomb/pickpocket
+│   │   ├── sp_trapadtsk → club 7/8 陷阱改造 (164-228)
+│   │   ├── sp_extract_trait → club 21 码语行人提取 (230-260)
+│   │   ├── sp_add_trait → club 21 码语行人插入 (261-294)
+│   │   ├── sp_consume_trait → club 21 码语行人消耗 (296-325)
+│   │   ├── sp_fireseed_* → club 22 种火 (345-429)
+│   │   └── else → $mode = $sp_cmd (430-432)
+│   ├── [C5] team (433-439)
+│   ├── [C6] consle* 控制台 (440-460)
+│   ├── [C7] dialogue_choice (461-506)
+│   └── [C8] end_dialogue/choose_fish/memory (507-533)
+│
+├── ★ 其余 $mode 分支 (534-839) — 16 个 elseif
+│   ├── item/itemmain/quest/special(mode)/senditem
+│   ├── revcombat (chase_flag: 标签)
+│   ├── rest/fishing/corpse/team/shop/depot
+│   ├── deathnote/oneonone/sp_skpts/revskpts/sp_pbomb
+│   └── else → command_end_flag:
+│
+├── [D] 后处理 (841-869) — pacorpse/冷却/背包
+└── [E] 响应组装 (871-973) — BGM/对话框/模板/JSON
+
+================================================================
+二、目标架构
+================================================================
+
+2.1 重构后 command.php 骨架
+
+<?php
+define('CURSCRIPT', 'game');
+require './include/core/common.inc.php';
+require GAME_ROOT.'./include/gamectl/game.func.php';
+require GAME_ROOT.'./include/gamectl/player_auth.func.php';
+
+// [A] 认证
+$auth_result = auth_game_player();
+// ... 5 种状态处理（不变）
+$pdata = $auth_result['pdata'];
+
+// [B] 公共初始化
+require GAME_ROOT.'./include/gamectl/init_player.func.php';
+extract($pdata, EXTR_REFS);
+init_playerdata();
+$log = init_player_log();
+$cmd = $main = ''; $cmdnum = 0;
+$gamedata = array();
+
+// [C] 预执行检查
+if ($hp > 0) {
+    $log      .= init_noise_display();
+    $rmcdtime  = init_cooldown();
+    $log      .= init_dizzy_check();
+    init_club_check();
+    check_extrabag_overflow();
+
+    // 预检查 + 路由分发
+    $pre_check = resolve_pre_checks($hp, $command, $action, $mode,
+        $coldtimeon, $rmcdtime, $sp_cmd);
+
+    if ($pre_check['skip_cmd']) {
+        $mode = $pre_check['mode'];
+    } elseif ($pre_check['mode'] === 'chase_action') {
+        // goto chase_flag 的消除
+        include_once GAME_ROOT.'./include/game/combat/revbattle.func.php';
+        \revbattle\revbattle_prepare($pre_check['command'], $message);
+    } else {
+        $mode = cmd_router_dispatch($command, $mode, $pdata, $cmdcdtime);
+    }
+}
+
+// [D] 后处理
+cmd_router_post_process($action, $gamestate, $bid,
+    $coldtimeon, $cmdcdtime, $rmcdtime);
+$endtime = $now;
+$cmdnum++;
+
+// [E] 响应组装
+cmd_router_assemble_response($hp, $command, $mode, $state, $cmd,
+    $itms0, $clbpara, $coldtimeon, $showcoldtimer, $rmcdtime,
+    $pdata, $gamedata, $log, $main);
+
+================================================================
+三、新增文件清单
+================================================================
+
+include/command/                        # 新建目录
+├── router.php                          # 路由配置数组 + dispatch 函数
+├── router_helpers.php                  # 辅助函数（冷却/对话框/dizzy等）
+├── handlers/
+│   ├── basic_commands.php              # move/search/rest/fishing/song
+│   ├── item_commands.php               # 物品 itm* 使用
+│   ├── itemmain_entry.php              # itemmain 入口分发
+│   ├── special_dispatch.php            # special -> sp_cmd 分发（精简版）
+│   ├── dialogue_handler.php            # dialogue_choice + end_dialogue
+│   ├── console_handler.php             # consle* 控制台
+│   ├── team_handler.php                # team 指令
+│   └── misc_commands.php              # choose_fish/memory/menu
+
+include/game/club/                      # 已有文件追加
+├── club21.func.php                     # + club21_cmd_entry()
+└── club22.func.php                     # + club22_cmd_entry()
+
+================================================================
+四、各文件行数估算
+================================================================
+
+文件                                     操作     行数
+command.php                              重写     ~350
+include/command/router.php               新建     ~180
+include/command/router_helpers.php       新建     ~80
+include/command/handlers/basic_commands.php 新建  ~60
+include/command/handlers/item_commands.php  新建  ~20
+include/command/handlers/itemmain_entry.php 新建  ~40
+include/command/handlers/special_dispatch.php 新建 ~100
+include/command/handlers/dialogue_handler.php 新建 ~80
+include/command/handlers/console_handler.php  新建 ~40
+include/command/handlers/team_handler.php     新建 ~20
+include/command/handlers/misc_commands.php    新建 ~30
+include/game/club/club21.func.php         追加     +80
+include/game/club/club22.func.php         追加     +100
+
+总计新增 ~830 行，分散到 12 个文件
+command.php 净减 623 行
+
+================================================================
+五、消除 goto 语句方案
+================================================================
+
+goto         原位置                  消除方式
+goto cd_flag 眩晕后跳到冷却提示        resolve_pre_checks() 返回 skip_cmd=true
+goto chase_flag (L65) 追击→战斗       resolve_pre_checks() 返回 chase_action
+goto chase_flag (L530) 记忆→锁定敌人  misc_commands 中直接设置 $mode='revcombat'
+
+================================================================
+六、实施步骤（5天）
+================================================================
+
+第1天：基础设施 + 辅助函数
+- 创建 include/command/ 目录结构
+- 创建 router_helpers.php（6个辅助函数 + resolve_pre_checks）
+- 用 resolve_pre_checks() 替换 command.php 第40-95行
+- 消除 goto cd_flag
+
+第2天：提取 handler 文件 + 路由表
+- basic_commands.php (move/search/rest/fishing/song)
+- item_commands.php + itemmain_entry.php
+- dialogue_handler.php
+- console_handler.php + team_handler.php + misc_commands.php
+- router.php + route_command_mode()
+
+第3天：club21/club22 + special 重构
+- club21.func.php 追加 club21_cmd_entry()
+- club22.func.php 追加 club22_cmd_entry() + fireseed_handle_getitem()
+- special_dispatch.php（含 trap_adtsk + 简单分发 + club21/club22转发）
+- 消除 goto chase_flag（两处）
+
+第4天：其余 mode 路由 + 后处理器
+- get_mode_routes() 中16个 mode handler
+- cmd_router_dispatch() 替换 command.php 分发树
+- cmd_router_post_process() 提取
+- cmd_router_assemble_response() 提取
+
+第5天：全面回归 + 清理
+- 35+场景回归测试
+- php -l 全部新文件
+- 性能对比
+- 代码审查（防止循环依赖）
+- 更新 CODEBASE.md
+
+================================================================
+七、测试矩阵（35+ 场景）
+================================================================
+
+#  场景              mode        command             关键验证点
+1  移动              command     move                冷却时间、位置变更
+2  探索              command     search              物品发现、遇敌、冷却
+3  物品使用          command     itm1~6              itemuse()、冷却
+4  休息              command     rest0~3             医院检查、状态变更
+5  钓鱼              command     fishing             开始钓鱼+休息效果
+6  唱歌              command     song                饰品歌曲
+7  物品菜单          command     itemmain            itemmix/elementmix 分发
+8  特殊-陷阱改造     command→special sp_trapadtsk   club7(电池) club8(毒药)检查
+9  特殊-码语提取     command→special sp_extract_trait club21 武器/装备扫描
+10 特殊-码语插入     command→special sp_add_trait    club21 emoji扫描
+11 特殊-种火部署     command→special sp_fireseed_deploy club22 种火
+12 特殊-种火取物     command→special sp_fireseed_getitem itm0满/空两路径
+13 特殊-妙手         command→special sp_pickpocket   扒窃技能
+14 特殊-换武器       command→special sp_weapon       weaponswap+冷却
+15 队伍              command     team                teamquit/teamcheck
+16 控制台            command     consle*             天气/雷达/禁区
+17 对话选择          command     dialogue_choice     clbpara 同步
+18 记忆              command     memory0~N           物品/敌人记忆
+19 菜单              command     menu                返回指令面板
+20 物品模式          item        use_*               use_func_item
+21 物品主菜单(12子)  itemmain    itemget/add/merge/move/drop/off/swap
+22 任务              quest       quest_accept/reject/cancel
+23 特殊模式(7子)     special     pose/tac/hor/inf/chkp/shop/clubsel
+24 战斗              revcombat   chase/dfight/cover   revbattle_prepare
+25 休息模式          rest        rest*               rest()
+26 钓鱼模式          fishing     fishing_command     钓鱼+休息
+27 尸体              corpse      getcorpse/fireseed_recruit
+28 队伍模式          team        teammake/join/quit
+29 商店              shop        itembuy             商店购买
+30 仓库              depot       saveitem/loaditem
+31 死亡笔记          deathnote   dnname
+32 约战              oneonone    dnname
+33 技能升级          revskpts    upgskill/swtskill/actskill
+34 炸弹              sp_pbomb    YES
+35 眩晕状态          (状态)      —                   goto cd_flag 已消除
+36 冷却状态          (状态)      —                   冷却锁定正确
+37 pacorpse          (后处理)    —                   尸体发现
+
+================================================================
+八、风险控制
+================================================================
+
+风险                                 概率   缓解措施
+handler 中 require_once 顺序依赖      中     路由表统一加载，handler 内部不加 include
+global 变量在 handler 函数间污染      中     每个 handler 显式声明所用 global
+分支遗漏（elseif 未被路由表覆盖）    低     对照测试矩阵回归，else fallback 加 error_log
+club21/club22 移动后功能异常         中     独立性强，先走通全流程再切
+性能回退（函数调用开销）             低     include_once 次数减少，总体持平或更好
+merge conflicts（新功能加入）        低     路由表是显式配置数组，加一行即可
+
+================================================================
+九、成功指标
+================================================================
+
+指标                              当前        目标
+command.php 行数                  973         ≤ 400
+$mode == 'command' 内 elseif 数   20          0
+最大嵌套深度                      4           2
+goto 语句数                       3           0
+club21 代码在 command.php 中行数  ~70         0
+club22 代码在 command.php 中行数  ~70         0
+单文件最长行数                    973         ≤ 350
+新增 mode 所需修改文件数           1           1~2
+测试覆盖场景数                    手动        35+回归场景

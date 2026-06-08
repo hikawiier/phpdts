@@ -1,0 +1,436 @@
+================================================================================
+  game.php 全面技术评估与优化方案
+  生成日期：2026-06-09
+  项目：PHPDTS
+  ================================================================================
+
+一、执行摘要
+──────────────────────────────────────────────────────────────────────────────
+
+game.php 是 PHPDTS 游戏主界面的入口文件（204 行），负责玩家认证、状态初始化、
+战斗触发、对话管理、RuleSet 剧情、模板渲染和 API 代理。文件承载了过多职责，
+安全防护薄弱，逻辑耦合度高。与已完成重构的 command.php（67 行骨架 + 路由层）
+相比，game.php 明显滞后，亟需结构性优化。
+
+
+二、代码质量评估
+──────────────────────────────────────────────────────────────────────────────
+
+2.1 优点
+
+  - 认证提取：将 auth_game_player() 独立为函数（player_auth.func.php），
+    返回结构化状态码，比旧版内联判断更清晰
+  - 初始化拆分：init_playerdata() / init_player_log() / init_noise_display()
+    等小函数分离到 init_player.func.php，职责明确
+  - RuleSet 支持：对 RuleSet 开场/结束剧情的支持较完整，有缓存和防重复显示机制
+  - 双前端输出：支持经典模板（default）和 VEX SPA（api_v2.php）两种输出方式
+  - 文档配套：有 CODEBASE.md、GLOBALS.md 等完善的代码库文档
+
+2.2 问题
+
+  问题 1：SQL 注入漏洞（高危）
+  ──────────────────────────
+  game.php L123 和 L134 直接将 $pls 拼入 SQL，该值来自 extract($pdata,
+  EXTR_REFS)——玩家数据库中的 pls 字段，如果 players 表被污染则产生二次注入：
+
+    // Line 123 - 漏洞代码
+    $result = $db->query("SELECT * FROM {$tablepre}players
+      WHERE pid='".intval($enemyid)."' AND hp>0 AND pls='$pls'");
+
+    // Line 134 - 同样的问题
+    $result = $db->query("SELECT * FROM {$tablepre}players
+      WHERE pid='".intval($nid)."' AND hp>0");
+
+  $pls 应使用 $db->escape_string() 包装。
+
+  问题 2：职责过载（204 行涵盖 7 种职责）
+  ─────────────────────────────────────
+    认证检查 (L10-32)
+      → 玩家数据初始化 (L37, L49-59)
+        → 聊天/表情加载 (L62-64)
+          → 死亡状态处理 + RuleSet 结束剧情 (L67-95)
+            → 状态机路由 (L97-104)
+              → 战斗触发 (L107-144)
+                → 对话管理 (L148-188)
+                  → API 代理 (L191-194)
+                    → 模板渲染 (L197-202)
+
+  对比 command.php 经过 2026-06 重构后仅 67 行骨架，game.php 的复杂度高约 3 倍。
+
+  问题 3：重复的玩家查询模式
+  ──────────────────────────
+  L108-L143 三处 action 分支（corpse / chase+dfight / neut）几乎相同的
+  查询→fetch→include 模式，仅参数略有不同。
+
+  问题 4：请求中段写入数据库
+  ──────────────────────────
+  L82 和 L155 在渲染前调用 player_save($pdata) 写库：
+
+    // Line 82 - 标记 RuleSet 结束剧情已显示
+    $clbpara['ruleset_ending_shown'] = true;
+    player_save($pdata);
+
+    // Line 155 - 标记 RuleSet 开场剧情已显示
+    $clbpara['ruleset_story_shown'] = true;
+    player_save($pdata);
+
+  这导致 GET 请求（页面刷新）产生副作用，违反 HTTP GET 幂等性。若玩家快速
+  刷新页面，可能造成竞争条件。
+
+  问题 5：注释掉的死代码
+  ──────────────────────
+  L196 保留了被注释的 referrer 检查逻辑，game.func.php L527-L543 保留了
+  大量注释的 w_save() 函数——这些应清理。
+
+
+三、性能分析
+──────────────────────────────────────────────────────────────────────────────
+
+3.1 每请求的 DB 查询清单
+
+  查询                                   位置              说明
+  ─────────────────────────────────────  ────────────────  ──────────────────
+  players WHERE name=...                 auth_game_player  玩家认证（必要）
+  game WHERE groomid=...                 game.php L42      获取 RuleSet ID
+  players WHERE pid=...                  game.php L72      击杀者名称（仅死亡时）
+  players WHERE pid=... AND hp=0         game.php L110     尸体查询（条件）
+  players WHERE pid=... AND hp>0 AND..   game.php L123     战斗目标查询（条件）
+  players WHERE pid=... AND hp>0         game.php L134     中立遭遇查询（条件）
+  chat 查询                              getchat() L62     聊天记录
+  log 查询                               init_player_log() 未读互动日志
+  clubslct 相关                          init_club_check() 社团选择（条件）
+
+  正常页面加载（玩家存活，无特殊 action）至少 4 次 DB 查询。其中 RuleSet ID
+  查询（L42）与 load_gameinfo() 中已有的 $gruleset 全局变量重复。
+
+3.2 性能瓶颈
+
+  1. RuleSet 查询冗余：load_gameinfo() 已从 game 表加载了 gruleset 字段，
+     game.php L42-47 又做了一次重复查询
+  2. 文件锁阻塞：common.inc.php 使用 flock($plock, LOCK_EX) 文件锁，所有
+     非 chat 请求串行通过状态机，高并发下性能急剧下降
+  3. 无缓存层：getchat()、表情数据、物品描述解析（init_profile() 中的
+     parse_nameinfo_desc()）每次刷新都重新计算
+  4. 同步 I/O：init_profile() 中 13 个装备/物品槽的 parse_*_desc() 串行执行
+
+
+四、安全隐患审计
+──────────────────────────────────────────────────────────────────────────────
+
+  #  风险                  严重度  位置                      说明
+  ── ────────────────────  ──────  ────────────────────────  ──────────────
+  1  SQL 注入（二次）       高      game.php L123             $pls 未 escape
+  2  密码明文比较           高      player_auth.func.php L21  明文校验（遗留）
+  3  无 CSRF 防护           中      全局                      action 参数无 token
+  4  无请求频率限制         中      全局                      刷新即可多次触发副作用
+  5  GET 请求副作用         中      game.php L82, L155        player_save() 写库
+  6  include 路径可控性     低      game.php L192-193         缺少 IN_GAME 校验
+  7  文件锁释放时机         低      common.inc.php L131-159   锁外写入时间窗口
+
+
+五、可维护性评估
+──────────────────────────────────────────────────────────────────────────────
+
+5.1 与 command.php 重构的对比
+
+  维度               command.php（已重构）    game.php（待重构）
+  ─────────────────  ──────────────────────  ────────────────────
+  代码行数           67 行骨架               204 行
+  架构               骨架 + 路由层 + 9 handler 单文件全流程
+  状态管理           cmd_router_dispatch()    if-elseif 链式判断
+  Goto 语句          已消除                   未使用（好）
+  函数提取           pre_checks/post_process  部分提取（auth、init）
+
+5.2 具体问题
+
+  1. 全局变量依赖：204 行中直接使用约 40 个全局变量（$hp, $pls, $state,
+     $action, $mode, $gamestate 等），无一通过函数参数传递
+  2. 隐含状态机：L67-L104 的 $mode 决定逻辑形成了一个隐含状态机
+     （death → rest → itemmain → command），与游戏全局状态机
+     （0→10→20→30→40）重叠但独立
+  3. 魔法字符串散落：'corpse'、'pacorpse'、'chase'、'pchase'、'dfight'、
+     'neut'、'ruleset_ending'、'ruleset_opening' 等未定义常量
+  4. extract() 遗留：L37 的 extract($pdata, EXTR_REFS) 加上 L115/L139 的
+     extract($edata, EXTR_PREFIX_ALL, 'w')，使代码中变量来源难以追踪
+
+
+六、扩展性评估
+──────────────────────────────────────────────────────────────────────────────
+
+6.1 当前扩展方式
+
+  需求              当前做法                    问题
+  ─────────────────  ─────────────────────────  ──────────────────────
+  新 action 类型    在 if-elseif 链中追加分支    链越来越长，复杂度增长
+  新对话/剧情类型   直接追加 if 判断             对话逻辑已占 40+ 行
+  新前端模式        追加 include 分支            已有 3 个渲染路径
+  新玩家状态        在 L67-L104 的 if 链中插入   隐含状态机逻辑混乱
+
+6.2 痛点
+
+  - 三输出路径（template / api.php / api_v2.php）硬编码在文件末尾，
+    新增第四种前端需要改 game.php
+  - action 与 mode 耦合：$action 驱动的战斗触发和 $mode 驱动的状态路由
+    是两个独立的概念，却在同一文件中交织
+  - RuleSet 剧情硬编码：开场/结束剧情的 player_save + $opendialog 逻辑
+    直接写在 game.php 中，无法通过配置新增剧情类型
+
+
+七、模块交互分析
+──────────────────────────────────────────────────────────────────────────────
+
+7.1 依赖图
+
+  game.php
+  ├── include/core/common.inc.php          ← 基础设施（必须）
+  │   ├── global.func.php                  ← 工具函数
+  │   ├── auth/user.func.php               ← 用户认证
+  │   ├── config.inc.php                   ← DB配置
+  │   ├── db_mysqli.class.php              ← DB驱动
+  │   ├── gamectl/init.func.php            ← 初始化
+  │   ├── gamectl/news.func.php            ← 新闻
+  │   ├── gamectl/resources.func.php       ← 资源
+  │   ├── room/roommng.func.php            ← 房间管理
+  │   ├── game/club/revclubskills.func.php ← 社团技能
+  │   ├── game/dice.func.php               ← 骰子
+  │   ├── pregame/titles.func.php          ← 头衔
+  │   ├── gamectl/system.func.php          ← 游戏系统
+  │   ├── gamectl/deatharea.func.php       ← 禁区
+  │   ├── gamectl/gamestate.func.php       ← 状态机
+  │   └── gamectl/messages.func.php        ← 站内信
+  ├── include/gamectl/game.func.php        ← 玩家函数
+  ├── include/gamectl/player_auth.func.php ← 认证函数
+  ├── include/gamectl/init_player.func.php ← 初始化函数
+  ├── include/game/encounter.func.php      ← 遭遇（条件）
+  ├── include/game/combat/revbattle.func.php ← 战斗渲染（条件）
+  ├── gamedata/ruleset/story_config.php    ← RuleSet剧情（条件）
+  ├── api.php                              ← 旧前端API（条件）
+  ├── api_v2.php                           ← VEX前端API（条件）
+  └── templates/{id}/game.htm              ← 模板渲染
+
+7.2 交互问题
+
+  1. 与 common.inc.php 的时序依赖：game.php 的 player_save() 调用在
+     common.inc.php 释放文件锁之后执行，写操作不在锁保护范围内
+  2. 与 command.php 的状态共享：两者都通过 extract($pdata) 操作相同的
+     全局变量，但 game.php 是只读渲染，command.php 是读写操作，共享全局
+     命名空间存在变量污染风险
+  3. 与 battle 模块的耦合：游戏内直接 include 战斗模块并调用 findenemy_rev()
+     / init_battle_rev()，而非通过 command.php 的 mode 分发机制
+
+
+================================================================================
+  八、分阶段优化方案
+================================================================================
+
+第一阶段：安全加固与缺陷修复（优先级 P0，预计 1-2 天）
+──────────────────────────────────────────────────────────────────────────────
+
+  目标：消除已知安全漏洞，确保线上稳定运行
+
+  步骤  具体内容                                                  文件
+  ────  ───────────────────────────────────────────────────────  ──────────
+  1.1   $pls 参数 escape：将 pls='$pls' 改为                      game.php
+        pls='".$db->escape_string($pls)."'
+  1.2   action 参数白名单校验：仅允许                              game.php
+        corpse/pacorpse/chase/pchase/dfight/neut
+  1.3   消除 RuleSet ID 重复查询：直接使用 $gruleset 全局变量       game.php
+        替代 L42-47 的查询
+  1.4   $bid/$enemyid/$nid 的 intval() 检查（确认覆盖完整）        game.php
+  1.5   清理注释掉的无用代码（L196、game.func.php L527-543）       两个文件
+
+  预期效果：消除所有已知安全漏洞，减少一次不必要的 DB 查询。
+  风险：极低。escape 和 intval 是纯加固操作，不改变业务逻辑。
+
+
+第二阶段：架构重构——提取 Action Handler（优先级 P1，预计 3-5 天）
+──────────────────────────────────────────────────────────────────────────────
+
+  目标：参照 command.php 重构模式，将 action 处理逻辑提取为独立函数
+
+  步骤  具体内容
+  ────  ───────────────────────────────────────────────────────
+  2.1   新建 include/gamectl/game_action.func.php，
+        将 corpse/chase/dfight/neut 四个分支提取为独立函数
+  2.2   提取公共模式：fetch_target_player($pid, $conditions)
+        → fetch → include → init
+  2.3   定义 action 常量或类常量：ACTION_CORPSE = 'corpse' 等
+  2.4   将 action 分发改为映射表驱动
+
+  重构后 game.php 的 action 处理简化为：
+
+    $action_handlers = array(
+        'corpse'   => 'game_action_handle_corpse',
+        'pacorpse' => 'game_action_handle_corpse',
+        'chase'    => 'game_action_handle_chase',
+        'pchase'   => 'game_action_handle_chase',
+        'dfight'   => 'game_action_handle_dfight',
+        'neut'     => 'game_action_handle_neut',
+    );
+    if (isset($action_handlers[$action])) {
+        $main = $action_handlers[$action]($pdata, $bid, $pls);
+    }
+
+  预期效果：game.php 缩减至约 120 行，action 逻辑可单独测试。
+
+
+第三阶段：对话系统重构（优先级 P1，预计 2-3 天）
+──────────────────────────────────────────────────────────────────────────────
+
+  目标：将 RuleSet 剧情和对话管理从 game.php 分离
+
+  步骤  具体内容
+  ────  ───────────────────────────────────────────────────────
+  3.1   新建 include/gamectl/game_dialogue.func.php
+  3.2   提取 resolve_dialogue_state(&$pdata, $ruleset_id, $just_made_choice)
+        函数，返回 ['opendialog'=>..., 'dialogue_id'=>...]
+  3.3   RuleSet 剧情注入逻辑移到独立函数
+  3.4   消除 GET 请求中的 player_save() 副作用——
+        改为仅在 POST 请求或首次加载时标记已读
+  3.5   添加 if ($_SERVER['REQUEST_METHOD'] === 'GET') 保护
+
+  预期效果：对话逻辑完全独立，不再阻塞 game.php 主流程阅读。
+
+
+第四阶段：输出层统一与缓存引入（优先级 P2，预计 3-5 天）
+──────────────────────────────────────────────────────────────────────────────
+
+  目标：统一三输出路径，减少重复计算
+
+  步骤  具体内容
+  ────  ───────────────────────────────────────────────────────
+  4.1   新建 include/gamectl/game_output.func.php，
+        统一模板/API/VEX 三输出
+  4.2   提取输出分发逻辑：
+        dispatch_game_output($mode, $main, $pdata)
+  4.3   init_profile() 的装备描述计算结果加入进程级缓存
+  4.4   聊天和日志的首次加载可考虑客户端缓存策略（ETag/Last-Modified）
+
+  示例代码：
+
+    function dispatch_game_output($render_mode, $main_content, $pdata) {
+        switch ($render_mode) {
+            case 'vex_api':  // GET vex_api=1
+                include GAME_ROOT.'./api_v2.php';
+                break;
+            case 'api':      // GET is_new
+                include GAME_ROOT.'./api.php';
+                break;
+            default:         // 传统模板
+                init_profile($pdata);
+                include template('game');
+        }
+    }
+
+  预期效果：输出路径清晰，便于后续扩展（如纯 JSON API）。
+
+
+第五阶段：文件锁优化与性能提升（优先级 P2，预计 2-3 天）
+──────────────────────────────────────────────────────────────────────────────
+
+  目标：减少文件锁阻塞时间，提升并发能力
+
+  步骤  具体内容
+  ────  ───────────────────────────────────────────────────────
+  5.1   将 game.php 的状态读取操作移到文件锁之前（如果可以）
+  5.2   评估用数据库行锁或 Redis 分布式锁替代文件锁
+  5.3   getchat() 和表情数据增加服务端内存缓存（APCu/文件缓存）
+  5.4   评估引入 OpCache 配置（PHP 内置）
+
+  风险：较高。文件锁变更需充分测试并发场景。
+
+
+第六阶段：全面现代化（优先级 P3，建议评估后决定）
+──────────────────────────────────────────────────────────────────────────────
+
+  步骤  具体内容
+  ────  ───────────────────────────────────────────────────────
+  6.1   引入 Router 类统一入口文件模式
+        （game.php / command.php / valid.php 共享基类）
+  6.2   将 extract() 全局变量迁移至 $_PLAYER 容器数组
+  6.3   PSR-4 自动加载替代手动 require
+  6.4   引入 PHPStan/Psalm 静态分析
+
+
+================================================================================
+  九、风险矩阵
+================================================================================
+
+  风险                              概率    影响    缓解措施
+  ────────────────────────────────  ──────  ──────  ────────────────────────
+  SQL 注入被利用                      低      高      第一阶段立即修复
+  GET 副作用导致数据不一致            中      中      第三阶段消除
+  重构破坏现有功能                    中      高      分阶段、灰度发布
+  文件锁变更引入竞争条件              低      高      第五阶段充分压测
+  extract() 迁移遗漏变量              中      中      全局搜索+自动化检查
+  并发 player_save 写冲突             低      中      DB 行级锁保护
+
+
+================================================================================
+  十、测试验证策略
+================================================================================
+
+10.1 每阶段测试 Checklist
+
+  [ ] PHP 语法检查：php -l（所有修改文件）
+  [ ] 功能回归测试：
+      [ ] 玩家登录 → game.php 正常加载
+      [ ] 死亡状态 → 显示死亡页面
+      [ ] RuleSet 房间 → 开场/结束剧情正常显示
+      [ ] 追击/遭遇 → corpse / chase / neut action 正常
+      [ ] 昏迷/休息状态 → 正确显示 rest 页面
+      [ ] 手中持有道具 → itemfind 页面正常
+      [ ] VEX 前端 → ?vex_api=1 正常输出
+      [ ] is_new API → ?is_new 正常输出
+  [ ] 安全测试：
+      [ ] SQL 注入测试（pls 字段异常值）
+      [ ] XSS 测试（玩家名/物品名注入）
+  [ ] 性能测试：
+      [ ] 正常页面加载 DB 查询次数
+      [ ] 10 并发请求响应时间
+
+10.2 测试脚本建议
+
+  # PHP 语法批量检查
+  for f in game.php include/gamectl/*.func.php; do php -l "$f"; done
+
+  # 模拟请求测试
+  curl -b "user=testuser; pass=testhash" "http://localhost:8080/game.php"
+  curl -b "user=testuser; pass=testhash" "http://localhost:8080/game.php?is_new=1"
+  curl -b "user=testuser; pass=testhash" "http://localhost:8080/game.php?vex_api=1"
+
+
+================================================================================
+  十一、上线部署建议
+================================================================================
+
+  1. 分支策略：每阶段在独立分支开发，合并前 Code Review
+  2. 灰度发布：
+     - 第一阶段（安全修复）：直接热修复上线
+     - 第二阶段起：先在私房间（groomid > 0）灰度 1-2 天
+     - 确认无异常后全量上线
+  3. 回滚方案：保留 game.php 原始版本备份，git revert 一键回滚
+  4. 监控指标：
+     - game.php 响应时间（目标 < 200ms）
+     - DB 查询次数（目标 ≤ 4 次/请求）
+     - PHP 错误日志中 game.php 相关报错
+  5. 变更记录：每阶段完成后创建
+     doc/YYYYMMDD-HHMMSS-game-optimization-phaseN.txt
+
+
+================================================================================
+  十二、总结
+================================================================================
+
+game.php 是一个典型的"上帝对象"式入口文件，随着项目演进积累了过多职责。
+
+最紧迫的威胁：
+  - SQL 注入漏洞（L123）—— 应在第一阶段立即修复
+  - GET 请求副作用（L82/L155）—— 违反 HTTP 幂等性
+
+架构层面的问题可参照 command.php 的成功重构经验，分 6 个阶段逐步将
+game.php 从 204 行的巨型文件收敛为 50 行左右的轻量骨架 + 独立函数模块。
+
+推荐优先执行第一至第三阶段（安全加固 + action 提取 + 对话分离），
+这三阶段风险低、收益高，可将 game.php 核心逻辑缩减至约 80 行，
+并为后续的缓存和并发优化铺平道路。

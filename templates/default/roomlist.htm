@@ -3,11 +3,10 @@
 <form method="post" name="roomact" onsubmit="return false;" >
 <input type="hidden" name="roomact" id="roomact" value="">
 
-<!--{eval $now_rooms = !empty($roomlist) ? count($roomlist) : 0;}-->
+<!--{eval include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php'; $now_rooms = !empty($roomlist) ? count($roomlist) : 0;}-->
 	<span class="evergreen">当前房间列表（{$now_rooms}/{$max_rooms}）
 <!--{if $now_rooms < $max_rooms && !$groomid && (!empty($cuser) && !empty($cpass))}-->
 	<input type="button" value="创建普通房间" onclick="$('roomact').value='create';postCmd('roomact','index.php');" >
-	<!--{eval include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';}-->
 	<!--{if get_ruleset_config()}-->
 		<input type="button" value="创建时光重现房间" onclick="showRulesetDialog();" >
 	<!--{/if}-->

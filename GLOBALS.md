@@ -24,7 +24,7 @@
 | 战斗运行时状态（pa/pd） | [十三-运行时](#战斗运行时临时变量) | `$pa['hitrate']`, `$pa['final_damage']` |
 | clbpara全部键 | [十四](#十四clbpara结构详解) | `$clbpara['skill']`, `$clbpara['quest']` |
 | 搜索记忆/视野（smeo） | [十四-smeo](#探索视野--搜索记忆系统smeo) | `$clbpara['smeo']` |
-| 日志/错误/调试 | [十五](#十五其他特殊变量) | `$log`, `$main`, `$error` |
+| 日志/错误/AJAX输出 | [十一](#十一日志与输出变量) | `$log`, `$main`, `$error`, `$gamedata` |
 | 禁区系统函数 | [十六](#十六禁区系统函数) | `is_death_area()`, `is_safe_area()`, `get_death_areas()` |
 
 ---
@@ -493,8 +493,45 @@
 | `$main` | string | 主界面内容区 |
 | `$cmd` | string | 当前命令 |
 | `$actlog` | string | 行为日志 |
-| `$gamedata` | array | AJAX返回数据（`command.php`输出） |
+| `$gamedata` | array | **AJAX响应数据数组**——详见下方 |
 | `$error` | string | 错误信息 |
+
+### $gamedata 结构详解
+
+> 各入口文件局部定义的多维关联数组，经 `compatible_json_encode()` 序列化后作为 AJAX 响应返回前端。不同入口文件结构不同，`command.php` 最完整。
+
+**定义入口：** [command.php](command.php)（游戏指令）、[user.php](user.php)（用户设置）、[register.php](register.php)（注册）、[messages.php](messages.php)（站内信）
+
+**command.php 中的完整结构：**
+
+| 键 | 类型 | 来源 |
+|----|------|------|
+| `url` | string\|null | 直接赋值（游戏结束=`end.php`） |
+| `timer` | int | `$rmcdtime`（冷却计时器，毫秒） |
+| `locationId` | int | `$pls`（当前位置编号） |
+| `clbpara` | array | `$clbpara`（社团参数，完整传给前端） |
+| `value.teamID` | string | `$teamID` |
+| `innerHTML.ingamebgm` | string | `init_bgm()` |
+| `innerHTML.notice` | string | `ob_get_contents()`（即时反馈） |
+| `innerHTML.cmd` | string | 模板渲染（death/itemfind/fishing/rest/command 等） |
+| `innerHTML.pls` | string | `$plsinfo[$pls]` |
+| `innerHTML.anum` | int | `$alivenum` |
+| `innerHTML.main` | string | `profile` 模板 |
+| `innerHTML.log` | string | `$log`（同时写入 `vex/cache/log_{groomid}_{pid}.php`） |
+| `innerHTML.error` | string\|null | `$error`（条件性） |
+| `innerHTML.chattype` | string | 聊天选择器 HTML（有队伍时多"队伍"选项） |
+
+**其他入口的简化结构：**
+
+| 入口 | 结构 |
+|------|------|
+| `user.php` | `innerHTML.info`（操作结果信息） |
+| `register.php` | `innerHTML.info`、`innerHTML.postreg`（注册后按钮）、`innerHTML.error` |
+| `messages.php` | `innerHTML.info`、`innerHTML.messages`（消息列表 HTML）、`innerHTML.error` |
+
+**消费方式：** `innerHTML` 子键名直接对应前端 DOM 元素 `id`，JS 遍历注入。旧前端用 `game.js`；`$_GET['is_new']` 时走 [api.php](api.php) 输出另一套 JSON。
+
+**序列化：** `compatible_json_encode()` 定义于 [include/core/global.func.php](include/core/global.func.php)，自动选择 PHP 内置或自定义 JSON 类。
 
 ---
 
