@@ -22,6 +22,11 @@
                       ├── global.func.php       → 工具函数库
                       ├── user.func.php         → 用户认证
                       ├── 输入提取+过滤(COOKIE/POST/GET, EXTR_SKIP防覆盖)
+                      │   └── extract(gstrfilter($_POST)) → POST变量注入全局作用域
+                      │       但函数内无法访问。command.php 额外构建 $post = gstrfilter($_POST)
+                      │       将过滤后的 POST 数据打包为关联数组，通过参数链传入路由函数。
+                      │       路由/handler 函数统一从 $post['key'] 取值。
+                      │       详见 §五 command.php 分发机制。
                       ├── config.inc.php        → 数据库参数
                       ├── db_{driver}.class.php → 数据库驱动
                       ├── system.php            → 系统设定

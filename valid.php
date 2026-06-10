@@ -203,16 +203,10 @@ if($mode == 'enter') {
 	$clbpara['valid_bgmbook'] = $regular_bgm;
 	$clbpara['bgmbook'] = $clbpara['valid_bgmbook'];
 
-	# 检查当前房间是否使用RuleSet
-	$ruleset_id = '';
-	if (isset($groomid)) {
-		$room_id = intval($groomid);
-		$result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$room_id}");
-		if ($db->num_rows($result)) {
-			$room_data = $db->fetch_array($result);
-			$ruleset_id = $room_data['gruleset'];
-		}
-	}
+	# 使用common.inc.php中缓存的全局$gruleset（已一次性查询，避免重复DB查询）
+	# Use globally cached $gruleset from common.inc.php (single query, no duplicate DB calls)
+	global $gruleset;
+	$ruleset_id = isset($gruleset) ? $gruleset : '';
 
 	# 应用RuleSet初始化设置
 	if (!empty($ruleset_id)) {

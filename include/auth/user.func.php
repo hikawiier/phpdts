@@ -99,18 +99,15 @@ function real_ip()
 
 
 function get_iconlist(){
-	global $iconlimit,$icon,$groomid,$db,$gtablepre;
+	global $iconlimit,$icon;
 
-	// 检查当前房间是否使用RuleSet
+	// 使用common.inc.php中缓存的全局$gruleset（已一次性查询，避免重复DB查询）
+	// Use globally cached $gruleset from common.inc.php (single query, no duplicate DB calls)
+	global $gruleset;
+	$ruleset_id = isset($gruleset) ? $gruleset : '';
 	$current_iconlimit = $iconlimit;
-	if (!empty($groomid) && $groomid > 0) {
-		$result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$groomid}");
-		if ($db->num_rows($result)) {
-			$room_data = $db->fetch_array($result);
-			$ruleset_id = $room_data['gruleset'];
-
-			if (!empty($ruleset_id)) {
-				include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';
+	if (!empty($ruleset_id)) {
+			include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';
 				$avatar_limits = get_ruleset_avatar_limits($ruleset_id);
 				if ($avatar_limits) {
 					// 根据用户性别确定头像限制
@@ -122,8 +119,6 @@ function get_iconlist(){
 					}
 				}
 			}
-		}
-	}
 
 	$iconarray = array();
 	for($n = 0; $n <= $current_iconlimit; $n++)	{

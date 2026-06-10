@@ -1,18 +1,12 @@
 {template header}
 <script type="text/javascript">
-// 设置RuleSet头像路径
-<!--{if !empty($groomid) && $groomid > 0}-->
-	<!--{eval $result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$groomid}");}-->
-	<!--{if $db->num_rows($result)}-->
-		<!--{eval $room_data = $db->fetch_array($result);}-->
-		<!--{eval $ruleset_id = $room_data['gruleset'];}-->
-		<!--{if !empty($ruleset_id)}-->
-			<!--{eval include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';}-->
-			<!--{eval $ruleset_config = get_ruleset_config($ruleset_id);}-->
-			<!--{if $ruleset_config && isset($ruleset_config['avatar_config']) && $ruleset_config['avatar_config']['use_ruleset_avatars']}-->
-				window.rulesetAvatarPath = '$ruleset_config[avatar_config][avatar_path]';
-			<!--{/if}-->
-		<!--{/if}-->
+// 设置RuleSet头像路径（使用common.inc.php缓存的全局$gruleset）
+<!--{eval $ruleset_id = isset($gruleset) ? $gruleset : '';}-->
+<!--{if !empty($ruleset_id)}-->
+	<!--{eval include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';}-->
+	<!--{eval $ruleset_config = get_ruleset_config($ruleset_id);}-->
+	<!--{if $ruleset_config && isset($ruleset_config['avatar_config']) && $ruleset_config['avatar_config']['use_ruleset_avatars']}-->
+		window.rulesetAvatarPath = '$ruleset_config[avatar_config][avatar_path]';
 	<!--{/if}-->
 <!--{/if}-->
 </script>

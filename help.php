@@ -5,6 +5,7 @@ define('CURSCRIPT', 'help');
 require './include/core/common.inc.php';
 require './include/gamectl/game.func.php';
 include_once GAME_ROOT.'./include/game/item/itemplace.func.php';
+include_once GAME_ROOT . './include/game/render.func.php';
 
 $mixfile = config('mixitem',$gamecfg);
 $shopfile = config('shopitem',$gamecfg);

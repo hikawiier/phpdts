@@ -15,20 +15,10 @@ $ruleset_function_overrides = array();
  * 获取当前房间的RuleSet ID
  */
 function get_current_ruleset_id() {
-    global $groomid, $db, $gtablepre;
-
-    if (!isset($groomid) || !isset($db) || !isset($gtablepre)) {
-        return '';
-    }
-
-    $room_id = intval($groomid);
-    $result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$room_id}");
-    if ($db->num_rows($result)) {
-        $room_data = $db->fetch_array($result);
-        return $room_data['gruleset'];
-    }
-
-    return '';
+    // 使用common.inc.php中缓存的全局$gruleset（已一次性查询，避免重复DB查询）
+    // Use globally cached $gruleset from common.inc.php (single query, no duplicate DB calls)
+    global $gruleset;
+    return isset($gruleset) ? $gruleset : '';
 }
 
 /**

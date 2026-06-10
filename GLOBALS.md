@@ -44,6 +44,7 @@
 | `load_gameinfo()` | 从数据库加载 | `$gamestate`, `$areanum`, `$alivenum`... |
 | `extract($pdata)` | 从玩家数据提取 | `$pid`, `$name`, `$hp`, `$itm1`... |
 | `extract($_POST/$_GET)` | 从请求提取（Cookie优先级最高，EXTR_SKIP防覆盖） | `$mode`, `$command`, `$action`... |
+| **`$post = gstrfilter($_POST)`** | **command.php 入口处构建的 POST 参数关联数组** | **`$post['mode']`, `$post['command']`, `$post['choice']`...** |
 
 ---
 

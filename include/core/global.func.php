@@ -142,18 +142,11 @@ function clearcookies() {
 }
 
 function config($file = '', $cfg = 1) {
-	global $groomid, $db, $gtablepre;
-
-	// 检查当前房间是否使用RuleSet
-	$ruleset_id = '';
-	if (isset($groomid) && isset($db) && isset($gtablepre)) {
-		$room_id = intval($groomid);
-		$result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$room_id}");
-		if ($db->num_rows($result)) {
-			$room_data = $db->fetch_array($result);
-			$ruleset_id = $room_data['gruleset'];
-		}
-	}
+	// 使用common.inc.php中缓存的全局$gruleset（已一次性查询，避免重复DB查询）
+	// Use globally cached $gruleset from common.inc.php (single query, no duplicate DB calls)
+	// 注意：chat.php不走配置加载路径，$gruleset可能未定义
+	global $gruleset;
+	$ruleset_id = isset($gruleset) ? $gruleset : '';
 
 	// 如果房间使用RuleSet，优先加载RuleSet资源文件
 	if (!empty($ruleset_id)) {

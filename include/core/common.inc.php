@@ -183,6 +183,18 @@ if(!empty($groomid))
 
 $tablepre = !empty($groomid) ? $tablepre.'s'.$groomid.'_' : $tablepre;
 
+// RuleSet缓存：一次查询gruleset，下游函数统一读取，避免每次config()调用重复查询DB
+// RuleSet cache: query gruleset once, downstream functions read from this global
+global $gruleset;
+$gruleset = '';
+if (!empty($groomid) && $groomid > 0) {
+    $result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$groomid}");
+    if ($db->num_rows($result)) {
+        $room_data = $db->fetch_array($result);
+        $gruleset = $room_data['gruleset'];
+    }
+}
+
 // chat.php 仅需上述最小初始化，跳过后续所有游戏逻辑和配置加载
 // chat.php only needs minimal init above; skip game logic and config loading below
 if(CURSCRIPT !== 'chat')

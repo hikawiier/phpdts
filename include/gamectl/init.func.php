@@ -23,16 +23,10 @@ function init_icon_states(&$pa,$pd,$ismeet=0)
 	$pa['typeinfo'] = $typeinfo[$pa['type']];
 	
 	# 更新头像情报
-	# 检查当前房间是否使用RuleSet
-	global $groomid, $db, $gtablepre;
-	$ruleset_id = '';
-	if (!empty($groomid) && $groomid > 0) {
-		$result = $db->query("SELECT gruleset FROM {$gtablepre}game WHERE groomid = {$groomid}");
-		if ($db->num_rows($result)) {
-			$room_data = $db->fetch_array($result);
-			$ruleset_id = $room_data['gruleset'];
-		}
-	}
+	# 使用common.inc.php中缓存的全局$gruleset（已一次性查询，避免重复DB查询）
+	# Check current room RuleSet using globally cached $gruleset from common.inc.php
+	global $gruleset;
+	$ruleset_id = isset($gruleset) ? $gruleset : '';
 
 	# 如果使用RuleSet，尝试加载RuleSet头像
 	if (!empty($ruleset_id)) {
