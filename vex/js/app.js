@@ -3,12 +3,18 @@
 // ══════════════════════════════════════════════════
 
 function loadAll() {
-    console.log('[App] loadAll() 开始执行');
-    loadMap();
-    loadItemFind();
-    loadExplorationMemory();
-    loadInventory();
-    refreshLog();
+    console.log('[App] loadAll() start');
+    Promise.allSettled([
+        loadMap(),
+        loadItemFind(),
+        loadExplorationMemory(),
+        loadInventory(),
+        refreshLog()
+    ]).then(function() {
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) {
+            Debug.renderAiDump();
+        }
+    });
 }
 
 loadAll();

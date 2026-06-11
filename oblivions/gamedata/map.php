@@ -17,6 +17,7 @@ return [
             'entrance_pls'  => 1,
             'exit_pls'      => 6,
             'next_region'   => 2,
+            'prev_region'   => null,
             'exit_links'    => [2],
         ],
         2 => [
@@ -24,7 +25,8 @@ return [
             'desc'          => '散发着恶臭的泥泞湿地，每一步都可能陷入未知的深渊。',
             'entrance_pls'  => 1,
             'exit_pls'      => 4,
-            'next_region'   => null,   // 终点，暂不设结束条件
+            'next_region'   => null,
+            'prev_region'   => 1,
             'exit_links'    => [],
         ],
     ],

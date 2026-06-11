@@ -1,14 +1,14 @@
 // ══════════════════════════════════════════════════
-// 背包 / Inventory (道具槽 itm1~itm6)
+// 背包 / Inventory (item slots itm1~itm6)
 // ══════════════════════════════════════════════════
 
 async function loadInventory() {
     var listEl = document.getElementById('inventoryList');
-    listEl.innerHTML = '<div class="loading">加载中...</div>';
+    listEl.innerHTML = '<div class="loading">loading...</div>';
     Debug.add(Debug.CATEGORIES.API, 'loadInventory:start', { action: 'player_inventory' });
     var result = await gameApi('player_inventory');
     Debug.add(Debug.CATEGORIES.INVENTORY, 'loadInventory:response', result.data);
-    if (result.status !== 'success') { listEl.innerHTML = '<div class="error">加载失败: ' + escapeHtml(result.message) + '</div>'; return; }
+    if (result.status !== 'success') { listEl.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>'; return; }
     var d = result.data;
 
     var html = '<div class="slot-grid">';
@@ -16,19 +16,19 @@ async function loadInventory() {
         for (var i = 0; i < d.slots.length; i++) {
             var s = d.slots[i];
             if (s.empty) {
-                html += '<div class="slot-card slot-empty"><span class="slot-num">' + s.slot + '</span><span class="slot-empty-text">空</span></div>';
+                html += '<div class="slot-card slot-empty"><span class="slot-num">' + s.slot + '</span><span class="slot-empty-text">empty</span></div>';
             } else {
                 html += '<div class="slot-card slot-filled">' +
                     '<span class="slot-num">' + s.slot + '</span>' +
                     '<span class="slot-name">' + escapeHtml(s.name) + '</span>' +
                     '<span class="slot-kind">' + escapeHtml(s.kind) + '</span>' +
-                    '<span class="slot-meta">效:' + s.effect + ' 耐:' + escapeHtml(s.durability) + '</span>' +
+                    '<span class="slot-meta">eff:' + s.effect + ' dur:' + escapeHtml(s.durability) + '</span>' +
                     '</div>';
             }
         }
     }
     html += '</div>';
-    html += '<div class="slot-info">道具: ' + (d.num||0) + '/' + (d.limit||20) + '</div>';
+    html += '<div class="slot-info">items: ' + (d.num||0) + '/' + (d.limit||20) + '</div>';
     listEl.innerHTML = html;
 
     loadEquipment();
@@ -41,18 +41,18 @@ async function loadInventory() {
 async function loadEquipment() {
     var eqEl = document.getElementById('equipment');
     var result = await gameApi('player_info');
-    if (result.status !== 'success') { eqEl.innerHTML = '<div class="error">加载失败</div>'; return; }
+    if (result.status !== 'success') { eqEl.innerHTML = '<div class="error">load failed</div>'; return; }
     var eq = result.data.equipment;
-    if (!eq) { eqEl.innerHTML = '<div class="error">无装备数据</div>'; return; }
+    if (!eq) { eqEl.innerHTML = '<div class="error">no equipment data</div>'; return; }
 
     var eqSlots = [
-        { key: 'wep',  label: '主武器', icon: '⚔' },
-        { key: 'wep2', label: '副武器', icon: '🗡' },
-        { key: 'arb',  label: '身体',   icon: '🛡' },
-        { key: 'arh',  label: '头部',   icon: '⛑' },
-        { key: 'ara',  label: '饰品',   icon: '💍' },
-        { key: 'arf',  label: '脚部',   icon: '👢' },
-        { key: 'art',  label: '其他',   icon: '📿' }
+        { key: 'wep',  label: 'Weapon', icon: 'W' },
+        { key: 'wep2', label: 'Sub',    icon: 'S' },
+        { key: 'arb',  label: 'Body',   icon: 'B' },
+        { key: 'arh',  label: 'Head',   icon: 'H' },
+        { key: 'ara',  label: 'Acc',    icon: 'A' },
+        { key: 'arf',  label: 'Foot',   icon: 'F' },
+        { key: 'art',  label: 'Other',  icon: 'O' }
     ];
 
     var html = '';
@@ -64,13 +64,13 @@ async function loadEquipment() {
                 '<span class="eq-icon">' + es.icon + '</span>' +
                 '<span class="eq-label">' + es.label + '</span>' +
                 '<span class="eq-name">' + escapeHtml(item.name) + '</span>' +
-                '<span class="eq-meta">' + escapeHtml(item.kind||'') + ' 效:' + (item.exp||0) + ' 耐:' + escapeHtml(item.sk||'0') + '</span>' +
+                '<span class="eq-meta">' + escapeHtml(item.kind||'') + ' eff:' + (item.exp||0) + ' dur:' + escapeHtml(item.sk||'0') + '</span>' +
                 '</div>';
         } else {
             html += '<div class="eq-slot eq-empty">' +
                 '<span class="eq-icon">' + es.icon + '</span>' +
                 '<span class="eq-label">' + es.label + '</span>' +
-                '<span class="eq-name">无</span>' +
+                '<span class="eq-name">(none)</span>' +
                 '</div>';
         }
     }
@@ -86,10 +86,10 @@ var hasFoundItem = false;
 
 async function loadItemFind() {
     var el = document.getElementById('itemFindArea');
-    el.innerHTML = '<div class="loading">加载中...</div>';
+    el.innerHTML = '<div class="loading">loading...</div>';
     var result = await gameApi('player_info');
     if (result.status !== 'success') {
-        el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(result.message) + '</div>';
+        el.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>';
         return;
     }
     var d = result.data;
@@ -97,7 +97,7 @@ async function loadItemFind() {
 
     if (!d.items || !d.items[0] || !d.items[0].name) {
         hasFoundItem = false;
-        el.innerHTML = '<div class="card"><h3>发现物品</h3><p class="grey">附近没有发现物品。</p></div>';
+        el.innerHTML = '<div class="card"><h3>items found</h3><p class="grey">nothing nearby.</p></div>';
         return;
     }
 
@@ -106,52 +106,75 @@ async function loadItemFind() {
     var itm = d.items[0];
     var subKindHtml = '';
     if (itm.skk && isNaN(Number(itm.skk))) {
-        subKindHtml = '，属性：' + escapeHtml(itm.skk);
+        subKindHtml = ' | props: ' + escapeHtml(itm.skk);
     }
 
     var clubHtml = '';
     if (playerClub === 20) {
-        clubHtml = '<button class="cmdbutton refine" onclick="itemFindRefine()">[C]提炼</button>';
+        clubHtml = '<button class="cmdbutton refine" onclick="itemFindRefine()">[C]refine</button>';
     }
 
     el.innerHTML =
         '<div class="card itemfind-card">' +
-        '<h3>发现物品</h3>' +
-        '<p>发现了物品 <span class="yellow">' + escapeHtml(itm.name) + '</span>，' +
-        '类型：' + escapeHtml(itm.kind) + subKindHtml + '，' +
-        '效：' + escapeHtml(itm.exp) + '，耐：' + escapeHtml(itm.sk) + '。</p>' +
+        '<h3>items found</h3>' +
+        '<p>found <span class="yellow">' + escapeHtml(itm.name) + '</span>, ' +
+        'type: ' + escapeHtml(itm.kind) + subKindHtml + ', ' +
+        'eff: ' + escapeHtml(itm.exp) + ', dur: ' + escapeHtml(itm.sk) + '.</p>' +
         '<div class="itemfind-buttons">' +
-        '<button class="cmdbutton pickup" onclick="itemFindPickup()">[Z]拾取</button>' +
-        '<button class="cmdbutton use" onclick="itemFindUse()">[A]使用</button>' +
+        '<button class="cmdbutton pickup" onclick="itemFindPickup()">[Z]pickup</button>' +
+        '<button class="cmdbutton use" onclick="itemFindUse()">[A]use</button>' +
         clubHtml +
-        '<button class="cmdbutton discard" onclick="itemFindDiscard()">[X]丢弃</button>' +
+        '<button class="cmdbutton discard" onclick="itemFindDiscard()">[X]discard</button>' +
         '</div>' +
         '</div>';
 }
 
 async function itemFindPickup() {
     var ok = await submitCommand({ mode: 'itemmain', command: 'itemget' });
-    if (ok) { hasFoundItem = false; loadItemFind(); loadInventory(); refreshLog(); } else { alert('拾取失败'); }
+    if (ok) {
+        hasFoundItem = false;
+        await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
+    } else {
+        alert('pickup failed');
+    }
 }
 
 async function itemFindUse() {
     var ok = await submitCommand({ mode: 'command', command: 'itm0' });
-    if (ok) { hasFoundItem = false; loadItemFind(); loadInventory(); refreshLog(); } else { alert('使用失败'); }
+    if (ok) {
+        hasFoundItem = false;
+        await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
+    } else {
+        alert('use failed');
+    }
 }
 
 async function itemFindRefine() {
     var ok = await submitCommand({ mode: 'itemmain', command: 'split_itm0' });
-    if (ok) { hasFoundItem = false; loadItemFind(); loadInventory(); refreshLog(); } else { alert('提炼失败'); }
+    if (ok) {
+        hasFoundItem = false;
+        await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
+    } else {
+        alert('refine failed');
+    }
 }
 
 async function itemFindDiscard() {
     var ok = await submitCommand({ mode: 'itemmain', command: 'dropitm0' });
-    if (ok) { hasFoundItem = false; loadItemFind(); loadInventory(); refreshLog(); } else { alert('丢弃失败'); }
+    if (ok) {
+        hasFoundItem = false;
+        await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
+    } else {
+        alert('discard failed');
+    }
 }
 
 // ══════════════════════════════════════════════════
 // 探索记忆 / Exploration Memory (smeo)
-// 当 $clbpara['smeo'] 存在时显示
 // ══════════════════════════════════════════════════
 
 var explorationMemory = {};
@@ -185,23 +208,23 @@ async function loadExplorationMemory() {
         if (!mem || !mem[1]) continue;
 
         var type = mem[1];
-        var name = mem[2] || '未知';
+        var name = mem[2] || 'unknown';
         var btnText = '';
         var btnClass = '';
         var icon = '';
 
         if (type === 'itm') {
-            btnText = '拾取 ' + name;
+            btnText = 'pickup ' + name;
             btnClass = 'pickup';
-            icon = '📦';
+            icon = 'I';
         } else if (type === 'enemy') {
-            btnText = '迎战 ' + name;
+            btnText = 'fight ' + name;
             btnClass = 'use';
-            icon = '⚔';
+            icon = 'F';
         } else if (type === 'corpse') {
-            btnText = '检查 ' + name + ' 的尸体';
+            btnText = 'check ' + name + '\'s corpse';
             btnClass = 'refine';
-            icon = '💀';
+            icon = 'C';
         } else {
             continue;
         }
@@ -218,17 +241,15 @@ async function loadExplorationMemory() {
             '</div>';
     }
 
-    areaEl.innerHTML = html || '<p class="grey">暂无探索记忆</p>';
+    areaEl.innerHTML = html || '<p class="grey">no memory</p>';
 }
 
 async function explorationMemoryAction(key) {
     var ok = await submitCommand({ mode: 'command', command: 'memory' + key });
     if (ok) {
-        loadExplorationMemory();
-        loadItemFind();
-        loadInventory();
-        refreshLog();
+        await Promise.all([loadExplorationMemory(), loadItemFind(), loadInventory(), refreshLog()]);
+        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
     } else {
-        alert('操作失败');
+        alert('action failed');
     }
 }

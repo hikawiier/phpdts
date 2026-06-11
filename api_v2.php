@@ -84,6 +84,9 @@ switch ($action) {
     case 'debug_log':
         handle_debug_log();
         break;
+    case 'ai_dump_save':
+        handle_ai_dump_save();
+        break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
 }
@@ -489,6 +492,22 @@ function handle_debug_log() {
     }
 
     api_response('success', array('written' => $written));
+}
+
+function handle_ai_dump_save() {
+    $raw = file_get_contents('php://input');
+    $data = json_decode($raw, true);
+    if (!$data || !isset($data['dump'])) {
+        api_error('缺少dump数据', 'INVALID_DUMP_DATA');
+    }
+
+    $dir = GAME_ROOT . './vex/cache/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
+
+    file_put_contents($dir . 'debug_dump.txt', $data['dump'], LOCK_EX);
+    api_response('success', array('written' => true));
 }
 
 ?>

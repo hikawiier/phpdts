@@ -136,7 +136,7 @@ function obl_move($moveto, &$pdata) {
     $log .= "从{$from_tile['name']}移动到了<span class=\"yellow\">{$target_tile['name']}</span>。<br>";
     $log .= $target_tile['desc'] . '<br>';
 
-    // 8. 区域切换检查
+    // 8. 区域切换检查 — 出口格
     if ($moveto == $region['exit_pls']) {
         $next_group = $region['next_region'];
         if ($next_group && isset($map['regions'][$next_group])) {
@@ -155,7 +155,25 @@ function obl_move($moveto, &$pdata) {
         }
     }
 
-    // 9. 游戏刻
+    // 9. 区域切换检查 — 入口格回退
+    if ($moveto == $region['entrance_pls'] && !empty($region['prev_region'])) {
+        $prev_group = $region['prev_region'];
+        if (isset($map['regions'][$prev_group])) {
+            $prev_region = $map['regions'][$prev_group];
+            $pdata['pgroup'] = $prev_group;
+            $pdata['pls'] = $prev_region['exit_pls'];
+            $log .= "<br>你转过身，从<span class=\"yellow\">{$region['name']}</span>" .
+                    "回到了<span class=\"yellow\">{$prev_region['name']}</span>。<br>";
+            $log .= $prev_region['desc'] . '<br>';
+
+            $exit_tile = $map['tiles'][$prev_group][$prev_region['exit_pls']] ?? [];
+            if ($exit_tile) {
+                $log .= $exit_tile['desc'] . '<br>';
+            }
+        }
+    }
+
+    // 10. 游戏刻
     // [预留] $gamevars['obl_tick']++
 
     // 10. 移动后钩子
