@@ -26,7 +26,7 @@ $t1_list = valid_getclublist_t1($udata);
 $t2_list = valid_getclublist_t2($udata);
 
 if($mode == 'enter') {
-	if($iplimit) {
+	if($iplimit && !oblivions_is_active()) {
 		$result = $db->query("SELECT * FROM {$gtablepre}users AS u, {$tablepre}players AS p WHERE u.ip='{$udata['ip']}' AND ( u.username=p.name AND p.type=0)");
 		if($db->num_rows($result) > $iplimit) { gexit($_ERROR['ip_limit'],__file__,__line__); }
 	}	
@@ -256,8 +256,17 @@ if($mode == 'enter') {
 		}
 	}
 
-	# 显示开场剧情模态框
-	$clbpara['noskip_dialogue'] = 'opening';
+	# 显示开场剧情模态框（Oblivions 模式跳过）
+	if (!oblivions_is_active()) {
+		$clbpara['noskip_dialogue'] = 'opening';
+	}
+
+	// Oblivions 模式：pls=0 保留，初始化 pgroup=1, pls=1
+	if (oblivions_is_active()) {
+		$pgroup = 1;
+		$pls = 1;
+		$exp = 0;
+	}
 
 	//$nick=$udata['nick'];
 	/*$nicks=$udata['nicks'];
@@ -343,7 +352,7 @@ if($mode == 'enter') {
 		addnews($now,'newpc',$name,"{$sexinfo[$gd]}{$sNo}号",$ip,$nick);
 	}
 	
-	if($validnum >= $validlimit && $gamestate == 20){
+	if($validnum >= $validlimit && $gamestate == 20 && !oblivions_is_active()){
 		$gamestate = 30;
 	}
 	//$gamestate = $validnum < $validlimit ? 20 : 30;

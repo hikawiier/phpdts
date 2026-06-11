@@ -34,10 +34,14 @@
         <main class="game-layout">
             <div class="col-left">
                 <div class="panel panel-map" id="mapSection">
-                    <h2>战场地图</h2>
+                    <h2>战场地图 <button class="debug-toggle" id="debugToggle" onclick="toggleMoveDebug()" title="移动调试">🔍</button></h2>
                     <div id="mapInfo"></div>
                     <div class="map-grid-wrap">
                         <div class="map-grid" id="mapGrid"></div>
+                    </div>
+                    <div class="move-debug-panel" id="moveDebugPanel" style="display:none;">
+                        <h3>移动调试日志</h3>
+                        <div class="debug-content" id="moveDebugContent"></div>
                     </div>
                 </div>
             </div>
@@ -81,6 +85,7 @@
 
     <script src="js/data.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/debug.js"></script>
     <script src="js/player.js"></script>
     <script src="js/inventory.js"></script>
     <script src="js/map.js"></script>

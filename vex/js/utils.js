@@ -9,7 +9,13 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-function getPlaceName(pls) { return PLACE_NAMES[pls] || ('位置' + pls); }
+function getPlaceName(pls) {
+    if (mapData && mapData.links && mapData.curRegion) {
+        var tiles = mapData.links.tiles[mapData.curRegion];
+        if (tiles && tiles[pls]) return tiles[pls].name;
+    }
+    return PLACE_NAMES[pls] || ('位置' + pls);
+}
 
 function getWeatherText(w)  { return WEATHER_NAMES[w] || '未知'; }
 function getStateText(s)    { return GAME_STATE_NAMES[s] || '未知'; }
@@ -48,9 +54,9 @@ async function apiRequest(url, method, data) {
 }
 
 // VEX 前端 API 包装 / VEX frontend API wrapper
-// 统一走 game.php 代理，避免直接访问 api_v2.php
+// 直连 api_v2.php，不经过 game.php 代理
 function gameApi(action) {
-    return apiRequest(BASE_URL + '/game.php?vex_api=1&action=' + action);
+    return apiRequest(BASE_URL + '/api_v2.php?action=' + action);
 }
 
 // ══════════════════════════════════════════════════
@@ -73,4 +79,12 @@ async function submitCommand(params) {
         console.error('提交失败:', e);
         return false;
     }
+}
+
+// ══════════════════════════════════════════════════
+// 调试日志上传 / Debug log upload (委托 Debug 模块)
+// ══════════════════════════════════════════════════
+
+async function flushDebugLog() {
+    await Debug.flush();
 }

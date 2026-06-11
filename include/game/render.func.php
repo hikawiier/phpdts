@@ -13,6 +13,8 @@ if (!defined('IN_GAME')) {
 // Only enabled for u_templateid = 0 (classic) or 2 (NOUVEAU)
 function is_rich_template_enabled() {
 	global $udata;
+	// Oblivions 模式：不启用 dialogue 对话面板和 BGM 播放器
+	if (function_exists('oblivions_is_active') && oblivions_is_active()) return false;
 	if (empty($udata)) return true; // 安全回退：未加载用户数据时默认启用 / Safe fallback
 	$tid = isset($udata['u_templateid']) ? intval($udata['u_templateid']) : 0;
 	return ($tid === 0 || $tid === 2);

@@ -9,10 +9,15 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 // 移动指令 / Move command
-function cmd_handle_move($moveto, &$cmdcdtime) {
+function cmd_handle_move($moveto, &$cmdcdtime, &$pdata) {
     global $coldtimeon, $movecoldtime;
-    include_once GAME_ROOT . './include/game/search.func.php';
-    move($moveto);
+    if (oblivions_is_active()) {
+        include_once GAME_ROOT . './oblivions/include/game/move.func.php';
+        obl_move($moveto,$pdata);
+    } else {
+        include_once GAME_ROOT . './include/game/search.func.php';
+        move($moveto);
+    }
     if ($coldtimeon) {
         $cmdcdtime = $movecoldtime;
     }

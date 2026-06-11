@@ -70,6 +70,55 @@ function roommng_verify_db_game_structure()
 	return;
 }
 
+# 创建一个 Oblivions 遗忘之境单人房间
+# 不通过 RuleSet 系统，直接写入 game 表
+function roommng_create_oblivions_room(&$udata)
+{
+	global $db,$gtablepre,$now,$max_rooms,$startmin,$rerror;
+
+	if(!empty($udata['roomid']))
+	{
+		$rerror = 'alreay_in_room';
+		return;
+	}
+
+	# 统计当前已新建房间数量
+	$result = $db->query("SELECT groomid FROM {$gtablepre}game WHERE groomid>0 ");
+	$now_room_nums = $db->num_rows($result);
+	if($now_room_nums >= $max_rooms)
+	{
+		$rerror = 'room_num_limit';
+		return;
+	}
+
+	if($now_room_nums)
+	{
+		$room_ids = range(1,$max_rooms);
+		while($now_room_ids[] = $db->fetch_array($result)['groomid']){};
+		$new_room_id = array_shift(array_diff($room_ids,$now_room_ids));
+	}
+	else
+	{
+		$new_room_id = 1;
+	}
+
+	# 获取当前游戏回数
+	$result = $db->query("SELECT max(gamenum) AS max_value FROM {$gtablepre}game WHERE groomid>=0 ");
+	$new_gamenum = $db->fetch_array($result)['max_value'];
+
+	# 新建并初始化房间状态
+	$starttime = $now + $startmin*5;
+	$db->query("INSERT INTO {$gtablepre}game (gamenum,groomid,groomownid,gamestate,starttime,gruleset) VALUES ('$new_gamenum','$new_room_id','{$udata['username']}','0','$starttime','OBLIVIONS')");
+
+	# 加入房间
+	roommng_join_room($new_room_id,$udata);
+
+	// 使房间列表缓存失效 / Invalidate room list cache
+	@unlink(GAME_ROOT.'./gamedata/cache/roomlist.php');
+
+	return;
+}
+
 # 创建一个新房间
 function roommng_create_new_room(&$udata, $ruleset_id = '')
 {
@@ -190,6 +239,13 @@ function roommng_join_room($rkey,&$udata)
 	if($db->num_rows($result))
 	{
 		$gdata = $db->fetch_array($result);
+
+		// OBLIVIONS 模式：单人限制
+		if (!empty($gdata['gruleset']) && $gdata['gruleset'] === 'OBLIVIONS' && $gdata['groomnums'] >= 1) {
+			$rerror = 'oblivions_single_player';
+			return;
+		}
+
 		$gdata['groomnums']++;
 		# 更新房间内玩家数量
 		$db->query("UPDATE {$gtablepre}game SET groomnums='{$gdata['groomnums']}' WHERE groomid='{$rkey}'");

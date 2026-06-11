@@ -247,8 +247,38 @@ function compatible_json_encode($data){	//自动选择使用内置函数或者�
 }
 
 //----------------------------------------
+
+/**
+ * 应用日志记录 / Application logging
+ *
+ * 将日志写入 gamedata/logs/ 目录，按日期分文件（app_YYYY-MM-DD.log）。
+ * 自动创建目录，使用 writeover 的 file lock 保证并发安全。
+ * 用于替代 error_log()，在未启用 PHP 系统日志的环境下工作。
+ *
+ * @param string $message 日志消息
+ * @param string $level   日志级别：DEBUG | INFO | WARNING | ERROR
+ * @return void
+ */
+function app_log($message, $level = 'INFO') {
+	$log_dir = GAME_ROOT . './gamedata/logs/';
+	if (!is_dir($log_dir)) {
+		@mkdir($log_dir, 0777, true);
+	}
+	$log_file = $log_dir . 'app_' . date('Y-m-d') . '.log';
+	$log_line = '[' . date('Y-m-d H:i:s') . '] [' . $level . '] ' . $message . "\n";
+	writeover($log_file, $log_line, 'ab+', 1, 0, 0);
+}
 //              重要游戏函数
 //----------------------------------------
+
+/*
+ * 判断当前是否为 Oblivions 遗忘之境单人模式
+ * 不依赖 RuleSet 覆盖系统，直接通过 gruleset 字段判断
+ */
+function oblivions_is_active() {
+	global $gruleset;
+	return isset($gruleset) && $gruleset === 'OBLIVIONS';
+}
 
 function addnews($t = 0, $n = '',$a='',$b='',$c = '', $d = '', $e = '') {
 	global $now,$db,$tablepre,$gtablepre;

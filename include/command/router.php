@@ -36,7 +36,7 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime, $post) {
         if ($command == 'move') {
             global $moveto;
             include_once GAME_ROOT . './include/command/handlers/basic_commands.php';
-            cmd_handle_move($moveto, $cmdcdtime);
+            cmd_handle_move($moveto, $cmdcdtime, $pdata);
             return 'command';
         }
 

@@ -5,7 +5,9 @@
 async function loadInventory() {
     var listEl = document.getElementById('inventoryList');
     listEl.innerHTML = '<div class="loading">加载中...</div>';
+    Debug.add(Debug.CATEGORIES.API, 'loadInventory:start', { action: 'player_inventory' });
     var result = await gameApi('player_inventory');
+    Debug.add(Debug.CATEGORIES.INVENTORY, 'loadInventory:response', result.data);
     if (result.status !== 'success') { listEl.innerHTML = '<div class="error">加载失败: ' + escapeHtml(result.message) + '</div>'; return; }
     var d = result.data;
 

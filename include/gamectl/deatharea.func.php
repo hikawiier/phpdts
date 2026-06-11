@@ -34,7 +34,8 @@ if (!defined('IN_GAME')) {
  */
 function is_death_area($area_id) {
     global $arealist, $areanum, $hack;
-    return !$hack && array_search($area_id, $arealist) <= $areanum;
+    $idx = array_search($area_id, $arealist);
+    return !$hack && $idx !== false && $idx <= $areanum;
 }
 
 /**
@@ -51,7 +52,8 @@ function is_death_area($area_id) {
  */
 function is_safe_area($area_id) {
     global $arealist, $areanum, $hack;
-    return $hack || array_search($area_id, $arealist) > $areanum;
+    $idx = array_search($area_id, $arealist);
+    return $hack || ($idx !== false && $idx > $areanum);
 }
 
 /**
@@ -161,6 +163,11 @@ function get_safe_areas_ex($exclude_danger_areas = true) {
  */
 function get_areainfo_html() {
     global $plsinfo, $arealist, $areanum, $areaadd, $areatime, $areahour;
+
+    // OBLIVIONS 模式：无禁区，返回空
+    if (oblivions_is_active()) {
+        return '';
+    }
 
     $areadata = '';
     $plsnum = count($plsinfo);

@@ -10,27 +10,11 @@ define('CURSCRIPT', 'api');
 
 require_once './include/core/common.inc.php';
 require_once './include/gamectl/game.func.php';
+require_once './include/gamectl/player_auth.func.php';
+require_once './include/core/entrypoint.php';
 
-# 复制command.php中的登录验证逻辑，确保API请求必须来自已登录的玩家
-if (!$cuser || !$cpass) {
-    gexit($_ERROR['no_login'], __file__, __line__);
-}
-# $pdata是从数据库中获取到的当前玩家的所有数据
-$pdata = fetch_playerdata_by_name($cuser);
-if (!$pdata) {
-    header("Location: index.php");
-    exit();
-}
-if ($pdata['pass'] != $cpass) {
-    $tr = $db->query("SELECT `password` FROM {$gtablepre}users WHERE username='$cuser'");
-    $tp = $db->fetch_array($tr);
-    $password = $tp['password'];
-    if ($password == $cpass) {
-        $db->query("UPDATE {$tablepre}players SET pass='$password' WHERE name='$cuser'");
-    } else {
-        gexit($_ERROR['wrong_pw'], __file__, __line__);
-    }
-}
+// 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
+$pdata = game_entrypoint('api');
 
 header('Content-Type: application/json');
 
@@ -96,6 +80,9 @@ switch ($action) {
         break;
     case 'chat_list':
         handle_chat_list();
+        break;
+    case 'debug_log':
+        handle_debug_log();
         break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
@@ -414,14 +401,27 @@ function handle_player_inventory() {
 function handle_game_map() {
     global $pdata, $arealist, $areanum, $plsinfo, $hack, $areaadd;
 
-    api_response('success', array(
+    $data = array(
         'currentLocation' => (int)$pdata['pls'],
+        'currentRegion'   => (int)$pdata['pgroup'],
         'arealist' => $arealist,
         'areanum' => $areanum,
         'areaadd' => $areaadd,
         'hack' => $hack,
         'totalAreas' => count($plsinfo)
-    ));
+    );
+
+    // Oblivions 模式：附加连通性数据
+    if (oblivions_is_active()) {
+        $map = require GAME_ROOT . './oblivions/gamedata/map.php';
+        $data['links'] = array(
+            'regions' => $map['regions'],
+            'tiles'   => $map['tiles'],
+            'grids'   => $map['grids'],
+        );
+    }
+
+    api_response('success', $data);
 }
 
 function handle_game_log() {
@@ -453,6 +453,42 @@ function handle_chat_list() {
     }
     $messages = array_reverse($messages);
     api_response('success', $messages);
+}
+
+function handle_debug_log() {
+    global $groomid, $cuser;
+
+    $raw = file_get_contents('php://input');
+    $data = json_decode($raw, true);
+    if (!$data || !is_array($data)) {
+        api_error('无效的调试数据', 'INVALID_DEBUG_DATA');
+    }
+
+    $dir = GAME_ROOT . './vex/cache/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
+
+    $categories = isset($data['categories']) ? $data['categories'] : $data;
+    $written = array();
+
+    foreach ($categories as $category => $entries) {
+        if (!is_array($entries)) continue;
+        $safe_cat = preg_replace('/[^a-z_]/', '', strtolower($category));
+        if (empty($safe_cat)) $safe_cat = 'move';
+
+        $log_file = $dir . 'debug_' . $safe_cat . '_' . $groomid . '.log';
+        $entry = array(
+            'time' => date('Y-m-d H:i:s'),
+            'user' => $cuser,
+            'entries' => $entries
+        );
+        $line = json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n";
+        file_put_contents($log_file, $line, FILE_APPEND | LOCK_EX);
+        $written[] = $safe_cat;
+    }
+
+    api_response('success', array('written' => $written));
 }
 
 ?>

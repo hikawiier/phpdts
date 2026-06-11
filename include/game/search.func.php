@@ -85,6 +85,7 @@ function move($moveto = 99,&$data=NULL)
 		//玩家位于标准地点组内
 		if((!array_key_exists($moveto,$plsinfo))||($moveto == 'main')||($moveto < 0 )||($moveto >= $plsnum))
 		{
+			$log.= 'moveto = '.$moveto.'<br>';
 			$log .= '请选择正确的移动地点。<br>';
 			return;
 		}

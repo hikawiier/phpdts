@@ -7,6 +7,7 @@
 	<span class="evergreen">当前房间列表（{$now_rooms}/{$max_rooms}）
 <!--{if $now_rooms < $max_rooms && !$groomid && (!empty($cuser) && !empty($cpass))}-->
 	<input type="button" value="创建普通房间" onclick="$('roomact').value='create';postCmd('roomact','index.php');" >
+	<input type="button" value="创建遗忘之境" onclick="$('roomact').value='create_oblivions';postCmd('roomact','index.php');" >
 	<!--{if get_ruleset_config()}-->
 		<input type="button" value="创建时光重现房间" onclick="showRulesetDialog();" >
 	<!--{/if}-->
@@ -32,11 +33,15 @@
 				</td>
 				<td class="b3" width="100px">
 					<!--{if !empty($rinfo['gruleset'])}-->
-						<!--{eval $ruleset_config = get_ruleset_config($rinfo['gruleset']);}-->
-						<!--{if $ruleset_config}-->
-							<span class="yellow" title="$ruleset_config[description]">$ruleset_config[name]</span>
+						<!--{if $rinfo['gruleset'] == 'OBLIVIONS'}-->
+							<span class="yellow" title="单人PvE探索模式。没有禁区，没有其他玩家，独自在遗忘之境中生存。">遗忘之境</span>
 						<!--{else}-->
-							<span class="red">$rinfo[gruleset]</span>
+							<!--{eval $ruleset_config = get_ruleset_config($rinfo['gruleset']);}-->
+							<!--{if $ruleset_config}-->
+								<span class="yellow" title="$ruleset_config[description]">$ruleset_config[name]</span>
+							<!--{else}-->
+								<span class="red">$rinfo[gruleset]</span>
+							<!--{/if}-->
 						<!--{/if}-->
 					<!--{else}-->
 						<span class="evergreen">标准模式</span>

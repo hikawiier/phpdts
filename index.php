@@ -34,6 +34,10 @@ if(!empty($roomact))
 		$ruleset_id = isset($ruleset) ? $ruleset : '';
 		roommng_create_new_room($udata, $ruleset_id);
 	}
+	elseif($roomact == 'create_oblivions')
+	{
+		roommng_create_oblivions_room($udata);
+	}
 	elseif($roomact == 'create_ruleset')
 	{
 		$ruleset_id = isset($ruleset) ? $ruleset : '';

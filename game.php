@@ -18,6 +18,12 @@ if (isset($mode) && $mode == 'quit') {
 // [A] 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
 $pdata = game_entrypoint('game');
 
+// OBLIVIONS 模式：强制使用 VEX 模板
+if (oblivions_is_active()) {
+	header("Location: vex/index.html");
+	exit();
+}
+
 // [B] 公共初始化 / Common initialization
 require GAME_ROOT.'./include/gamectl/init_player.func.php';
 

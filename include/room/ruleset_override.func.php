@@ -39,7 +39,7 @@ function init_ruleset_override() {
 		include_once GAME_ROOT.'./gamedata/ruleset/ruleset_config.php';
 		$current_ruleset_config = get_ruleset_config($ruleset_id);
 		if (!empty($GLOBALS['errorinfo'])) {
-			error_log("RuleSet Override: 房间 " . $GLOBALS['groomid'] . " 使用 RuleSet: $ruleset_id");
+			app_log("RuleSet Override: 房间 " . $GLOBALS['groomid'] . " 使用 RuleSet: $ruleset_id", 'INFO');
 		}
 	}
 }
@@ -55,7 +55,7 @@ function load_ruleset_override_functions() {
 		// 加载全随机模式的覆盖函数
 		include_once GAME_ROOT.'./gamedata/ruleset/ACDTS_298SP4_AR/include/ruleset_functions.php';
 		if (!empty($GLOBALS['errorinfo'])) {
-			error_log("RuleSet Override: 已加载 $ruleset_id 的覆盖函数");
+			app_log("RuleSet Override: 已加载 $ruleset_id 的覆盖函数", 'INFO');
 		}
 	}
 }

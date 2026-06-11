@@ -115,3 +115,6 @@ img/NPCAvatar_Temp.psd
 diff_copy.bat
 gamedata/adminlog.php
 /gamedata/cache/rate_limit
+gamedata/cache/compress_queue.php
+gamedata/cache/roomlist.php
+/.mimocode

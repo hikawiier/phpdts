@@ -5,7 +5,9 @@
 async function loadPlayerInfo() {
     var el = document.getElementById('playerInfo');
     el.innerHTML = '<div class="loading">加载中...</div>';
+    Debug.add(Debug.CATEGORIES.API, 'loadPlayerInfo:start', { action: 'player_info' });
     var result = await gameApi('player_info');
+    Debug.add(Debug.CATEGORIES.PLAYER, 'loadPlayerInfo:response', result.data);
     if (result.status !== 'success') { el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(result.message) + '</div>'; return; }
     var d = result.data;
     var expP = ((d.exp||0)/(d.upexp||1))*100;

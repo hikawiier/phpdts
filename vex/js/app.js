@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════
 
 function loadAll() {
+    console.log('[App] loadAll() 开始执行');
     loadMap();
     loadItemFind();
     loadExplorationMemory();
