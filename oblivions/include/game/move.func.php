@@ -10,15 +10,37 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 /**
- * 加载地图数据（带缓存）
+ * 加载地图数据（按区域懒加载）
+ * - 不传参：返回 regions + grids + 已缓存的 tiles
+ * - 传 pgroup：加载该区域 tiles 并返回完整结构
+ * @param int|null $pgroup 区域 ID，null 表示不额外加载
  * @return array
  */
-function obl_get_map_data() {
-    static $map = null;
-    if ($map === null) {
-        $map = require GAME_ROOT . './oblivions/gamedata/map.php';
+function obl_get_map_data($pgroup = null) {
+    static $regions = null;
+    static $grids = null;
+    static $tilesCache = [];
+
+    // 首次调用加载 regions + grids（轻量元数据）
+    if ($regions === null) {
+        $base = require GAME_ROOT . './oblivions/gamedata/map.php';
+        $regions = $base['regions'];
+        $grids = $base['grids'];
     }
-    return $map;
+
+    // 按需加载指定区域的 tiles
+    if ($pgroup !== null && !isset($tilesCache[$pgroup])) {
+        $path = GAME_ROOT . "./oblivions/gamedata/tiles/region_{$pgroup}.php";
+        if (file_exists($path)) {
+            $tilesCache[$pgroup] = require $path;
+        }
+    }
+
+    return [
+        'regions' => $regions,
+        'tiles'   => $tilesCache,
+        'grids'   => $grids,
+    ];
 }
 
 /**
@@ -40,7 +62,7 @@ function obl_get_move_range() {
 function obl_get_distance($pgroup, $from, $to) {
     if ($from === $to) return 0;
 
-    $map = obl_get_map_data();
+    $map = obl_get_map_data($pgroup);
     $tiles = $map['tiles'][$pgroup] ?? [];
     if (!isset($tiles[$from]) || !isset($tiles[$to])) return -1;
 
@@ -69,8 +91,8 @@ function obl_get_distance($pgroup, $from, $to) {
 function obl_move($moveto, &$pdata) {
     global $log;
 
-    $map = obl_get_map_data();
     $cur_pgroup = (int)$pdata['pgroup'];
+    $map = obl_get_map_data($cur_pgroup);
     $cur_pls = (int)$pdata['pls'];
 
     // 1. 同位置检查
@@ -140,6 +162,8 @@ function obl_move($moveto, &$pdata) {
     if ($moveto == $region['exit_pls']) {
         $next_group = $region['next_region'];
         if ($next_group && isset($map['regions'][$next_group])) {
+            // 预加载目标区域 tiles
+            $map = obl_get_map_data($next_group);
             $next_region = $map['regions'][$next_group];
             $pdata['pgroup'] = $next_group;
             $pdata['pls'] = $next_region['entrance_pls'];
@@ -159,6 +183,8 @@ function obl_move($moveto, &$pdata) {
     if ($moveto == $region['entrance_pls'] && !empty($region['prev_region'])) {
         $prev_group = $region['prev_region'];
         if (isset($map['regions'][$prev_group])) {
+            // 预加载目标区域 tiles
+            $map = obl_get_map_data($prev_group);
             $prev_region = $map['regions'][$prev_group];
             $pdata['pgroup'] = $prev_group;
             $pdata['pls'] = $prev_region['exit_pls'];

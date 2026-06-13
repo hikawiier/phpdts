@@ -2,15 +2,25 @@
 // 玩家信息 / Player info (render in drawer)
 // ══════════════════════════════════════════════════
 
-async function loadPlayerInfo() {
-    var el = document.getElementById('playerInfo');
+import { DebugBus, RAGE_STATUS, POSE_NAMES, TACTIC_NAMES } from './data.js';
+import { escapeHtml, getPlaceName, getGenderText, getRaceText, getClubText } from './utils.js';
+import { dataManager } from './data-manager.js';
+
+export async function loadPlayerInfo() {
+    const el = document.getElementById('playerInfo');
     el.innerHTML = '<div class="loading">loading...</div>';
-    Debug.add(Debug.CATEGORIES.API, 'loadPlayerInfo:start', { action: 'player_info' });
-    var result = await gameApi('player_info');
-    Debug.add(Debug.CATEGORIES.PLAYER, 'loadPlayerInfo:response', result.data);
+    DebugBus.emit('api', 'loadPlayerInfo:start', { action: 'player_info' });
+    const result = await dataManager.fetch('player_info', true);
+    DebugBus.emit('player', 'loadPlayerInfo:response', {
+        hp: result.data ? result.data.hp : null,
+        sp: result.data ? result.data.sp : null,
+        pls: result.data ? result.data.pls : null,
+        pgroup: result.data ? result.data.pgroup : null,
+        lvl: result.data ? result.data.lvl : null
+    });
     if (result.status !== 'success') { el.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>'; return; }
-    var d = result.data;
-    var expP = ((d.exp||0)/(d.upexp||1))*100;
+    const d = result.data;
+    const expP = ((d.exp||0)/(d.upexp||1))*100;
     el.innerHTML =
         '<div class="card"><h3>Basic Info</h3>' +
         '<p>name: ' + escapeHtml(d.name) + '</p>' +
@@ -39,22 +49,18 @@ async function loadPlayerInfo() {
 // 玩家信息抽屉 / Player info drawer
 // ══════════════════════════════════════════════════
 
-var drawerOpen = false;
+let drawerOpen = false;
 
-function toggleDrawer() {
-    var drawer = document.getElementById('playerDrawer');
-    var overlay = document.getElementById('drawerOverlay');
-    var toggle = document.getElementById('drawerToggle');
+export function toggleDrawer() {
+    const drawer = document.getElementById('playerDrawer');
+    const overlay = document.getElementById('drawerOverlay');
+    const toggle = document.getElementById('drawerToggle');
     drawerOpen = !drawerOpen;
     if (drawerOpen) {
         drawer.classList.add('open');
         overlay.classList.add('open');
         toggle.classList.add('shifted');
-        loadPlayerInfo().then(function() {
-            if (typeof Debug !== 'undefined' && Debug.isEnabled()) {
-                Debug.renderAiDump();
-            }
-        });
+        loadPlayerInfo();
     } else {
         drawer.classList.remove('open');
         overlay.classList.remove('open');
@@ -62,10 +68,10 @@ function toggleDrawer() {
     }
 }
 
-function closeDrawer() {
-    var drawer = document.getElementById('playerDrawer');
-    var overlay = document.getElementById('drawerOverlay');
-    var toggle = document.getElementById('drawerToggle');
+export function closeDrawer() {
+    const drawer = document.getElementById('playerDrawer');
+    const overlay = document.getElementById('drawerOverlay');
+    const toggle = document.getElementById('drawerToggle');
     drawerOpen = false;
     drawer.classList.remove('open');
     overlay.classList.remove('open');

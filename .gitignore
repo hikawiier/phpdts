@@ -118,3 +118,4 @@ gamedata/adminlog.php
 gamedata/cache/compress_queue.php
 gamedata/cache/roomlist.php
 /.mimocode
+gamedata/cache/roomlist.php

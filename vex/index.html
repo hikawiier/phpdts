@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="base-url" content="/phpdts">
     <title>PHPDTS - 立体剪纸大逃杀</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -34,14 +35,10 @@
         <main class="game-layout">
             <div class="col-left">
                 <div class="panel panel-map" id="mapSection">
-                    <h2>战场地图 <button class="debug-toggle" id="debugToggle" onclick="toggleMoveDebug()" title="移动调试">🔍</button></h2>
+                    <h2>战场地图</h2>
                     <div id="mapInfo"></div>
                     <div class="map-grid-wrap">
                         <div class="map-grid" id="mapGrid"></div>
-                    </div>
-                    <div class="move-debug-panel" id="moveDebugPanel" style="display:none;">
-                        <h3>移动调试日志</h3>
-                        <div class="debug-content" id="moveDebugContent"></div>
                     </div>
                 </div>
             </div>
@@ -53,10 +50,6 @@
                 <div class="panel panel-itemfind" id="itemfindSection">
                     <h2>发现物品</h2>
                     <div id="itemFindArea"></div>
-                </div>
-                <div class="panel panel-memory" id="memorySection" style="display:none;">
-                    <h2>探索记忆</h2>
-                    <div id="memoryArea"></div>
                 </div>
                 <div class="panel-group-bottom">
                     <div class="panel panel-inv" id="inventorySection">
@@ -83,13 +76,6 @@
 
     <button class="drawer-toggle" id="drawerToggle" onclick="toggleDrawer()" title="玩家信息">☰</button>
 
-    <script src="js/data.js"></script>
-    <script src="js/utils.js"></script>
-    <script src="js/debug.js"></script>
-    <script src="js/player.js"></script>
-    <script src="js/inventory.js"></script>
-    <script src="js/map.js"></script>
-    <script src="js/log.js"></script>
-    <script src="js/app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

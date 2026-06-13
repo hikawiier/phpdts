@@ -414,9 +414,11 @@ function handle_game_map() {
         'totalAreas' => count($plsinfo)
     );
 
-    // Oblivions 模式：附加连通性数据
+    // Oblivions 模式：附加连通性数据（按需加载当前区域 tiles）
     if (oblivions_is_active()) {
-        $map = require GAME_ROOT . './oblivions/gamedata/map.php';
+        include_once GAME_ROOT . './oblivions/include/game/move.func.php';
+        $cur_pgroup = (int)$pdata['pgroup'];
+        $map = obl_get_map_data($cur_pgroup);
         $data['links'] = array(
             'regions' => $map['regions'],
             'tiles'   => $map['tiles'],
@@ -467,47 +469,58 @@ function handle_debug_log() {
         api_error('无效的调试数据', 'INVALID_DEBUG_DATA');
     }
 
-    $dir = GAME_ROOT . './vex/cache/';
+    $log_file = GAME_ROOT . './vex/cache/debug_move_' . $groomid . '.log';
+    $dir = dirname($log_file);
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);
     }
 
-    $categories = isset($data['categories']) ? $data['categories'] : $data;
-    $written = array();
+    $entry = array(
+        'time' => date('Y-m-d H:i:s'),
+        'user' => $cuser,
+        'entries' => $data
+    );
 
-    foreach ($categories as $category => $entries) {
-        if (!is_array($entries)) continue;
-        $safe_cat = preg_replace('/[^a-z_]/', '', strtolower($category));
-        if (empty($safe_cat)) $safe_cat = 'move';
+    $line = json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n";
+    file_put_contents($log_file, $line, FILE_APPEND | LOCK_EX);
 
-        $log_file = $dir . 'debug_' . $safe_cat . '_' . $groomid . '.log';
-        $entry = array(
-            'time' => date('Y-m-d H:i:s'),
-            'user' => $cuser,
-            'entries' => $entries
-        );
-        $line = json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n";
-        file_put_contents($log_file, $line, FILE_APPEND | LOCK_EX);
-        $written[] = $safe_cat;
-    }
-
-    api_response('success', array('written' => $written));
+    api_response('success', array('written' => true));
 }
 
 function handle_ai_dump_save() {
+    global $groomid, $cuser;
+
     $raw = file_get_contents('php://input');
-    $data = json_decode($raw, true);
-    if (!$data || !isset($data['dump'])) {
-        api_error('缺少dump数据', 'INVALID_DUMP_DATA');
+    if (empty($raw)) {
+        api_error('空数据', 'EMPTY_DATA');
     }
 
-    $dir = GAME_ROOT . './vex/cache/';
+    $log_file = GAME_ROOT . './vex/cache/ai_dump_' . $groomid . '.jsonl';
+    $dir = dirname($log_file);
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);
     }
 
-    file_put_contents($dir . 'debug_dump.txt', $data['dump'], LOCK_EX);
-    api_response('success', array('written' => true));
+    // JSON Lines 追加写入，每行末尾加换行
+    $payload = trim($raw);
+    $lines = explode("\n", $payload);
+    $valid_lines = array();
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (empty($line)) continue;
+        // 验证每行是合法 JSON
+        json_decode($line);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $valid_lines[] = $line;
+        }
+    }
+
+    if (!empty($valid_lines)) {
+        $content = implode("\n", $valid_lines) . "\n";
+        file_put_contents($log_file, $content, FILE_APPEND | LOCK_EX);
+    }
+
+    api_response('success', array('written' => count($valid_lines)));
 }
 
 ?>

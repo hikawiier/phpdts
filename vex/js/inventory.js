@@ -2,19 +2,28 @@
 // 背包 / Inventory (item slots itm1~itm6)
 // ══════════════════════════════════════════════════
 
-async function loadInventory() {
-    var listEl = document.getElementById('inventoryList');
-    listEl.innerHTML = '<div class="loading">loading...</div>';
-    Debug.add(Debug.CATEGORIES.API, 'loadInventory:start', { action: 'player_inventory' });
-    var result = await gameApi('player_inventory');
-    Debug.add(Debug.CATEGORIES.INVENTORY, 'loadInventory:response', result.data);
-    if (result.status !== 'success') { listEl.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>'; return; }
-    var d = result.data;
+import { DebugBus } from './data.js';
+import { escapeHtml, gameApi } from './utils.js';
+import { refreshLog } from './log.js';
+import { dataManager } from './data-manager.js';
+import { commandQueue } from './command-queue.js';
 
-    var html = '<div class="slot-grid">';
+export let playerClub = 0;
+export let hasFoundItem = false;
+
+export async function loadInventory() {
+    const listEl = document.getElementById('inventoryList');
+    listEl.innerHTML = '<div class="loading">loading...</div>';
+    DebugBus.emit('api', 'loadInventory:start', { action: 'player_inventory' });
+    const result = await gameApi('player_inventory');
+    DebugBus.emit('inventory', 'loadInventory:response', { slotCount: result.data ? (result.data.slots || []).length : 0 });
+    if (result.status !== 'success') { listEl.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>'; return; }
+    const d = result.data;
+
+    let html = '<div class="slot-grid">';
     if (d.slots && d.slots.length > 0) {
-        for (var i = 0; i < d.slots.length; i++) {
-            var s = d.slots[i];
+        for (let i = 0; i < d.slots.length; i++) {
+            const s = d.slots[i];
             if (s.empty) {
                 html += '<div class="slot-card slot-empty"><span class="slot-num">' + s.slot + '</span><span class="slot-empty-text">empty</span></div>';
             } else {
@@ -39,13 +48,13 @@ async function loadInventory() {
 // ══════════════════════════════════════════════════
 
 async function loadEquipment() {
-    var eqEl = document.getElementById('equipment');
-    var result = await gameApi('player_info');
+    const eqEl = document.getElementById('equipment');
+    const result = await dataManager.fetch('player_info');
     if (result.status !== 'success') { eqEl.innerHTML = '<div class="error">load failed</div>'; return; }
-    var eq = result.data.equipment;
+    const eq = result.data.equipment;
     if (!eq) { eqEl.innerHTML = '<div class="error">no equipment data</div>'; return; }
 
-    var eqSlots = [
+    const eqSlots = [
         { key: 'wep',  label: 'Weapon', icon: 'W' },
         { key: 'wep2', label: 'Sub',    icon: 'S' },
         { key: 'arb',  label: 'Body',   icon: 'B' },
@@ -55,10 +64,10 @@ async function loadEquipment() {
         { key: 'art',  label: 'Other',  icon: 'O' }
     ];
 
-    var html = '';
-    for (var i = 0; i < eqSlots.length; i++) {
-        var es = eqSlots[i];
-        var item = eq[es.key];
+    let html = '';
+    for (let i = 0; i < eqSlots.length; i++) {
+        const es = eqSlots[i];
+        const item = eq[es.key];
         if (item && item.name) {
             html += '<div class="eq-slot eq-filled">' +
                 '<span class="eq-icon">' + es.icon + '</span>' +
@@ -81,18 +90,15 @@ async function loadEquipment() {
 // 发现物品 / Item find
 // ══════════════════════════════════════════════════
 
-var playerClub = 0;
-var hasFoundItem = false;
-
-async function loadItemFind() {
-    var el = document.getElementById('itemFindArea');
+export async function loadItemFind() {
+    const el = document.getElementById('itemFindArea');
     el.innerHTML = '<div class="loading">loading...</div>';
-    var result = await gameApi('player_info');
+    const result = await dataManager.fetch('player_info');
     if (result.status !== 'success') {
         el.innerHTML = '<div class="error">load failed: ' + escapeHtml(result.message) + '</div>';
         return;
     }
-    var d = result.data;
+    const d = result.data;
     playerClub = d.club || 0;
 
     if (!d.items || !d.items[0] || !d.items[0].name) {
@@ -103,13 +109,13 @@ async function loadItemFind() {
 
     hasFoundItem = true;
 
-    var itm = d.items[0];
-    var subKindHtml = '';
+    const itm = d.items[0];
+    let subKindHtml = '';
     if (itm.skk && isNaN(Number(itm.skk))) {
         subKindHtml = ' | props: ' + escapeHtml(itm.skk);
     }
 
-    var clubHtml = '';
+    let clubHtml = '';
     if (playerClub === 20) {
         clubHtml = '<button class="cmdbutton refine" onclick="itemFindRefine()">[C]refine</button>';
     }
@@ -129,127 +135,46 @@ async function loadItemFind() {
         '</div>';
 }
 
-async function itemFindPickup() {
-    var ok = await submitCommand({ mode: 'itemmain', command: 'itemget' });
-    if (ok) {
+export async function itemFindPickup() {
+    const result = await commandQueue.execute({ mode: 'itemmain', command: 'itemget' });
+    if (result.success) {
         hasFoundItem = false;
+        dataManager.invalidateAll();
         await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
-        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
     } else {
-        alert('pickup failed');
+        alert('pickup failed' + (result.error ? ': ' + result.error : ''));
     }
 }
 
-async function itemFindUse() {
-    var ok = await submitCommand({ mode: 'command', command: 'itm0' });
-    if (ok) {
+export async function itemFindUse() {
+    const result = await commandQueue.execute({ mode: 'command', command: 'itm0' });
+    if (result.success) {
         hasFoundItem = false;
+        dataManager.invalidateAll();
         await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
-        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
     } else {
-        alert('use failed');
+        alert('use failed' + (result.error ? ': ' + result.error : ''));
     }
 }
 
-async function itemFindRefine() {
-    var ok = await submitCommand({ mode: 'itemmain', command: 'split_itm0' });
-    if (ok) {
+export async function itemFindRefine() {
+    const result = await commandQueue.execute({ mode: 'itemmain', command: 'split_itm0' });
+    if (result.success) {
         hasFoundItem = false;
+        dataManager.invalidateAll();
         await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
-        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
     } else {
-        alert('refine failed');
+        alert('refine failed' + (result.error ? ': ' + result.error : ''));
     }
 }
 
-async function itemFindDiscard() {
-    var ok = await submitCommand({ mode: 'itemmain', command: 'dropitm0' });
-    if (ok) {
+export async function itemFindDiscard() {
+    const result = await commandQueue.execute({ mode: 'itemmain', command: 'dropitm0' });
+    if (result.success) {
         hasFoundItem = false;
+        dataManager.invalidateAll();
         await Promise.all([loadItemFind(), loadInventory(), refreshLog()]);
-        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
     } else {
-        alert('discard failed');
-    }
-}
-
-// ══════════════════════════════════════════════════
-// 探索记忆 / Exploration Memory (smeo)
-// ══════════════════════════════════════════════════
-
-var explorationMemory = {};
-var hasExplorationMemory = false;
-
-async function loadExplorationMemory() {
-    var sectionEl = document.getElementById('memorySection');
-    var areaEl = document.getElementById('memoryArea');
-    if (!sectionEl || !areaEl) return;
-
-    var result = await gameApi('player_info');
-    if (result.status !== 'success') return;
-
-    var d = result.data;
-    var smeo = (d.clbpara && d.clbpara.smeo) ? d.clbpara.smeo : null;
-
-    if (!smeo || Object.keys(smeo).length === 0) {
-        hasExplorationMemory = false;
-        explorationMemory = {};
-        sectionEl.style.display = 'none';
-        return;
-    }
-
-    hasExplorationMemory = true;
-    explorationMemory = smeo;
-    sectionEl.style.display = '';
-
-    var html = '';
-    for (var key in smeo) {
-        var mem = smeo[key];
-        if (!mem || !mem[1]) continue;
-
-        var type = mem[1];
-        var name = mem[2] || 'unknown';
-        var btnText = '';
-        var btnClass = '';
-        var icon = '';
-
-        if (type === 'itm') {
-            btnText = 'pickup ' + name;
-            btnClass = 'pickup';
-            icon = 'I';
-        } else if (type === 'enemy') {
-            btnText = 'fight ' + name;
-            btnClass = 'use';
-            icon = 'F';
-        } else if (type === 'corpse') {
-            btnText = 'check ' + name + '\'s corpse';
-            btnClass = 'refine';
-            icon = 'C';
-        } else {
-            continue;
-        }
-
-        html +=
-            '<div class="card memory-card">' +
-            '<div class="memory-header">' +
-            '<span class="memory-icon">' + icon + '</span>' +
-            '<span class="memory-name">' + escapeHtml(name) + '</span>' +
-            '</div>' +
-            '<div class="memory-buttons">' +
-            '<button class="cmdbutton ' + btnClass + '" onclick="explorationMemoryAction(\'' + key + '\')">' + escapeHtml(btnText) + '</button>' +
-            '</div>' +
-            '</div>';
-    }
-
-    areaEl.innerHTML = html || '<p class="grey">no memory</p>';
-}
-
-async function explorationMemoryAction(key) {
-    var ok = await submitCommand({ mode: 'command', command: 'memory' + key });
-    if (ok) {
-        await Promise.all([loadExplorationMemory(), loadItemFind(), loadInventory(), refreshLog()]);
-        if (typeof Debug !== 'undefined' && Debug.isEnabled()) Debug.renderAiDump();
-    } else {
-        alert('action failed');
+        alert('discard failed' + (result.error ? ': ' + result.error : ''));
     }
 }

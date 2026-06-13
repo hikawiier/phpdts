@@ -1,0 +1,97 @@
+// ══════════════════════════════════════════════════
+// 地图格 CRUD 逻辑 / Tile CRUD logic
+// ══════════════════════════════════════════════════
+
+import state, { nextPls, saveToStorage } from '../state.js';
+import { autoConnect, disconnectAll } from './connectivity.js';
+
+/**
+ * 创建地图格
+ */
+export function createTile(pgroup, x, y) {
+  const tiles = state.project.tiles[pgroup];
+  if (!tiles) return null;
+
+  // 检查该坐标是否已有格
+  for (const pls in tiles) {
+    if (tiles[pls].x === x && tiles[pls].y === y) return null;
+  }
+
+  const pls = nextPls(pgroup);
+  tiles[pls] = {
+    name: '新地图格',
+    desc: '',
+    floor: 'standard',
+    tide: 'shallow',
+    height: 0,
+    passable: true,
+    destructible: false,
+    neighbors: [],
+    x: x,
+    y: y,
+    preset_safe: false,
+    _breaks: [],
+  };
+
+  // 自动连通
+  autoConnect(pgroup, pls);
+  saveToStorage();
+  return pls;
+}
+
+/**
+ * 删除地图格
+ */
+export function deleteTile(pgroup, pls) {
+  const tiles = state.project.tiles[pgroup];
+  if (!tiles || !tiles[pls]) return;
+
+  // 清理连通关系
+  disconnectAll(pgroup, pls);
+
+  delete tiles[pls];
+
+  // 清理区域中对该格的引用
+  const region = state.project.regions[pgroup];
+  if (region) {
+    if (region.entrance_pls === pls) region.entrance_pls = null;
+    if (region.exit_pls === pls) region.exit_pls = null;
+  }
+
+  if (state.selectedTile === pls) {
+    state.selectedTile = null;
+  }
+
+  saveToStorage();
+}
+
+/**
+ * 更新地图格属性
+ */
+export function updateTile(pgroup, pls, props) {
+  const tiles = state.project.tiles[pgroup];
+  if (!tiles || !tiles[pls]) return;
+
+  const oldX = tiles[pls].x;
+  const oldY = tiles[pls].y;
+
+  Object.assign(tiles[pls], props);
+
+  // 如果坐标变了，重新计算连通
+  if (props.x !== undefined && props.x !== oldX || props.y !== undefined && props.y !== oldY) {
+    // 先清除所有旧连通
+    disconnectAll(pgroup, pls);
+    tiles[pls].neighbors = [];
+    // 重新自动连通
+    autoConnect(pgroup, pls);
+  }
+
+  saveToStorage();
+}
+
+/**
+ * 移动地图格坐标（拖拽）
+ */
+export function moveTile(pgroup, pls, newX, newY) {
+  updateTile(pgroup, pls, { x: newX, y: newY });
+}

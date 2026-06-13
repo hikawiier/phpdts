@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oblivions Map Editor</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header class="editor-header">
+            <div class="header-left">
+                <svg class="header-deco" viewBox="0 0 60 60" width="36" height="36">
+                    <polygon points="30,8 6,52 54,52" fill="#ff7675" stroke="#2d3436" stroke-width="3" stroke-linejoin="round"/>
+                    <circle cx="30" cy="24" r="14" fill="#ffeaa7" stroke="#2d3436" stroke-width="3"/>
+                    <circle cx="26" cy="22" r="2" fill="#2d3436"/>
+                    <circle cx="34" cy="22" r="2" fill="#2d3436"/>
+                    <path d="M 27 30 Q 30 33 33 30" fill="none" stroke="#2d3436" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <h1>Oblivions Map Editor</h1>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-import" id="btnImportDir" title="选择 gamedata 目录自动导入">导入目录</button>
+                <button class="btn btn-import" id="btnImport" title="手动粘贴 PHP 数据">手动导入</button>
+                <button class="btn btn-export" id="btnExport" title="导出 ZIP">导出全部</button>
+            </div>
+        </header>
+
+        <main class="editor-layout">
+            <div class="col-left" id="colLeft">
+                <div class="panel panel-regions">
+                    <h2>区域列表</h2>
+                    <div id="regionList" class="region-list"></div>
+                    <button class="btn btn-add" id="btnAddRegion">+ 新建区域</button>
+                </div>
+                <div class="panel panel-region-props" id="regionPropsPanel" style="display:none;">
+                    <h2>区域属性</h2>
+                    <div id="regionProps"></div>
+                </div>
+            </div>
+
+            <div class="col-center">
+                <div class="toolbar" id="toolbar">
+                    <button class="tool-btn active" data-tool="select" title="选择 (V)">选择</button>
+                    <button class="tool-btn" data-tool="draw" title="绘制 (B)">绘制</button>
+                    <button class="tool-btn" data-tool="erase" title="擦除 (E)">擦除</button>
+                    <span class="tool-sep"></span>
+                    <button class="tool-btn" data-tool="break" title="断开连通 (D)">断开</button>
+                    <button class="tool-btn" data-tool="restore" title="恢复连通 (R)">恢复</button>
+                    <span class="tool-sep"></span>
+                    <label class="grid-size-label">网格:
+                        <input type="number" id="gridCols" min="1" max="30" value="8" style="width:40px"> ×
+                        <input type="number" id="gridRows" min="1" max="30" value="6" style="width:40px">
+                    </label>
+                </div>
+                <div class="panel panel-canvas">
+                    <div class="canvas-wrap" id="canvasWrap">
+                        <div class="grid-container" id="gridContainer"></div>
+                        <svg class="connections-layer" id="connectionsLayer"></svg>
+                    </div>
+                    <div class="canvas-info" id="canvasInfo">选择一个区域开始编辑</div>
+                </div>
+            </div>
+
+            <div class="col-right">
+                <div class="panel panel-tile-props" id="tilePropsPanel">
+                    <h2>地图格属性</h2>
+                    <div id="tileProps">
+                        <p class="hint">点击地图格查看属性</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 导入对话框 -->
+    <div class="modal-overlay" id="importModal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>导入地图数据</h3>
+                <button class="modal-close" id="importModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="hint">粘贴 PHP 文件内容，或将文件拖入下方文本框</p>
+                <label>map.php 内容：</label>
+                <textarea id="importMapPhp" rows="8" placeholder="粘贴 map.php 的完整内容..."></textarea>
+                <label>region_*.php 内容（多个区域用 --- 分隔）：</label>
+                <textarea id="importTilesPhp" rows="10" placeholder="粘贴 region_1.php 内容&#10;---&#10;粘贴 region_2.php 内容"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="importCancel">取消</button>
+                <button class="btn btn-primary" id="importConfirm">导入</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
