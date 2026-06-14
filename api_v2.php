@@ -87,6 +87,9 @@ switch ($action) {
     case 'ai_dump_save':
         handle_ai_dump_save();
         break;
+    case 'tile_actions':
+        handle_tile_actions();
+        break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
 }
@@ -403,6 +406,7 @@ function handle_player_inventory() {
 
 function handle_game_map() {
     global $pdata, $arealist, $areanum, $plsinfo, $hack, $areaadd;
+    global $db, $tablepre;
 
     $data = array(
         'currentLocation' => (int)$pdata['pls'],
@@ -424,6 +428,16 @@ function handle_game_map() {
             'tiles'   => $map['tiles'],
             'grids'   => $map['grids'],
         );
+
+        // 迷雾数据：查询当前区域已点亮（fog=1）的格子，稀疏表示 {pls: 1}
+        // 未列出的格子默认 fog=0（迷雾中）。仅查当前区域，与 tiles 数据范围对齐。
+        $fog_data = array();
+        $fog_result = $db->query("SELECT pls FROM {$tablepre}oblmapstates
+                                   WHERE pgroup='$cur_pgroup' AND fog=1");
+        while ($row = $db->fetch_array($fog_result)) {
+            $fog_data[(int)$row['pls']] = 1;
+        }
+        $data['links']['fog'] = array($cur_pgroup => $fog_data);
     }
 
     api_response('success', $data);
@@ -521,6 +535,135 @@ function handle_ai_dump_save() {
     }
 
     api_response('success', array('written' => count($valid_lines)));
+}
+
+/**
+ * tile_actions — 当前格交互数据
+ *
+ * 返回当前格的 POI 列表 + 已发现道具（按 iaid 分组）。
+ * POI 仅在迷雾清除（fog=1）后可见；道具仅在 discovered>0 时可见。
+ *
+ * 返回结构：
+ *   pois         — POI 数组，每个 POI 含 iaid/name/desc/searchable/repeatable/searched/items...
+ *   ground_items — 脚边散落道具（iaid=0）数组
+ */
+function handle_tile_actions() {
+    global $pdata, $db, $tablepre;
+
+    if (!oblivions_is_active()) {
+        api_error('非 Oblivions 模式', 'NOT_OBLIVIONS');
+    }
+
+    $pgroup = (int)$pdata['pgroup'];
+    $pls = (int)$pdata['pls'];
+
+    // 1. 读取当前格 POI（仅迷雾清除后的）
+    $poi_result = $db->query("SELECT p.* FROM {$tablepre}oblmappoi p
+                               INNER JOIN {$tablepre}oblmapstates s
+                               ON p.pgroup=s.pgroup AND p.pls=s.pls
+                               WHERE p.pgroup='$pgroup' AND p.pls='$pls' AND s.fog=1");
+    $pois = array();
+    $poi_iaids = array();
+
+    $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
+
+    while ($poi = $db->fetch_array($poi_result)) {
+        $poi_id = $poi['poi_id'];
+        $tpl = isset($poi_table[$poi_id]) ? $poi_table[$poi_id] : null;
+        if (!$tpl) continue;
+
+        $poi_iaids[] = (int)$poi['iaid'];
+        $poi_data = array(
+            'iaid'          => (int)$poi['iaid'],
+            'poi_id'        => $poi_id,
+            'name'          => $tpl['name'],
+            'desc'          => $tpl['desc'],
+            'searchable'    => !empty($tpl['searchable']),
+            'repeatable'    => !empty($tpl['repeatable']),
+            'searched'      => !empty($poi['searched']),
+            'search_count'  => (int)$poi['search_count'],
+            'items'         => array(),
+        );
+
+        // 可重复搜索属性
+        if (!empty($tpl['repeatable'])) {
+            $poi_data['repeat_limit'] = (int)($tpl['repeat_limit'] ?? 0);
+            $poi_data['repeat_cooldown'] = (int)($tpl['repeat_cooldown'] ?? 0);
+        }
+
+        // 机制属性
+        if (!empty($tpl['mechanic'])) {
+            $poi_data['mechanic'] = $tpl['mechanic'];
+            if (isset($tpl['mechanic_value'])) {
+                $poi_data['mechanic_value'] = $tpl['mechanic_value'];
+            }
+            if (isset($tpl['mechanic_params'])) {
+                $poi_data['mechanic_params'] = $tpl['mechanic_params'];
+            }
+        }
+
+        $pois[] = $poi_data;
+    }
+
+    // 2. 读取当前格已发现的道具（按 iaid 分组）
+    $item_result = $db->query("SELECT * FROM {$tablepre}oblmapitem
+                                WHERE pgroup='$pgroup' AND pls='$pls' AND discovered>0");
+
+    $items_by_iaid = array();  // iaid => [item, ...]
+    $ground_items = array();   // iaid=0 的道具
+
+    while ($item = $db->fetch_array($item_result)) {
+        $iaid = (int)$item['iaid'];
+        $item_data = array(
+            'iid'       => (int)$item['iid'],
+            'item_id'   => $item['item_id'],
+            'itm'       => $item['itm'],
+            'itmk'      => $item['itmk'],
+            'itme'      => (int)$item['itme'],
+            'itms'      => $item['itms'],
+            'itmsk'     => $item['itmsk'],
+            'itmpara'   => $item['itmpara'],
+            'discovered'=> (int)$item['discovered'],
+        );
+
+        // 近视道具附加信息
+        if ((int)$item['discovered'] === 2) {
+            $fake_id = $item['fake_item_id'];
+            if (!empty($fake_id)) {
+                $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
+                $display_name = isset($item_table[$fake_id])
+                    ? $item_table[$fake_id]['itm'] . '（？）'
+                    : $item['itm'] . '（？）';
+            } else {
+                $display_name = $item['itm'] . '（？）';
+            }
+            $item_data['display_name'] = $display_name;
+            $item_data['fake_item_id'] = $fake_id;
+            $item_data['is_trap'] = !empty($item['is_trap']) ? 1 : 0;
+        }
+
+        if ($iaid === 0) {
+            $ground_items[] = $item_data;
+        } else {
+            if (!isset($items_by_iaid[$iaid])) {
+                $items_by_iaid[$iaid] = array();
+            }
+            $items_by_iaid[$iaid][] = $item_data;
+        }
+    }
+
+    // 3. 将道具分配到对应 POI
+    foreach ($pois as &$poi) {
+        if (isset($items_by_iaid[$poi['iaid']])) {
+            $poi['items'] = $items_by_iaid[$poi['iaid']];
+        }
+    }
+    unset($poi);
+
+    api_response('success', array(
+        'pois'         => $pois,
+        'ground_items' => $ground_items,
+    ));
 }
 
 ?>

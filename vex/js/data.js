@@ -75,16 +75,6 @@ export const DebugBus = (function() {
 // 资源数据预设 / Resource data presets
 // ══════════════════════════════════════════════════
 
-export const WEATHER_NAMES = {
-    0:'晴天',1:'大晴',2:'多云',3:'小雨',4:'暴雨',5:'台风',6:'雷雨',
-    7:'下雪',8:'起雾',9:'浓雾',10:'瘴气',11:'龙卷风',12:'暴风雪',
-    13:'冰雹',14:'离子暴',15:'辐射尘',16:'臭氧洞',17:'极光',18:'光玉雨'
-};
-
-export const GAME_STATE_NAMES = {
-    0:'已结束',10:'即将开始',20:'开放激活',30:'停止激活',40:'连斗中',50:'死斗中',60:'紧急状态！'
-};
-
 export const GENDER_NAMES = {0:'未定', m:'男生', f:'女生', n:'投影'};
 
 export const RACE_NAMES = {0:'人类',1:'兽人',2:'妖精',3:'龙',4:'鱼人',5:'ＡＩ'};
@@ -96,8 +86,6 @@ export const CLUB_NAMES = {
     19:'晶莹剔透',20:'元素大师',21:'码语行人',22:'枫火歌者',98:'换装迷宫',99:'第一形态'
 };
 
-export const HP_STATUS = ['并无大碍','伤痕累累','生命危险','已经死亡'];
-export const SP_STATUS = ['精力充沛','略有疲惫','精疲力尽','已经死亡'];
 export const RAGE_STATUS = ['平静','愤怒','暴怒','已经死亡'];
 export const POSE_NAMES = ['通常','作战姿态','强袭姿态','探物姿态','偷袭姿态','治疗姿态','✧狂飙姿态✧','哨戒姿态'];
 export const TACTIC_NAMES = ['通常','','重视防御','重视反击','重视躲避'];
@@ -106,4 +94,4 @@ export const TACTIC_NAMES = ['通常','','重视防御','重视反击','重视�
 // 地图状态 / Map state (Oblivions dynamic links map)
 // ══════════════════════════════════════════════════
 
-export const mapData = { curLoc: null, curRegion: null, arealist: [], areanum: -1, areaadd: 0, hack: 0, links: null };
+export const mapData = { curLoc: null, curRegion: null, links: null };

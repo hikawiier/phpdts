@@ -1,13 +1,13 @@
 <?php return array (
   1 => 
   array (
-    'gamenum' => '92',
+    'gamenum' => '96',
     'gamestate' => '20',
     'groomid' => '1',
     'groomnums' => '1',
     'groomownid' => '233',
     'gruleset' => 'OBLIVIONS',
-    'starttime' => '1781397681',
+    'starttime' => '1781493110',
     'winmode' => '0',
     'winner' => '',
     'arealist' => '0',
@@ -17,8 +17,8 @@
     'validnum' => '1',
     'alivenum' => '1',
     'deathnum' => '0',
-    'afktime' => '1781397681',
-    'optime' => '1781397676',
+    'afktime' => '1781493110',
+    'optime' => '1781493105',
     'weather' => '7',
     'hack' => '0',
     'hdamage' => '0',

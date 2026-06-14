@@ -49,6 +49,7 @@ function rs_game($mode = 0) {
 	if ($mode & 8)  { if (rs_init_npcs() === false) return; }
 	if ($mode & 16) rs_init_mapitems();
 	if ($mode & 32) rs_init_shops();
+	if ($mode & 64) rs_init_oblivions();    // OBLIVIONS 模式：初始化遗忘之境地图数据
 }
 
 /**
@@ -428,6 +429,119 @@ function rs_init_shops() {
 		$qry = "INSERT INTO {$tablepre}shopitem (kind,num,price,area,item,itmk,itme,itms,itmsk,itmpara) VALUES ".substr($qry, 0, -1);
 	}
 	$db->query($qry);
+}
+
+/**
+ * 初始化 Oblivions 遗忘之境地图数据 / Initialize Oblivions map data
+ *
+ * 流程：建表 → 载入配置 → 遍历区域按 tile 潮汐分组生成 POI/野生道具 → 初始化迷雾
+ * 仅在 oblivions_is_active() 时由 rs_game(64) 调用，非 Oblivions 模式零开销。
+ *
+ * @global object $db 数据库连接
+ * @global string $tablepre 游戏表前缀
+ * @return void
+ */
+function rs_init_oblivions() {
+	global $db, $tablepre;
+
+	// 1. 建表（DROP IF EXISTS + CREATE，与 reset.sql 模式一致但完全独立）
+	rs_init_oblivions_tables();
+
+	// 2. 按需加载生成函数库（避免非 Oblivions 模式污染全局 scope）
+	include_once GAME_ROOT.'./oblivions/include/game/generate.func.php';
+
+	// 3. 载入配置文件（仅在 Oblivions 模式才加载）
+	$poi_pool     = include GAME_ROOT.'./oblivions/gamedata/poi_pool.php';
+	$poi_table    = include GAME_ROOT.'./oblivions/gamedata/poi_table.php';
+	$item_table   = include GAME_ROOT.'./oblivions/gamedata/item_table.php';
+	$scatter_pool = include GAME_ROOT.'./oblivions/gamedata/scatter_pool.php';
+	$map_data     = include GAME_ROOT.'./oblivions/gamedata/map.php';
+
+	// 4. 遍历所有区域，按需加载该区域的地图格数据
+	//    map.php 的 regions 仅含元数据；tile 的 tide/passable 在 tiles/region_{pgroup}.php 中
+	//    同一区域内 tile 的 tide 可能不同，因此按 tide 桶分组生成
+	foreach ($map_data['regions'] as $pgroup => $region) {
+		$tile_file = GAME_ROOT."./oblivions/gamedata/tiles/region_{$pgroup}.php";
+		if (!is_file($tile_file)) {
+			app_log("rs_init_oblivions(): tiles/region_{$pgroup}.php not found, skipping region.", 'WARNING');
+			continue;
+		}
+		$tiles = include $tile_file;
+		if (!is_array($tiles) || empty($tiles)) {
+			continue;
+		}
+
+		// 调用 generate.func.php 入口：为该区域生成 POI 与野生散落道具
+		obl_generate_region_items($pgroup, $tiles, [
+			'poi_pool'     => $poi_pool,
+			'poi_table'    => $poi_table,
+			'item_table'   => $item_table,
+			'scatter_pool' => $scatter_pool,
+		]);
+	}
+
+	// 5. 初始化迷雾（所有可通行格 fog=0，玩家出生时再点亮视野）
+	rs_init_oblivions_fog($map_data);
+}
+
+/**
+ * Oblivions 三张表的建表 / Create Oblivions tables (DROP IF EXISTS + CREATE)
+ *
+ * 独立于 reset.sql：Oblivions 是可选模块，不应污染核心建表脚本。
+ * 上一局 Oblivions 残留表在本局初始化时由 DROP IF EXISTS 自动清理。
+ *
+ * @global object $db 数据库连接
+ * @global string $tablepre 游戏表前缀
+ * @return void
+ */
+function rs_init_oblivions_tables() {
+	global $db, $tablepre;
+	$sqldir = GAME_ROOT.'./oblivions/sql/';
+
+	$tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql'];
+	foreach ($tables as $file) {
+		$sql = file_get_contents($sqldir . $file);
+		// 与 rs_reset_social() 一致：CR→LF，再替换表前缀
+		$sql = str_replace("\r", "\n", str_replace(' bra_', ' '.$tablepre, $sql));
+		$db->queries($sql);
+	}
+}
+
+/**
+ * 初始化 Oblivions 图格迷雾 / Initialize Oblivions tile fog states
+ *
+ * 为所有可通行格插入 oblmapstates 记录，fog=0（未探索）。
+ * 玩家出生时由 obl_update_vision() 点亮出生格及视野范围，不在 rs_game 阶段处理。
+ *
+ * @param array $map_data map.php 返回的地图结构
+ * @global object $db 数据库连接
+ * @global string $tablepre 游戏表前缀
+ * @return void
+ */
+function rs_init_oblivions_fog($map_data) {
+	global $db, $tablepre;
+
+	$values = array();
+	foreach ($map_data['regions'] as $pgroup => $region) {
+		$pgroup = (int)$pgroup;
+		$tile_file = GAME_ROOT."./oblivions/gamedata/tiles/region_{$pgroup}.php";
+		if (!is_file($tile_file)) continue;
+		$tiles = include $tile_file;
+		if (!is_array($tiles)) continue;
+
+		foreach ($tiles as $pls => $tile) {
+			// 仅可通行格建立状态记录（不可通行格无需迷雾管理）
+			if (empty($tile['passable'])) continue;
+			$pls = (int)$pls;
+			$values[] = "($pgroup, $pls, 0, 0, '')";
+		}
+	}
+
+	// 分批插入，每批 500 条
+	foreach (array_chunk($values, 500) as $batch) {
+		$qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags) VALUES " . implode(',', $batch);
+		$db->query($qry);
+	}
 }
 
 /**

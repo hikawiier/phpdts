@@ -14,6 +14,7 @@ CREATE TABLE bra_oblmappoi (
   poi_id varchar(32) NOT NULL default '',
   searched tinyint(1) unsigned NOT NULL default '0',      -- 0=未搜索 1=已搜索
   search_count tinyint unsigned NOT NULL default '0',
+  last_search_turn int unsigned NOT NULL default '0',      -- 上次搜索的回合，用于可重复POI冷却判定
 
   PRIMARY KEY (iaid),
   INDEX idx_pgroup_pls (pgroup, pls)

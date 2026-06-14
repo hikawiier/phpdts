@@ -126,6 +126,21 @@ ob_start();
 $cuser = & ${$gtablepre.'user'};
 $cpass = & ${$gtablepre.'pass'};
 
+// 调试自动登录：无 Cookie 时从本地配置文件读取凭据 / Debug auto-login: read credentials from local config when no Cookie
+if ((!$cuser || !$cpass) && file_exists(GAME_ROOT.'debug_autologin.php')) {
+	$debug_autologin_user = '';
+	$debug_autologin_pass = '';
+	include GAME_ROOT.'debug_autologin.php';
+	if (!empty($debug_autologin_user) && !empty($debug_autologin_pass)) {
+		$cuser = $debug_autologin_user;
+		$cpass = md5($debug_autologin_pass);
+		// 同步写入 Cookie 使后续请求也保持登录 / Set cookie so subsequent requests stay logged in
+		gsetcookie('user', $cuser);
+		gsetcookie('pass', $cpass);
+	}
+	unset($debug_autologin_user, $debug_autologin_pass);
+}
+
 // 房间列表缓存 / Room list cache (TTL=60s)
 $roomlist_cache_file = GAME_ROOT.'./gamedata/cache/roomlist.php';
 $roomlist_cache_ttl = 60;

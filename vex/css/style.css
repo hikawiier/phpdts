@@ -206,17 +206,6 @@ header h1 {
     cursor: pointer;
 }
 
-.map-cell.warning {
-    background: #ffeaa7;
-    color: #2d3436;
-    cursor: pointer;
-}
-
-.map-cell.danger {
-    background: #ffcccc;
-    color: #d63031;
-}
-
 .map-cell.unreachable {
     background: #3a3a4a;
     color: #666;
@@ -292,12 +281,6 @@ header h1 {
 .panel-log .log-content .orange { color: #e17055; }
 .panel-log .log-content .white { color: #2d3436; }
 .panel-log .log-content .linen { color: #636e72; }
-
-/* 物品发现面板 / Item find panel */
-.panel-itemfind {
-    flex: 0 0 auto;
-    min-height: 0;
-}
 
 /* 底部面板组 / Bottom panel group */
 .panel-group-bottom {
@@ -678,83 +661,6 @@ header h1 {
 }
 
 /* ══════════════════════════════════════════════════
-   物品发现按钮 / Item find buttons
-   ══════════════════════════════════════════════════ */
-
-.itemfind-card .yellow {
-    color: #e17055;
-    font-weight: bold;
-}
-
-.itemfind-card .grey {
-    color: #b2bec3;
-}
-
-.itemfind-buttons {
-    margin-top: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    position: relative;
-    z-index: 1;
-}
-
-.itemfind-buttons .cmdbutton {
-    padding: 8px 18px;
-    border: 3px solid #2d3436;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    color: #2d3436;
-    transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.15s;
-    filter: drop-shadow(3px 4px 0px rgba(65, 55, 45, 0.2));
-    position: relative;
-    font-family: inherit;
-}
-
-.itemfind-buttons .cmdbutton:hover {
-    transform: translateY(-2px) scale(1.04);
-    filter: drop-shadow(5px 8px 0px rgba(65, 55, 45, 0.22));
-}
-
-.itemfind-buttons .cmdbutton:active {
-    transform: scale(0.92) !important;
-}
-
-.itemfind-buttons .cmdbutton.pickup {
-    background: #7bed9f;
-}
-
-.itemfind-buttons .cmdbutton.pickup:hover {
-    background: #55efc4;
-}
-
-.itemfind-buttons .cmdbutton.use {
-    background: #74b9ff;
-}
-
-.itemfind-buttons .cmdbutton.use:hover {
-    background: #a29bfe;
-}
-
-.itemfind-buttons .cmdbutton.refine {
-    background: #dfe6e9;
-}
-
-.itemfind-buttons .cmdbutton.refine:hover {
-    background: #ffeaa7;
-}
-
-.itemfind-buttons .cmdbutton.discard {
-    background: #ff7675;
-}
-
-.itemfind-buttons .cmdbutton.discard:hover {
-    background: #fab1a0;
-}
-
-/* ══════════════════════════════════════════════════
    通用样式 / General styles
    ══════════════════════════════════════════════════ */
 
@@ -862,3 +768,295 @@ header h1 {
 .map-cell.entrance-tile {
     box-shadow: inset 0 0 0 2px #4a9;
 }
+
+/* ══════════════════════════════════════════════════
+   通用按钮 / Global .cmdbutton (剪纸风)
+   供 tile-action / inventory 等所有交互按钮使用
+   ══════════════════════════════════════════════════ */
+
+.cmdbutton {
+    padding: 6px 14px;
+    border: 3px solid #2d3436;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    color: #2d3436;
+    background: #ffeaa7;
+    font-family: inherit;
+    line-height: 1.3;
+    flex: 0 0 auto;
+    transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.15s, background 0.15s;
+    filter: drop-shadow(2px 3px 0px rgba(65, 55, 45, 0.2));
+    position: relative;
+    z-index: 1;
+}
+.cmdbutton:hover {
+    transform: translateY(-2px) scale(1.04);
+    filter: drop-shadow(3px 5px 0px rgba(65, 55, 45, 0.25));
+    background: #fdcb6e;
+}
+.cmdbutton:active {
+    transform: scale(0.92) !important;
+}
+.cmdbutton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    filter: none;
+    background: #dfe6e9;
+}
+.cmdbutton.explore-btn {
+    background: #74b9ff;
+    color: #2d3436;
+}
+.cmdbutton.explore-btn:hover { background: #a29bfe; }
+.cmdbutton.discard-btn {
+    background: #ff7675;
+    color: #fff;
+    padding: 3px 8px;
+    font-size: 11px;
+    border-width: 2px;
+}
+.cmdbutton.discard-btn:hover { background: #d63031; }
+
+/* ══════════════════════════════════════════════════
+   Tile Action Bar — 底部动作条（剪纸卡片风）
+   ══════════════════════════════════════════════════ */
+
+.panel-tileaction {
+    flex: 0 0 auto;
+    max-height: 220px;
+    padding: 8px 10px;
+}
+
+#tileActionBar {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    position: relative;
+    z-index: 1;
+}
+
+.tile-row {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    gap: 8px;
+    background: #ffffff;
+    border: 2px solid #2d3436;
+    border-radius: 6px;
+    filter: drop-shadow(2px 2px 0px rgba(65, 55, 45, 0.12));
+    transition: transform 0.12s, filter 0.12s;
+}
+.tile-row:hover {
+    transform: translateX(2px);
+    filter: drop-shadow(3px 3px 0px rgba(65, 55, 45, 0.18));
+}
+
+.tile-icon { font-size: 16px; flex: 0 0 auto; }
+.tile-name { flex: 1 1 auto; font-size: 13px; color: #2d3436; }
+.tile-empty {
+    color: #b2bec3;
+    font-size: 13px;
+    padding: 10px 0;
+    text-align: center;
+    background: transparent;
+    border: 2px dashed #dfe6e9;
+    border-radius: 6px;
+    filter: none;
+}
+.tile-empty:hover { transform: none; filter: none; }
+
+.tile-explore {
+    justify-content: center;
+    padding: 4px;
+    background: transparent;
+    border: none;
+    filter: none;
+}
+.tile-explore:hover { transform: none; filter: none; }
+.explore-btn { width: 100%; }
+
+/* 建筑物行状态徽章 */
+.tile-poi .grey { color: #b2bec3; font-size: 11px; font-weight: normal; }
+.repeat-count {
+    color: #0984e3;
+    font-size: 11px;
+    font-weight: bold;
+    background: rgba(9, 132, 227, 0.12);
+    padding: 1px 5px;
+    border-radius: 4px;
+    flex: 0 0 auto;
+}
+
+/* 脚边道具行（黄绿色调突出） */
+.tile-ground {
+    border-color: #00b894;
+    background: #e0f7ef;
+}
+.tile-ground .tile-icon { color: #00b894; }
+
+/* ══════════════════════════════════════════════════
+   Bottom Sheet — 底部弹窗（剪纸卡片风）
+   ══════════════════════════════════════════════════ */
+
+.bottom-sheet-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(45, 52, 54, 0.45);
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.bottom-sheet-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.bottom-sheet {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #f5f0e8;
+    border-top: 4px solid #2d3436;
+    border-left: 4px solid #2d3436;
+    border-right: 4px solid #2d3436;
+    border-radius: 16px 16px 0 0;
+    z-index: 101;
+    max-height: 60vh;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    display: flex;
+    flex-direction: column;
+    filter: drop-shadow(0 -4px 0px rgba(65, 55, 45, 0.2));
+}
+.bottom-sheet.active { transform: translateY(0); }
+
+.sheet-header {
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: bold;
+    color: #2d3436;
+    background: #ffeaa7;
+    border-bottom: 3px solid #2d3436;
+    border-radius: 12px 12px 0 0;
+    line-height: 1.5;
+}
+.sheet-header .grey { color: #636e72; font-weight: normal; font-size: 12px; }
+
+.sheet-body {
+    padding: 8px 12px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+
+.sheet-item {
+    display: flex;
+    align-items: center;
+    padding: 7px 8px;
+    gap: 8px;
+    background: #ffffff;
+    border: 2px solid #2d3436;
+    border-radius: 6px;
+    margin-bottom: 5px;
+    filter: drop-shadow(2px 2px 0px rgba(65, 55, 45, 0.12));
+}
+.sheet-item .item-name { flex: 1 1 auto; font-size: 13px; font-weight: bold; color: #2d3436; }
+.sheet-item .item-meta { font-size: 11px; color: #636e72; flex: 0 0 auto; }
+
+.sheet-footer {
+    padding: 8px 0 4px;
+    text-align: center;
+}
+
+.mechanic-result {
+    padding: 16px 8px;
+    text-align: center;
+}
+.mechanic-effect {
+    font-size: 17px;
+    color: #e17055;
+    font-weight: bold;
+}
+
+/* ══════════════════════════════════════════════════
+   Fog — 地图迷雾（纸质纹理）
+   用多层 radial-gradient 模拟粗糙纸张纤维/斑点
+   ══════════════════════════════════════════════════ */
+
+.map-cell.fogged {
+    background-color: #b8a88a;
+    background-image:
+        radial-gradient(circle at 20% 30%, rgba(90, 78, 58, 0.35) 1px, transparent 1.5px),
+        radial-gradient(circle at 70% 60%, rgba(90, 78, 58, 0.3) 1px, transparent 1.5px),
+        radial-gradient(circle at 45% 80%, rgba(90, 78, 58, 0.25) 1px, transparent 1.5px),
+        radial-gradient(circle at 85% 20%, rgba(90, 78, 58, 0.2) 0.5px, transparent 1px),
+        radial-gradient(circle at 10% 70%, rgba(120, 105, 80, 0.2) 0.5px, transparent 1px);
+    background-size: 8px 8px, 11px 11px, 13px 13px, 6px 6px, 9px 9px;
+    color: #6b5d44;
+    cursor: default;
+}
+.cell-fog {
+    font-size: 18px;
+    color: #5a4e3a;
+    opacity: 0.55;
+    text-shadow: 0 0 2px rgba(184, 168, 138, 0.8);
+}
+
+/* ══════════════════════════════════════════════════
+   当前格探索提示
+   ══════════════════════════════════════════════════ */
+
+.map-cell.current { cursor: pointer; }
+.map-cell.current:hover::after {
+    content: '探索';
+    position: absolute;
+    bottom: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    font-weight: bold;
+    color: #2d3436;
+    background: #ffeaa7;
+    padding: 1px 5px;
+    border: 1.5px solid #2d3436;
+    border-radius: 4px;
+    white-space: nowrap;
+    z-index: 10;
+    filter: drop-shadow(1px 1px 0px rgba(65, 55, 45, 0.2));
+}
+
+/* ══════════════════════════════════════════════════
+   Toast — 轻量提示（剪纸卡片风）
+   ══════════════════════════════════════════════════ */
+
+.toast-container {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.toast {
+    padding: 8px 14px;
+    border: 3px solid #2d3436;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #2d3436;
+    background: #f5f0e8;
+    opacity: 0;
+    transform: translateX(30px) rotate(2deg);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    pointer-events: auto;
+    filter: drop-shadow(3px 4px 0px rgba(65, 55, 45, 0.2));
+    max-width: 280px;
+}
+.toast.show { opacity: 1; transform: translateX(0) rotate(0deg); }
+.toast-info { background: #dfe6e9; border-left-width: 6px; }
+.toast-error { background: #ffcccc; border-left-width: 6px; border-left-color: #d63031; }
+.toast-success { background: #c8e6c0; border-left-width: 6px; border-left-color: #00b894; }

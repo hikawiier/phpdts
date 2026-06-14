@@ -24,10 +24,16 @@ function cmd_handle_move($moveto, &$cmdcdtime, &$pdata) {
 }
 
 // 探索指令 / Search command
-function cmd_handle_search(&$cmdcdtime) {
+function cmd_handle_search(&$cmdcdtime, &$pdata) {
     global $coldtimeon, $searchcoldtime;
-    include_once GAME_ROOT . './include/game/search.func.php';
-    search();
+    if (oblivions_is_active()) {
+        // Oblivions 模式：搜索当前格（等同原地探索，前端通常逐个搜索 POI，此处为兼容旧入口）
+        include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
+        obl_explore($pdata);
+    } else {
+        include_once GAME_ROOT . './include/game/search.func.php';
+        search();
+    }
     if ($coldtimeon) {
         $cmdcdtime = $searchcoldtime;
     }

@@ -27,7 +27,7 @@ function gamestate_try_prepare() {
             $hdamage = 0;
             $hplayer = '';
             $noisemode = '';
-            rs_game(1 + 2 + 4 + 8 + 16 + 32);
+            rs_game(63 + (oblivions_is_active() ? 64 : 0));
             return true;
         }
     }

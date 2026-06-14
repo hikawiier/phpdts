@@ -4,9 +4,10 @@
 
 import { DebugBus, mapData } from './data.js';
 import { escapeHtml, getPlaceName, gameApi } from './utils.js';
-import { hasFoundItem, loadItemFind, loadInventory } from './inventory.js';
+import { loadInventory } from './inventory.js';
 import { loadPlayerInfo } from './player.js';
 import { refreshLog } from './log.js';
+import { loadTileAction } from './tile-action.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
 
@@ -14,34 +15,20 @@ import { commandQueue } from './command-queue.js';
 // 地图表格渲染 / Map grid renderer
 // ══════════════════════════════════════════════════
 
-function getAreaStatus(areaId) {
-    if (!mapData.arealist || !mapData.arealist.length) return 'safe';
-    const id = parseInt(areaId);
-    let idx = -1;
-    for (let i = 0; i < mapData.arealist.length; i++) {
-        if (parseInt(mapData.arealist[i]) === id) {
-            idx = i;
-            break;
-        }
-    }
-    if (idx === -1) return 'safe';
-    if (mapData.hack) return 'safe';
-    if (idx <= mapData.areanum) return 'danger';
-    if (idx <= (mapData.areanum + mapData.areaadd)) return 'warning';
-    return 'safe';
-}
-
 function isReachable(areaId) {
-    if (!mapData.links) {
-        return getAreaStatus(areaId) !== 'danger';
-    }
     if (mapData.curLoc === null || mapData.curRegion === null) return false;
     const tiles = mapData.links.tiles[mapData.curRegion];
     if (!tiles) return false;
     const curTile = tiles[mapData.curLoc];
     if (!curTile || !curTile.neighbors) return false;
 
-    if (curTile.neighbors.indexOf(areaId) !== -1) return true;
+    if (curTile.neighbors.indexOf(areaId) !== -1) {
+        // 迷雾格不可作为移动目标（即使它在邻居列表中）
+        const fogData = mapData.links.fog;
+        const regionFog = fogData && fogData[mapData.curRegion] ? fogData[mapData.curRegion] : {};
+        if (!regionFog[areaId]) return false;
+        return true;
+    }
 
     // 入口格特殊处理：在相邻格上，且当前区域可回退到前区域
     const regions = mapData.links.regions;
@@ -77,6 +64,10 @@ function renderMapGrid() {
         grid.style.gridTemplateColumns = '38px repeat(' + cols + ', 52px)';
         grid.style.gridTemplateRows = '32px repeat(' + rows + ', 44px)';
 
+        // 迷雾数据（稀疏表示：仅含 fog=1 的格子）
+        const fogData = mapData.links.fog;
+        const regionFog = fogData && fogData[mapData.curRegion] ? fogData[mapData.curRegion] : {};
+
         const corner = document.createElement('div');
         corner.className = 'map-cell coord';
         corner.textContent = 'coord';
@@ -106,35 +97,44 @@ function renderMapGrid() {
                     cell.className += ' empty';
                 } else {
                     const isCurrent = tileInfo.pls === mapData.curLoc;
-                    const reachable = isReachable(tileInfo.pls);
-                    const isExit = mapData.links.regions[mapData.curRegion] &&
-                                 tileInfo.pls === mapData.links.regions[mapData.curRegion].exit_pls;
-                    const isEntrance = mapData.links.regions[mapData.curRegion] &&
-                                     tileInfo.pls === mapData.links.regions[mapData.curRegion].entrance_pls &&
-                                     mapData.links.regions[mapData.curRegion].prev_region !== null;
+                    // 迷雾判定：未在 regionFog 中 = 迷雾覆盖
+                    const isFogged = !isCurrent && !regionFog[tileInfo.pls];
 
-                    if (isCurrent) {
-                        cell.className += ' current';
-                    } else if (!tileInfo.tile.passable) {
-                        cell.className += ' blocked';
-                    } else if (reachable) {
-                        cell.className += ' safe';
+                    if (isFogged) {
+                        // 迷雾格：深色遮罩 + "?"，不可点击，不显示名称
+                        cell.className += ' fogged';
+                        cell.innerHTML = '<span class="cell-fog">?</span>';
                     } else {
-                        cell.className += ' unreachable';
-                    }
-                    if (isExit) {
-                        cell.className += ' exit-tile';
-                    }
-                    if (isEntrance) {
-                        cell.className += ' entrance-tile';
-                    }
+                        const reachable = isReachable(tileInfo.pls);
+                        const isExit = mapData.links.regions[mapData.curRegion] &&
+                                     tileInfo.pls === mapData.links.regions[mapData.curRegion].exit_pls;
+                        const isEntrance = mapData.links.regions[mapData.curRegion] &&
+                                         tileInfo.pls === mapData.links.regions[mapData.curRegion].entrance_pls &&
+                                         mapData.links.regions[mapData.curRegion].prev_region !== null;
 
-                    let html = '<span class="cell-name">' + escapeHtml(tileInfo.tile.name) + '</span>';
-                    if (isCurrent) html += '<span class="cell-cur">*</span>';
-                    cell.innerHTML = html;
+                        if (isCurrent) {
+                            cell.className += ' current';
+                        } else if (!tileInfo.tile.passable) {
+                            cell.className += ' blocked';
+                        } else if (reachable) {
+                            cell.className += ' safe';
+                        } else {
+                            cell.className += ' unreachable';
+                        }
+                        if (isExit) {
+                            cell.className += ' exit-tile';
+                        }
+                        if (isEntrance) {
+                            cell.className += ' entrance-tile';
+                        }
 
-                    if (isCurrent || reachable) {
-                        cell.onclick = ((pls) => () => clickMove(pls))(tileInfo.pls);
+                        let html = '<span class="cell-name">' + escapeHtml(tileInfo.tile.name) + '</span>';
+                        if (isCurrent) html += '<span class="cell-cur">*</span>';
+                        cell.innerHTML = html;
+
+                        if (isCurrent || reachable) {
+                            cell.onclick = ((pls) => () => clickMove(pls))(tileInfo.pls);
+                        }
                     }
                 }
                 grid.appendChild(cell);
@@ -173,10 +173,6 @@ export async function loadMap() {
     const d = result.data;
     mapData.curLoc = d.currentLocation !== undefined ? d.currentLocation : null;
     mapData.curRegion = d.currentRegion !== undefined ? d.currentRegion : null;
-    mapData.arealist = (d.arealist || []).map(function(v) { return parseInt(v); });
-    mapData.areanum = d.areanum !== undefined ? d.areanum : -1;
-    mapData.areaadd = d.areaadd !== undefined ? d.areaadd : 0;
-    mapData.hack = d.hack || 0;
     mapData.links = d.links || null;
 
     renderMapGrid();
@@ -190,24 +186,26 @@ export async function loadMap() {
         infoText += ' | neighbors: ' + linkCount;
     }
     infoEl.innerHTML = infoText;
+
+    // 地图加载完成事件，供 tile-action.js 等模块刷新（解耦，不直接 import）
+    DebugBus.emit('map', 'loaded', { curLoc: mapData.curLoc, curRegion: mapData.curRegion, hasLinks: !!mapData.links });
 }
 
 function clickMove(areaId) {
     if (areaId === undefined || areaId === null) return;
 
+    // 点击当前格 → 原地探索（由 tile-action.js 处理）
+    if (areaId === mapData.curLoc) {
+        if (window._tileActionExplore) window._tileActionExplore();
+        return;
+    }
+
     DebugBus.emit('action', 'clickMove:trigger', {
         target_areaId: areaId,
         target_placeName: getPlaceName(areaId),
         current_pls: mapData.curLoc,
-        current_region: mapData.curRegion,
-        hasFoundItem: hasFoundItem
+        current_region: mapData.curRegion
     });
-
-    if (hasFoundItem) {
-        DebugBus.emit('action', 'clickMove:blocked', { reason: 'hasFoundItem' });
-        alert('There are items nearby. Pick them up, use or discard them before moving.');
-        return;
-    }
 
     const cmdParams = { command: 'move', moveto: parseInt(areaId) };
     DebugBus.emit('action', 'clickMove:submit', { params: cmdParams });
@@ -224,8 +222,8 @@ function clickMove(areaId) {
             Promise.all([
                 loadMap(),
                 loadPlayerInfo(),
-                loadItemFind(),
                 loadInventory(),
+                loadTileAction(),
                 refreshLog()
             ]);
         } else {
@@ -258,7 +256,6 @@ DebugBus.registerState('render', function() {
     const grid = document.getElementById('mapGrid');
     const log = document.getElementById('logContent');
     const inv = document.getElementById('inventoryList');
-    const itemFind = document.getElementById('itemFindArea');
     return {
         panels: {
             mapGrid: grid ? {
@@ -272,8 +269,7 @@ DebugBus.registerState('render', function() {
                 clientHeight: log.clientHeight,
                 scrollTop: log.scrollTop
             } : null,
-            inventoryList: inv ? { visible: inv.offsetParent !== null, childCount: inv.children.length } : null,
-            itemFindArea: itemFind ? { visible: itemFind.offsetParent !== null } : null
+            inventoryList: inv ? { visible: inv.offsetParent !== null, childCount: inv.children.length } : null
         },
         viewport: {
             w: window.innerWidth,

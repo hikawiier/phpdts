@@ -116,10 +116,8 @@ function obl_move($moveto, &$pdata) {
         return;
     }
 
-    // 4. 体力检查
-    $base_cost = 0;
-    if ($pdata['sp'] < $base_cost) {
-        $log .= '体力不足，无法移动。<br>';
+    // 4. 体力检查（首格预扣，独立函数配置驱动）
+    if (!obl_check_move_sp($pdata, 1)) {
         return;
     }
 
@@ -142,13 +140,17 @@ function obl_move($moveto, &$pdata) {
         return;
     }
 
-    // 6. 消耗体力
-    $cost = $distance * $base_cost;
-    if ($pdata['sp'] < $cost) {
-        $log .= '体力不足，无法移动。<br>';
-        return;
+    // 6. 跨格移动补扣差额（obl_check_move_sp 已按 distance=1 扣除首格）
+    if ($distance > 1) {
+        $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
+        $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
+        $extra_cost = ($distance - 1) * $base_cost;
+        if ($pdata['sp'] < $extra_cost) {
+            $log .= '体力不足，无法移动到那么远的地方。<br>';
+            return;
+        }
+        $pdata['sp'] -= $extra_cost;
     }
-    $pdata['sp'] -= $cost;
 
     // 7. 执行移动
     $from_tile = $tiles[$cur_pls];
@@ -202,14 +204,42 @@ function obl_move($moveto, &$pdata) {
     // 10. 游戏刻
     // [预留] $gamevars['obl_tick']++
 
-    // 10. 移动后钩子
-    obl_post_move_hook();
+    // 11. 移动后钩子：自动探索（跳过体力检查）
+    obl_post_move_hook($pdata);
 }
 
 /**
- * 移动后钩子（预留）
- * 后续在此实现：自动探索、遇敌判定、事件点触发、地板属性效果
+ * 检查玩家是否满足移动消耗的体力
+ * 独立函数，配置驱动，基础值 0 不消耗
+ *
+ * @param array &$pdata   玩家数据
+ * @param int   $distance 移动距离（格数）
+ * @return bool true=体力充足（已扣除），false=体力不足
  */
-function obl_post_move_hook() {
-    // TODO
+function obl_check_move_sp(&$pdata, $distance = 1) {
+    global $log;
+
+    $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
+    $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
+    $cost = $distance * $base_cost;
+
+    if ($pdata['sp'] < $cost) {
+        $log .= '体力不足，无法移动。<br>';
+        return false;
+    }
+
+    // 扣除体力
+    $pdata['sp'] -= $cost;
+    return true;
+}
+
+/**
+ * 移动后钩子：自动探索（跳过体力检查）
+ *
+ * @param array &$pdata 玩家数据
+ */
+function obl_post_move_hook(&$pdata) {
+    // 移动后自动触发探索，不消耗探索体力
+    include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
+    obl_explore($pdata, true);
 }

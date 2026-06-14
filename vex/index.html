@@ -41,15 +41,14 @@
                         <div class="map-grid" id="mapGrid"></div>
                     </div>
                 </div>
+                <div class="panel panel-tileaction" id="tileActionSection">
+                    <div id="tileActionBar"></div>
+                </div>
             </div>
             <div class="col-right">
                 <div class="panel panel-log" id="logSection">
                     <h2>游戏日志</h2>
                     <div class="log-content" id="logContent">加载中...</div>
-                </div>
-                <div class="panel panel-itemfind" id="itemfindSection">
-                    <h2>发现物品</h2>
-                    <div id="itemFindArea"></div>
                 </div>
                 <div class="panel-group-bottom">
                     <div class="panel panel-inv" id="inventorySection">
@@ -64,6 +63,16 @@
             </div>
         </main>
     </div>
+
+    <!-- Bottom Sheet（全局覆盖层，由 tile-action.js 控制） -->
+    <div class="bottom-sheet-overlay" id="bottomSheetOverlay" onclick="closeBottomSheet()"></div>
+    <div class="bottom-sheet" id="bottomSheet">
+        <div class="sheet-header" id="sheetHeader"></div>
+        <div class="sheet-body" id="sheetBody"></div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div class="toast-container" id="toastContainer"></div>
 
     <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
     <div class="player-drawer" id="playerDrawer">
