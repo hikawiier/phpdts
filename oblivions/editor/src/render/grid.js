@@ -103,8 +103,10 @@ export function renderGrid() {
           cell.classList.add('cell-exit');
         }
 
-        // 内容
-        let html = `<span class="cell-name">${escHtml(tile.name || '未命名')}</span>`;
+        // 内容：显示坐标，有名字时追加显示
+        const coord = String.fromCharCode(65 + tile.y) + tile.x;
+        let html = `<span class="cell-coord">${coord}</span>`;
+        if (tile.name) html += `<span class="cell-name">${escHtml(tile.name)}</span>`;
         html += `<span class="cell-pls">#${pls}</span>`;
         if (region.entrance_pls === pls) html += `<span class="cell-badge badge-entrance">入</span>`;
         if (region.exit_pls === pls) html += `<span class="cell-badge badge-exit">出</span>`;

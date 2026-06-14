@@ -89,6 +89,8 @@ body {
 .btn-import:hover { background: #a29bfe; }
 .btn-export { background: #7bed9f; }
 .btn-export:hover { background: #55efc4; }
+.btn-quick-export { background: #fdcb6e; }
+.btn-quick-export:hover { background: #f9ca24; }
 .btn-primary { background: #ffeaa7; }
 .btn-primary:hover { background: #fdcb6e; }
 .btn-danger { background: #ff7675; color: #fff; }
@@ -495,6 +497,13 @@ body {
     animation: pulse 0.8s ease-in-out infinite;
 }
 
+.cell-coord {
+    font-size: 13px;
+    font-weight: bold;
+    color: #2d3436;
+    line-height: 1;
+}
+
 .cell-name {
     font-size: 9px;
     text-align: center;
@@ -504,6 +513,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: #636e72;
 }
 
 .cell-pls {

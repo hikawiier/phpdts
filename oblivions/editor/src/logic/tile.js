@@ -19,7 +19,7 @@ export function createTile(pgroup, x, y) {
 
   const pls = nextPls(pgroup);
   tiles[pls] = {
-    name: '新地图格',
+    name: '',
     desc: '',
     floor: 'standard',
     tide: 'shallow',

@@ -20,6 +20,9 @@ const state = {
 
   // 连通断开操作的第二步标记
   breakFirst: null,      // 断开/恢复连通时第一次点击的 pls
+
+  // 目录句柄（用于快速导出）
+  dirHandle: null,       // File System Access API 的 DirectoryHandle
 };
 
 // 下一个可用的 pgroup

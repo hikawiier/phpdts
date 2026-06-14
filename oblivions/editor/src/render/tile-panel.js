@@ -80,7 +80,7 @@ export function renderTilePanel() {
     </div>
     <div class="prop-row">
       <label>名称</label>
-      <input type="text" id="tpName" value="${escHtml(tile.name || '')}">
+      <input type="text" id="tpName" value="${escHtml(tile.name || '')}" placeholder="可选，留空则显示坐标">
     </div>
     <div class="prop-row">
       <label>描述</label>
