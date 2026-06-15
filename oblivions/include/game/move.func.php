@@ -10,6 +10,56 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 /**
+ * 获取地块的显示名称
+ * - 有名地块直接返回 name
+ * - 无名地块根据 floor/tide/passable 生成地形描述，如"一片金属覆盖的荒地"
+ *
+ * @param array $tile 地块数据
+ * @return string 显示名称
+ */
+function obl_get_tile_display_name($tile) {
+    if (!empty($tile['name'])) {
+        return $tile['name'];
+    }
+
+    $cfg = include GAME_ROOT . './oblivions/gamedata/terrain_desc.php';
+    $floor_key = $tile['floor'] ?? 'standard';
+    $tide_key = $tile['tide'] ?? 'shallow';
+
+    $floor = $cfg['floor'][$floor_key] ?? $cfg['floor']['standard'];
+    $floor_name = $floor['name'][array_rand($floor['name'])];
+    $floor_adj  = $floor['adj'][array_rand($floor['adj'])];
+
+    $tide_pool = $cfg['tide'][$tide_key] ?? [''];
+    $tide_adj = $tide_pool[array_rand($tide_pool)];
+
+    // 选择模板：有潮汐修饰用完整版，否则用简洁版
+    if (!empty($tide_adj)) {
+        $tpl_pool = $cfg['templates']['default'];
+        $text = str_replace(
+            ['{tide_adj}', '{floor_adj}', '{floor_name}'],
+            [$tide_adj, $floor_adj, $floor_name],
+            $tpl_pool[array_rand($tpl_pool)]
+        );
+    } else {
+        $tpl_pool = $cfg['templates']['no_tide'];
+        $text = str_replace(
+            ['{floor_adj}', '{floor_name}'],
+            [$floor_adj, $floor_name],
+            $tpl_pool[array_rand($tpl_pool)]
+        );
+    }
+
+    // 不可通行追加后缀
+    if (empty($tile['passable'])) {
+        $suffix_pool = $cfg['impassable_suffix'];
+        $text .= $suffix_pool[array_rand($suffix_pool)];
+    }
+
+    return $text;
+}
+
+/**
  * 加载地图数据（按区域懒加载）
  * - 不传参：返回 regions + grids + 已缓存的 tiles
  * - 传 pgroup：加载该区域 tiles 并返回完整结构
@@ -94,10 +144,19 @@ function obl_move($moveto, &$pdata) {
     $cur_pgroup = (int)$pdata['pgroup'];
     $map = obl_get_map_data($cur_pgroup);
     $cur_pls = (int)$pdata['pls'];
+    $region = $map['regions'][$cur_pgroup] ?? null;
 
-    // 1. 同位置检查
+    // 1. 同位置检查（允许在出入口格原地触发区域切换）
     if ($cur_pls == $moveto) {
-        $log .= '已经在当前位置，不需要移动。<br>';
+        $is_exit = $region && $cur_pls == $region['exit_pls'];
+        $is_entrance = $region && $cur_pls == $region['entrance_pls'] && !empty($region['prev_region']);
+        if (!$is_exit && !$is_entrance) {
+            $log .= '已经在当前位置，不需要移动。<br>';
+            return;
+        }
+        // 站在出入口格原地 → 执行区域切换
+        obl_switch_region($region, $cur_pls, $map, $pdata);
+        obl_post_move_hook($pdata);
         return;
     }
 
@@ -112,7 +171,8 @@ function obl_move($moveto, &$pdata) {
 
     // 3. 可通行检查
     if (empty($target_tile['passable'])) {
-        $log .= "{$target_tile['name']}无法通行，请绕道。<br>";
+        $tname = obl_get_tile_display_name($target_tile);
+        $log .= "{$tname}，无法通行，请绕道。<br>";
         return;
     }
 
@@ -132,11 +192,13 @@ function obl_move($moveto, &$pdata) {
         // 跨格移动 → BFS 距离
         $distance = obl_get_distance($cur_pgroup, $cur_pls, $moveto);
         if ($distance === -1 || $distance > $move_range) {
-            $log .= "无法直接移动到{$target_tile['name']}。<br>";
+            $tname = obl_get_tile_display_name($target_tile);
+            $log .= "无法直接移动到{$tname}。<br>";
             return;
         }
     } else {
-        $log .= "无法直接移动到{$target_tile['name']}，需要通过相邻区域。<br>";
+        $tname = obl_get_tile_display_name($target_tile);
+        $log .= "无法直接移动到{$tname}，需要通过相邻区域。<br>";
         return;
     }
 
@@ -156,15 +218,39 @@ function obl_move($moveto, &$pdata) {
     $from_tile = $tiles[$cur_pls];
     $pdata['pls'] = $moveto;
 
-    $region = $map['regions'][$cur_pgroup];
-    $log .= "从{$from_tile['name']}移动到了<span class=\"yellow\">{$target_tile['name']}</span>。<br>";
-    $log .= $target_tile['desc'] . '<br>';
+    $from_name = obl_get_tile_display_name($from_tile);
+    $to_name = obl_get_tile_display_name($target_tile);
+    $log .= "从{$from_name}移动到了<span class=\"yellow\">{$to_name}</span>。<br>";
+    if (!empty($target_tile['desc'])) {
+        $log .= $target_tile['desc'] . '<br>';
+    }
 
-    // 8. 区域切换检查 — 出口格
+    // 8. 区域切换不再自动触发（需玩家在出入口格主动点击切换）
+
+    // 9. 游戏刻
+    // [预留] $gamevars['obl_tick']++
+
+    // 10. 移动后钩子：自动探索（跳过体力检查）
+    obl_post_move_hook($pdata);
+}
+
+/**
+ * 区域切换处理
+ * 当玩家移动到出口/入口格，或站在出入口格原地触发切换时调用
+ *
+ * @param array  $region  当前区域信息
+ * @param int    $moveto  目标格 pls（与当前格相同时为原地切换）
+ * @param array  $map     地图数据
+ * @param array  &$pdata  玩家数据
+ */
+function obl_switch_region($region, $moveto, &$map, &$pdata) {
+    global $log;
+    if (!$region) return;
+
+    // 出口格 → 前往下一区域
     if ($moveto == $region['exit_pls']) {
         $next_group = $region['next_region'];
         if ($next_group && isset($map['regions'][$next_group])) {
-            // 预加载目标区域 tiles
             $map = obl_get_map_data($next_group);
             $next_region = $map['regions'][$next_group];
             $pdata['pgroup'] = $next_group;
@@ -181,11 +267,10 @@ function obl_move($moveto, &$pdata) {
         }
     }
 
-    // 9. 区域切换检查 — 入口格回退
+    // 入口格回退 → 返回上一区域
     if ($moveto == $region['entrance_pls'] && !empty($region['prev_region'])) {
         $prev_group = $region['prev_region'];
         if (isset($map['regions'][$prev_group])) {
-            // 预加载目标区域 tiles
             $map = obl_get_map_data($prev_group);
             $prev_region = $map['regions'][$prev_group];
             $pdata['pgroup'] = $prev_group;
@@ -200,12 +285,6 @@ function obl_move($moveto, &$pdata) {
             }
         }
     }
-
-    // 10. 游戏刻
-    // [预留] $gamevars['obl_tick']++
-
-    // 11. 移动后钩子：自动探索（跳过体力检查）
-    obl_post_move_hook($pdata);
 }
 
 /**

@@ -90,9 +90,10 @@ function obl_calc_vision_range($pgroup, $pls, &$pdata) {
         $neighbors = $tiles[$cur]['neighbors'] ?? [];
         foreach ($neighbors as $n_pls) {
             if (isset($visited[$n_pls])) continue;
-            if (empty($tiles[$n_pls]['passable'])) continue;
             $visited[$n_pls] = true;
             $visible_tiles[$n_pls] = ['distance' => $dist + 1];
+            // 不可通行格可见但不再继续扩展（不能站在山上看到更远的地方）
+            if (empty($tiles[$n_pls]['passable'])) continue;
             $queue[] = [$n_pls, $dist + 1];
         }
     }

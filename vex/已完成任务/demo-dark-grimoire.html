@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oblivions — 遗忘之地</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        parchment: { DEFAULT: '#2a2218', light: '#3a3028', dark: '#1a1410' },
+                        ink: { DEFAULT: '#c8b89a', dim: '#7a6e5c', faint: '#4a4238', bright: '#e8dcc0' },
+                        blood: { DEFAULT: '#8b2a1a', glow: '#c44530' },
+                        moss: { DEFAULT: '#4a7a3a', glow: '#6aaa50' },
+                        wax: { DEFAULT: '#b8942e', glow: '#d4aa38' },
+                        abyss: { DEFAULT: '#2a5a7a', glow: '#4090c0' },
+                        bone: '#a09080',
+                    },
+                    fontFamily: {
+                        display: ['Cinzel', 'Palatino Linotype', 'Georgia', 'serif'],
+                        body: ['Noto Serif SC', 'SimSun', 'serif'],
+                    },
+                    animation: {
+                        'seal-pulse': 'sealPulse 5s ease-in-out infinite',
+                        'current-pulse': 'currentPulse 3s ease-in-out infinite',
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        /* ═══ 仅保留 Tailwind 无法覆盖的自定义样式 ═══ */
+
+        /* 全局噪点纹理 + 暗角 */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
+                radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 100%);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* 蜡封裂纹 */
+        .seal::before {
+            content: '';
+            position: absolute;
+            top: 30%; left: 15%; right: 20%; bottom: 40%;
+            border-top: 1px solid rgba(0,0,0,0.3);
+            border-bottom: 1px solid rgba(0,0,0,0.15);
+            transform: rotate(-15deg);
+        }
+
+        /* 面板内纹理叠加 */
+        .panel-texture::before {
+            content: '';
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(ellipse at 15% 20%, rgba(184,148,46,0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 85% 80%, rgba(139,42,26,0.03) 0%, transparent 40%);
+            pointer-events: none;
+        }
+        .panel-texture::after {
+            content: '';
+            position: absolute; inset: 0;
+            box-shadow: inset 0 0 40px rgba(0,0,0,0.25);
+            pointer-events: none;
+        }
+
+        /* 日志左侧墨线 */
+        .log-inkline::before {
+            content: '';
+            position: absolute;
+            left: 4px; top: 0; bottom: 0; width: 1px;
+            background: linear-gradient(180deg, transparent, #8b2a1a 20%, #8b2a1a 80%, transparent);
+            opacity: 0.3;
+        }
+
+        /* 地图网格背景线 */
+        .map-grid-lines::before {
+            content: '';
+            position: absolute; inset: 0;
+            background:
+                repeating-linear-gradient(90deg, #4a4238 0px, #4a4238 1px, transparent 1px, transparent 50px),
+                repeating-linear-gradient(0deg, #4a4238 0px, #4a4238 1px, transparent 1px, transparent 42px);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        /* 当前位置格发光 */
+        .map-cell-current {
+            background:
+                radial-gradient(circle, rgba(184,148,46,0.2) 0%, rgba(184,148,46,0.05) 70%),
+                #3a3028;
+        }
+
+        /* 迷雾格 */
+        .map-cell-fogged {
+            background: radial-gradient(circle at 40% 30%, rgba(26,20,16,0.95) 0%, rgba(42,34,24,0.9) 100%);
+        }
+
+        /* 不可通行格 */
+        .map-cell-blocked {
+            background: linear-gradient(135deg, rgba(139,42,26,0.15) 0%, rgba(26,20,16,0.8) 100%);
+        }
+
+        /* 可通行格微光 */
+        .map-cell-safe {
+            background:
+                radial-gradient(ellipse at 30% 40%, rgba(200,184,154,0.08) 0%, transparent 70%),
+                #3a3028;
+        }
+
+        /* Header 底部装饰线 */
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: -1px; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg,
+                transparent 0%, #b8942e 10%, #8b2a1a 30%,
+                #b8942e 50%, #8b2a1a 70%, #b8942e 90%, transparent 100%);
+            opacity: 0.5;
+            filter: blur(0.5px);
+        }
+
+        /* 动画关键帧 */
+        @keyframes sealPulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(139,42,26,0.4), inset 0 2px 4px rgba(255,255,255,0.1), inset 0 -2px 4px rgba(0,0,0,0.3); }
+            50% { box-shadow: 0 0 30px rgba(139,42,26,0.6), inset 0 2px 4px rgba(255,255,255,0.1), inset 0 -2px 4px rgba(0,0,0,0.3); }
+        }
+        @keyframes currentPulse {
+            0%, 100% { box-shadow: 0 0 15px rgba(184,148,46,0.25), inset 0 0 8px rgba(184,148,46,0.1); }
+            50% { box-shadow: 0 0 25px rgba(184,148,46,0.4), inset 0 0 12px rgba(184,148,46,0.15); }
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4a4238; border-radius: 1px; }
+        ::-webkit-scrollbar-thumb:hover { background: #7a6e5c; }
+
+        /* 日志颜色 */
+        .log-yellow { color: #d4aa38; font-weight: 700; }
+        .log-grey { color: #7a6e5c; font-style: italic; }
+        .log-red { color: #c44530; font-weight: 700; }
+        .log-green { color: #6aaa50; }
+        .log-blue { color: #4090c0; }
+    </style>
+</head>
+<body class="h-full overflow-hidden bg-parchment-dark text-ink font-body select-none cursor-default">
+
+    <div id="app" class="h-full flex flex-col overflow-hidden">
+
+        <!-- ═══ HEADER ═══ -->
+        <header class="relative flex items-center justify-center gap-5 px-8 py-3.5 bg-gradient-to-b from-parchment/95 to-parchment-dark/90 overflow-hidden">
+            <div class="seal relative w-12 h-12 rounded-full flex items-center justify-center text-xl border-2 border-[#3a0e06] animate-seal-pulse shrink-0"
+                 style="background: radial-gradient(circle at 35% 30%, #d45535, #8b2a1a 50%, #5a1a0e); color: #1a0804; box-shadow: inset 0 2px 4px rgba(255,255,255,0.1), inset 0 -2px 4px rgba(0,0,0,0.3);">
+                ☠
+            </div>
+            <h1 class="font-display text-[22px] font-black text-ink-bright tracking-[8px] uppercase"
+                style="text-shadow: 0 0 30px rgba(184,148,46,0.15), 0 2px 4px rgba(0,0,0,0.5);">
+                OBLIVIONS
+            </h1>
+            <span class="absolute bottom-4 right-8 font-body text-[11px] text-ink-dim tracking-[6px]">遗忘之地</span>
+        </header>
+
+        <!-- ═══ MAIN LAYOUT ═══ -->
+        <main class="flex-1 grid grid-cols-[55%_1fr] overflow-hidden">
+
+            <!-- LEFT: Map + Actions -->
+            <div class="flex flex-col border-r border-ink-faint overflow-hidden">
+
+                <!-- Map Panel -->
+                <div class="panel-texture relative flex-1 min-h-0 flex flex-col bg-parchment p-3.5 overflow-hidden border-b border-ink-faint">
+                    <div class="flex items-center gap-2 pb-2 mb-2.5 border-b border-ink-faint relative z-10">
+                        <span class="text-blood text-sm">◈</span>
+                        <span class="font-display text-wax text-[11px] tracking-[4px] uppercase">Cartography</span>
+                    </div>
+                    <div class="font-body text-xs text-ink-dim mb-2 pl-3 border-l-2 border-blood relative z-10">
+                        垃圾平原 — 散落的零件堆
+                    </div>
+                    <div class="flex-1 flex items-center justify-center min-h-0 overflow-auto relative z-10">
+                        <div class="map-grid-lines relative grid gap-0.5 p-1"
+                             style="grid-template-columns: 32px repeat(10, 48px); grid-template-rows: 24px repeat(10, 40px);"
+                             id="mapGrid">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tile Action Bar -->
+                <div class="flex-none max-h-[180px] bg-parchment/60 border-t border-ink-faint p-2.5 overflow-hidden">
+                    <div id="tileActionBar" class="flex flex-col gap-0.5 overflow-y-auto relative z-10">
+                        <div class="flex items-center gap-2.5 px-2.5 py-1.5 bg-parchment-light/50 border-l-2 border-ink-faint hover:bg-parchment-light/80 hover:border-l-wax transition-all">
+                            <span class="text-sm saturate-70">📦</span>
+                            <span class="flex-1 text-xs font-body text-ink">补给储藏箱 <span class="text-ink-dim text-[11px]">— 未搜索</span></span>
+                            <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright hover:shadow-[0_0_8px_rgba(184,148,46,0.15)] transition-all tracking-wide cursor-pointer">搜索</button>
+                        </div>
+                        <div class="flex items-center gap-2.5 px-2.5 py-1.5 bg-parchment-light/50 border-l-2 border-moss hover:bg-parchment-light/80 hover:border-l-moss-glow transition-all">
+                            <span class="text-sm saturate-80 brightness-110">🔧</span>
+                            <span class="flex-1 text-xs font-body text-ink">生锈齿轮</span>
+                            <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright hover:shadow-[0_0_8px_rgba(184,148,46,0.15)] transition-all tracking-wide cursor-pointer">拾取</button>
+                        </div>
+                        <div class="flex items-center gap-2.5 px-2.5 py-1.5 bg-parchment-light/50 border-l-2 border-moss hover:bg-parchment-light/80 hover:border-l-moss-glow transition-all">
+                            <span class="text-sm saturate-80 brightness-110">🧴</span>
+                            <span class="flex-1 text-xs font-body text-ink">废铁片</span>
+                            <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright hover:shadow-[0_0_8px_rgba(184,148,46,0.15)] transition-all tracking-wide cursor-pointer">拾取</button>
+                        </div>
+                        <div class="flex justify-center py-1">
+                            <button class="w-full px-4 py-1.5 font-body font-medium text-abyss-glow bg-abyss/15 border border-abyss hover:bg-abyss/30 hover:shadow-[0_0_12px_rgba(64,144,192,0.2)] transition-all tracking-[3px] text-xs cursor-pointer">探索周围</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Log + Inventory -->
+            <div class="flex flex-col overflow-hidden">
+
+                <!-- Log Panel -->
+                <div class="panel-texture relative flex-[4_1_0%] min-h-0 flex flex-col bg-parchment overflow-hidden border-b border-ink-faint">
+                    <div class="flex items-center gap-2 px-4 pt-3.5 pb-2 border-b border-ink-faint relative z-10">
+                        <span class="text-blood text-sm">✦</span>
+                        <span class="font-display text-wax text-[11px] tracking-[4px] uppercase">Chronicle</span>
+                    </div>
+                    <div class="log-inkline relative flex-1 overflow-y-auto font-body text-[13px] leading-[2] text-ink px-4 py-2 z-10">
+                        你从<span class="log-yellow">废弃的入口</span>出发，踏入了这片被遗忘的土地。<br>
+                        <span class="log-grey">你环顾四周，发现了以下事物——</span><br>
+                        从废弃的入口移动到了<span class="log-yellow">散落的零件堆</span>。<br>
+                        废弃机械零件凌乱地散落在地面，踩上去嘎吱作响。<br>
+                        <span class="log-green">你发现了一个补给储藏箱！</span><br>
+                        <span class="log-green">你发现了一件生锈齿轮。</span><br>
+                        你搜索了补给储藏箱，获得了<span class="log-yellow">生命药剂</span>×1<br>
+                        <span class="log-red">那是一个陷阱！</span>你被飞出的铁片划伤了手臂。<br>
+                        从一片荒芜的荒地移动到了<span class="log-yellow">一片金属覆盖的废铁地</span>。<br>
+                    </div>
+                </div>
+
+                <!-- Inventory + Equipment -->
+                <div class="flex-[6_1_0%] grid grid-cols-2 min-h-0 overflow-hidden">
+
+                    <!-- Inventory -->
+                    <div class="panel-texture relative flex flex-col bg-parchment overflow-hidden border-r border-ink-faint">
+                        <div class="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-ink-faint relative z-10">
+                            <span class="text-blood text-sm">◆</span>
+                            <span class="font-display text-wax text-[11px] tracking-[4px] uppercase">Inventory</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-1 p-1 overflow-y-auto content-start relative z-10 flex-1">
+                            <div class="bg-parchment-light/40 border border-ink-faint rounded-sm p-1.5 flex flex-col items-center justify-center min-h-[52px] relative hover:bg-parchment-light/70 hover:border-wax hover:shadow-[0_0_8px_rgba(184,148,46,0.1)] transition-all">
+                                <span class="absolute top-0.5 left-1 font-display text-[9px] text-abyss">I</span>
+                                <span class="font-body text-[11px] font-bold text-ink-bright text-center truncate max-w-full">生命药剂</span>
+                                <span class="text-[9px] text-ink-dim mt-0.5">消耗品</span>
+                            </div>
+                            <div class="bg-parchment-light/40 border border-ink-faint rounded-sm p-1.5 flex flex-col items-center justify-center min-h-[52px] relative hover:bg-parchment-light/70 hover:border-wax hover:shadow-[0_0_8px_rgba(184,148,46,0.1)] transition-all">
+                                <span class="absolute top-0.5 left-1 font-display text-[9px] text-abyss">II</span>
+                                <span class="font-body text-[11px] font-bold text-ink-bright text-center truncate max-w-full">生锈水管</span>
+                                <span class="text-[9px] text-ink-dim mt-0.5">武器</span>
+                            </div>
+                            <div class="bg-parchment-light/40 border border-ink-faint rounded-sm p-1.5 flex flex-col items-center justify-center min-h-[52px] relative hover:bg-parchment-light/70 hover:border-wax hover:shadow-[0_0_8px_rgba(184,148,46,0.1)] transition-all">
+                                <span class="absolute top-0.5 left-1 font-display text-[9px] text-abyss">III</span>
+                                <span class="font-body text-[11px] font-bold text-ink-bright text-center truncate max-w-full">废铁片</span>
+                                <span class="text-[9px] text-ink-dim mt-0.5">材料</span>
+                            </div>
+                            <div class="border border-dashed border-ink-faint rounded-sm opacity-30 flex items-center justify-center min-h-[52px]">
+                                <span class="font-display text-[9px] text-ink-dim">IV</span>
+                            </div>
+                            <div class="border border-dashed border-ink-faint rounded-sm opacity-30 flex items-center justify-center min-h-[52px]">
+                                <span class="font-display text-[9px] text-ink-dim">V</span>
+                            </div>
+                            <div class="border border-dashed border-ink-faint rounded-sm opacity-30 flex items-center justify-center min-h-[52px]">
+                                <span class="font-display text-[9px] text-ink-dim">VI</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Equipment -->
+                    <div class="panel-texture relative flex flex-col bg-parchment overflow-hidden">
+                        <div class="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-ink-faint relative z-10">
+                            <span class="text-blood text-sm">◇</span>
+                            <span class="font-display text-wax text-[11px] tracking-[4px] uppercase">Armament</span>
+                        </div>
+                        <div class="relative z-10">
+                            <div class="flex items-center gap-2 px-2.5 py-1.5 border-b border-ink-faint hover:bg-parchment-light/40 transition-colors min-h-[36px]">
+                                <span class="text-sm saturate-60">⚔</span>
+                                <span class="font-display text-[9px] text-ink-dim w-9 text-right tracking-wider uppercase">Wpn</span>
+                                <span class="font-body text-xs font-bold text-ink-bright flex-1 truncate">生锈水管</span>
+                                <span class="text-[10px] text-ink-dim whitespace-nowrap">ATK 8</span>
+                            </div>
+                            <div class="flex items-center gap-2 px-2.5 py-1.5 border-b border-ink-faint opacity-30 min-h-[36px]">
+                                <span class="text-sm saturate-60">🛡</span>
+                                <span class="font-display text-[9px] text-ink-dim w-9 text-right tracking-wider uppercase">Arm</span>
+                                <span class="font-body text-xs text-ink-faint font-light flex-1 truncate">空</span>
+                            </div>
+                            <div class="flex items-center gap-2 px-2.5 py-1.5 border-b border-ink-faint opacity-30 min-h-[36px]">
+                                <span class="text-sm saturate-60">💍</span>
+                                <span class="font-display text-[9px] text-ink-dim w-9 text-right tracking-wider uppercase">Acc</span>
+                                <span class="font-body text-xs text-ink-faint font-light flex-1 truncate">空</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ═══ BOTTOM SHEET ═══ -->
+    <div class="fixed inset-0 bg-[rgba(10,8,4,0.75)] z-[100] opacity-0 invisible transition-all duration-300 backdrop-blur-[2px] active" id="bottomSheetOverlay"
+         style="opacity:1;visibility:visible;">
+    </div>
+    <div class="fixed bottom-0 left-0 right-0 bg-parchment border-t-2 border-wax z-[101] max-h-[55vh] flex flex-col shadow-[0_-8px_40px_rgba(0,0,0,0.5)] transition-transform duration-400 translate-y-0"
+         id="bottomSheet"
+         style="transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);">
+        <div class="px-5 py-3.5 font-display text-[13px] font-bold text-wax bg-wax/[0.06] border-b border-ink-faint tracking-[2px] flex items-center gap-2.5">
+            📦 补给储藏箱 <span class="text-ink-dim font-light text-[11px] font-body tracking-normal">— 垃圾平原 (1,0)</span>
+        </div>
+        <div class="px-4 py-2.5 overflow-y-auto flex-1">
+            <div class="flex items-center gap-2.5 px-2.5 py-2 bg-parchment-light/30 border-l-2 border-ink-faint mb-1 hover:bg-parchment-light/60 hover:border-l-wax transition-all">
+                <span class="flex-1 text-[13px] font-bold text-ink-bright font-body">🧪 生命药剂</span>
+                <span class="text-[10px] text-ink-dim">消耗品</span>
+                <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright transition-all tracking-wide cursor-pointer">拾取</button>
+            </div>
+            <div class="flex items-center gap-2.5 px-2.5 py-2 bg-parchment-light/30 border-l-2 border-ink-faint mb-1 hover:bg-parchment-light/60 hover:border-l-wax transition-all">
+                <span class="flex-1 text-[13px] font-bold text-ink-bright font-body">🔩 生锈齿轮</span>
+                <span class="text-[10px] text-ink-dim">材料</span>
+                <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright transition-all tracking-wide cursor-pointer">拾取</button>
+            </div>
+            <div class="flex items-center gap-2.5 px-2.5 py-2 bg-parchment-light/30 border-l-2 border-ink-faint mb-1 hover:bg-parchment-light/60 hover:border-l-wax transition-all">
+                <span class="flex-1 text-[13px] font-bold text-ink-bright font-body">🧵 绳索</span>
+                <span class="text-[10px] text-ink-dim">工具</span>
+                <button class="px-3 py-1 text-[11px] font-body font-medium text-ink bg-parchment-light/50 border border-ink-faint hover:bg-parchment-light/80 hover:border-wax hover:text-ink-bright transition-all tracking-wide cursor-pointer">拾取</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ TOAST ═══ -->
+    <div class="fixed top-5 right-5 z-[400] flex flex-col gap-1.5 pointer-events-none">
+        <div class="px-4 py-2 border-l-[3px] border-l-moss font-body text-xs text-ink-bright bg-parchment shadow-[0_4px_16px_rgba(0,0,0,0.4)] max-w-[260px] pointer-events-auto">
+            拾取了 生命药剂
+        </div>
+    </div>
+
+    <!-- ═══ PLAYER DRAWER ═══ -->
+    <div class="fixed inset-0 bg-[rgba(10,8,4,0.6)] z-[250] opacity-0 invisible transition-all duration-300 backdrop-blur-[1px]" id="drawerOverlay"></div>
+    <div class="fixed top-0 left-0 w-[300px] h-screen bg-parchment z-[300] -translate-x-full flex flex-col border-r-2 border-wax shadow-[4px_0_24px_rgba(0,0,0,0.5)] transition-transform duration-400"
+         id="playerDrawer"
+         style="transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);">
+        <div class="flex justify-between items-center px-4 py-4 bg-wax/[0.06] border-b border-ink-faint font-display text-xs text-wax tracking-[3px]">
+            <span>☠ SURVIVOR</span>
+            <button class="border border-ink-faint text-ink-dim text-lg px-1.5 leading-none hover:text-blood-glow hover:border-blood transition-colors cursor-pointer">&times;</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-3">
+            <div class="bg-parchment-light/30 border-l-2 border-ink-faint p-2.5 mb-2 text-[11px]">
+                <h3 class="font-display text-[10px] text-wax tracking-[2px] uppercase mb-1.5">Vitality</h3>
+                <div class="h-2.5 bg-parchment-dark/50 border border-ink-faint overflow-hidden my-1">
+                    <div class="h-full bg-gradient-to-r from-blood to-blood-glow" style="width:72%"></div>
+                </div>
+                <p class="text-ink-dim mt-1">72 / 100</p>
+            </div>
+            <div class="bg-parchment-light/30 border-l-2 border-ink-faint p-2.5 mb-2 text-[11px]">
+                <h3 class="font-display text-[10px] text-wax tracking-[2px] uppercase mb-1.5">Stamina</h3>
+                <div class="h-2.5 bg-parchment-dark/50 border border-ink-faint overflow-hidden my-1">
+                    <div class="h-full bg-gradient-to-r from-abyss to-abyss-glow" style="width:45%"></div>
+                </div>
+                <p class="text-ink-dim mt-1">45 / 100</p>
+            </div>
+            <div class="bg-parchment-light/30 border-l-2 border-ink-faint p-2.5 mb-2 text-[11px]">
+                <h3 class="font-display text-[10px] text-wax tracking-[2px] uppercase mb-1.5">Experience</h3>
+                <div class="h-2.5 bg-parchment-dark/50 border border-ink-faint overflow-hidden my-1">
+                    <div class="h-full bg-gradient-to-r from-wax to-wax-glow" style="width:30%"></div>
+                </div>
+                <p class="text-ink-dim mt-1">Level 3 — 300 / 1000</p>
+            </div>
+        </div>
+    </div>
+    <button class="fixed left-0 top-1/2 -translate-y-1/2 z-[200] bg-parchment text-wax border border-ink-faint border-l-0 rounded-r-sm py-4 px-1.5 cursor-pointer font-display text-base tracking-[4px] shadow-[2px_0_12px_rgba(0,0,0,0.3)] hover:bg-parchment-light hover:shadow-[2px_0_16px_rgba(0,0,0,0.4),0_0_8px_rgba(184,148,46,0.1)] transition-all"
+            id="drawerToggle"
+            style="writing-mode: vertical-lr;">☠</button>
+
+    <!-- Demo Note -->
+    <div class="fixed bottom-2.5 left-1/2 -translate-x-1/2 bg-wax/[0.08] border border-wax/30 px-4 py-1.5 font-display text-[10px] text-wax z-[500] tracking-[2px]">
+        ◈ Dark Grimoire + Tailwind Demo
+    </div>
+
+    <script>
+        const mapGrid = document.getElementById('mapGrid');
+        const cols = 10, rows = 10;
+
+        mapGrid.innerHTML += '<div class="font-display text-[9px] text-ink-dim bg-transparent"></div>';
+        for (let x = 0; x < cols; x++) mapGrid.innerHTML += `<div class="font-display text-[9px] text-ink-dim bg-transparent flex items-center justify-center">${x}</div>`;
+
+        const named = {
+            '0,0': '入口', '1,0': '零件堆', '3,0': '轮胎山',
+            '4,0': '管道', '5,0': '废铁山', '7,0': '尽头',
+        };
+        const blocked = { '5,0': true };
+        const fogged = new Set();
+        for (let y = 0; y < rows; y++)
+            for (let x = 0; x < cols; x++)
+                if (y > 2 || (y === 2 && x > 4)) fogged.add(`${x},${y}`);
+        const current = '1,0';
+        const exit = '7,0';
+
+        for (let y = 0; y < rows; y++) {
+            mapGrid.innerHTML += `<div class="font-display text-[9px] text-ink-dim bg-transparent flex items-center justify-center">${y}</div>`;
+            for (let x = 0; x < cols; x++) {
+                const key = `${x},${y}`;
+                let cls = 'flex items-center justify-center text-[9px] font-bold relative overflow-hidden transition-all duration-150 z-[1] rounded-sm cursor-default';
+                let content = '';
+
+                if (fogged.has(key)) {
+                    cls += ' map-cell-fogged border border-parchment-dark/50';
+                    content = '<span class="text-sm opacity-30 blur-[1px]">?</span>';
+                } else if (blocked[key]) {
+                    cls += ' map-cell-blocked text-blood border border-blood/30';
+                    content = named[key] || '✕';
+                } else if (key === current) {
+                    cls += ' map-cell-current border-2 border-wax animate-current-pulse cursor-pointer z-[4]';
+                    content = (named[key] ? `<span class="font-body text-[8px] text-ink text-center leading-tight truncate max-w-full px-0.5">${named[key]}</span>` : '') + '<span class="text-wax text-xs">◆</span>';
+                } else if (key === exit) {
+                    cls += ' map-cell-safe border border-abyss shadow-[0_0_8px_rgba(42,90,122,0.2)] cursor-pointer hover:bg-wax/[0.08] hover:border-wax hover:shadow-[0_0_12px_rgba(184,148,46,0.15)] hover:scale-105 hover:z-[5]';
+                    content = named[key] ? `<span class="font-body text-[8px] text-ink text-center leading-tight truncate max-w-full px-0.5">${named[key]}</span>` : '▸';
+                } else {
+                    cls += ' map-cell-safe border border-ink-faint/30 cursor-pointer hover:bg-wax/[0.08] hover:border-wax hover:shadow-[0_0_12px_rgba(184,148,46,0.15)] hover:scale-105 hover:z-[5]';
+                    if (named[key]) content = `<span class="font-body text-[8px] text-ink text-center leading-tight truncate max-w-full px-0.5">${named[key]}</span>`;
+                }
+                mapGrid.innerHTML += `<div class="${cls}">${content}</div>`;
+            }
+        }
+
+        document.getElementById('bottomSheetOverlay').addEventListener('click', function() {
+            this.classList.remove('active');
+            this.style.opacity = '0';
+            this.style.visibility = 'hidden';
+            const sheet = document.getElementById('bottomSheet');
+            sheet.style.transform = 'translateY(100%)';
+        });
+        document.getElementById('drawerToggle').addEventListener('click', function() {
+            const overlay = document.getElementById('drawerOverlay');
+            const drawer = document.getElementById('playerDrawer');
+            overlay.style.opacity = '1';
+            overlay.style.visibility = 'visible';
+            drawer.style.transform = 'translateX(0)';
+            this.style.left = '300px';
+        });
+        function closeDrawer() {
+            const overlay = document.getElementById('drawerOverlay');
+            const drawer = document.getElementById('playerDrawer');
+            const toggle = document.getElementById('drawerToggle');
+            overlay.style.opacity = '0';
+            overlay.style.visibility = 'hidden';
+            drawer.style.transform = 'translateX(-100%)';
+            toggle.style.left = '0';
+        }
+        document.getElementById('drawerOverlay').addEventListener('click', closeDrawer);
+        document.querySelector('#playerDrawer button').addEventListener('click', closeDrawer);
+    </script>
+</body>
+</html>

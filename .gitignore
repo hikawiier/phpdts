@@ -120,3 +120,7 @@ gamedata/cache/roomlist.php
 /.mimocode
 gamedata/cache/roomlist.php
 debug_autologin.php
+
+# Node
+node_modules/
+vex/css/output.css

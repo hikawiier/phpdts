@@ -14,7 +14,7 @@ export function escapeHtml(str) {
 export function getPlaceName(pls) {
     if (mapData && mapData.links && mapData.curRegion) {
         const tiles = mapData.links.tiles[mapData.curRegion];
-        if (tiles && tiles[pls]) return tiles[pls].name;
+        if (tiles && tiles[pls] && tiles[pls].name) return tiles[pls].name;
     }
     return '位置' + pls;
 }

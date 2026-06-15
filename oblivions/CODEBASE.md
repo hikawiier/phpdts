@@ -15,13 +15,84 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 
 ---
 
-## 二、目录结构
+## 二、核心概念词典
+
+> AI 智能体介入项目前必读。以下概念在 Oblivions 中有特定含义，不可按字面意思理解。
+
+### 2.1 区域 (Region) vs 地图格 (Tile)
+
+- **区域**：一个独立的子地图，由多个地图格拼接而成。数据库键 `pgroup`，最多 255 个区域。
+- **地图格**：最小的移动单元，数据库键 `pls`（区域内局部索引 1-254）。跨区域时 pls 可重用——区域1的 pls=5 和区域2的 pls=5 是不同的格。
+- **组合键**：`(pgroup, pls)` 唯一确定一个地图格。
+
+### 2.2 地板属性 (floor)
+
+地图格的地板属性，**影响玩家交互**（移动消耗修正、技能效果、可破坏性），不是纯装饰：
+
+| 值 | 含义 |
+|----|------|
+| `standard` | 标准地板 |
+| `water` | 含水地板 |
+| `vegetation` | 覆植地板 |
+| `metal` | 金属地板 |
+| `magic` | 富魔力地板 |
+
+### 2.3 潮汐属性 (tide)
+
+**不是海潮涨落，是区域危险等级分区标签。** 潮汐影响资源生成倾向（稀有度权重、敌人生成偏向、事件点类型），不影响玩家移动：
+
+| 值 | 危险等级 | 含义 |
+|----|---------|------|
+| `shallow` | T-1（低） | 浅滩区，低危险 |
+| `deep` | T（中） | 深水区，中危险 |
+| `abyss` | T+1（高） | 深海区，高危险 |
+| `safe` | 特殊 | 安全区（预设或动态判定：该格无敌人/道具/未触发事件点） |
+
+### 2.4 迷雾 (fog) vs 发现 (discovered)
+
+两个**独立**的关注点，不可混淆：
+
+| | 迷雾 (fog) | 发现 (discovered) |
+|---|---|---|
+| **控制什么** | 地图格的可见性 | 道具的可操作性 |
+| **数据位置** | `oblmapstates` 表 `fog` 字段 | `oblmapitem` 表 `discovered` 字段 |
+| **如何点亮** | BFS 视野计算，玩家位置扩展 | 玩家进入地图格时自动发现该格所有道具 |
+| **效果** | 迷雾格在前端显示为 `░░░` | 未发现的道具不出现在拾取列表中 |
+
+### 2.5 POI vs 散落道具
+
+都是道具来源，但机制不同：
+
+| | POI（建筑物） | 散落道具 |
+|---|---|---|
+| **位置** | 地图格内的建筑物 | 直接在地图格上 |
+| **获取方式** | 需搜索（`obl_search_poi`），消耗体力 | 直接拾取（`obl_pickup_item`） |
+| **数据表** | `oblmappoi` | `oblmapitem` |
+| **搜索次数** | 有 `search_count` 上限 | 无搜索概念 |
+| **生成池** | `poi_pool.php` | `scatter_pool.php` |
+
+### 2.6 itmpara
+
+道具的 JSON 附加参数字段（`$pdata['itmpara']`）。Oblivions 利用它追踪道具的原始索引：
+
+- **拾取时**：将 `item_id`（地图道具实例ID）注入 `itmpara` 的 `obl_item_id` 键
+- **丢弃时**：从 `itmpara` 读取 `obl_item_id`，还原为地图道具实例
+- **格式**：JSON 对象，如 `{"obl_item_id": "42"}`
+
+### 2.7 游戏刻 (tick)
+
+- 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
+- 当前仅记录，不驱动任何系统（战斗/NPC AI 未实现）
+
+---
+
+## 三、目录结构
 
 ```
 oblivions/
 ├── include/game/
 │   ├── explore.func.php      # 探索/搜索/拾取/丢弃核心逻辑
-│   ├── move.func.php         # 移动/地图数据加载/BFS距离计算
+│   ├── move.func.php         # 移动/地图数据加载/BFS距离计算/地形描述
 │   └── generate.func.php     # 资源生成（POI + 野生散落道具）
 ├── gamedata/
 │   ├── obl_config.php        # 可调参数配置
@@ -30,6 +101,7 @@ oblivions/
 │   ├── poi_loot.php          # POI 掉落表
 │   ├── poi_pool.php          # POI 刷新池（按潮汐区配置）
 │   ├── scatter_pool.php      # 野生散落道具池（按潮汐区配置）
+│   ├── terrain_desc.php      # 地形描述文本配置（随机组合生成无名格描述）
 │   ├── map.php               # 区域元数据 + 网格布局
 │   └── tiles/
 │       ├── region_1.php      # 区域1（垃圾平原）地图格数据
@@ -56,11 +128,11 @@ oblivions/
 
 ---
 
-## 三、数据库表
+## 四、数据库表
 
 所有表前缀为 `$tablepre`（默认 `bra_`），建表由 `rs_init_oblivions_tables()` 读取 `oblivions/sql/` 下SQL文件执行。
 
-### 3.1 `bra_oblmapstates` — 图格状态
+### 4.1 `bra_oblmapstates` — 图格状态
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -72,7 +144,7 @@ oblivions/
 
 主键: `(pgroup, pls)`
 
-### 3.2 `bra_oblmappoi` — POI实例
+### 4.2 `bra_oblmappoi` — POI实例
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -86,7 +158,7 @@ oblivions/
 
 索引: `idx_pgroup_pls(pgroup, pls)`
 
-### 3.3 `bra_oblmapitem` — 地图道具实例
+### 4.3 `bra_oblmapitem` — 地图道具实例
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -109,9 +181,9 @@ oblivions/
 
 ---
 
-## 四、API 接口
+## 五、API 接口
 
-### 4.1 通用协议
+### 5.1 通用协议
 
 - 入口: `api_v2.php?action=xxx`
 - 认证: Cookie 中的 `$cuser` / `$cpass`
@@ -121,7 +193,7 @@ oblivions/
 ```
 - 错误响应: `{ "status": "error", "error": { "code": "NOT_OBLIVIONS", "message": "..." } }`
 
-### 4.2 `game_map` — 地图数据（Oblivions扩展）
+### 5.2 `game_map` — 地图数据（Oblivions扩展）
 
 - **请求**: `GET api_v2.php?action=game_map`
 - **Oblivions扩展**: 当 `oblivions_is_active()` 为 true 时，额外返回 `links` 字段
@@ -157,7 +229,7 @@ oblivions/
 
 **前端用途**: `links.tiles[pgroup][pls].neighbors` 用于渲染可移动方向；`links.grids` 用于网格布局；`links.regions` 用于区域信息展示。
 
-### 4.3 `tile_actions` — 当前格交互数据
+### 5.3 `tile_actions` — 当前格交互数据
 
 - **请求**: `GET api_v2.php?action=tile_actions`
 - **前置条件**: 必须在 Oblivions 模式下
@@ -224,16 +296,16 @@ oblivions/
 
 ---
 
-## 五、命令路由
+## 六、命令路由
 
-### 5.1 提交格式
+### 6.1 提交格式
 
 通过 `command.php` POST 提交：
 - `mode=command`（必须）
 - `command=命令名`
 - 附加字段见下表
 
-### 5.2 Oblivions 专用命令
+### 6.2 Oblivions 专用命令
 
 | 命令 | POST附加字段 | 处理函数 | 说明 |
 |------|-------------|----------|------|
@@ -242,14 +314,14 @@ oblivions/
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
 | `obl_discard` | `slot` (int 1-6) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
 
-### 5.3 通用命令的 Oblivions 分支
+### 6.3 通用命令的 Oblivions 分支
 
 | 命令 | Oblivions分支 | 非Oblivions分支 |
 |------|--------------|----------------|
 | `move` | `obl_move($moveto, $pdata)` | `move($moveto)` |
 | `search` | `obl_explore($pdata)` | `search()` |
 
-### 5.4 命令执行流程
+### 6.4 命令执行流程
 
 ```
 command.php
@@ -264,9 +336,9 @@ command.php
 
 ---
 
-## 六、游戏数据文件
+## 七、游戏数据文件
 
-### 6.1 `obl_config.php` — 可调参数
+### 7.1 `obl_config.php` — 可调参数
 
 ```php
 return [
@@ -279,7 +351,7 @@ return [
 
 读取方式: `obl_get_config()`（带静态缓存）
 
-### 6.2 `item_table.php` — 道具模板
+### 7.2 `item_table.php` — 道具模板
 
 ```php
 'item_id' => [
@@ -296,9 +368,9 @@ return [
 ]
 ```
 
-**种类代码**: WP=钝器 WK=刃器 WG=枪械 WD=投掷 WF=拳套 AR=身体防具 AH=头部防具 AA=饰品 MT=材料 HH=恢复 HS=食物 DX=药物 TK=工具 SP=特殊
+**种类代码**: WP=钝器 WK=刃器 WG=枪械 WD=投掷 WF=灵符 AR=身体防具 AH=头部防具 AA=饰品 MT=材料 HH=恢复 HS=食物 DX=药物 TK=工具 SP=特殊
 
-### 6.3 `poi_table.php` — POI模板
+### 7.3 `poi_table.php` — POI模板
 
 ```php
 'poi_id' => [
@@ -314,7 +386,7 @@ return [
 ]
 ```
 
-### 6.4 `poi_loot.php` — POI掉落表
+### 7.4 `poi_loot.php` — POI掉落表
 
 ```php
 'poi_id' => [
@@ -327,7 +399,7 @@ return [
 ]
 ```
 
-### 6.5 `map.php` — 区域元数据
+### 7.5 `map.php` — 区域元数据
 
 ```php
 return [
@@ -349,7 +421,7 @@ return [
 ];
 ```
 
-### 6.6 `tiles/region_{pgroup}.php` — 地图格数据
+### 7.6 `tiles/region_{pgroup}.php` — 地图格数据
 
 ```php
 'pls' => [
@@ -364,7 +436,7 @@ return [
 ],
 ```
 
-### 6.7 `scatter_pool.php` / `poi_pool.php` — 生成池
+### 7.7 `scatter_pool.php` / `poi_pool.php` — 生成池
 
 按潮汐区分桶，`scatter_pool` 控制野生道具生成，`poi_pool` 控制POI生成：
 
@@ -375,11 +447,42 @@ return [
 ]
 ```
 
+### 7.8 `terrain_desc.php` — 地形描述文本配置
+
+为无名地块提供随机组合的描述文本，用于移动日志。按 `floor` + `tide` + `passable` 三个属性组合：
+
+```php
+return [
+    'floor_adj' => [
+        'standard'    => ['荒芜的', '空旷的', '布满灰尘的', ...],
+        'metal'       => ['金属覆盖的', '锈迹斑斑的', '残骸堆积的', ...],
+        'water'       => ['泥泞的', '潮湿的', '积水覆盖的', ...],
+        'vegetation'  => ['杂草丛生的', '藤蔓缠绕的', '灌木密布的', ...],
+    ],
+    'floor_name' => [
+        'standard'    => ['荒地', '平地', '碎石地', ...],
+        'metal'       => ['废铁地', '锈蚀地', '金属地', ...],
+        'water'       => ['湿地', '泥潭', '浅滩', ...],
+        'vegetation'  => ['灌木丛', '草丛', '荒野', ...],
+    ],
+    'tide_adj' => [
+        'deep'  => ['深', '幽深的', '令人窒息的', ...],
+        'abyss' => ['深渊般的', '无尽的', '吞噬一切的', ...],
+    ],
+    'impassable_suffix' => ['，无法通行', '，挡住了去路', '，请绕道', ...],
+];
+```
+
+**组合规则**（`obl_get_tile_display_name()`）：
+- 有名格：直接返回 `name`
+- 无名格：`"一片" + tide_adj? + floor_adj + floor_name + impassable_suffix?`
+- 每次调用 `array_rand()` 随机选取，同一格每次移动日志可能不同
+
 ---
 
-## 七、核心函数索引
+## 八、核心函数索引
 
-### 7.1 explore.func.php
+### 8.1 explore.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -397,7 +500,7 @@ return [
 | `obl_pickup_item` | `(int $iid, array &$pdata): void` | 拾取道具（含近视揭示/陷阱/并发保护） |
 | `obl_discard_item` | `(int $slot, array &$pdata): void` | 丢弃道具（含item_id还原到地图） |
 
-### 7.2 move.func.php
+### 8.2 move.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -406,9 +509,10 @@ return [
 | `obl_get_distance` | `(int $pgroup, int $from, int $to): int` | BFS最短路径（不可达返回-1） |
 | `obl_move` | `(int $moveto, array &$pdata): void` | 移动（含区域切换/体力/自动探索） |
 | `obl_check_move_sp` | `(array &$pdata, int $distance = 1): bool` | 移动体力检查+扣除 |
+| `obl_get_tile_display_name` | `(array $tile): string` | 获取地块显示名称（有名格用name，无名格用terrain_desc随机组合） |
 | `obl_post_move_hook` | `(array &$pdata): void` | 移动后钩子：自动探索（跳过体力检查） |
 
-### 7.3 generate.func.php
+### 8.3 generate.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -418,9 +522,9 @@ return [
 
 ---
 
-## 八、代码规范
+## 九、代码规范
 
-### 8.1 命名约定
+### 9.1 命名约定
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
@@ -430,20 +534,20 @@ return [
 | 数据库表 | `{$tablepre}oblmap{suffix}` | `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
 
-### 8.2 数据传递规范
+### 9.2 数据传递规范
 
 - **`$pdata` 引用传递**: 所有修改玩家数据的函数接受 `&$pdata`，禁止函数内 `extract()`
 - **日志输出**: 通过全局 `$log` 变量追加，格式 `$log .= '消息<br>';`
 - **数据库操作**: 使用全局 `$db` + `$tablepre`，SQL中表名写 `{$tablepre}oblmapxxx`
 - **配置读取**: 通过 `obl_get_config()` 获取，带静态缓存，不直接 include
 
-### 8.3 并发安全
+### 9.3 并发安全
 
 - **拾取竞态**: `DELETE ... WHERE iid='$iid' AND discovered>0`，检查 `affected_rows()` 防重复拾取
 - **搜索计数**: `UPDATE ... SET search_count=search_count+1` 原子递增
 - **迷雾写入**: `INSERT ... ON DUPLICATE KEY UPDATE fog=1` 幂等操作
 
-### 8.4 itmpara 约定
+### 9.4 itmpara 约定
 
 - 数据库中为 JSON 数组格式
 - 拾取时注入 `obl_item_id` 键保存原始地图道具ID
@@ -451,7 +555,7 @@ return [
 
 ---
 
-## 九、玩家生命周期（Oblivions模式）
+## 十、玩家生命周期（Oblivions模式）
 
 ```
 0. 地图初始化 → 所有格子迷雾覆盖
@@ -469,13 +573,13 @@ return [
 
 ---
 
-## 十、前端集成速查
+## 十一、前端集成速查
 
-### 10.1 页面入口
+### 11.1 页面入口
 
 Oblivions 模式下 `game.php` 重定向到 `vex/index.html`（SPA前端）。
 
-### 10.2 数据拉取
+### 11.2 数据拉取
 
 | 需求 | API | 关键字段 |
 |------|-----|----------|
@@ -483,7 +587,7 @@ Oblivions 模式下 `game.php` 重定向到 `vex/index.html`（SPA前端）。
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
 | 玩家位置 | `player_info` | `pgroup`(区域), `pls`(格子) |
 
-### 10.3 命令提交
+### 11.3 命令提交
 
 ```javascript
 // 探索
@@ -502,7 +606,7 @@ submitCommand('obl_discard', { slot: slotNumber }); // slot: 1-6
 submitCommand('move', { moveto: targetPls });
 ```
 
-### 10.4 前端关键逻辑
+### 11.4 前端关键逻辑
 
 - **迷雾渲染**: `fog=0` 的格子不可见（不渲染/灰色覆盖），`fog=1` 的格子正常显示
 - **POI可见性**: 仅迷雾清除后的POI返回（由API过滤）

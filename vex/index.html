@@ -4,86 +4,146 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="base-url" content="/phpdts">
-    <title>PHPDTS - 立体剪纸大逃杀</title>
-    <link rel="stylesheet" href="css/style.css">
+    <title>OBLIVIONS — 遗忘之地</title>
+    <link rel="stylesheet" href="css/output.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="css/terminal.css">
 </head>
-<body>
-    <div id="app">
-        <header>
-            <svg class="header-deco" viewBox="0 0 60 60" width="48" height="48">
-                <polygon points="30,8 6,52 54,52" fill="#ff7675" stroke="#2d3436" stroke-width="3" stroke-linejoin="round"/>
-                <circle cx="30" cy="24" r="14" fill="#ffeaa7" stroke="#2d3436" stroke-width="3"/>
-                <circle cx="23" cy="27" r="3" fill="#ff8787" opacity="0.5"/>
-                <circle cx="37" cy="27" r="3" fill="#ff8787" opacity="0.5"/>
-                <circle cx="26" cy="22" r="2" fill="#2d3436"/>
-                <circle cx="34" cy="22" r="2" fill="#2d3436"/>
-                <path d="M 27 30 Q 30 33 33 30" fill="none" stroke="#2d3436" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <h1>PHPDTS Battle Royale</h1>
-            <svg class="header-deco" viewBox="0 0 60 60" width="48" height="48" style="animation-delay: 0.4s;">
-                <ellipse cx="28" cy="42" rx="16" ry="11" fill="#ffffff" stroke="#2d3436" stroke-width="3"/>
-                <path d="M 18 34 Q 25 36 28 33 Q 33 42 20 44 Z" fill="#2d3436"/>
-                <circle cx="40" cy="30" r="10" fill="#ffffff" stroke="#2d3436" stroke-width="3"/>
-                <polygon points="32,24 31,14 39,22" fill="#2d3436" stroke="#2d3436" stroke-width="2" stroke-linejoin="round"/>
-                <polygon points="46,24 50,14 42,22" fill="#ffffff" stroke="#2d3436" stroke-width="3" stroke-linejoin="round"/>
-                <circle cx="37" cy="29" r="1.5" fill="#2d3436"/>
-                <circle cx="43" cy="29" r="1.5" fill="#2d3436"/>
-                <path d="M 39 32 Q 40 33 41 32" fill="none" stroke="#2d3436" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
+<body class="h-screen overflow-hidden bg-bg text-fg-mid font-mono text-xs leading-[1.6] select-none">
+
+    <div id="app" class="h-full flex flex-col">
+
+        <!-- ═══ HEADER ═══ -->
+        <header class="flex-none px-4 py-1.5 border-b border-fg-dim/50">
+            <pre class="text-fg-bright text-[9px] leading-[1.15] whitespace-pre overflow-hidden font-bold"> ██████╗ ██████╗ ██╗     ██████╗ ███████╗███████╗██╗███╗   ██╗███████╗██████╗
+██╔════╝██╔═══██╗██║     ██╔══██╗██╔════╝██╔════╝██║████╗  ██║██╔════╝██╔══██╗
+██║     ██║   ██║██║     ██║  ██║█████╗  ███████╗██║██╔██╗ ██║█████╗  ██████╔╝
+██║     ██║   ██║██║     ██║  ██║██╔══╝  ╚════██║██║██║╚██╗██║██╔══╝  ██╔══██╗
+╚██████╗╚██████╔╝███████╗██████╔╝███████╗███████║██║██║ ╚████║███████╗██║  ██║
+ ╚═════╝ ╚═════╝ ╚══════╝╚═════╝ ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝</pre>
+            <div id="headerStatus" class="flex items-center gap-4 mt-0.5 text-[10px] text-fg-dim"></div>
         </header>
 
-        <main class="game-layout">
-            <div class="col-left">
-                <div class="panel panel-map" id="mapSection">
-                    <h2>战场地图</h2>
-                    <div id="mapInfo"></div>
-                    <div class="map-grid-wrap">
-                        <div class="map-grid" id="mapGrid"></div>
+        <!-- ═══ MAIN ═══ -->
+        <main class="flex-1 grid grid-cols-[55%_1fr] min-h-0 overflow-hidden">
+
+            <!-- LEFT: Map + Actions -->
+            <div class="flex flex-col border-r border-fg-dim/30 min-h-0 overflow-hidden">
+
+                <!-- Map -->
+                <div class="flex-1 min-h-0 flex flex-col p-3 overflow-hidden">
+                    <div class="ascii-title flex-none">
+                        <span>┌─</span>
+                        <span class="ascii-label">CARTOGRAPHY</span>
+                        <span>─</span>
+                        <span class="flex-1 ascii-line"></span>
+                        <span>┐</span>
+                    </div>
+                    <div id="mapInfo" class="text-fg-dim text-[10px] py-1 flex-none"></div>
+                    <div id="mapContainer" class="map-container flex-1 min-h-0 overflow-auto relative">
+                        <div id="mapGrid" class="ascii-map-grid"></div>
+                    </div>
+                    <div class="zoom-controls">
+                        <button id="zoomOut" class="zoom-btn">-</button>
+                        <span id="zoomLevel" class="zoom-label">1.0x</span>
+                        <button id="zoomIn" class="zoom-btn">+</button>
+                    </div>
+                    <div class="ascii-title-bottom flex-none">
+                        <span>└</span>
+                        <span class="flex-1 ascii-line"></span>
+                        <span>┘</span>
                     </div>
                 </div>
-                <div class="panel panel-tileaction" id="tileActionSection">
+
+                <!-- Tile Actions -->
+                <div class="flex-none border-t border-fg-dim/30 p-3 overflow-y-auto" style="max-height:180px;">
+                    <div class="ascii-title flex-none mb-1.5">
+                        <span>┌─</span>
+                        <span class="ascii-label">ACTIONS</span>
+                        <span>─</span>
+                        <span class="flex-1 ascii-line"></span>
+                        <span>┐</span>
+                    </div>
                     <div id="tileActionBar"></div>
                 </div>
             </div>
-            <div class="col-right">
-                <div class="panel panel-log" id="logSection">
-                    <h2>游戏日志</h2>
-                    <div class="log-content" id="logContent">加载中...</div>
-                </div>
-                <div class="panel-group-bottom">
-                    <div class="panel panel-inv" id="inventorySection">
-                        <h2>背包</h2>
-                        <div id="inventoryList"></div>
+
+            <!-- RIGHT: Log + Inventory/Equipment -->
+            <div class="flex flex-col min-h-0 overflow-hidden">
+
+                <!-- Log -->
+                <div class="min-h-0 flex flex-col p-3 overflow-hidden border-b border-fg-dim/30" style="flex:4 1 0%;">
+                    <div class="ascii-title flex-none mb-1.5">
+                        <span>┌─</span>
+                        <span class="ascii-label">CHRONICLE</span>
+                        <span>─</span>
+                        <span class="flex-1 ascii-line"></span>
+                        <span>┐</span>
                     </div>
-                    <div class="panel panel-eq" id="equipmentSection">
-                        <h2>装备</h2>
-                        <div id="equipment"></div>
+                    <div class="flex-1 overflow-y-auto pl-2 border-l border-fg-dim/20 min-h-0">
+                        <div id="logContent" class="text-fg-mid leading-[1.8]"></div>
+                    </div>
+                </div>
+
+                <!-- Inventory + Equipment -->
+                <div class="min-h-0 grid grid-cols-2 overflow-hidden" style="flex:6 1 0%;">
+
+                    <!-- Inventory -->
+                    <div class="flex flex-col p-3 overflow-hidden border-r border-fg-dim/30">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">INVENTORY</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span>┐</span>
+                        </div>
+                        <div id="inventoryList" class="flex-1 overflow-y-auto min-h-0"></div>
+                    </div>
+
+                    <!-- Equipment -->
+                    <div class="flex flex-col p-3 overflow-hidden">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">ARMAMENT</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span>┐</span>
+                        </div>
+                        <div id="equipment" class="flex-1 overflow-y-auto min-h-0"></div>
                     </div>
                 </div>
             </div>
         </main>
+
+        <!-- ═══ STATUS BAR ═══ -->
+        <footer id="statusBar" class="flex-none px-4 py-1 border-t border-fg-dim/30 text-[10px] text-fg-dim flex items-center gap-4"></footer>
     </div>
 
-    <!-- Bottom Sheet（全局覆盖层，由 tile-action.js 控制） -->
-    <div class="bottom-sheet-overlay" id="bottomSheetOverlay" onclick="closeBottomSheet()"></div>
-    <div class="bottom-sheet" id="bottomSheet">
-        <div class="sheet-header" id="sheetHeader"></div>
-        <div class="sheet-body" id="sheetBody"></div>
-    </div>
-
-    <!-- Toast 容器 -->
-    <div class="toast-container" id="toastContainer"></div>
-
-    <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
-    <div class="player-drawer" id="playerDrawer">
-        <div class="drawer-header">
-            <span>玩家信息</span>
-            <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+    <!-- ═══ BOTTOM SHEET ═══ -->
+    <div class="bs-overlay fixed inset-0 bg-black/80 z-[100]" id="bottomSheetOverlay"></div>
+    <div class="bottom-sheet fixed bottom-0 left-0 right-0 bg-bg border-t-2 border-hi z-[101] max-h-[50vh] flex flex-col" id="bottomSheet">
+        <div class="px-4 py-2 border-b border-fg-dim/30 text-fg-bright text-xs tracking-widest flex items-center gap-3 flex-none">
+            <span>┌─</span>
+            <span id="sheetHeader" class="font-bold"></span>
+            <span id="sheetSub" class="text-fg-dim font-normal"></span>
+            <span class="ml-auto text-fg-dim cursor-pointer hover:text-hi transition-colors" id="sheetCloseBtn">[ESC]</span>
         </div>
-        <div class="drawer-body" id="playerInfo"></div>
+        <div id="sheetBody" class="px-4 py-2 overflow-y-auto flex-1 space-y-0.5"></div>
     </div>
 
-    <button class="drawer-toggle" id="drawerToggle" onclick="toggleDrawer()" title="玩家信息">☰</button>
+    <!-- ═══ TOAST ═══ -->
+    <div class="toast-container fixed top-3 right-3 z-[400] flex flex-col gap-1.5 pointer-events-none" id="toastContainer"></div>
+
+    <!-- ═══ PLAYER DRAWER ═══ -->
+    <div class="drawer-overlay fixed inset-0 bg-black/70 z-[250]" id="drawerOverlay"></div>
+    <div class="player-drawer fixed top-0 left-0 w-[280px] h-screen bg-bg z-[300] flex flex-col border-r-2 border-hi" id="playerDrawer">
+        <div class="flex justify-between items-center px-4 py-3 border-b border-fg-dim/30 text-fg-bright text-xs tracking-widest flex-none">
+            <span>┌─ SURVIVOR</span>
+            <button class="text-fg-dim hover:text-hi transition-colors cursor-pointer text-sm" id="drawerCloseBtn">[X]</button>
+        </div>
+        <div id="playerInfo" class="flex-1 overflow-y-auto p-4 space-y-3 text-[11px]"></div>
+    </div>
+    <button class="drawer-toggle fixed left-0 top-1/2 -translate-y-1/2 z-[200] bg-bg text-fg-bright border border-fg-dim/30 border-l-0 py-3 px-1 cursor-pointer font-mono text-[10px] tracking-widest hover:bg-white hover:text-black transition-all" id="drawerToggle" style="writing-mode: vertical-lr;">STATS</button>
 
     <script type="module" src="js/app.js"></script>
 </body>

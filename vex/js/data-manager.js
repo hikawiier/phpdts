@@ -10,7 +10,8 @@ class DataManager {
         this._cache = new Map();       // action -> { data, timestamp }
         this._pending = new Map();      // action -> Promise（去重）
         this._ttl = 2000;              // 缓存有效期 2 秒
-        this._subscribers = new Map();  // action -> Set<callback>
+        this._subscribers = new Map();  // action -> Set<callback>（API 数据订阅）
+        this._listeners = new Map();    // event -> Set<callback>（语义事件订阅）
     }
 
     async fetch(action, forceRefresh = false) {
@@ -67,6 +68,28 @@ class DataManager {
     _notify(action, data) {
         const subs = this._subscribers.get(action);
         if (subs) subs.forEach(cb => cb(data));
+    }
+
+    // ─── 语义事件机制（模块间通信，独立于 API action） ───
+    // 操作完成时 broadcast('game:action-completed')，各面板 listen 后自行刷新
+    broadcast(event, data) {
+        const listeners = this._listeners.get(event);
+        if (listeners) listeners.forEach(cb => cb(data));
+    }
+
+    listen(event, callback) {
+        if (!this._listeners.has(event)) {
+            this._listeners.set(event, new Set());
+        }
+        this._listeners.get(event).add(callback);
+    }
+
+    unlisten(event, callback) {
+        const listeners = this._listeners.get(event);
+        if (listeners) {
+            listeners.delete(callback);
+            if (listeners.size === 0) this._listeners.delete(event);
+        }
     }
 }
 
