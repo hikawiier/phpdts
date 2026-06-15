@@ -1,10 +1,83 @@
 // ══════════════════════════════════════════════════
-// 玩家信息 / Player info (drawer, ASCII 终端风)
+// 玩家信息 / Player info (左侧抽屉 + 状态栏)
 // ══════════════════════════════════════════════════
 
-import { DebugBus, RAGE_STATUS, POSE_NAMES, TACTIC_NAMES } from './data.js';
+import { DebugBus, RAGE_STATUS, POSE_NAMES, TACTIC_NAMES, mapData, BASE_URL } from './data.js';
 import { escapeHtml, getPlaceName, getGenderText, getRaceText, getClubText } from './utils.js';
 import { dataManager } from './data-manager.js';
+
+// ══════════════════════════════════════════════════
+// 状态栏渲染
+// ══════════════════════════════════════════════════
+
+let statusData = null; // 缓存 player_info 数据
+
+export async function renderStatusBar() {
+    const result = await dataManager.fetch('player_info', true);
+    if (result.status !== 'success' || !result.data) return;
+    statusData = result.data;
+    applyStatusBar();
+}
+
+function applyStatusBar() {
+    if (!statusData) return;
+    const d = statusData;
+
+    // 头像
+    const avatarEl = document.getElementById('statusAvatar');
+    if (avatarEl) {
+        const gd = d.gd || 'f';
+        const icon = d.icon || '0';
+        const imgSrc = BASE_URL + '/img/' + gd + '_' + icon + '.gif';
+        avatarEl.innerHTML = '<img src="' + escapeHtml(imgSrc) + '" alt="avatar" onerror="this.parentElement.innerHTML=\'<span class=status-avatar-fallback>???</span>\'">';
+    }
+
+    // 位置信息
+    let regionName = 'unknown';
+    let curName = 'unknown';
+    if (mapData.links && mapData.curRegion !== null && mapData.links.regions[mapData.curRegion]) {
+        regionName = mapData.links.regions[mapData.curRegion].name || 'unknown';
+    }
+    if (mapData.curLoc !== null) {
+        curName = getPlaceName(mapData.curLoc);
+    }
+    const regionEl = document.getElementById('regionInfo');
+    if (regionEl) regionEl.textContent = regionName;
+    const locationEl = document.getElementById('locationInfo');
+    if (locationEl) locationEl.textContent = curName;
+
+    // HP 条
+    const hp = d.hp || 0;
+    const mhp = d.mhp || 1;
+    const hpPct = Math.max(0, Math.min(100, (hp / mhp) * 100));
+    const hpBar = document.getElementById('hpBar');
+    const hpText = document.getElementById('hpText');
+    if (hpBar) {
+        hpBar.style.width = hpPct + '%';
+        if (hp / mhp < 0.3) {
+            hpBar.classList.add('danger');
+        } else {
+            hpBar.classList.remove('danger');
+        }
+    }
+    if (hpText) {
+        hpText.textContent = 'HP ' + hp + '/' + mhp;
+        if (hp / mhp < 0.3) {
+            hpText.classList.add('danger');
+        } else {
+            hpText.classList.remove('danger');
+        }
+    }
+
+    // SP 条
+    const sp = d.sp || 0;
+    const msp = d.msp || 1;
+    const spPct = Math.max(0, Math.min(100, (sp / msp) * 100));
+    const spBar = document.getElementById('spBar');
+    const spText = document.getElementById('spText');
+    if (spBar) spBar.style.width = spPct + '%';
+    if (spText) spText.textContent = 'SP ' + sp + '/' + msp;
+}
 
 export async function loadPlayerInfo() {
     const el = document.getElementById('playerInfo');
@@ -68,31 +141,37 @@ let drawerOpen = false;
 export function toggleDrawer() {
     const drawer = document.getElementById('playerDrawer');
     const overlay = document.getElementById('drawerOverlay');
-    const toggle = document.getElementById('drawerToggle');
     drawerOpen = !drawerOpen;
     if (drawerOpen) {
         drawer.classList.add('open');
         overlay.classList.add('open');
-        toggle.classList.add('shifted');
         loadPlayerInfo();
     } else {
         drawer.classList.remove('open');
         overlay.classList.remove('open');
-        toggle.classList.remove('shifted');
     }
 }
 
 export function closeDrawer() {
     const drawer = document.getElementById('playerDrawer');
     const overlay = document.getElementById('drawerOverlay');
-    const toggle = document.getElementById('drawerToggle');
     drawerOpen = false;
     drawer.classList.remove('open');
     overlay.classList.remove('open');
-    toggle.classList.remove('shifted');
 }
 
-// 操作完成时刷新 drawer 内容（若已打开）
+export function isDrawerOpen() {
+    return drawerOpen;
+}
+
+// 操作完成时刷新 drawer 内容（若已打开）+ 状态栏
 dataManager.listen('game:action-completed', function() {
     if (drawerOpen) loadPlayerInfo();
+    dataManager.invalidate('player_info');
+    renderStatusBar();
+});
+
+// 地图加载完成时更新位置信息
+dataManager.listen('map:loaded', function() {
+    applyStatusBar();
 });

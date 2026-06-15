@@ -269,8 +269,8 @@ function initMapInteraction() {
 
     // ─── 滚轮缩放（桌面端，Ctrl+滚轮） ───
     container.addEventListener('wheel', function(e) {
+        e.preventDefault(); // 阻止默认滚动，无论是否 Ctrl
         if (!e.ctrlKey) return; // 仅 Ctrl+滚轮触发缩放
-        e.preventDefault();
         const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
         applyZoom(zoomLevel + delta);
     }, { passive: false });
@@ -407,30 +407,7 @@ export async function loadMap() {
     }
     if (infoEl) infoEl.innerHTML = infoText;
 
-    // 填充头部状态行 + 底部状态栏（地图维度信息）
-    let regionName = 'unknown';
-    let curNameShort = curName;
-    if (mapData.links && mapData.curRegion !== null && mapData.links.regions[mapData.curRegion]) {
-        regionName = mapData.links.regions[mapData.curRegion].name || 'unknown';
-    }
-    const headerEl = document.getElementById('headerStatus');
-    if (headerEl) {
-        headerEl.innerHTML =
-            '<span>> SECTOR: ' + escapeHtml(regionName) + '</span>'
-            + '<span>|</span>'
-            + '<span>LOC: ' + escapeHtml(curNameShort) + '</span>'
-            + '<span class="ml-auto text-fg-mid">█ SYSTEM ONLINE <span class="cursor-blink">█</span></span>';
-    }
-    const footerEl = document.getElementById('statusBar');
-    if (footerEl) {
-        footerEl.innerHTML =
-            '<span>> REGION: ' + escapeHtml(regionName) + '</span>'
-            + '<span>|</span>'
-            + '<span>LOC: ' + escapeHtml(curNameShort) + '</span>'
-            + '<span class="ml-auto text-fg-dim/50">OBLIVIONS v0.1</span>';
-    }
-
-    // 地图加载完成 → 广播事件（tile-action/inventory 监听刷新）
+    // 统一状态栏：由 player.js 管理，地图加载完成后广播 map:loaded
     dataManager.broadcast('map:loaded', { curLoc: mapData.curLoc, curRegion: mapData.curRegion, hasLinks: !!mapData.links });
 }
 

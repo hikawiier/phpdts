@@ -1,5 +1,6 @@
 // ══════════════════════════════════════════════════
-// 背包 + 装备 / Inventory & Equipment (ASCII 终端风)
+// 背包 + 装备 / Inventory & Equipment (右侧抽屉)
+// 标签切换：INVENTORY | ARMAMENT
 // ══════════════════════════════════════════════════
 
 import { DebugBus, mapData } from './data.js';
@@ -7,21 +8,69 @@ import { escapeHtml, gameApi } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
 
+// 当前选中标签
+let activeTab = 'inventory';
+
+// 缓存数据，抽屉打开时渲染用
+let inventoryData = null;
+let equipmentData = null;
+
+// ══════════════════════════════════════════════════
+// 标签切换
+// ══════════════════════════════════════════════════
+
+export function setActiveTab(tab) {
+    activeTab = tab;
+    // 更新标签 UI
+    const tabs = document.querySelectorAll('.inv-tab');
+    for (let i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('active', tabs[i].dataset.tab === tab);
+    }
+    renderCurrentTab();
+}
+
+function renderCurrentTab() {
+    if (activeTab === 'inventory') {
+        renderInventoryContent();
+    } else {
+        renderEquipmentContent();
+    }
+}
+
 // ══════════════════════════════════════════════════
 // 背包渲染
 // ══════════════════════════════════════════════════
 
 export async function loadInventory() {
-    const listEl = document.getElementById('inventoryList');
-    if (!listEl) return;
-    listEl.innerHTML = '<div class="loading">loading...</div>';
     DebugBus.emit('api', 'loadInventory:start', { action: 'player_inventory' });
     const result = await gameApi('player_inventory');
     if (result.status !== 'success') {
-        listEl.innerHTML = '<div class="error">load failed</div>';
+        inventoryData = null;
+        renderCurrentTab();
         return;
     }
-    const d = result.data;
+    inventoryData = result.data;
+
+    // 同时加载装备数据
+    await loadEquipmentData();
+
+    // 如果抽屉打开中，刷新内容
+    const drawer = document.getElementById('invDrawer');
+    if (drawer && drawer.classList.contains('open')) {
+        renderCurrentTab();
+    }
+}
+
+function renderInventoryContent() {
+    const el = document.getElementById('invDrawerContent');
+    if (!el) return;
+
+    if (!inventoryData) {
+        el.innerHTML = '<div class="loading">loading...</div>';
+        return;
+    }
+
+    const d = inventoryData;
     const isOblivions = !!mapData.links;
 
     let html = '<div class="inv-grid">';
@@ -48,31 +97,40 @@ export async function loadInventory() {
     }
     html += '</div>';
     html += '<div class="slot-info">items: ' + (d.num || 0) + '/' + (d.limit || 20) + '</div>';
-    listEl.innerHTML = html;
+    el.innerHTML = html;
 
     // 绑定丢弃按钮事件
-    const discardBtns = listEl.querySelectorAll('button[data-action="discard"]');
+    const discardBtns = el.querySelectorAll('button[data-action="discard"]');
     for (let i = 0; i < discardBtns.length; i++) {
         discardBtns[i].addEventListener('click', function() {
             handleDiscard(parseInt(this.dataset.slot));
         });
     }
-
-    loadEquipment();
 }
 
 // ══════════════════════════════════════════════════
 // 装备渲染
 // ══════════════════════════════════════════════════
 
-async function loadEquipment() {
-    const eqEl = document.getElementById('equipment');
-    if (!eqEl) return;
+async function loadEquipmentData() {
     const result = await dataManager.fetch('player_info');
-    if (result.status !== 'success') { eqEl.innerHTML = '<div class="error">load failed</div>'; return; }
-    const d = result.data;
-    if (!d) { eqEl.innerHTML = '<div class="error">no data</div>'; return; }
+    if (result.status !== 'success' || !result.data) {
+        equipmentData = null;
+        return;
+    }
+    equipmentData = result.data;
+}
 
+function renderEquipmentContent() {
+    const el = document.getElementById('invDrawerContent');
+    if (!el) return;
+
+    if (!equipmentData) {
+        el.innerHTML = '<div class="loading">loading...</div>';
+        return;
+    }
+
+    const d = equipmentData;
     const eq = d.equipment || {};
     const eqSlots = [
         { key: 'wep',  label: 'WPN' },
@@ -102,7 +160,7 @@ async function loadEquipment() {
         }
     }
 
-    eqEl.innerHTML = html;
+    el.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════
@@ -124,7 +182,7 @@ async function handleDiscard(slot) {
 }
 
 // ══════════════════════════════════════════════════
-// 事件订阅：地图加载/操作完成时刷新背包
+// 事件订阅：地图加载/操作完成时刷新背包数据
 // ══════════════════════════════════════════════════
 
 dataManager.listen('map:loaded', function() { loadInventory(); });

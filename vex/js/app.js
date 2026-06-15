@@ -3,10 +3,10 @@
 // ══════════════════════════════════════════════════
 
 import { loadMap, initMapInteraction } from './map.js';
-import { loadInventory } from './inventory.js';
-import { toggleDrawer, closeDrawer } from './player.js';
+import { loadInventory, setActiveTab } from './inventory.js';
+import { toggleDrawer, closeDrawer, isDrawerOpen, renderStatusBar } from './player.js';
 import { refreshLog } from './log.js';
-import { loadTileAction, closeBottomSheet } from './tile-action.js';
+import { loadTileAction, closeModal } from './tile-action.js';
 import { DebugBus, BASE_URL } from './data.js';
 
 // 统一刷新：地图优先（触发 map:loaded），其余并发
@@ -26,28 +26,112 @@ async function refreshAll() {
 async function loadAll() {
     console.log('[App] loadAll() start');
     await refreshAll();
+    renderStatusBar();
 }
 
-// 绑定全局 DOM 事件（替代原 HTML onclick 内联）
+// ══════════════════════════════════════════════════
+// 右侧道具抽屉
+// ══════════════════════════════════════════════════
+
+let invDrawerOpen = false;
+
+function openInvDrawer() {
+    // 互斥：关闭左侧抽屉
+    if (isDrawerOpen()) closeDrawer();
+
+    const drawer = document.getElementById('invDrawer');
+    const overlay = document.getElementById('invDrawerOverlay');
+    if (!drawer || !overlay) return;
+    invDrawerOpen = true;
+    drawer.classList.add('open');
+    overlay.classList.add('open');
+    // 加载数据并渲染当前标签
+    loadInventory();
+}
+
+function closeInvDrawer() {
+    const drawer = document.getElementById('invDrawer');
+    const overlay = document.getElementById('invDrawerOverlay');
+    if (!drawer || !overlay) return;
+    invDrawerOpen = false;
+    drawer.classList.remove('open');
+    overlay.classList.remove('open');
+}
+
+function toggleInvDrawer() {
+    if (invDrawerOpen) {
+        closeInvDrawer();
+    } else {
+        openInvDrawer();
+    }
+}
+
+// ══════════════════════════════════════════════════
+// 左侧属性抽屉（增强：互斥关闭右侧）
+// ══════════════════════════════════════════════════
+
+function openPlayerDrawer() {
+    // 互斥：关闭右侧抽屉
+    if (invDrawerOpen) closeInvDrawer();
+    if (!isDrawerOpen()) toggleDrawer();
+}
+
+// ══════════════════════════════════════════════════
+// 绑定全局 DOM 事件
+// ══════════════════════════════════════════════════
+
 function bindGlobalEvents() {
-    // Drawer 开关
-    const toggle = document.getElementById('drawerToggle');
+    // 左侧抽屉（玩家属性）
+    const playerBtn = document.getElementById('playerDrawerBtn');
     const overlay = document.getElementById('drawerOverlay');
     const closeBtn = document.getElementById('drawerCloseBtn');
-    if (toggle) toggle.addEventListener('click', toggleDrawer);
+    if (playerBtn) playerBtn.addEventListener('click', openPlayerDrawer);
     if (overlay) overlay.addEventListener('click', closeDrawer);
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
 
-    // Bottom Sheet 关闭（点遮罩 / [ESC] 按钮）
-    const bsOverlay = document.getElementById('bottomSheetOverlay');
-    const bsClose = document.getElementById('sheetCloseBtn');
-    if (bsOverlay) bsOverlay.addEventListener('click', closeBottomSheet);
-    if (bsClose) bsClose.addEventListener('click', closeBottomSheet);
+    // 右侧抽屉（道具/装备）
+    const invBtn = document.getElementById('inventoryDrawerBtn');
+    const invOverlay = document.getElementById('invDrawerOverlay');
+    const invCloseBtn = document.getElementById('invDrawerCloseBtn');
+    if (invBtn) invBtn.addEventListener('click', toggleInvDrawer);
+    if (invOverlay) invOverlay.addEventListener('click', closeInvDrawer);
+    if (invCloseBtn) invCloseBtn.addEventListener('click', closeInvDrawer);
 
-    // ESC 键关闭弹窗
-    document.addEventListener('keydown', (e) => {
+    // 右侧抽屉标签切换
+    const invTabs = document.querySelectorAll('.inv-tab');
+    for (let i = 0; i < invTabs.length; i++) {
+        invTabs[i].addEventListener('click', function() {
+            setActiveTab(this.dataset.tab);
+        });
+    }
+
+    // 模态框关闭
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    if (modalOverlay) modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) closeModal();
+    });
+    if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeModal);
+
+    // 键盘快捷键
+    document.addEventListener('keydown', function(e) {
+        // 忽略输入框内的按键
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
         if (e.key === 'Escape') {
-            closeBottomSheet();
+            // 优先级：模态框 > 右侧抽屉 > 左侧抽屉
+            const modalOverlay = document.getElementById('modalOverlay');
+            if (modalOverlay && modalOverlay.classList.contains('open')) {
+                closeModal();
+            } else if (invDrawerOpen) {
+                closeInvDrawer();
+            } else if (isDrawerOpen()) {
+                closeDrawer();
+            }
+        } else if (e.key === 'i' || e.key === 'I') {
+            toggleInvDrawer();
+        } else if (e.key === 'p' || e.key === 'P') {
+            openPlayerDrawer();
         }
     });
 }

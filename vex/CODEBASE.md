@@ -14,7 +14,7 @@
 - **潮汐 (tide)**: 影响地图格边框颜色（shallow=灰, deep=黄, abyss=红, safe=绿）
 - **地板 (floor)**: 影响地图格背景色和 ASCII 字符
 - **发现 (discovered)**: discovered=0 的道具不返回给前端，discovered=2 显示假名+？
-- **POI vs 散落道具**: pois[] 和 ground_items[] 两个独立列表
+- **POI vs 散落道具**: pois[] 和 ground_items[] 两个独立列表，在动作条中以 2 列网格并排显示
 - **区域 vs 地图格**: currentRegion 对应 pgroup，currentLocation 对应 pls
 - **itmpara**: 拾取时前端无需处理，丢弃时 slot 参数 1-6 对应 itm1~itm6
 
@@ -44,20 +44,20 @@ vex/
 ├── css/
 │   ├── input.css           # Tailwind 源文件（@theme 色板定义）
 │   ├── output.css          # Tailwind 编译输出（勿手动编辑）
-│   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类）
+│   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框）
 ├── js/
-│   ├── app.js              # 入口：初始化 + 全局事件绑定
+│   ├── app.js              # 入口：初始化 + 全局事件绑定 + 抽屉/模态框管理
 │   ├── data.js             # 全局配置：BASE_URL / DebugBus / mapData / 常量
 │   ├── data-manager.js     # 数据层：缓存 + 去重 + 订阅/广播
 │   ├── command-queue.js    # 命令队列：防抖 + 锁定 + 冷却
 │   ├── map.js              # 地图：渲染 + 移动 + 可达性判定
-│   ├── tile-action.js      # 地图格交互：探索/搜索/拾取/Bottom Sheet
-│   ├── inventory.js        # 背包 + 装备渲染 + 丢弃
-│   ├── player.js           # 玩家信息抽屉
+│   ├── tile-action.js      # 地图格交互：探索/搜索/拾取 + 居中模态框
+│   ├── inventory.js        # 背包 + 装备渲染 + 丢弃（右侧抽屉）
+│   ├── player.js           # 玩家信息（左侧抽屉）+ 状态栏渲染
 │   ├── log.js              # 日志：标签推断 + 事件驱动刷新
 │   ├── utils.js            # 工具：escapeHtml / API请求 / 命令提交
 │   └── debug.js            # AI调试模块（仅 ?debug=ai 时加载）
-└── Vex前端重构设计.md       # 重构设计文档
+└── docs/                   # 设计文档
 ```
 
 ---
@@ -77,6 +77,7 @@ app.js
 - 所有面板模块依赖 `data-manager.js`（订阅刷新）和 `data.js`（全局状态）
 - 所有写操作依赖 `command-queue.js`（防重复提交）
 - `utils.js` 提供 `gameApi()`（只读）和 `submitCommand()`（写操作）
+- `player.js` 同时负责状态栏渲染和左侧玩家抽屉
 
 ---
 
@@ -95,6 +96,7 @@ app.js
   → loadInventory()              // gameApi('player_inventory')
   → loadTileAction()             // gameApi('tile_actions')
   → refreshLog()                 // gameApi('game_log')
+  → loadPlayerInfo()             // gameApi('player_info') → 渲染状态栏
 ```
 
 ### 4.2 写入流
@@ -109,7 +111,7 @@ app.js
       → inventory.js: loadInventory()   // 订阅 game:action-completed
       → tile-action.js: loadTileAction() // 订阅 game:action-completed
       → log.js: refreshLog()            // 订阅 game:action-completed
-      → player.js: loadPlayerInfo()     // 订阅 game:action-completed（仅 drawer 打开时）
+      → player.js: loadPlayerInfo()     // 订阅 game:action-completed（渲染状态栏+抽屉打开时更新内容）
 ```
 
 ### 4.3 事件清单
@@ -132,7 +134,7 @@ app.js
 | `game_map` | 地图网格+连通性+迷雾+区域信息 | map.js |
 | `tile_actions` | 当前格 POI + 脚边道具 | tile-action.js |
 | `player_inventory` | 背包槽位 + 装备 | inventory.js |
-| `player_info` | 玩家属性 + 装备详情 | player.js, inventory.js |
+| `player_info` | 玩家属性 + 装备详情 + gd/icon | player.js（状态栏+抽屉）, inventory.js |
 | `game_log` | 日志 HTML 字符串 | log.js |
 
 ### 5.2 写入 API（POST `command.php`）
@@ -215,47 +217,88 @@ links = {
 ### 7.1 页面布局
 
 ```
-┌─────────────────────────────────────────────────┐
-│ HEADER: ASCII art banner + 状态行               │
-├──────────────────────┬──────────────────────────┤
-│ LEFT (55%)           │ RIGHT (45%)              │
-│ ┌──────────────────┐ │ ┌──────────────────────┐ │
-│ │ CARTOGRAPHY      │ │ │ CHRONICLE (flex:4)   │ │
-│ │ (地图网格)        │ │ │ (日志，带 [TAG] 前缀)│ │
-│ │                  │ │ │                      │ │
-│ ├──────────────────┤ │ ├──────────┬───────────┤ │
-│ │ ACTIONS          │ │ │INVENTORY │ ARMAMENT  │ │
-│ │ (POI/道具/探索)  │ │ │(flex:6)  │(flex:6)   │ │
-│ └──────────────────┘ │ └──────────┴───────────┘ │
-├──────────────────────┴──────────────────────────┤
-│ STATUS BAR: HP/SP/LV/区域/位置                   │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ STATUS BAR (80px)                                        │
+│ ┌──────────────────────────────────┐  ┌───────────────┐ │
+│ │ 垃圾平原     ████████░░ HP 400  │  │               │ │
+│ │ 废旧轮胎山   ██████░░░░ SP 12   │  │    头像       │ │
+│ │ [属性]                    [背包] │  │   140×80      │ │
+│ └──────────────────────────────────┘  └───────────────┘ │
+├──────────────────────────┬───────────────────────────────┤
+│ LEFT (65%)               │ RIGHT (35%)                   │
+│ ┌──────────────────────┐ │ ┌───────────────────────────┐ │
+│ │ CARTOGRAPHY          │ │ │ CHRONICLE (flex:4)        │ │
+│ │ (地图网格)            │ │ │ (日志，带 [TAG] 前缀)     │ │
+│ │                      │ │ │                           │ │
+│ │                      │ │ ├───────────────────────────┤ │
+│ │                      │ │ │ ACTIONS (flex:6)          │ │
+│ │                      │ │ │ [E] 探索周围              │ │
+│ │                      │ │ │ ┌────────┬────────────┐  │ │
+│ │                      │ │ │ │[G]脚边 │ [S]废料堆  │  │ │
+│ │                      │ │ │ │ 道具×6 │ (已搜索)   │  │ │
+│ │                      │ │ │ └────────┴────────────┘  │ │
+│ └──────────────────────┘ │ └───────────────────────────┘ │
+├──────────────────────────┴───────────────────────────────┤
+│ 浮动组件：左侧抽屉(玩家属性) / 右侧抽屉(背包+装备)       │
+│           居中模态框(POI搜索/道具拾取) / Toast通知         │
+└──────────────────────────────────────────────────────────┘
 ```
 
-浮动组件：Bottom Sheet（拾取弹窗）、Toast（通知）、Player Drawer（左侧抽屉）
+### 7.2 状态栏结构
 
-### 7.2 DOM ID 索引
+状态栏由 `player.js` 统一渲染（`renderStatusBar()`），三行布局：
+
+| 行 | 左侧 | 右侧 |
+|----|------|------|
+| 1 | 区域名 (`#regionInfo`) | HP 可视化条 + 数值 (`#hpBar` / `#hpText`) |
+| 2 | 地图格名 (`#locationInfo`) | SP 可视化条 + 数值 (`#spBar` / `#spText`) |
+| 3 | `[属性]` 按钮 (`#playerDrawerBtn`) | `[背包]` 按钮 (`#inventoryDrawerBtn`) |
+
+右侧固定头像框 (`#statusAvatar`)，140×80px，图片路径 `/phpdts/img/{gd}_{icon}.gif`。
+
+HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪烁；SP 暗灰 `#555`。
+
+### 7.3 交互组件
+
+| 组件 | 触发 | 位置 | 说明 |
+|------|------|------|------|
+| 左侧抽屉 | `[属性]` 按钮 | 页面左侧滑出 | 玩家属性详情 |
+| 右侧抽屉 | `[背包]` 按钮 | 页面右侧滑出 | 背包(INVENTORY) + 装备(ARMAMENT) 标签切换 |
+| 居中模态框 | POI/脚边道具点击 | 画面中央 | 360px 宽，半透明遮罩，scale 动画 |
+| Toast | `ui:toast` 事件 | 右上角 | 自动消失通知 |
+
+### 7.4 动作条 (ACTIONS)
+
+动作条分为三个区域：
+1. **常驻按钮区**：`[E] 探索周围`、`前往下一区域`（满宽）
+2. **交互网格区**：2 列网格 (`.poi-grid`)，脚边道具和 POI 并排显示
+3. **空状态**：无可交互对象时显示"此处无可交互对象"
+
+### 7.5 DOM ID 索引
 
 | ID | 所在文件 | 用途 |
 |----|---------|------|
+| `regionInfo` | index.html | 区域名（状态栏第1行左侧） |
+| `locationInfo` | index.html | 地图格名（状态栏第2行左侧） |
+| `hpBar` / `hpText` | index.html | HP 可视化条 / 数值文字 |
+| `spBar` / `spText` | index.html | SP 可视化条 / 数值文字 |
+| `playerDrawerBtn` | index.html | [属性] 按钮（开左侧抽屉） |
+| `inventoryDrawerBtn` | index.html | [背包] 按钮（开右侧抽屉） |
+| `statusAvatar` | index.html | 头像容器（140×80） |
 | `mapGrid` | index.html | 地图网格容器（map.js 渲染） |
 | `mapInfo` | index.html | 地图状态行（LOC/REGION） |
 | `tileActionBar` | index.html | 动作条容器（tile-action.js 渲染） |
 | `logContent` | index.html | 日志容器（log.js 渲染） |
 | `inventoryList` | index.html | 背包容器（inventory.js 渲染） |
 | `equipment` | index.html | 装备容器（inventory.js 渲染） |
-| `playerInfo` | index.html | 抽屉内容容器（player.js 渲染） |
-| `headerStatus` | index.html | 头部状态行（map.js 更新） |
-| `statusBar` | index.html | 底部状态栏（map.js 更新） |
-| `bottomSheetOverlay` | index.html | Bottom Sheet 遮罩 |
-| `bottomSheet` | index.html | Bottom Sheet 主体 |
-| `sheetHeader` / `sheetSub` / `sheetBody` | index.html | Bottom Sheet 内容区 |
-| `sheetCloseBtn` | index.html | Bottom Sheet 关闭按钮 |
+| `playerInfo` | index.html | 左侧抽屉内容容器（player.js 渲染） |
+| `modalOverlay` | index.html | 模态框遮罩 |
+| `modalBox` | index.html | 模态框主体 |
+| `modalTitle` / `modalBody` | index.html | 模态框标题 / 内容区 |
 | `toastContainer` | index.html | Toast 容器 |
 | `drawerOverlay` | index.html | 抽屉遮罩 |
-| `playerDrawer` | index.html | 抽屉主体 |
-| `drawerToggle` | index.html | 抽屉开关按钮 |
-| `drawerCloseBtn` | index.html | 抽屉关闭按钮 |
+| `playerDrawer` | index.html | 左侧抽屉主体（玩家属性） |
+| `inventoryDrawer` | index.html | 右侧抽屉主体（背包+装备） |
 
 ---
 
@@ -267,7 +310,7 @@ links = {
 |----|------|------|
 | Tailwind 编译 | `css/output.css` | 工具类 + 主题 token（由 `input.css` 编译） |
 | Tailwind 源 | `css/input.css` | `@theme` 色板定义（bg/fg-dim/fg-mid/fg-bright/fg-glow/hi） |
-| 自定义 | `css/terminal.css` | CRT 特效、地图格、按钮、动画、日志类、弹窗/抽屉 |
+| 自定义 | `css/terminal.css` | CRT 特效、地图格、按钮、动画、日志类、状态栏、模态框、抽屉 |
 
 ### 8.2 Tailwind 主题色
 
@@ -290,11 +333,16 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 | `.map-cell` / `.reachable` / `.fogged` / `.blocked` / `.current` | 地图格状态 | terminal.css |
 | `.term-btn` / `.term-btn.block` / `.term-btn.discard` | 终端风格按钮 | terminal.css |
 | `.tile-row` / `.tile-tag` / `.tile-name` | 动作条行 | terminal.css |
+| `.tile-explore-row` | 探索按钮行（居中） | terminal.css |
+| `.poi-grid` | POI + 脚边道具 2 列网格 | terminal.css |
 | `.slot-card` / `.slot-filled` / `.slot-empty` | 背包格 | terminal.css |
 | `.eq-slot` / `.eq-label` / `.eq-name` | 装备槽 | terminal.css |
-| `.sheet-item` / `.item-tag` / `.item-name` | 弹窗道具行 | terminal.css |
+| `.modal-item` / `.item-tag` / `.item-name` | 模态框道具行 | terminal.css |
 | `.toast` / `.toast.show` / `.toast-error` | Toast 通知 | terminal.css |
 | `.log-tag` / `.log-content .yellow` 等 | 日志样式 | terminal.css |
+| `.status-bar` / `.status-bar-row` / `.bar-fill` / `.bar-container` | 状态栏 | terminal.css |
+| `.status-avatar` / `.status-avatar-fallback` | 头像框 | terminal.css |
+| `.modal-overlay` / `.modal-box` | 居中模态框 | terminal.css |
 
 ### 8.4 日志颜色映射
 
