@@ -99,7 +99,7 @@ function obl_get_map_data($pgroup = null) {
  * @return int
  */
 function obl_get_move_range() {
-    return 1;
+    return 3;
 }
 
 /**
@@ -110,6 +110,8 @@ function obl_get_move_range() {
  * @return int         最短路径长度（边数），不可达返回 -1
  */
 function obl_get_distance($pgroup, $from, $to) {
+    $from = (int)$from;
+    $to = (int)$to;
     if ($from === $to) return 0;
 
     $map = obl_get_map_data($pgroup);
@@ -141,6 +143,7 @@ function obl_get_distance($pgroup, $from, $to) {
 function obl_move($moveto, &$pdata) {
     global $log;
 
+    $moveto = (int)$moveto;
     $cur_pgroup = (int)$pdata['pgroup'];
     $map = obl_get_map_data($cur_pgroup);
     $cur_pls = (int)$pdata['pls'];
@@ -191,7 +194,7 @@ function obl_move($moveto, &$pdata) {
     } elseif ($move_range > 1) {
         // 跨格移动 → BFS 距离
         $distance = obl_get_distance($cur_pgroup, $cur_pls, $moveto);
-        if ($distance === -1 || $distance > $move_range) {
+        if ($distance === -1 || ($distance > $move_range)) {
             $tname = obl_get_tile_display_name($target_tile);
             $log .= "无法直接移动到{$tname}。<br>";
             return;

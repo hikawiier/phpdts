@@ -427,6 +427,7 @@ function handle_game_map() {
             'regions' => $map['regions'],
             'tiles'   => $map['tiles'],
             'grids'   => $map['grids'],
+            'move_range' => obl_get_move_range(),
         );
 
         // 迷雾数据：查询当前区域已点亮（fog=1）的格子，稀疏表示 {pls: 1}

@@ -46,7 +46,8 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 | `shallow` | T-1（低） | 浅滩区，低危险 |
 | `deep` | T（中） | 深水区，中危险 |
 | `abyss` | T+1（高） | 深海区，高危险 |
-| `safe` | 特殊 | 安全区（预设或动态判定：该格无敌人/道具/未触发事件点） |
+
+> **注意**：`safe` **不是** `tide` 的取值。安全区状态由独立字段 `preset_safe` 标记，详见 2.8 节。
 
 ### 2.4 迷雾 (fog) vs 发现 (discovered)
 
@@ -425,16 +426,22 @@ return [
 
 ```php
 'pls' => [
-    'name'      => string,   // 格名
-    'desc'      => string,   // 格描述
-    'floor'     => string,   // 地板类型(standard/metal/...)
-    'tide'      => string,   // 潮汐区(shallow/deep/abyss)
-    'passable'  => bool,     // 是否可通行
-    'neighbors' => [int],    // 邻接格pls列表
-    'x'         => int,      // 网格X坐标
-    'y'         => int,      // 网格Y坐标
+    'name'         => string,   // 格名
+    'desc'         => string,   // 格描述
+    'floor'        => string,   // 地板类型(standard/metal/...)
+    'tide'         => string,   // 潮汐区(shallow/deep/abyss)，不含 safe
+    'passable'     => bool,     // 是否可通行（详见 2.8.2）
+    'neighbors'    => [int],    // 邻接格pls列表
+    'x'            => int,      // 网格X坐标
+    'y'            => int,      // 网格Y坐标
+    // 以下为可选/占位字段（详见 2.8.1 / 2.9）
+    'preset_safe'  => bool,     // 安全区状态标记，仅前端视觉用，后端不读取（详见 2.8.1）
+    'height'       => int,      // 占位：未来高度系统 TODO（默认 0）
+    'destructible' => bool,     // 占位：未来可破坏地形 TODO（默认 false，详见 2.8.3）
 ],
 ```
+
+> **数据一致性提示**：有名格（手写）通常只有前 8 个字段，无名格（编辑器生成）带全部 11 个字段。前端读取 `preset_safe` 时用 `!!` 容错缺失情况。
 
 ### 7.7 `scatter_pool.php` / `poi_pool.php` — 生成池
 

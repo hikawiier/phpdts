@@ -19,24 +19,65 @@ const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.15;
 
 // ══════════════════════════════════════════════════
-// 可达性判定
+// 可达性判定（BFS 距离缓存）
 // ══════════════════════════════════════════════════
+
+// 缓存：从当前格出发，所有可达格的 pls → distance 映射
+let reachableMap = new Map();
+
+/**
+ * 从当前格 BFS 计算所有 move_range 内可达格的距离
+ * 在 renderMapGrid() 中调用，结果缓存到 reachableMap
+ */
+function computeReachableMap() {
+    reachableMap = new Map();
+    if (!mapData.links || mapData.curLoc === null || mapData.curRegion === null) return;
+
+    const tiles = mapData.links.tiles[mapData.curRegion];
+    if (!tiles) return;
+    const curTile = tiles[mapData.curLoc];
+    if (!curTile || !curTile.neighbors) return;
+
+    const moveRange = mapData.links.move_range || 1;
+    const fogData = mapData.links.fog;
+    const regionFog = fogData && fogData[mapData.curRegion] ? fogData[mapData.curRegion] : {};
+
+    // BFS
+    const queue = [[mapData.curLoc, 0]];
+    const visited = { [mapData.curLoc]: true };
+
+    while (queue.length > 0) {
+        const [curPls, dist] = queue.shift();
+        if (dist >= moveRange) continue; // 超过移动距离，不再扩展
+
+        const tile = tiles[curPls];
+        if (!tile || !tile.neighbors) continue;
+
+        for (const next of tile.neighbors) {
+            if (visited[next]) continue;
+            const nextTile = tiles[next];
+            if (!nextTile) continue;
+
+            // 不可通行格既不作为中转，也不作为目标
+            if (!nextTile.passable) continue;
+
+            visited[next] = true;
+            reachableMap.set(next, dist + 1);
+            queue.push([next, dist + 1]);
+        }
+    }
+
+    // 过滤掉迷雾格作为目标（目标格必须非迷雾）
+    for (const pls of reachableMap.keys()) {
+        if (!regionFog[pls]) {
+            reachableMap.delete(pls);
+        }
+    }
+}
 
 function isReachable(areaId) {
     if (!mapData.links) return false;
     if (mapData.curLoc === null || mapData.curRegion === null) return false;
-    const tiles = mapData.links.tiles[mapData.curRegion];
-    if (!tiles) return false;
-    const curTile = tiles[mapData.curLoc];
-    if (!curTile || !curTile.neighbors) return false;
-
-    if (curTile.neighbors.indexOf(areaId) !== -1) {
-        // 迷雾格不可作为移动目标
-        const fogData = mapData.links.fog;
-        const regionFog = fogData && fogData[mapData.curRegion] ? fogData[mapData.curRegion] : {};
-        if (!regionFog[areaId]) return false;
-        return true;
-    }
 
     // 入口格特殊处理：可回退到前区域
     const regions = mapData.links.regions;
@@ -44,7 +85,8 @@ function isReachable(areaId) {
     if (curRegionInfo && areaId === curRegionInfo.entrance_pls && curRegionInfo.prev_region !== null) {
         return true;
     }
-    return false;
+
+    return reachableMap.has(areaId);
 }
 
 function buildCoordIndex(tiles) {
@@ -122,6 +164,9 @@ function renderMapGrid() {
     const tiles = mapData.links.tiles[mapData.curRegion];
     const coordIndex = tiles ? buildCoordIndex(tiles) : {};
 
+    // 计算可达性格缓存（BFS 从当前格出发，move_range 内）
+    computeReachableMap();
+
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             const tileInfo = coordIndex[c + ',' + r];
@@ -145,9 +190,16 @@ function renderMapGrid() {
             const isSafe = !!tileInfo.tile.preset_safe;
             const name = tileInfo.tile.name || '';
 
-            if (isDeep) cell.className += ' tide-deep';
-            if (isMetal) cell.className += ' floor-metal';
-            if (isSafe) cell.className += ' safe-zone';
+            // 已探索（非迷雾）格才有微背景 + 潮汐/地板视觉
+            if (!isFogged) {
+                cell.className += ' explored';
+                if (isDeep) cell.className += ' tide-deep';
+                if (isMetal) cell.className += ' floor-metal';
+                if (isSafe) cell.className += ' safe-zone';
+            }
+
+            // 无名格坐标标签（极淡）
+            const coordLabel = String.fromCharCode(65 + tileInfo.tile.y) + tileInfo.tile.x;
 
             if (isFogged) {
                 cell.className += ' fogged';
@@ -160,16 +212,6 @@ function renderMapGrid() {
                 cell.innerHTML = '<span class="cell-name pulse-white"><span class="cell-me" style="font-size:' + meFontSize + 'px">[我]</span>' + prefix + escapeHtml(name || ('位置' + tileInfo.pls)) + '</span>';
                 cell.classList.add('reachable');
                 cell.addEventListener('click', () => clickMove(tileInfo.pls));
-            } else if (!passable) {
-                cell.className += ' blocked';
-                const prefix = isExit ? '▸' : (isEntrance ? '◂' : '');
-                const label = prefix + name;
-                cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-name" style="font-size:' + nameFontSize + 'px">·</span>';
-                cell.style.cursor = 'pointer';
-                cell.addEventListener('click', () => {
-                    const msg = name ? '无法通过：' + name : '此处无法通行';
-                    if (typeof showToast === 'function') showToast(msg, 'error');
-                });
             } else {
                 const reachable = isReachable(tileInfo.pls);
                 if (reachable) {
@@ -177,15 +219,26 @@ function renderMapGrid() {
                 } else {
                     cell.className += ' unreachable';
                 }
+                if (!passable) cell.className += ' blocked';
                 if (isExit) cell.className += ' exit-tile';
                 if (isEntrance) cell.className += ' entrance-tile';
 
                 const prefix = isExit ? '▸' : (isEntrance ? '◂' : '');
                 const label = prefix + name;
-                cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-name" style="font-size:' + nameFontSize + 'px">·</span>';
+                cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-coord">' + coordLabel + '</span>';
 
                 if (reachable) {
                     cell.addEventListener('click', () => clickMove(tileInfo.pls));
+                    // 路径预览：悬停时显示从当前格到目标格的最短路径
+                    cell.addEventListener('mouseenter', () => showPathPreview(tileInfo.pls));
+                    cell.addEventListener('mouseleave', () => clearPathPreview());
+                } else if (!passable) {
+                    // 不可通行格点击反馈
+                    cell.style.cursor = 'pointer';
+                    cell.addEventListener('click', () => {
+                        const msg = name ? '无法通过：' + name : '此处无法通行';
+                        dataManager.broadcast('ui:toast', { type: 'error', msg: msg });
+                    });
                 }
             }
             grid.appendChild(cell);
@@ -198,6 +251,185 @@ function renderMapGrid() {
 
 // 兼容空值判断（passable 可能是 true/1/''）
 function empty(v) { return v === undefined || v === null || v === '' || v === 0 || v === false; }
+
+// ══════════════════════════════════════════════════
+// BFS 最短路径（基于 neighbors 连通关系）
+// ══════════════════════════════════════════════════
+
+/**
+ * 计算从 fromPls 到 toPls 的最短路径
+ * 纯 neighbors BFS，跳过不可通行中转格（与后端 obl_get_distance 一致）
+ * @returns {number[]} pls 数组（含起点和终点），找不到返回 null
+ */
+function findPath(fromPls, toPls) {
+    if (!mapData.links || mapData.curRegion === null) return null;
+    const tiles = mapData.links.tiles[mapData.curRegion];
+    if (!tiles || !tiles[fromPls] || !tiles[toPls]) return null;
+
+    if (fromPls === toPls) return [fromPls];
+
+    const queue = [fromPls];
+    const visited = { [fromPls]: true };
+    const parent = {};
+
+    while (queue.length > 0) {
+        const cur = queue.shift();
+        const tile = tiles[cur];
+        if (!tile || !tile.neighbors) continue;
+
+        for (const next of tile.neighbors) {
+            if (visited[next]) continue;
+            const nextTile = tiles[next];
+            if (!nextTile) continue;
+
+            // 中转格必须可通行（与后端 obl_get_distance 一致），目标格除外
+            if (next !== toPls && !nextTile.passable) continue;
+
+            visited[next] = true;
+            parent[next] = cur;
+
+            if (next === toPls) {
+                // 回溯路径
+                const path = [toPls];
+                let p = toPls;
+                while (parent[p] !== undefined) {
+                    p = parent[p];
+                    path.unshift(p);
+                }
+                return path;
+            }
+            queue.push(next);
+        }
+    }
+    return null;
+}
+
+/**
+ * 根据两个格子的坐标差计算方向箭头
+ */
+function getDirectionArrow(fromTile, toTile) {
+    const dx = toTile.x - fromTile.x;
+    const dy = toTile.y - fromTile.y;
+    if (dx === 0 && dy < 0) return '↑';
+    if (dx === 0 && dy > 0) return '↓';
+    if (dx < 0 && dy === 0) return '←';
+    if (dx > 0 && dy === 0) return '→';
+    if (dx > 0 && dy < 0) return '↗';
+    if (dx > 0 && dy > 0) return '↘';
+    if (dx < 0 && dy < 0) return '↖';
+    if (dx < 0 && dy > 0) return '↙';
+    return '';
+}
+
+/**
+ * 清除所有路径预览高亮
+ */
+function clearPathPreview() {
+    const grid = document.getElementById('mapGrid');
+    if (!grid) return;
+    grid.querySelectorAll('.cell-path').forEach(el => {
+        el.classList.remove('cell-path');
+        const arrow = el.querySelector('.cell-path-arrow');
+        if (arrow) arrow.remove();
+    });
+}
+
+/**
+ * 显示从当前格到目标格的路径预览
+ */
+function showPathPreview(targetPls) {
+    clearPathPreview();
+    if (mapData.curLoc === null) return;
+
+    const path = findPath(mapData.curLoc, targetPls);
+    if (!path || path.length < 2) return;
+
+    const tiles = mapData.links.tiles[mapData.curRegion];
+    const grid = document.getElementById('mapGrid');
+    if (!grid) return;
+
+    const fogData = mapData.links.fog;
+    const regionFog = fogData && fogData[mapData.curRegion] ? fogData[mapData.curRegion] : {};
+
+    // 路径中间格（不含起点和终点）高亮 + 方向箭头
+    // 迷雾中间格不高亮（保持神秘感）
+    for (let i = 1; i < path.length - 1; i++) {
+        const pls = path[i];
+        if (!regionFog[pls]) continue; // 迷雾格跳过
+
+        const cell = grid.querySelector('[data-pls="' + pls + '"]');
+        if (cell) {
+            cell.classList.add('cell-path');
+            const fromTile = tiles[path[i - 1]];
+            const toTile = tiles[pls];
+            const arrow = getDirectionArrow(fromTile, toTile);
+            if (arrow) {
+                const arrowEl = document.createElement('span');
+                arrowEl.className = 'cell-path-arrow';
+                arrowEl.textContent = arrow;
+                cell.appendChild(arrowEl);
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════
+// 键盘方向键移动
+// ══════════════════════════════════════════════════
+
+/**
+ * 处理方向键/WASD 移动
+ * @param {number} dx - X 方向偏移 (-1/0/1)
+ * @param {number} dy - Y 方向偏移 (-1/0/1)
+ */
+async function handleKeyMove(dx, dy) {
+    if (mapData.curLoc === null || mapData.curRegion === null) return;
+    if (commandQueue.isLocked) return;
+
+    const tiles = mapData.links.tiles[mapData.curRegion];
+    if (!tiles) return;
+    const curTile = tiles[mapData.curLoc];
+    if (!curTile) return;
+
+    const targetX = curTile.x + dx;
+    const targetY = curTile.y + dy;
+
+    // 查找目标坐标对应的 pls
+    let targetPls = null;
+    for (const pls in tiles) {
+        if (tiles[pls].x === targetX && tiles[pls].y === targetY) {
+            targetPls = parseInt(pls);
+            break;
+        }
+    }
+
+    // 无效移动判断
+    if (targetPls === null) {
+        shakeCurrentCell();
+        return;
+    }
+
+    // 检查可达性（BFS 距离判定，含迷雾过滤）
+    if (!isReachable(targetPls)) {
+        shakeCurrentCell();
+        return;
+    }
+
+    // 执行移动（复用 clickMove）
+    await clickMove(targetPls);
+}
+
+/**
+ * 当前格抖动反馈（无效移动时）
+ */
+function shakeCurrentCell() {
+    const grid = document.getElementById('mapGrid');
+    if (!grid) return;
+    const cell = grid.querySelector('.map-cell.current');
+    if (!cell) return;
+    cell.classList.add('cell-shake');
+    setTimeout(() => cell.classList.remove('cell-shake'), 300);
+}
 
 // ══════════════════════════════════════════════════
 // 自动居中
@@ -345,6 +577,26 @@ function initMapInteraction() {
             renderMapGrid();
             requestAnimationFrame(() => centerOnPlayer(false));
         }, 150);
+    });
+
+    // ─── 键盘方向键/WASD 移动 ───
+    document.addEventListener('keydown', function(e) {
+        // 输入框聚焦时忽略
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        // 模态框/抽屉打开时忽略
+        const modal = document.getElementById('modalOverlay');
+        if (modal && modal.classList.contains('open')) return;
+
+        let dx = 0, dy = 0;
+        switch (e.key) {
+            case 'ArrowUp': case 'w': case 'W':    dy = -1; break;
+            case 'ArrowDown': case 's': case 'S':  dy = 1;  break;
+            case 'ArrowLeft': case 'a': case 'A':  dx = -1; break;
+            case 'ArrowRight': case 'd': case 'D': dx = 1;  break;
+            default: return;
+        }
+        e.preventDefault();
+        handleKeyMove(dx, dy);
     });
 }
 

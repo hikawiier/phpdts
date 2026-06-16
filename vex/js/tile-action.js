@@ -15,7 +15,7 @@ let tileData = null;
 // Toast（由 ui:toast 事件触发）
 // ══════════════════════════════════════════════════
 
-function showToast(message, type, duration) {
+export function showToast(message, type, duration) {
     type = type || 'info';
     duration = duration || 2000;
     const container = document.getElementById('toastContainer');
