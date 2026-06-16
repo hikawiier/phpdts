@@ -2,7 +2,7 @@
 // 右栏：地图格属性面板 / Tile properties panel
 // ══════════════════════════════════════════════════
 
-import state, { selectedTileData } from '../state.js';
+import state, { selectedTileData, currentGrid } from '../state.js';
 import { updateTile, deleteTile } from '../logic/tile.js';
 import { breakConnection, restoreConnection } from '../logic/connectivity.js';
 import { renderGrid } from './grid.js';
@@ -69,6 +69,10 @@ export function renderTilePanel() {
     `<option value="${o.value}" ${tile.tide === o.value ? 'selected' : ''}>${o.label}</option>`
   ).join('');
 
+  const grid = currentGrid();
+  const maxCols = grid ? grid.cols : 30;
+  const maxRows = grid ? grid.rows : 30;
+
   el.innerHTML = `
     <div class="prop-row">
       <label>pls</label>
@@ -76,7 +80,10 @@ export function renderTilePanel() {
     </div>
     <div class="prop-row">
       <label>坐标</label>
-      <span class="prop-readonly">(${tile.x}, ${tile.y})</span>
+      <span class="coord-inputs">
+        X <input type="number" id="tpX" value="${tile.x}" min="0" max="${maxCols - 1}" style="width:48px">
+        Y <input type="number" id="tpY" value="${tile.y}" min="0" max="${maxRows - 1}" style="width:48px">
+      </span>
     </div>
     <div class="prop-row">
       <label>名称</label>
@@ -131,6 +138,43 @@ export function renderTilePanel() {
   bindInput('tpTide', 'tide');
   bindInput('tpPassable', 'passable', el => el.checked);
   bindInput('tpSafe', 'preset_safe', el => el.checked);
+
+  // 坐标输入：带校验
+  const tpX = document.getElementById('tpX');
+  const tpY = document.getElementById('tpY');
+
+  const handleCoordChange = (input, axis) => {
+    input.addEventListener('change', () => {
+      const val = parseInt(input.value);
+      if (isNaN(val)) { input.value = axis === 'x' ? tile.x : tile.y; return; }
+
+      const newX = axis === 'x' ? val : tile.x;
+      const newY = axis === 'y' ? val : tile.y;
+
+      // 校验范围
+      const g = currentGrid();
+      if (newX < 0 || newX >= (g?.cols || 30) || newY < 0 || newY >= (g?.rows || 30)) {
+        input.value = axis === 'x' ? tile.x : tile.y;
+        return;
+      }
+
+      // 校验目标坐标是否被占用
+      const tiles = state.project.tiles[pgroup] || {};
+      const occupied = Object.entries(tiles).some(([p, t]) => {
+        return parseInt(p) !== pls && t.x === newX && t.y === newY;
+      });
+      if (occupied) {
+        input.value = axis === 'x' ? tile.x : tile.y;
+        return;
+      }
+
+      updateTile(pgroup, pls, { x: newX, y: newY });
+      renderGrid();
+    });
+  };
+
+  if (tpX) handleCoordChange(tpX, 'x');
+  if (tpY) handleCoordChange(tpY, 'y');
 
   // 断开连通按钮
   el.querySelectorAll('.btn-break').forEach(btn => {

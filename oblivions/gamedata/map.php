@@ -20,8 +20,8 @@ return [
         'exit_links' => [
             2
         ],
-        'cols' => 10,
-        'rows' => 10
+        'cols' => 11,
+        'rows' => 11
     ],
     '2' => [
         'name' => '腐烂沼泽',
@@ -30,17 +30,19 @@ return [
         'exit_pls' => 4,
         'next_region' => null,
         'prev_region' => 1,
-        'exit_links' => []
+        'exit_links' => [],
+        'cols' => 11,
+        'rows' => 11
     ]
 ],
     'grids' => [
     '1' => [
-        'cols' => 10,
-        'rows' => 10
+        'cols' => 11,
+        'rows' => 11
     ],
     '2' => [
-        'cols' => 6,
-        'rows' => 4
+        'cols' => 11,
+        'rows' => 11
     ]
 ],
 ];

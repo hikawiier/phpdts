@@ -21,6 +21,13 @@ const state = {
   // 连通断开操作的第二步标记
   breakFirst: null,      // 断开/恢复连通时第一次点击的 pls
 
+  // 画笔预设（绘制/油漆桶工具使用）
+  brushPreset: {
+    floor: 'standard',
+    tide: 'shallow',
+    passable: true,
+  },
+
   // 目录句柄（用于快速导出）
   dirHandle: null,       // File System Access API 的 DirectoryHandle
 };

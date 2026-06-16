@@ -3,7 +3,7 @@
 // ══════════════════════════════════════════════════
 
 import state, { loadFromStorage, loadProject } from './state.js';
-import { initToolShortcuts } from './tools.js';
+import { initToolShortcuts, initBrushPresetPanel } from './tools.js';
 import { initRegionPanel, renderRegionPanel } from './render/region-panel.js';
 import { renderGrid } from './render/grid.js';
 import { renderTilePanel } from './render/tile-panel.js';
@@ -16,6 +16,7 @@ function init() {
 
   initRegionPanel();
   initToolShortcuts();
+  initBrushPresetPanel();
   initImportDir();
   initImportModal();
   initExportButton();

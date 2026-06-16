@@ -2,10 +2,10 @@
 // CSS Grid 画布渲染 / Grid canvas renderer
 // ══════════════════════════════════════════════════
 
-import state, { currentTiles, currentGrid, currentRegion } from '../state.js';
-import { createTile, deleteTile } from '../logic/tile.js';
+import state, { currentTiles, currentGrid, currentRegion, saveToStorage } from '../state.js';
+import { createTile, deleteTile, updateTile, moveTile } from '../logic/tile.js';
 import { breakConnection, restoreConnection, getBrokenNeighbors } from '../logic/connectivity.js';
-import { setTool } from '../tools.js';
+import { setTool, getBrushPreset } from '../tools.js';
 import { renderConnections } from './connections.js';
 import { renderTilePanel } from './tile-panel.js';
 import { renderRegionPanel } from './region-panel.js';
@@ -14,6 +14,9 @@ const CELL_W = 52;
 const CELL_H = 44;
 const HEADER_W = 38;
 const HEADER_H = 28;
+
+// 拖拽状态
+let dragState = null; // { pls, startX, startY, originX, originY, el }
 
 /**
  * 渲染当前区域的网格画布
@@ -103,6 +106,14 @@ export function renderGrid() {
           cell.classList.add('cell-exit');
         }
 
+        // 地板/潮汐视觉标记
+        if (tile.floor && tile.floor !== 'standard') {
+          cell.classList.add('cell-floor-' + tile.floor);
+        }
+        if (tile.tide && tile.tide !== 'shallow') {
+          cell.classList.add('cell-tide-' + tile.tide);
+        }
+
         // 内容：显示坐标，有名字时追加显示
         const coord = String.fromCharCode(65 + tile.y) + tile.x;
         let html = `<span class="cell-coord">${coord}</span>`;
@@ -115,11 +126,18 @@ export function renderGrid() {
 
         // 点击事件
         cell.addEventListener('click', () => handleCellClick(pls));
+
+        // 拖拽事件（选择工具下）
+        cell.addEventListener('mousedown', (e) => handleDragStart(e, pls));
       }
 
       // 空白格点击（绘制工具）
       if (!cellInfo) {
         cell.addEventListener('click', () => handleEmptyCellClick(c, r));
+        // 拖拽释放目标
+        cell.addEventListener('mouseup', () => handleDragDrop(c, r));
+        cell.addEventListener('mouseenter', () => handleDragEnter(c, r));
+        cell.addEventListener('mouseleave', () => handleDragLeave(c, r));
       }
 
       container.appendChild(cell);
@@ -138,6 +156,9 @@ export function renderGrid() {
  * 处理已有地图格的点击
  */
 function handleCellClick(pls) {
+  // 拖拽中不处理点击
+  if (dragState && dragState.moved) return;
+
   const tool = state.currentTool;
   const pgroup = state.currentRegion;
 
@@ -155,6 +176,18 @@ function handleCellClick(pls) {
       renderTilePanel();
       renderRegionPanel();
       break;
+
+    case 'paint': {
+      const preset = getBrushPreset();
+      updateTile(pgroup, pls, {
+        floor: preset.floor,
+        tide: preset.tide,
+        passable: preset.passable,
+      });
+      renderGrid();
+      renderTilePanel();
+      break;
+    }
 
     case 'break':
       if (state.breakFirst === null) {
@@ -190,13 +223,157 @@ function handleEmptyCellClick(x, y) {
   if (state.currentTool !== 'draw') return;
 
   const pgroup = state.currentRegion;
-  const pls = createTile(pgroup, x, y);
+  const preset = getBrushPreset();
+  const pls = createTile(pgroup, x, y, preset);
   if (pls !== null) {
     state.selectedTile = pls;
     renderGrid();
     renderTilePanel();
     renderRegionPanel();
   }
+}
+
+// ══════════════════════════════════════════════════
+// 拖拽移动 / Drag to move tile
+// ══════════════════════════════════════════════════
+
+function handleDragStart(e, pls) {
+  if (state.currentTool !== 'select') return;
+  if (e.button !== 0) return; // 仅左键
+
+  const tiles = currentTiles();
+  const tile = tiles[pls];
+  if (!tile) return;
+
+  const el = e.currentTarget;
+  dragState = {
+    pls,
+    originX: tile.x,
+    originY: tile.y,
+    el,
+    moved: false,
+    startX: e.clientX,
+    startY: e.clientY,
+  };
+
+  el.classList.add('cell-dragging');
+
+  // 全局 mousemove/mouseup 监听
+  document.addEventListener('mousemove', handleDragMove);
+  document.addEventListener('mouseup', handleDragEnd);
+}
+
+function handleDragMove(e) {
+  if (!dragState) return;
+
+  // 判断是否真正移动了（阈值 4px 防误触）
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  if (!dragState.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+
+  dragState.moved = true;
+
+  // 计算鼠标在 gridContainer 中的位置，确定目标格
+  const container = document.getElementById('gridContainer');
+  if (!container) return;
+
+  const rect = container.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const grid = currentGrid();
+  const cols = grid.cols || 8;
+  const rows = grid.rows || 6;
+
+  // 减去表头偏移
+  const cellX = Math.floor((mx - HEADER_W) / CELL_W);
+  const cellY = Math.floor((my - HEADER_H) / CELL_H);
+
+  // 清除之前的高亮
+  container.querySelectorAll('.cell-drop-target, .cell-drop-forbidden').forEach(el => {
+    el.classList.remove('cell-drop-target', 'cell-drop-forbidden');
+  });
+
+  if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows) {
+    // 检查目标格是否为空
+    const tiles = currentTiles();
+    const occupied = Object.values(tiles).some(t => t.x === cellX && t.y === cellY);
+
+    const targetCell = container.querySelector(`[data-x="${cellX}"][data-y="${cellY}"]`);
+    if (targetCell) {
+      if (occupied && !(cellX === dragState.originX && cellY === dragState.originY)) {
+        targetCell.classList.add('cell-drop-forbidden');
+      } else {
+        targetCell.classList.add('cell-drop-target');
+      }
+    }
+  }
+}
+
+function handleDragEnd(e) {
+  document.removeEventListener('mousemove', handleDragMove);
+  document.removeEventListener('mouseup', handleDragEnd);
+
+  if (!dragState) return;
+
+  const { pls, originX, originY, el, moved } = dragState;
+
+  // 清除高亮
+  const container = document.getElementById('gridContainer');
+  if (container) {
+    container.querySelectorAll('.cell-drop-target, .cell-drop-forbidden').forEach(c => {
+      c.classList.remove('cell-drop-target', 'cell-drop-forbidden');
+    });
+  }
+
+  el.classList.remove('cell-dragging');
+
+  if (!moved) {
+    dragState = null;
+    return;
+  }
+
+  // 计算目标格
+  const rect = container.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const grid = currentGrid();
+  const cols = grid.cols || 8;
+  const rows = grid.rows || 6;
+
+  const cellX = Math.floor((mx - HEADER_W) / CELL_W);
+  const cellY = Math.floor((my - HEADER_H) / CELL_H);
+
+  // 验证目标
+  if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows
+      && !(cellX === originX && cellY === originY)) {
+    const tiles = currentTiles();
+    const occupied = Object.values(tiles).some(t => t.x === cellX && t.y === cellY);
+
+    if (!occupied) {
+      moveTile(state.currentRegion, pls, cellX, cellY);
+      renderGrid();
+      renderTilePanel();
+    }
+  }
+
+  dragState = null;
+}
+
+function handleDragDrop(x, y) {
+  // mouseup 在空白格上触发时，handleDragEnd 已处理
+  // 此处留空，逻辑统一在 handleDragEnd 中
+}
+
+function handleDragEnter(x, y) {
+  if (!dragState || !dragState.moved) return;
+  // 高亮由 handleDragMove 统一处理
+}
+
+function handleDragLeave(x, y) {
+  if (!dragState || !dragState.moved) return;
+  // 高亮由 handleDragMove 统一处理
 }
 
 function escHtml(str) {

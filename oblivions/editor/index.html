@@ -45,10 +45,33 @@
                     <button class="tool-btn active" data-tool="select" title="选择 (V)">选择</button>
                     <button class="tool-btn" data-tool="draw" title="绘制 (B)">绘制</button>
                     <button class="tool-btn" data-tool="erase" title="擦除 (E)">擦除</button>
+                    <button class="tool-btn" data-tool="paint" title="油漆桶 (F)">油漆桶</button>
                     <span class="tool-sep"></span>
                     <button class="tool-btn" data-tool="break" title="断开连通 (D)">断开</button>
                     <button class="tool-btn" data-tool="restore" title="恢复连通 (R)">恢复</button>
                     <span class="tool-sep"></span>
+                    <div class="brush-preset-panel" id="brushPresetPanel" style="display:none;">
+                        <label class="brush-label">地板
+                            <select id="brushFloor" class="brush-select">
+                                <option value="standard">标准</option>
+                                <option value="water">含水</option>
+                                <option value="vegetation">覆植</option>
+                                <option value="metal">金属</option>
+                                <option value="magic">富魔力</option>
+                            </select>
+                        </label>
+                        <label class="brush-label">潮汐
+                            <select id="brushTide" class="brush-select">
+                                <option value="shallow">浅滩</option>
+                                <option value="deep">深水</option>
+                                <option value="abyss">深海</option>
+                                <option value="safe">安全</option>
+                            </select>
+                        </label>
+                        <label class="brush-label">通行
+                            <input type="checkbox" id="brushPassable" checked>
+                        </label>
+                    </div>
                     <label class="grid-size-label">网格:
                         <input type="number" id="gridCols" min="1" max="30" value="8" style="width:40px"> ×
                         <input type="number" id="gridRows" min="1" max="30" value="6" style="width:40px">

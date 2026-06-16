@@ -7,8 +7,12 @@ import { autoConnect, disconnectAll } from './connectivity.js';
 
 /**
  * 创建地图格
+ * @param {number} pgroup - 区域ID
+ * @param {number} x - 网格X坐标
+ * @param {number} y - 网格Y坐标
+ * @param {object} [preset] - 画笔预设 { floor, tide, passable }
  */
-export function createTile(pgroup, x, y) {
+export function createTile(pgroup, x, y, preset) {
   const tiles = state.project.tiles[pgroup];
   if (!tiles) return null;
 
@@ -21,10 +25,10 @@ export function createTile(pgroup, x, y) {
   tiles[pls] = {
     name: '',
     desc: '',
-    floor: 'standard',
-    tide: 'shallow',
+    floor: preset?.floor || 'standard',
+    tide: preset?.tide || 'shallow',
     height: 0,
-    passable: true,
+    passable: preset?.passable !== undefined ? preset.passable : true,
     destructible: false,
     neighbors: [],
     x: x,
