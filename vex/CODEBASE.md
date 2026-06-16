@@ -339,7 +339,72 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 
 ## 八、日志与反馈系统
 
-### 8.1 结构化日志渲染
+### 8.1 设计原则
+
+本节记录跨会话讨论沉淀的认知共识，避免重复歧义。新增功能或修改现有逻辑前必读。
+
+#### 8.1.1 `forceScroll` 的语义
+
+`forceScroll` 不是"是否滚动"的技术参数，而是"这次刷新是否代表玩家主动操作"的语义标记。
+
+| `forceScroll` | 语义 | 场景 | 行为 |
+|---------------|------|------|------|
+| `true`（默认） | 玩家主动操作，需要立刻看到反馈 | `game:action-completed` | 强制滚动到底部 + 清零未读 |
+| `false` | 被动刷新，不应打断玩家 | `map:loaded`、未来的自动轮询 | 尊重位置：在底部则滚动，不在底部则累加未读 |
+
+**关键决策**：`map:loaded` 改为 `forceScroll=false`。理由：玩家操作后 `game:action-completed` 已经负责强制滚动，`map:loaded` 再强制一次是冗余；首次加载时 `isAtBottom=true`，仍会自动滚动到底部。
+
+**新增调用点的判断规则**：未来新增 `refreshLog` 调用点时，判断这次刷新是"玩家主动触发"还是"被动通知"：
+- 玩家主动操作（点击移动、探索、拾取等）→ `forceScroll=true`
+- 被动通知（自动轮询、WebSocket 推送、NPC 事件等）→ `forceScroll=false`
+- 判断错误会导致：要么打断玩家翻看历史，要么玩家看不到新反馈
+
+#### 8.1.2 新日志高亮的"够用即可"原则
+
+高亮的目标是"提示玩家最新操作结果在哪"，**不是**"精确标记哪些是本次新增的"。
+
+**决策**：只给 `entries` 数组最后一条加 `log-new` 类，不做 `ts > prevLastTs` 的增量判断。
+
+**理由**：
+- 增量判断需要处理首次加载保护、200 条裁剪、ts 相等等边界，复杂度高
+- 视觉上多条同时高亮反而分散注意力
+- 玩家真正关心的是"最后一条"（最新操作结果），不是"这次刷新新增了几条"
+- `prevLastTs` 增量检测仍保留，但只服务于 Toast 触发，不参与高亮
+
+#### 8.1.3 Toast 同类合并的"相邻"语义
+
+合并只看容器内**最后一个** Toast 是否同类，不做全局聚合。
+
+**合并条件**：`lastElementChild.mergeId === mergeId && toastType === type`
+
+**不合并的情况**：
+- 不同 ID 交替出现（如 `pickup.success` → `pickup.bag_full` → `pickup.success`）不会合并中间那条
+- Toast 消失后合并链断裂，再来同 ID 会创建新 Toast
+
+**为什么不做全局聚合**：会破坏时间顺序语义，玩家会困惑"为什么刚才的 Toast 计数突然变了"。相邻合并是"批量操作刷屏"这个具体痛点的最小解决方案。
+
+#### 8.1.4 `showToast` 的 `mergeId` 可选性
+
+`mergeId` 是可选参数，不传时保持原有行为（不合并）。
+
+**调用规则**：
+- 日志触发的 Toast 传 `mergeId = entry.id`（启用合并）
+- `ui:toast` 事件触发的 Toast 不传 `mergeId`（不合并，保持兼容）
+
+**新增 Toast 调用点的判断规则**：
+- 同一操作可能批量触发的同类反馈 → 传 `mergeId`（如拾取、搜索）
+- 独立的一次性通知 → 不传 `mergeId`（如"移动失败"、"体力不足"）
+
+#### 8.1.5 `log-entry` 的 display:block 决策
+
+日志条目用 `display: block` 而非 `inline` + `<br>` 分隔。
+
+**理由**：
+- inline 元素的 `background` 只覆盖文字部分，换行时背景断裂
+- block 元素背景覆盖整行，高亮动画可靠
+- **警告**：如果改回 inline（比如想做行内紧凑布局），高亮动画会失效
+
+### 8.2 结构化日志渲染
 
 **数据源**：`obl_log` API 返回的 `LogEntry[]`（详见 5.4）
 
@@ -352,14 +417,15 @@ refreshLog()
       → 有 render 函数 → 调用 render(params)
       → 有 text 模板 → 替换 {param} 占位符 + 应用高亮
       → 未知 ID → 显示 [未知日志] 占位
-  → 拼接 <span class="log-tag">[TAG]</span> + content
+  → 每条包裹 <span class="log-entry">（block 布局，独占一行）
+  → 最后一条加 log-new 类（1.5s 高亮动画）
   → 写入 #logContent
 ```
 
 **关键文件**：
 - `data/log-templates.js`：40 个 ID 的模板配置 + `renderLogEntry(entry)` 函数
 - `data/terrain-desc.js`：无名格描述词库 + `generateTerrainDesc(floor, tide, passable)`
-- `js/log.js`：拉取日志 + 渲染 + 增量检测 + Toast 触发
+- `js/log.js`：拉取日志 + 渲染 + 增量检测 + Toast 触发 + 新日志高亮 + 未读提示
 
 **动作标签映射**（`log.js` 的 `ACTION_TAGS`）：
 
@@ -374,7 +440,40 @@ refreshLog()
 
 **样式控制**：日志颜色/高亮完全由前端模板控制（`<span class="yellow">` 等），后端不输出样式标记。颜色映射见 9.4。
 
-### 8.2 Toast 即时反馈系统
+### 8.3 新日志高亮
+
+**目标**：提示玩家最新操作结果在哪（详见 8.1.2 设计原则）。
+
+**实现**：
+- 渲染时 `entries` 数组最后一条加 `log-new` 类
+- CSS 动画 `log-new-flash`：1.5s 内背景从 `rgba(255,255,255,0.18)` 淡出到透明 + 左侧 2px 白色色条（`box-shadow inset`）淡出
+- `ease-out` 缓动，前半段快速衰减
+- 动画结束后不需要移除类（`innerHTML` 重渲染会自然清除）
+
+**CSS 类**：
+- `.log-entry`：`display: block`，每条日志独占一行（详见 8.1.5）
+- `.log-new`：触发 `log-new-flash` 动画
+
+### 8.4 未读日志提示按钮
+
+**解决问题**：`forceScroll=false` 场景下，玩家翻看历史时新日志进来不知道。
+
+**机制**（`log.js`）：
+- 模块级状态：`unreadCount`（未读计数）、`isAtBottom`（是否在底部）
+- `forceScroll=false` + 不在底部 + 有新日志 → 累加 `unreadCount`，显示提示按钮
+- 玩家手动滚动到底部 或 点击提示按钮 → 清零 `unreadCount`，隐藏按钮
+
+**提示按钮**（`#logUnreadBtn`）：
+- 位置：CHRONICLE 标题栏右侧（`┐` 之前）
+- 文案：`↓ N 条新日志`
+- 样式：`.log-unread-btn`（白色文字 + 灰色边框，终端风格）
+- 点击：调用 `scrollToBottom()`（滚动到底部 + 清零未读）
+
+**滚动监听**（`initLog()`，由 `app.js:loadAll()` 调用）：
+- 绑定 `scroll` 事件到 `#logContent` 的父级（滚动容器）
+- 滚动到底部附近（< 50px）时自动清零未读
+
+### 8.5 Toast 即时反馈系统
 
 **解决问题**：2 级页面（模态框/抽屉）打开时，全屏遮罩遮挡日志区，玩家看不到操作反馈。
 
@@ -387,15 +486,16 @@ refreshLog()
   → 后端 $obl_log->emit('pickup.bag_full', ...) → 持久化
   → command.php 响应 → broadcast('game:action-completed')
   → refreshLog() 触发
-  → 拉取 obl_log API → 增量检测（ts > lastTs）
+  → 拉取 obl_log API → 增量检测（ts > prevLastTs）
   → isAnyOverlayOpen() === true → 查 TOAST_RULES 白名单
-  → 匹配白名单 → showToast(renderLogEntry(entry), style, 2000, isHtml=true)
-  → Toast 在动态位置显示 2s
+  → 匹配白名单 → showToast(content, style, 2000, isHtml=true, mergeId=entry.id)
+  → Toast 在动态位置显示 2s（同类合并，详见 8.1.3）
 ```
 
 **增量检测**（`log.js`）：
 - 模块级变量 `lastTs` 记录上次拉取的最大 ts
-- `newEntries = entries.filter(e => e.ts > lastTs)`
+- `prevLastTs = lastTs`（渲染前记录，作为 Toast 增量的分界线）
+- `newEntries = entries.filter(e => e.ts > prevLastTs)`
 - 首次加载保护：`lastTs` 初始为 0，但首次拉取时无 2 级页面打开，自然不触发 Toast
 
 **白名单规则**（`log.js` 的 `TOAST_RULES`）：
@@ -418,12 +518,21 @@ refreshLog()
 
 **集中管理原因**：为避免 `log.js`/`tile-action.js`/`app.js`/`player.js` 之间循环依赖，新建 `toast-position.js` 集中管理 `isAnyOverlayOpen()` + `updateToastPosition()`。
 
-### 8.3 Toast 显示
+### 8.6 Toast 显示与同类合并
 
-**`showToast(message, type, duration, isHtml)`**（`tile-action.js`）：
+**`showToast(message, type, duration, isHtml, mergeId)`**（`tile-action.js`）：
 - `type`：`'error'`（[ERR]）/ `'success'`（[OK]）/ `'info'`（[i]）
 - `duration`：默认 2000ms，到时自动移除（300ms 淡出动画）
 - `isHtml`：默认 `false`（转义纯文本）；日志触发时传 `true`（`renderLogEntry` 输出含高亮 span）
+- `mergeId`：可选，传入日志 ID 时启用同类合并（详见 8.1.3、8.1.4）
+
+**同类合并逻辑**：
+- 传入 `mergeId` 时，检查容器内最后一个 Toast 是否同类（相同 `mergeId` + 相同 `type`）
+- 同类：更新计数（`×N`），重置消失计时器
+- 不同类或无 `mergeId`：创建新 Toast
+- 合并计数显示在 `.toast-count` 元素中
+
+**Timer 管理**：合并时通过 `dataset.timerId` 存储计时器 ID，便于 `clearTimeout` 重置。
 
 ---
 

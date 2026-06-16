@@ -5,7 +5,7 @@
 import { loadMap, initMapInteraction } from './map.js';
 import { loadInventory, setActiveTab } from './inventory.js';
 import { toggleDrawer, closeDrawer, isDrawerOpen, renderStatusBar } from './player.js';
-import { refreshLog } from './log.js';
+import { refreshLog, initLog } from './log.js';
 import { loadTileAction, closeModal } from './tile-action.js';
 import { DebugBus, BASE_URL } from './data.js';
 import { updateToastPosition } from './toast-position.js';
@@ -26,6 +26,7 @@ async function refreshAll() {
 
 async function loadAll() {
     console.log('[App] loadAll() start');
+    initLog();  // 绑定日志区滚动监听和未读提示按钮
     await refreshAll();
     renderStatusBar();
 }

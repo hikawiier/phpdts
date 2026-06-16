@@ -6,6 +6,12 @@
 //
 // 增量检测：通过 ts 对比识别新增条目，在 2 级页面（模态框/抽屉）
 // 打开时触发 Toast 即时反馈，避免遮罩遮挡日志区导致操作结果不可见。
+//
+// 新日志高亮：渲染时对 ts > prevLastTs 的条目加 log-new 类，
+// CSS 动画 1.5s 背景闪烁淡出，方便玩家定位新增日志。
+//
+// 未读提示：forceScroll=false 场景下尊重玩家滚动位置，
+// 不在底部时不强制滚动，改为显示"↓ N 条新日志"浮层按钮。
 // ══════════════════════════════════════════════════
 
 import { DebugBus } from './data.js';
@@ -37,14 +43,87 @@ const TOAST_RULES = {
     'discard.success':         { style: 'success' },
 };
 
-let lastTs = 0;  // 增量检测：记录上次拉取的最大 ts
+let lastTs = 0;        // 增量检测：记录上次拉取的最大 ts
+let unreadCount = 0;   // 未读新日志计数（forceScroll=false 场景累加）
+let isAtBottom = true; // 滚动容器是否在底部附近（初始为 true，首次加载自动滚动）
+
+// ── 滚动容器引用 ──
+function getScroller() {
+    const el = document.getElementById('logContent');
+    return el ? el.parentElement : null;
+}
+
+// ── 判断是否在底部附近（< 50px） ──
+function checkIsAtBottom() {
+    const scroller = getScroller();
+    if (!scroller) return true;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 50;
+}
+
+// ── 更新未读计数和提示按钮显示 ──
+function updateUnreadButton() {
+    const btn = document.getElementById('logUnreadBtn');
+    const countEl = document.getElementById('logUnreadCount');
+    if (!btn || !countEl) return;
+
+    if (unreadCount > 0) {
+        countEl.textContent = unreadCount;
+        btn.style.display = '';
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+// ── 滚动到底部并清零未读 ──
+function scrollToBottom() {
+    const scroller = getScroller();
+    if (scroller) {
+        scroller.scrollTop = scroller.scrollHeight;
+    }
+    unreadCount = 0;
+    isAtBottom = true;
+    updateUnreadButton();
+}
+
+// ── 滚动事件监听 ──
+function bindScrollListener() {
+    const scroller = getScroller();
+    if (!scroller) return;
+    scroller.addEventListener('scroll', function() {
+        const wasAtBottom = isAtBottom;
+        isAtBottom = checkIsAtBottom();
+        // 玩家手动滚动到底部时清零未读
+        if (!wasAtBottom && isAtBottom) {
+            unreadCount = 0;
+            updateUnreadButton();
+        }
+    });
+}
+
+// ── 提示按钮点击处理 ──
+function bindUnreadButton() {
+    const btn = document.getElementById('logUnreadBtn');
+    if (btn) {
+        btn.addEventListener('click', scrollToBottom);
+    }
+}
+
+/**
+ * 初始化日志模块：绑定滚动监听和提示按钮点击
+ * 应在 app.js 的 loadAll() 中调用
+ */
+export function initLog() {
+    bindScrollListener();
+    bindUnreadButton();
+}
 
 /**
  * 刷新日志：从 obl_log API 拉取结构化日志并渲染
  *
  * @param {boolean} forceScroll 是否强制滚动到底部
- *   - true（默认）：操作触发刷新，用户要看操作结果，强制滚到底部
- *   - false：被动刷新（如定时同步），仅在用户已接近底部时滚动，不打断翻看历史
+ *   - true（默认）：玩家主动操作触发，需要立刻看到反馈，强制滚到底部 + 清零未读
+ *   - false：被动刷新（如 map:loaded），尊重玩家滚动位置：
+ *           在底部则滚动；不在底部则累加未读 + 显示提示按钮
  */
 export async function refreshLog(forceScroll = true) {
     const el = document.getElementById('logContent');
@@ -56,7 +135,9 @@ export async function refreshLog(forceScroll = true) {
     const entries = result.data.entries || [];
 
     // ── 增量检测 ──
-    const newEntries = entries.filter(e => e.ts > lastTs);
+    // prevLastTs 用于 Toast 增量触发（2 级页面打开时按白名单弹 Toast）
+    const prevLastTs = lastTs;
+    const newEntries = entries.filter(e => e.ts > prevLastTs);
 
     // ── Toast 触发（仅在 2 级页面打开时，避免遮罩遮挡日志区） ──
     if (isAnyOverlayOpen() && newEntries.length > 0) {
@@ -66,7 +147,8 @@ export async function refreshLog(forceScroll = true) {
             if (rule) {
                 const content = renderLogEntry(entry);
                 // content 是 HTML（含高亮 span），showToast 第 4 参数 isHtml=true 直接渲染
-                if (content) showToast(content, rule.style, 2000, true);
+                // 第 5 参数 mergeId=entry.id 启用同类合并（避免批量操作刷屏）
+                if (content) showToast(content, rule.style, 2000, true, entry.id);
             }
         }
     }
@@ -81,32 +163,46 @@ export async function refreshLog(forceScroll = true) {
     }
 
     // 渲染所有条目，过滤空内容（如 move.tile_desc 无 desc 时返回空字符串）
-    const htmlParts = entries.map(entry => {
+    // 每条日志包裹在 <span class="log-entry"> 中（CSS 设为 display:block，每条独占一行）
+    // 最后一条加 log-new 类，触发 1.5s 高亮动画，作为"最新操作结果"的视觉提示
+    const lastIdx = entries.length - 1;
+    const htmlParts = entries.map((entry, idx) => {
         const tag = ACTION_TAGS[entry.action] || 'SYS';
         const content = renderLogEntry(entry);
         if (!content) return '';
-        return `<span class="log-tag">[${tag}]</span>${content}`;
+        const isNew = idx === lastIdx;
+        const newClass = isNew ? ' log-new' : '';
+        return `<span class="log-entry${newClass}"><span class="log-tag">[${tag}]</span>${content}</span>`;
     }).filter(p => p);
 
-    el.innerHTML = htmlParts.join('<br>');
+    el.innerHTML = htmlParts.join('');
 
-    // ── 滚动逻辑：滚动容器是 #logContent 的父级 div（overflow-y-auto） ──
-    const scroller = el.parentElement;
+    // ── 滚动逻辑 ──
+    const scroller = getScroller();
+    if (!scroller) return;
+
     if (forceScroll) {
-        // 操作触发：强制滚到底部，确保用户看到最新操作结果
-        scroller.scrollTop = scroller.scrollHeight;
+        // 玩家主动操作：始终强制滚动到底部 + 清零未读
+        scrollToBottom();
     } else {
-        // 被动刷新：仅在用户已接近底部时滚动，不打断翻看历史
-        const isNearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 50;
-        if (isNearBottom) {
+        // 被动刷新：尊重玩家滚动位置
+        if (isAtBottom) {
+            // 在底部：自动滚动
             scroller.scrollTop = scroller.scrollHeight;
+        } else if (newEntries.length > 0) {
+            // 不在底部：累加未读 + 显示提示按钮
+            unreadCount += newEntries.length;
+            updateUnreadButton();
         }
     }
 
-    DebugBus.emit('log', 'refreshLog:done', { count: entries.length });
+    DebugBus.emit('log', 'refreshLog:done', { count: entries.length, newCount: newEntries.length });
 }
 
 // ─── 事件驱动刷新（替代 setInterval 轮询） ───
-// 操作完成 / 地图加载后刷新日志（强制滚动，用户要看操作结果）
+// 玩家主动操作完成：强制滚动，用户要看操作结果
 dataManager.listen('game:action-completed', function() { refreshLog(); });
-dataManager.listen('map:loaded', function() { refreshLog(); });
+// 地图加载（含首次加载 + 操作后 loadMap 触发）：
+// 改为 forceScroll=false，避免与 game:action-completed 重复强制滚动
+// 首次加载时 isAtBottom=true，仍会自动滚动到底部
+dataManager.listen('map:loaded', function() { refreshLog(false); });

@@ -327,6 +327,39 @@ body::after {
 /* 日志标签前缀（[SYS][MOV] 等，由 log.js 注入） */
 .log-tag { color: #555; margin-right: 4px; }
 
+/* 日志条目容器（由 log.js 渲染时包裹，每条独占一行） */
+.log-entry {
+    display: block;
+    padding: 1px 0 1px 4px;
+}
+
+/* 新日志高亮：1.5s 背景闪烁淡出 + 左侧色条标记 */
+@keyframes log-new-flash {
+    0%   { background: rgba(255, 255, 255, 0.18); box-shadow: inset 2px 0 0 #fff; }
+    100% { background: transparent; box-shadow: inset 2px 0 0 transparent; }
+}
+
+.log-new {
+    animation: log-new-flash 1.5s ease-out;
+}
+
+/* 日志未读提示按钮（CHRONICLE 标题栏） */
+.log-unread-btn {
+    color: #fff;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border: 1px solid #888;
+    background: #0a0a0a;
+    pointer-events: auto;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+
+.log-unread-btn:hover {
+    background: #222;
+}
+
 /* ═══ 动作条行（tile-action） ═══ */
 
 .tile-row {
@@ -687,6 +720,13 @@ body::after {
 .toast-error { border-color: #bbb; }
 .toast-error .toast-tag { color: #ccc; }
 .toast-success .toast-tag { color: #eee; }
+
+/* Toast 同类合并计数 */
+.toast .toast-count {
+    color: #fff;
+    font-weight: 700;
+    margin-left: 4px;
+}
 
 /* ═══ 右侧道具抽屉 ═══ */
 
