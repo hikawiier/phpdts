@@ -23,6 +23,15 @@ $cmd = $main = '';
 $cmdnum = 0;
 $gamedata = array();
 
+// Oblivions 模式：初始化结构化日志收集器（替代 $log HTML 字符串机制）
+// 传统模式下 $obl_log 为 null，不影响原有 $log 流程
+if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+	include_once GAME_ROOT.'./oblivions/include/game/log.func.php';
+	$obl_log = new OblivionsLogger();
+} else {
+	$obl_log = null;
+}
+
 // [C] 预执行检查 + 路由分发 / Pre-checks + route dispatch
 if ($hp > 0) {
 	$log .= init_noise_display();
@@ -96,6 +105,10 @@ if (($coldtimeon && $showcoldtimer && $rmcdtime) || isset($dizzy_times)) {
 if ($hp > 0 && $coldtimeon && $showcoldtimer && $rmcdtime) {
 	$log .= '行动冷却时间：<span id="timer" class="yellow">0.0</span>秒<br>';
 }
+// Oblivions 模式：持久化结构化日志（替代 $log 文件化）
+if ($obl_log && $obl_log->hasEntries()) {
+	obl_log_persist($obl_log, $groomid, $pid);
+}
 player_save($pdata);
 
 // 资料渲染 / Profile rendering
@@ -157,12 +170,15 @@ ob_clean();
 $main ? include template($main) : include template('profile');
 $gamedata['innerHTML']['main'] = ob_get_contents();
 
-$gamedata['innerHTML']['log'] = $log;
-$log_dir = GAME_ROOT . './vex/cache/';
-if (!is_dir($log_dir)) {
-	mkdir($log_dir, 0777, true);
+// Oblivions 模式不走传统 $log 文件化（已由 obl_log_persist 处理）
+if (!$obl_log) {
+	$gamedata['innerHTML']['log'] = $log;
+	$log_dir = GAME_ROOT . './vex/cache/';
+	if (!is_dir($log_dir)) {
+		mkdir($log_dir, 0777, true);
+	}
+	writeover($log_dir . 'log_' . $groomid . '_' . $pid . '.php', $log);
 }
-writeover($log_dir . 'log_' . $groomid . '_' . $pid . '.php', $log);
 
 if (isset($error)) {
 	$gamedata['innerHTML']['error'] = $error;

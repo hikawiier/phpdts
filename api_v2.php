@@ -90,6 +90,9 @@ switch ($action) {
     case 'tile_actions':
         handle_tile_actions();
         break;
+    case 'obl_log':
+        handle_obl_log();
+        break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
 }
@@ -664,6 +667,30 @@ function handle_tile_actions() {
     api_response('success', array(
         'pois'         => $pois,
         'ground_items' => $ground_items,
+    ));
+}
+
+/**
+ * obl_log — 读取 Oblivions 结构化日志
+ *
+ * 返回当前玩家的结构化日志条目数组（按时间正序）。
+ * 仅在 Oblivions 模式下可用。
+ */
+function handle_obl_log() {
+    global $pdata, $groomid;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/log.func.php';
+
+    $pid = (int)$pdata['pid'];
+    $entries = obl_log_load($groomid, $pid);
+
+    api_response('success', array(
+        'entries' => $entries,
+        'total'   => count($entries),
     ));
 }
 

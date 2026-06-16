@@ -314,20 +314,47 @@ async function handleSearch(iaid) {
 async function handlePickup(iid) {
     const result = await commandQueue.execute({ mode: 'command', command: 'obl_pickup', iid: iid });
     if (result.success) {
-        // 从模态框 DOM 移除已拾取行
-        const body = document.getElementById('modalBody');
-        if (body) {
-            const row = body.querySelector('.modal-item[data-iid="' + iid + '"]');
-            if (row) row.remove();
-            if (body.querySelectorAll('.modal-item').length === 0) {
-                closeModal();
-            }
-        }
+        // 拾取后重新拉取数据刷新模态框，确保显示真实状态
+        // （不能仅移除 DOM 行，因为背包已满等失败情况下道具并未真正被拾取）
+        await loadTileAction();
+        refreshOpenModal();
         dataManager.invalidateAll();
         dataManager.broadcast('game:action-completed');
     } else {
         showToast(result.error || 'pickup failed', 'error');
     }
+}
+
+/**
+ * 刷新当前打开的模态框内容
+ * 根据模态框标题判断来源（POI 名称 or "脚边道具"），重新渲染对应内容
+ */
+function refreshOpenModal() {
+    const overlay = document.getElementById('modalOverlay');
+    if (!overlay || !overlay.classList.contains('open')) return;
+
+    const titleEl = document.getElementById('modalTitle');
+    if (!titleEl) return;
+    const title = titleEl.textContent.trim();
+
+    // 脚边道具模态框
+    if (title === '脚边道具') {
+        checkGround();
+        return;
+    }
+
+    // POI 模态框：根据标题查找对应的 iaid
+    if (tileData && tileData.pois) {
+        for (let i = 0; i < tileData.pois.length; i++) {
+            if (tileData.pois[i].name === title) {
+                checkPoi(tileData.pois[i].iaid);
+                return;
+            }
+        }
+    }
+
+    // 未找到匹配的来源（可能是机制触发型 POI 等），关闭模态框
+    closeModal();
 }
 
 async function handlePickupAll(items) {

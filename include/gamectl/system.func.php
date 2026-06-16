@@ -50,6 +50,15 @@ function rs_game($mode = 0) {
 	if ($mode & 16) rs_init_mapitems();
 	if ($mode & 32) rs_init_shops();
 	if ($mode & 64) rs_init_oblivions();    // OBLIVIONS 模式：初始化遗忘之境地图数据
+
+	// 清理 Oblivions 结构化日志文件（避免跨游戏残留）
+	// 定义在 oblivions/include/game/log.func.php，按需加载避免硬依赖
+	if (!function_exists('obl_log_clear_all')) {
+		@include_once GAME_ROOT.'./oblivions/include/game/log.func.php';
+	}
+	if (function_exists('obl_log_clear_all')) {
+		obl_log_clear_all();
+	}
 }
 
 /**

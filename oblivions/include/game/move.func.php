@@ -7,57 +7,10 @@ if (!defined('IN_GAME')) {
 // Oblivions 移动函数
 // 基于 (pgroup, pls) 组合键 + 邻接表连通图移动
 // 操作 $pdata 数组，不使用 extract($pdata, EXTR_REFS)
+//
+// 日志系统：使用 $obl_log（OblivionsLogger）替代传统 $log
+// 后端只输出事件结构，前端完全控制视觉呈现
 // ================================================================
-
-/**
- * 获取地块的显示名称
- * - 有名地块直接返回 name
- * - 无名地块根据 floor/tide/passable 生成地形描述，如"一片金属覆盖的荒地"
- *
- * @param array $tile 地块数据
- * @return string 显示名称
- */
-function obl_get_tile_display_name($tile) {
-    if (!empty($tile['name'])) {
-        return $tile['name'];
-    }
-
-    $cfg = include GAME_ROOT . './oblivions/gamedata/terrain_desc.php';
-    $floor_key = $tile['floor'] ?? 'standard';
-    $tide_key = $tile['tide'] ?? 'shallow';
-
-    $floor = $cfg['floor'][$floor_key] ?? $cfg['floor']['standard'];
-    $floor_name = $floor['name'][array_rand($floor['name'])];
-    $floor_adj  = $floor['adj'][array_rand($floor['adj'])];
-
-    $tide_pool = $cfg['tide'][$tide_key] ?? [''];
-    $tide_adj = $tide_pool[array_rand($tide_pool)];
-
-    // 选择模板：有潮汐修饰用完整版，否则用简洁版
-    if (!empty($tide_adj)) {
-        $tpl_pool = $cfg['templates']['default'];
-        $text = str_replace(
-            ['{tide_adj}', '{floor_adj}', '{floor_name}'],
-            [$tide_adj, $floor_adj, $floor_name],
-            $tpl_pool[array_rand($tpl_pool)]
-        );
-    } else {
-        $tpl_pool = $cfg['templates']['no_tide'];
-        $text = str_replace(
-            ['{floor_adj}', '{floor_name}'],
-            [$floor_adj, $floor_name],
-            $tpl_pool[array_rand($tpl_pool)]
-        );
-    }
-
-    // 不可通行追加后缀
-    if (empty($tile['passable'])) {
-        $suffix_pool = $cfg['impassable_suffix'];
-        $text .= $suffix_pool[array_rand($suffix_pool)];
-    }
-
-    return $text;
-}
 
 /**
  * 加载地图数据（按区域懒加载）
@@ -136,12 +89,29 @@ function obl_get_distance($pgroup, $from, $to) {
 }
 
 /**
+ * 构造地块日志参数（用于 $obl_log->emit 的 params）
+ * 后端只传原始属性，前端负责生成显示文案
+ *
+ * @param array $tile 地块数据
+ * @return array 日志参数
+ */
+function obl_tile_log_params($tile) {
+    return [
+        'name'     => $tile['name'] ?? '',
+        'desc'     => $tile['desc'] ?? '',
+        'floor'    => $tile['floor'] ?? 'standard',
+        'tide'     => $tile['tide'] ?? 'shallow',
+        'passable' => !empty($tile['passable']),
+    ];
+}
+
+/**
  * Oblivions 模式移动
  * @param int $moveto 目标 pls（区域内局部索引）
  * @param array $pdata 玩家数据
  */
 function obl_move($moveto, &$pdata) {
-    global $log;
+    global $obl_log;
 
     $moveto = (int)$moveto;
     $cur_pgroup = (int)$pdata['pgroup'];
@@ -154,7 +124,7 @@ function obl_move($moveto, &$pdata) {
         $is_exit = $region && $cur_pls == $region['exit_pls'];
         $is_entrance = $region && $cur_pls == $region['entrance_pls'] && !empty($region['prev_region']);
         if (!$is_exit && !$is_entrance) {
-            $log .= '已经在当前位置，不需要移动。<br>';
+            $obl_log->emit('move.same_pos', 'move');
             return;
         }
         // 站在出入口格原地 → 执行区域切换
@@ -166,7 +136,7 @@ function obl_move($moveto, &$pdata) {
     // 2. 目标有效性检查
     $tiles = $map['tiles'][$cur_pgroup] ?? [];
     if (!isset($tiles[$moveto])) {
-        $log .= '请选择正确的移动地点。<br>';
+        $obl_log->emit('move.invalid_target', 'move');
         return;
     }
 
@@ -174,8 +144,7 @@ function obl_move($moveto, &$pdata) {
 
     // 3. 可通行检查
     if (empty($target_tile['passable'])) {
-        $tname = obl_get_tile_display_name($target_tile);
-        $log .= "{$tname}，无法通行，请绕道。<br>";
+        $obl_log->emit('move.blocked', 'move', obl_tile_log_params($target_tile));
         return;
     }
 
@@ -195,13 +164,11 @@ function obl_move($moveto, &$pdata) {
         // 跨格移动 → BFS 距离
         $distance = obl_get_distance($cur_pgroup, $cur_pls, $moveto);
         if ($distance === -1 || ($distance > $move_range)) {
-            $tname = obl_get_tile_display_name($target_tile);
-            $log .= "无法直接移动到{$tname}。<br>";
+            $obl_log->emit('move.unreachable', 'move', obl_tile_log_params($target_tile));
             return;
         }
     } else {
-        $tname = obl_get_tile_display_name($target_tile);
-        $log .= "无法直接移动到{$tname}，需要通过相邻区域。<br>";
+        $obl_log->emit('move.no_path', 'move', obl_tile_log_params($target_tile));
         return;
     }
 
@@ -211,7 +178,7 @@ function obl_move($moveto, &$pdata) {
         $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
         $extra_cost = ($distance - 1) * $base_cost;
         if ($pdata['sp'] < $extra_cost) {
-            $log .= '体力不足，无法移动到那么远的地方。<br>';
+            $obl_log->emit('move.no_sp_far', 'move');
             return;
         }
         $pdata['sp'] -= $extra_cost;
@@ -221,12 +188,12 @@ function obl_move($moveto, &$pdata) {
     $from_tile = $tiles[$cur_pls];
     $pdata['pls'] = $moveto;
 
-    $from_name = obl_get_tile_display_name($from_tile);
-    $to_name = obl_get_tile_display_name($target_tile);
-    $log .= "从{$from_name}移动到了<span class=\"yellow\">{$to_name}</span>。<br>";
-    if (!empty($target_tile['desc'])) {
-        $log .= $target_tile['desc'] . '<br>';
-    }
+    $obl_log->emit('move.success', 'move', [
+        'from' => obl_tile_log_params($from_tile),
+        'to'   => obl_tile_log_params($target_tile),
+    ]);
+    // 地块描述作为独立条目，前端自行组合
+    $obl_log->emit('move.tile_desc', 'move', obl_tile_log_params($target_tile));
 
     // 8. 区域切换不再自动触发（需玩家在出入口格主动点击切换）
 
@@ -247,7 +214,7 @@ function obl_move($moveto, &$pdata) {
  * @param array  &$pdata  玩家数据
  */
 function obl_switch_region($region, $moveto, &$map, &$pdata) {
-    global $log;
+    global $obl_log;
     if (!$region) return;
 
     // 出口格 → 前往下一区域
@@ -258,15 +225,22 @@ function obl_switch_region($region, $moveto, &$map, &$pdata) {
             $next_region = $map['regions'][$next_group];
             $pdata['pgroup'] = $next_group;
             $pdata['pls'] = $next_region['entrance_pls'];
-            $log .= "<br>离开了<span class=\"yellow\">{$region['name']}</span>，进入了<span class=\"yellow\">{$next_region['name']}</span>。<br>";
-            $log .= $next_region['desc'] . '<br>';
+
+            // 拆分为三条独立日志：离开 → 进入 → 落脚格描述
+            $obl_log->emit('move.region_leave', 'move', [
+                'region_name' => $region['name'],
+            ]);
+            $obl_log->emit('move.region_enter', 'move', [
+                'region_name' => $next_region['name'],
+                'region_desc' => $next_region['desc'] ?? '',
+            ]);
 
             $entrance_tile = $map['tiles'][$next_group][$next_region['entrance_pls']] ?? [];
             if ($entrance_tile) {
-                $log .= $entrance_tile['desc'] . '<br>';
+                $obl_log->emit('move.tile_desc', 'move', obl_tile_log_params($entrance_tile));
             }
         } elseif ($next_group === null) {
-            $log .= '<br>你已经到达了当前区域的尽头，前方似乎没有路了……<br>';
+            $obl_log->emit('move.region_end', 'move');
         }
     }
 
@@ -278,13 +252,19 @@ function obl_switch_region($region, $moveto, &$map, &$pdata) {
             $prev_region = $map['regions'][$prev_group];
             $pdata['pgroup'] = $prev_group;
             $pdata['pls'] = $prev_region['exit_pls'];
-            $log .= "<br>你转过身，从<span class=\"yellow\">{$region['name']}</span>" .
-                    "回到了<span class=\"yellow\">{$prev_region['name']}</span>。<br>";
-            $log .= $prev_region['desc'] . '<br>';
+
+            // 拆分为三条独立日志：离开 → 进入 → 落脚格描述
+            $obl_log->emit('move.region_leave', 'move', [
+                'region_name' => $region['name'],
+            ]);
+            $obl_log->emit('move.region_enter', 'move', [
+                'region_name' => $prev_region['name'],
+                'region_desc' => $prev_region['desc'] ?? '',
+            ]);
 
             $exit_tile = $map['tiles'][$prev_group][$prev_region['exit_pls']] ?? [];
             if ($exit_tile) {
-                $log .= $exit_tile['desc'] . '<br>';
+                $obl_log->emit('move.tile_desc', 'move', obl_tile_log_params($exit_tile));
             }
         }
     }
@@ -299,14 +279,14 @@ function obl_switch_region($region, $moveto, &$map, &$pdata) {
  * @return bool true=体力充足（已扣除），false=体力不足
  */
 function obl_check_move_sp(&$pdata, $distance = 1) {
-    global $log;
+    global $obl_log;
 
     $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
     $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
     $cost = $distance * $base_cost;
 
     if ($pdata['sp'] < $cost) {
-        $log .= '体力不足，无法移动。<br>';
+        $obl_log->emit('move.no_sp', 'move');
         return false;
     }
 

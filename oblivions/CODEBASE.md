@@ -454,7 +454,11 @@ return [
 ]
 ```
 
-### 7.8 `terrain_desc.php` — 地形描述文本配置
+### 7.8 `terrain_desc.php` — 地形描述文本配置（⚠️已废弃）
+
+> **已废弃**：词库已迁移到前端 `vex/data/terrain-desc.js` 的 `generateTerrainDesc()`。
+> 后端不再生成描述文案，只传原始属性（floor/tide/passable），前端负责组合。
+> 本文件保留仅供历史参考，不再被任何代码引用。
 
 为无名地块提供随机组合的描述文本，用于移动日志。按 `floor` + `tide` + `passable` 三个属性组合：
 

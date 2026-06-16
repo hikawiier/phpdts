@@ -222,13 +222,13 @@ function obl_discover_items($pgroup, $visible_tiles) {
  * @return bool true=体力充足（已扣除），false=体力不足
  */
 function obl_check_explore_sp(&$pdata) {
-    global $log;
+    global $obl_log;
 
     $cfg = obl_get_config();
     $cost = (int)($cfg['explore_sp_cost'] ?? 0);
 
     if ($pdata['sp'] < $cost) {
-        $log .= '体力不足，无法探索。<br>';
+        $obl_log->emit('explore.no_sp', 'explore');
         return false;
     }
 
@@ -248,7 +248,7 @@ function obl_check_explore_sp(&$pdata) {
  * @param bool  $skip_sp_check   是否跳过体力检查（移动后自动探索时为 true）
  */
 function obl_explore(&$pdata, $skip_sp_check = false) {
-    global $log;
+    global $obl_log;
 
     // 1. 体力检查（移动后自动探索跳过）
     if (!$skip_sp_check) {
@@ -264,7 +264,7 @@ function obl_explore(&$pdata, $skip_sp_check = false) {
     obl_update_vision($pgroup, $pls, $pdata);
 
     // 3. 探索日志
-    $log .= "你仔细观察了周围的环境。<br>";
+    $obl_log->emit('explore.success', 'explore');
 
     // 4. 探索后钩子
     obl_post_explore_hook($pdata);
@@ -295,7 +295,7 @@ function obl_post_explore_hook(&$pdata) {
  * @param array &$pdata 玩家数据
  */
 function obl_search_poi($iaid, &$pdata) {
-    global $db, $tablepre, $log;
+    global $db, $tablepre, $obl_log;
 
     $iaid = (int)$iaid;
     $cur_pgroup = (int)$pdata['pgroup'];
@@ -304,14 +304,14 @@ function obl_search_poi($iaid, &$pdata) {
     // 1. 读取 POI 实例
     $result = $db->query("SELECT * FROM {$tablepre}oblmappoi WHERE iaid='$iaid'");
     if (!$db->num_rows($result)) {
-        $log .= '找不到这个建筑物。<br>';
+        $obl_log->emit('search.not_found', 'search');
         return;
     }
     $poi = $db->fetch_array($result);
 
     // 2. 位置检查：只能搜索当前格的建筑物
     if ((int)$poi['pgroup'] != $cur_pgroup || (int)$poi['pls'] != $cur_pls) {
-        $log .= '你不在那个建筑物旁边。<br>';
+        $obl_log->emit('search.not_adjacent', 'search');
         return;
     }
 
@@ -319,14 +319,16 @@ function obl_search_poi($iaid, &$pdata) {
     $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
     $poi_id = $poi['poi_id'];
     if (!isset($poi_table[$poi_id])) {
-        $log .= '建筑物数据异常。<br>';
+        $obl_log->emit('search.data_error', 'search');
         return;
     }
     $template = $poi_table[$poi_id];
 
     // 4. 可搜索检查
     if (empty($template['searchable'])) {
-        $log .= "{$template['name']}无法搜索。<br>";
+        $obl_log->emit('search.not_searchable', 'search', [
+            'poi_name' => $template['name'],
+        ]);
         return;
     }
 
@@ -346,7 +348,9 @@ function obl_search_poi($iaid, &$pdata) {
         $loot_table = $loot_config['loot'];
     } elseif ($is_repeat && !isset($loot_config['repeat_loot'])) {
         // 一次性建筑物已搜索过
-        $log .= "你已经搜索过{$template['name']}了。<br>";
+        $obl_log->emit('search.already_searched', 'search', [
+            'poi_name' => $template['name'],
+        ]);
         return;
     }
 
@@ -404,13 +408,15 @@ function obl_search_poi($iaid, &$pdata) {
 
     // 10. 日志
     if ($has_mechanic) {
-        $log .= "你搜索了{$template['name']}……<br>";
+        $obl_log->emit('search.mechanic_triggered', 'search', [
+            'poi_name' => $template['name'],
+        ]);
         // 机制效果日志由 obl_execute_mechanic 写入
-    } elseif (!empty($dropped_items)) {
-        $item_names = implode('、', array_unique($dropped_items));
-        $log .= "你搜索了{$template['name']}，发现了<span class=\"yellow\">{$item_names}</span>。<br>";
     } else {
-        $log .= "你搜索了{$template['name']}，但什么也没找到。<br>";
+        $obl_log->emit('search.result', 'search', [
+            'poi_name' => $template['name'],
+            'items'    => $dropped_items,
+        ]);
     }
 }
 
@@ -426,7 +432,7 @@ function obl_search_poi($iaid, &$pdata) {
  * @param array &$pdata   玩家数据
  */
 function obl_execute_mechanic($template, &$pdata) {
-    global $log;
+    global $obl_log;
 
     $mechanic = $template['mechanic'];
 
@@ -435,7 +441,9 @@ function obl_execute_mechanic($template, &$pdata) {
     if (function_exists($handler)) {
         $handler($template, $pdata);
     } else {
-        $log .= "机制【{$mechanic}】尚未实现。<br>";
+        $obl_log->emit('search.mechanic_pending', 'search', [
+            'mechanic' => $mechanic,
+        ]);
     }
 }
 
@@ -443,7 +451,7 @@ function obl_execute_mechanic($template, &$pdata) {
  * 机制：增加最大生命值
  */
 function obl_mechanic_max_hp_up($template, &$pdata) {
-    global $log;
+    global $obl_log;
 
     $value = (int)($template['mechanic_value'] ?? 0);
     if ($value <= 0) return;
@@ -452,8 +460,11 @@ function obl_mechanic_max_hp_up($template, &$pdata) {
     // 同时回复等量生命值
     $pdata['hp'] = min($pdata['hp'] + $value, $pdata['mhp']);
 
-    $log .= "一股暖流涌入体内，<span class=\"yellow\">最大生命值 +{$value}</span>！<br>";
-    $log .= "当前生命：<span class=\"yellow\">{$pdata['hp']}/{$pdata['mhp']}</span><br>";
+    $obl_log->emit('system.mechanic_max_hp_up', 'system', [
+        'value' => $value,
+        'hp'    => $pdata['hp'],
+        'mhp'   => $pdata['mhp'],
+    ]);
 }
 
 // ----------------------------------------------------------------
@@ -471,7 +482,7 @@ function obl_mechanic_max_hp_up($template, &$pdata) {
  * @param array &$pdata 玩家数据
  */
 function obl_pickup_item($iid, &$pdata) {
-    global $db, $tablepre, $log;
+    global $db, $tablepre, $obl_log;
 
     $iid = (int)$iid;
     $cur_pgroup = (int)$pdata['pgroup'];
@@ -480,20 +491,20 @@ function obl_pickup_item($iid, &$pdata) {
     // 1. 读取道具实例
     $result = $db->query("SELECT * FROM {$tablepre}oblmapitem WHERE iid='$iid'");
     if (!$db->num_rows($result)) {
-        $log .= '找不到这个道具。<br>';
+        $obl_log->emit('pickup.not_found', 'pickup');
         return;
     }
     $item = $db->fetch_array($result);
 
     // 2. 位置检查
     if ((int)$item['pgroup'] != $cur_pgroup || (int)$item['pls'] != $cur_pls) {
-        $log .= '那个道具不在你身边。<br>';
+        $obl_log->emit('pickup.not_adjacent', 'pickup');
         return;
     }
 
     // 3. 发现状态检查（未发现的道具不能拾取）
     if (empty($item['discovered'])) {
-        $log .= '你不知道那里有什么。<br>';
+        $obl_log->emit('pickup.unknown', 'pickup');
         return;
     }
 
@@ -505,14 +516,17 @@ function obl_pickup_item($iid, &$pdata) {
         // 揭示真实身份
         if (!empty($item['is_trap'])) {
             // 陷阱（v1 简化：仅写日志，不造成伤害，不获得道具）
-            $log .= "你伸手去拿<span class=\"yellow\">{$real_itm}</span>——<br>";
-            $log .= "<span class=\"red\">那是一个陷阱！</span><br>";
+            $obl_log->emit('pickup.trap', 'pickup', [
+                'item_name' => $real_itm,
+            ]);
             // 原子删除：仅当道具仍存在时删除，防止并发重复触发
             $db->query("DELETE FROM {$tablepre}oblmapitem WHERE iid='$iid'");
             return;
         }
         // 正常近视道具：揭示真实名称
-        $log .= "你拿起了看似普通的东西——原来是<span class=\"yellow\">{$real_itm}</span>！<br>";
+        $obl_log->emit('pickup.nearsighted_reveal', 'pickup', [
+            'item_name' => $real_itm,
+        ]);
     }
 
     // 5. 写入玩家背包（寻找空槽位 itm1~itm6）
@@ -526,7 +540,7 @@ function obl_pickup_item($iid, &$pdata) {
     }
 
     if ($slot === -1) {
-        $log .= '背包已满，无法拾取。<br>';
+        $obl_log->emit('pickup.bag_full', 'pickup');
         return;
     }
 
@@ -553,13 +567,15 @@ function obl_pickup_item($iid, &$pdata) {
         $pdata['itms' . $slot]    = '';
         $pdata['itmsk' . $slot]   = '';
         $pdata['itmpara' . $slot] = '';
-        $log .= '那个道具已经不在那里了。<br>';
+        $obl_log->emit('system.pickup_concurrent_loss', 'system');
         return;
     }
 
     // 7. 日志
     if (!$was_nearsighted) {
-        $log .= "你拾取了<span class=\"yellow\">{$real_itm}</span>。<br>";
+        $obl_log->emit('pickup.success', 'pickup', [
+            'item_name' => $real_itm,
+        ]);
     }
 }
 
@@ -579,17 +595,17 @@ function obl_pickup_item($iid, &$pdata) {
  * @param array &$pdata 玩家数据
  */
 function obl_discard_item($slot, &$pdata) {
-    global $db, $tablepre, $log;
+    global $db, $tablepre, $obl_log;
 
     $slot = (int)$slot;
     if ($slot < 1 || $slot > 6) {
-        $log .= '无效的背包槽位。<br>';
+        $obl_log->emit('discard.invalid_slot', 'discard', ['slot' => $slot]);
         return;
     }
 
     $key = 'itm' . $slot;
     if (empty($pdata[$key]) || $pdata[$key] === '') {
-        $log .= '该槽位没有道具。<br>';
+        $obl_log->emit('discard.empty_slot', 'discard', ['slot' => $slot]);
         return;
     }
 
@@ -637,7 +653,9 @@ function obl_discard_item($slot, &$pdata) {
     $pdata['itmsk' . $slot]   = '';
     $pdata['itmpara' . $slot] = '';
 
-    $log .= "你丢弃了<span class=\"yellow\">{$itm}</span>。<br>";
+    $obl_log->emit('discard.success', 'discard', [
+        'item_name' => $itm,
+    ]);
 }
 
 // ----------------------------------------------------------------
