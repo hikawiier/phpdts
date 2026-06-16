@@ -5,6 +5,7 @@
 import { DebugBus, RAGE_STATUS, POSE_NAMES, TACTIC_NAMES, mapData, BASE_URL } from './data.js';
 import { escapeHtml, getPlaceName, getGenderText, getRaceText, getClubText } from './utils.js';
 import { dataManager } from './data-manager.js';
+import { updateToastPosition } from './toast-position.js';
 
 // ══════════════════════════════════════════════════
 // 状态栏渲染
@@ -150,6 +151,7 @@ export function toggleDrawer() {
         drawer.classList.remove('open');
         overlay.classList.remove('open');
     }
+    updateToastPosition();
 }
 
 export function closeDrawer() {
@@ -158,6 +160,7 @@ export function closeDrawer() {
     drawerOpen = false;
     drawer.classList.remove('open');
     overlay.classList.remove('open');
+    updateToastPosition();
 }
 
 export function isDrawerOpen() {

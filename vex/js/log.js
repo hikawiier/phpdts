@@ -3,12 +3,17 @@
 //
 // 事件驱动刷新，从 obl_log API 拉取结构化日志条目，
 // 委托 log-templates.js 渲染为 HTML。
+//
+// 增量检测：通过 ts 对比识别新增条目，在 2 级页面（模态框/抽屉）
+// 打开时触发 Toast 即时反馈，避免遮罩遮挡日志区导致操作结果不可见。
 // ══════════════════════════════════════════════════
 
 import { DebugBus } from './data.js';
 import { gameApi } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { renderLogEntry } from '../data/log-templates.js';
+import { showToast } from './tile-action.js';
+import { isAnyOverlayOpen } from './toast-position.js';
 
 // 动作标记 → 前端显示标签
 const ACTION_TAGS = {
@@ -19,6 +24,20 @@ const ACTION_TAGS = {
     discard: 'DSC',
     system:  'SYS',
 };
+
+// Toast 白名单：仅这些日志 ID 触发即时反馈（2 级页面打开时）
+// move.* 不加入（地图变化已足够明显）
+// ID 与结构化日志系统实际实现的 ID 对齐
+const TOAST_RULES = {
+    'pickup.bag_full':         { style: 'error' },
+    'pickup.success':          { style: 'success' },
+    'pickup.not_found':        { style: 'error' },
+    'search.result':           { style: 'success' },
+    'search.already_searched': { style: 'error' },
+    'discard.success':         { style: 'success' },
+};
+
+let lastTs = 0;  // 增量检测：记录上次拉取的最大 ts
 
 /**
  * 刷新日志：从 obl_log API 拉取结构化日志并渲染
@@ -35,6 +54,27 @@ export async function refreshLog(forceScroll = true) {
     if (result.status !== 'success') return;
 
     const entries = result.data.entries || [];
+
+    // ── 增量检测 ──
+    const newEntries = entries.filter(e => e.ts > lastTs);
+
+    // ── Toast 触发（仅在 2 级页面打开时，避免遮罩遮挡日志区） ──
+    if (isAnyOverlayOpen() && newEntries.length > 0) {
+        for (let i = 0; i < newEntries.length; i++) {
+            const entry = newEntries[i];
+            const rule = TOAST_RULES[entry.id];
+            if (rule) {
+                const content = renderLogEntry(entry);
+                // content 是 HTML（含高亮 span），showToast 第 4 参数 isHtml=true 直接渲染
+                if (content) showToast(content, rule.style, 2000, true);
+            }
+        }
+    }
+
+    // ── 更新 lastTs（首次加载 lastTs=0，会把全部 entries 的最大 ts 记下，后续仅新增触发） ──
+    lastTs = entries.length ? entries[entries.length - 1].ts : lastTs;
+
+    // ── 渲染日志区 ──
     if (entries.length === 0) {
         el.innerHTML = '<span class="grey">[SYS] 暂无日志</span>';
         return;
@@ -50,7 +90,7 @@ export async function refreshLog(forceScroll = true) {
 
     el.innerHTML = htmlParts.join('<br>');
 
-    // 滚动逻辑：滚动容器是 #logContent 的父级 div（overflow-y-auto）
+    // ── 滚动逻辑：滚动容器是 #logContent 的父级 div（overflow-y-auto） ──
     const scroller = el.parentElement;
     if (forceScroll) {
         // 操作触发：强制滚到底部，确保用户看到最新操作结果

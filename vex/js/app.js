@@ -8,6 +8,7 @@ import { toggleDrawer, closeDrawer, isDrawerOpen, renderStatusBar } from './play
 import { refreshLog } from './log.js';
 import { loadTileAction, closeModal } from './tile-action.js';
 import { DebugBus, BASE_URL } from './data.js';
+import { updateToastPosition } from './toast-position.js';
 
 // 统一刷新：地图优先（触发 map:loaded），其余并发
 async function refreshAll() {
@@ -47,6 +48,7 @@ function openInvDrawer() {
     overlay.classList.add('open');
     // 加载数据并渲染当前标签
     loadInventory();
+    updateToastPosition();
 }
 
 function closeInvDrawer() {
@@ -56,6 +58,7 @@ function closeInvDrawer() {
     invDrawerOpen = false;
     drawer.classList.remove('open');
     overlay.classList.remove('open');
+    updateToastPosition();
 }
 
 function toggleInvDrawer() {

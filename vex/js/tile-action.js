@@ -8,6 +8,7 @@ import { escapeHtml, gameApi } from './utils.js';
 import { loadMap } from './map.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
+import { updateToastPosition } from './toast-position.js';
 
 let tileData = null;
 
@@ -15,7 +16,7 @@ let tileData = null;
 // Toast（由 ui:toast 事件触发）
 // ══════════════════════════════════════════════════
 
-export function showToast(message, type, duration) {
+export function showToast(message, type, duration, isHtml) {
     type = type || 'info';
     duration = duration || 2000;
     const container = document.getElementById('toastContainer');
@@ -23,7 +24,10 @@ export function showToast(message, type, duration) {
     const tag = type === 'error' ? '[ERR]' : (type === 'success' ? '[OK]' : '[i]');
     const toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
-    toast.innerHTML = '<span class="toast-tag">' + tag + '</span>' + escapeHtml(message);
+    // isHtml=true 时 message 视为已转义的 HTML（如 renderLogEntry 输出，含高亮 span）；
+    // 默认 false 转义纯文本，保持对 ui:toast 等现有调用方的兼容
+    const safeMessage = isHtml ? message : escapeHtml(message);
+    toast.innerHTML = '<span class="toast-tag">' + tag + '</span>' + safeMessage;
     container.appendChild(toast);
     requestAnimationFrame(function() { toast.classList.add('show'); });
     setTimeout(function() {
@@ -168,6 +172,7 @@ function bindActionBarEvents() {
 export function closeModal() {
     const overlay = document.getElementById('modalOverlay');
     if (overlay) overlay.classList.remove('open');
+    updateToastPosition();
 }
 
 function openModal(title, bodyHtml) {
@@ -178,6 +183,7 @@ function openModal(title, bodyHtml) {
     const overlay = document.getElementById('modalOverlay');
     if (overlay) overlay.classList.add('open');
     bindModalEvents();
+    updateToastPosition();
 }
 
 function renderItemRow(item) {

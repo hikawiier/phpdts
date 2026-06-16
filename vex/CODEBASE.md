@@ -17,6 +17,7 @@
 - **POI vs 散落道具**: pois[] 和 ground_items[] 两个独立列表，在动作条中以 2 列网格并排显示
 - **区域 vs 地图格**: currentRegion 对应 pgroup，currentLocation 对应 pls
 - **itmpara**: 拾取时前端无需处理，丢弃时 slot 参数 1-6 对应 itm1~itm6
+- **结构化日志**: 后端 emit 结构化条目（id+action+params），前端按 ID 查模板渲染，详见第八章
 
 ---
 
@@ -44,19 +45,23 @@ vex/
 ├── css/
 │   ├── input.css           # Tailwind 源文件（@theme 色板定义）
 │   ├── output.css          # Tailwind 编译输出（勿手动编辑）
-│   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框）
+│   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
 ├── js/
 │   ├── app.js              # 入口：初始化 + 全局事件绑定 + 抽屉/模态框管理
 │   ├── data.js             # 全局配置：BASE_URL / DebugBus / mapData / 常量
 │   ├── data-manager.js     # 数据层：缓存 + 去重 + 订阅/广播
 │   ├── command-queue.js    # 命令队列：防抖 + 锁定 + 冷却
 │   ├── map.js              # 地图：渲染 + 移动 + 可达性判定
-│   ├── tile-action.js      # 地图格交互：探索/搜索/拾取 + 居中模态框
+│   ├── tile-action.js      # 地图格交互：探索/搜索/拾取 + 居中模态框 + Toast
 │   ├── inventory.js        # 背包 + 装备渲染 + 丢弃（右侧抽屉）
 │   ├── player.js           # 玩家信息（左侧抽屉）+ 状态栏渲染
-│   ├── log.js              # 日志：标签推断 + 事件驱动刷新
+│   ├── log.js              # 日志：结构化渲染 + 增量检测 + Toast 触发
+│   ├── toast-position.js   # Toast 位置管理：isAnyOverlayOpen + updateToastPosition
 │   ├── utils.js            # 工具：escapeHtml / API请求 / 命令提交
 │   └── debug.js            # AI调试模块（仅 ?debug=ai 时加载）
+├── data/
+│   ├── log-templates.js    # 结构化日志模板配置（40 个 ID）+ renderLogEntry
+│   └── terrain-desc.js     # 地形描述词库（迁移自后端）+ generateTerrainDesc
 └── docs/                   # 设计文档
 ```
 
@@ -70,7 +75,8 @@ app.js
   ├── inventory.js ────┤
   ├── tile-action.js ──┤── data-manager.js ── data.js
   ├── player.js ───────┤── command-queue.js ── utils.js
-  └── log.js ──────────┘── debug.js (动态加载)
+  └── log.js ──────────┤── toast-position.js ──┘
+                       └── data/log-templates.js ── data/terrain-desc.js
 ```
 
 **关键依赖**：
@@ -78,6 +84,9 @@ app.js
 - 所有写操作依赖 `command-queue.js`（防重复提交）
 - `utils.js` 提供 `gameApi()`（只读）和 `submitCommand()`（写操作）
 - `player.js` 同时负责状态栏渲染和左侧玩家抽屉
+- `log.js` 依赖 `log-templates.js`（渲染）和 `toast-position.js`（Toast 触发判定）
+- `tile-action.js` / `app.js` / `player.js` 都依赖 `toast-position.js`（2 级页面开关时更新 Toast 位置）
+- `log-templates.js` 依赖 `terrain-desc.js`（无名格描述生成）
 
 ---
 
@@ -95,7 +104,7 @@ app.js
       → log.js: refreshLog()            // 订阅 map:loaded
   → loadInventory()              // gameApi('player_inventory')
   → loadTileAction()             // gameApi('tile_actions')
-  → refreshLog()                 // gameApi('game_log')
+  → refreshLog()                 // gameApi('obl_log')
   → loadPlayerInfo()             // gameApi('player_info') → 渲染状态栏
 ```
 
@@ -110,7 +119,7 @@ app.js
     dataManager.broadcast('game:action-completed')
       → inventory.js: loadInventory()   // 订阅 game:action-completed
       → tile-action.js: loadTileAction() // 订阅 game:action-completed
-      → log.js: refreshLog()            // 订阅 game:action-completed
+      → log.js: refreshLog()            // 订阅 game:action-completed（含 Toast 触发）
       → player.js: loadPlayerInfo()     // 订阅 game:action-completed（渲染状态栏+抽屉打开时更新内容）
 ```
 
@@ -135,7 +144,7 @@ app.js
 | `tile_actions` | 当前格 POI + 脚边道具 | tile-action.js |
 | `player_inventory` | 背包槽位 + 装备 | inventory.js |
 | `player_info` | 玩家属性 + 装备详情 + gd/icon | player.js（状态栏+抽屉）, inventory.js |
-| `game_log` | 日志 HTML 字符串 | log.js |
+| `obl_log` | 结构化日志条目数组（LogEntry[]） | log.js |
 
 ### 5.2 写入 API（POST `command.php`）
 
@@ -172,6 +181,31 @@ app.js
 ```json
 { "success": true|false, "error": "...", "gamedata": {...}, "timer": number|null }
 ```
+
+### 5.4 `obl_log` 响应格式
+
+```json
+{
+  "status": "success",
+  "data": {
+    "entries": [LogEntry, ...],
+    "total": 42
+  }
+}
+```
+
+**LogEntry 结构**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 细粒度 ID，命名规则 `{action}.{subevent}`，如 `move.success`、`pickup.bag_full` |
+| `action` | string | 粗粒度动作标记，6 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system` |
+| `params` | object | 模板参数，值限 string/number/boolean。可为空对象 `{}` |
+| `html` | string\|null | fallback HTML，正常为 `null` |
+| `ts` | number | Unix 秒级时间戳，用于排序和增量检测 |
+
+- `entries`：按时间正序（旧→新）
+- `total`：当前存储的条目总数（受 200 条上限裁剪）
 
 ---
 
@@ -265,7 +299,7 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 | 左侧抽屉 | `[属性]` 按钮 | 页面左侧滑出 | 玩家属性详情 |
 | 右侧抽屉 | `[背包]` 按钮 | 页面右侧滑出 | 背包(INVENTORY) + 装备(ARMAMENT) 标签切换 |
 | 居中模态框 | POI/脚边道具点击 | 画面中央 | 360px 宽，半透明遮罩，scale 动画 |
-| Toast | `ui:toast` 事件 | 右上角 | 自动消失通知 |
+| Toast | `ui:toast` 事件 / 日志增量 | 动态位置（右上/左上/中上） | 自动消失通知，详见第八章 |
 
 ### 7.4 动作条 (ACTIONS)
 
@@ -295,24 +329,115 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 | `modalOverlay` | index.html | 模态框遮罩 |
 | `modalBox` | index.html | 模态框主体 |
 | `modalTitle` / `modalBody` | index.html | 模态框标题 / 内容区 |
-| `toastContainer` | index.html | Toast 容器 |
-| `drawerOverlay` | index.html | 抽屉遮罩 |
+| `toastContainer` | index.html | Toast 容器（动态定位） |
+| `drawerOverlay` | index.html | 左抽屉遮罩 |
+| `invDrawerOverlay` | index.html | 右抽屉遮罩 |
 | `playerDrawer` | index.html | 左侧抽屉主体（玩家属性） |
 | `inventoryDrawer` | index.html | 右侧抽屉主体（背包+装备） |
 
 ---
 
-## 八、CSS 架构
+## 八、日志与反馈系统
 
-### 8.1 三层样式
+### 8.1 结构化日志渲染
+
+**数据源**：`obl_log` API 返回的 `LogEntry[]`（详见 5.4）
+
+**渲染流程**：
+```
+refreshLog()
+  → gameApi('obl_log')
+  → entries.forEach(entry => renderLogEntry(entry))
+    → 查 LOG_TEMPLATES[entry.id]
+      → 有 render 函数 → 调用 render(params)
+      → 有 text 模板 → 替换 {param} 占位符 + 应用高亮
+      → 未知 ID → 显示 [未知日志] 占位
+  → 拼接 <span class="log-tag">[TAG]</span> + content
+  → 写入 #logContent
+```
+
+**关键文件**：
+- `data/log-templates.js`：40 个 ID 的模板配置 + `renderLogEntry(entry)` 函数
+- `data/terrain-desc.js`：无名格描述词库 + `generateTerrainDesc(floor, tide, passable)`
+- `js/log.js`：拉取日志 + 渲染 + 增量检测 + Toast 触发
+
+**动作标签映射**（`log.js` 的 `ACTION_TAGS`）：
+
+| action | 标签 |
+|--------|------|
+| `move` | `[MOV]` |
+| `explore` | `[EXP]` |
+| `search` | `[SRC]` |
+| `pickup` | `[PKG]` |
+| `discard` | `[DSC]` |
+| `system` | `[SYS]` |
+
+**样式控制**：日志颜色/高亮完全由前端模板控制（`<span class="yellow">` 等），后端不输出样式标记。颜色映射见 9.4。
+
+### 8.2 Toast 即时反馈系统
+
+**解决问题**：2 级页面（模态框/抽屉）打开时，全屏遮罩遮挡日志区，玩家看不到操作反馈。
+
+**核心机制**：利用结构化日志作为单一数据源，在 2 级页面打开期间，根据日志增量触发 Toast 即时反馈。零布局改动，操作函数零侵入。
+
+**触发流程**：
+```
+玩家在 2 级页面操作（如拾取）
+  → commandQueue.execute() → 后端 obl_pickup
+  → 后端 $obl_log->emit('pickup.bag_full', ...) → 持久化
+  → command.php 响应 → broadcast('game:action-completed')
+  → refreshLog() 触发
+  → 拉取 obl_log API → 增量检测（ts > lastTs）
+  → isAnyOverlayOpen() === true → 查 TOAST_RULES 白名单
+  → 匹配白名单 → showToast(renderLogEntry(entry), style, 2000, isHtml=true)
+  → Toast 在动态位置显示 2s
+```
+
+**增量检测**（`log.js`）：
+- 模块级变量 `lastTs` 记录上次拉取的最大 ts
+- `newEntries = entries.filter(e => e.ts > lastTs)`
+- 首次加载保护：`lastTs` 初始为 0，但首次拉取时无 2 级页面打开，自然不触发 Toast
+
+**白名单规则**（`log.js` 的 `TOAST_RULES`）：
+- 仅 `pickup.*` / `search.*` / `discard.*` 的成功/失败 ID 触发
+- `move.*` 不触发（地图变化已足够明显）
+- 完整白名单见 `log.js` 源文件
+
+**Toast 位置动态切换**（`toast-position.js`）：
+
+| 2 级页面状态 | Toast 位置 | CSS class |
+|-------------|-----------|-----------|
+| 无（默认） | 右上角 | （无 class） |
+| 开左抽屉（属性） | 右上角（保持默认） | （无 class） |
+| 开右抽屉（背包） | 左上角 | `.pos-left` |
+| 开模态框 | 中上 | `.pos-center` |
+
+优先级：`模态框 > 右抽屉 > 左抽屉/默认`。
+
+**位置切换时机**：在 `openModal`/`closeModal`/`openInvDrawer`/`closeInvDrawer`/`toggleDrawer`/`closeDrawer` 等函数末尾调用 `updateToastPosition()`。
+
+**集中管理原因**：为避免 `log.js`/`tile-action.js`/`app.js`/`player.js` 之间循环依赖，新建 `toast-position.js` 集中管理 `isAnyOverlayOpen()` + `updateToastPosition()`。
+
+### 8.3 Toast 显示
+
+**`showToast(message, type, duration, isHtml)`**（`tile-action.js`）：
+- `type`：`'error'`（[ERR]）/ `'success'`（[OK]）/ `'info'`（[i]）
+- `duration`：默认 2000ms，到时自动移除（300ms 淡出动画）
+- `isHtml`：默认 `false`（转义纯文本）；日志触发时传 `true`（`renderLogEntry` 输出含高亮 span）
+
+---
+
+## 九、CSS 架构
+
+### 9.1 三层样式
 
 | 层 | 文件 | 内容 |
 |----|------|------|
 | Tailwind 编译 | `css/output.css` | 工具类 + 主题 token（由 `input.css` 编译） |
 | Tailwind 源 | `css/input.css` | `@theme` 色板定义（bg/fg-dim/fg-mid/fg-bright/fg-glow/hi） |
-| 自定义 | `css/terminal.css` | CRT 特效、地图格、按钮、动画、日志类、状态栏、模态框、抽屉 |
+| 自定义 | `css/terminal.css` | CRT 特效、地图格、按钮、动画、日志类、状态栏、模态框、抽屉、Toast |
 
-### 8.2 Tailwind 主题色
+### 9.2 Tailwind 主题色
 
 ```css
 /* input.css @theme */
@@ -324,7 +449,7 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 --color-hi: #fff;           /* 纯白（当前格/按钮hover） */
 ```
 
-### 8.3 JS 动态生成的 CSS 类名
+### 9.3 JS 动态生成的 CSS 类名
 
 JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不用 Tailwind 工具类：
 
@@ -338,18 +463,19 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 | `.slot-card` / `.slot-filled` / `.slot-empty` | 背包格 | terminal.css |
 | `.eq-slot` / `.eq-label` / `.eq-name` | 装备槽 | terminal.css |
 | `.modal-item` / `.item-tag` / `.item-name` | 模态框道具行 | terminal.css |
-| `.toast` / `.toast.show` / `.toast-error` | Toast 通知 | terminal.css |
+| `.toast-container` / `.toast-container.pos-left` / `.toast-container.pos-center` | Toast 容器（动态定位） | terminal.css |
+| `.toast` / `.toast.show` / `.toast-error` / `.toast-success` | Toast 通知 | terminal.css |
 | `.log-tag` / `.log-content .yellow` 等 | 日志样式 | terminal.css |
 | `.status-bar` / `.status-bar-row` / `.bar-fill` / `.bar-container` | 状态栏 | terminal.css |
 | `.status-avatar` / `.status-avatar-fallback` | 头像框 | terminal.css |
 | `.modal-overlay` / `.modal-box` | 居中模态框 | terminal.css |
 
-### 8.4 日志颜色映射
+### 9.4 日志颜色映射
 
-后端日志用 HTML `<span class="xxx">` 标记颜色，前端映射为灰阶：
+**结构化日志系统下，颜色由前端 `log-templates.js` 模板控制**（后端不再输出 `<span class="xxx">`）。模板中使用以下 class，`terminal.css` 映射为灰阶：
 
-| 后端 class | 前端效果 |
-|-----------|---------|
+| 模板使用的 class | 前端效果 |
+|-----------------|---------|
 | `.yellow` | `#fff` 加粗（重要地名/物品名） |
 | `.red` | `#ccc` 加粗+下划线（伤害/陷阱） |
 | `.green` | `#bbb`（发现/成功） |
@@ -359,15 +485,15 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 
 ---
 
-## 九、代码规范
+## 十、代码规范
 
-### 9.1 模块规范
+### 10.1 模块规范
 
 - **ES Modules**：所有 JS 文件使用 `import`/`export`，无 CommonJS
 - **无 window 全局函数**：HTML 中无 `onclick`，事件绑定在 JS 模块内通过 `addEventListener` 完成
 - **唯一例外**：`window.__vex_debug_bus` 和 `window.__vex_base_url` 供 `debug.js`（非模块脚本）访问
 
-### 9.2 命名约定
+### 10.2 命名约定
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
@@ -376,14 +502,15 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 | DOM 事件处理 | `handle` 前缀 | `handleExplore`, `handleSearch`, `handlePickup` |
 | CSS 类名 | kebab-case | `map-cell`, `tile-row`, `slot-card` |
 | 数据事件 | `namespace:action` | `game:action-completed`, `map:loaded`, `ui:toast` |
+| 日志 ID | `{action}.{subevent}` | `move.success`, `pickup.bag_full`（与后端一致） |
 
-### 9.3 HTML 拼接规范
+### 10.3 HTML 拼接规范
 
 - 使用模板字面量（template literal）拼接，不用字符串 `+` 连接
 - 所有动态内容必须经过 `escapeHtml()` 转义
 - 按钮使用 `data-action` + `data-xxx` 属性传递参数，渲染后 `addEventListener` 绑定
 
-### 9.4 刷新策略
+### 10.4 刷新策略
 
 操作成功后统一调用：
 ```javascript
@@ -396,9 +523,9 @@ dataManager.broadcast('game:action-completed');
 
 ---
 
-## 十、调试系统
+## 十一、调试系统
 
-### 10.1 DebugBus（始终运行）
+### 11.1 DebugBus（始终运行）
 
 `data.js` 中的极简事件总线，零开销（无订阅者时 emit 为空操作）：
 
@@ -409,7 +536,7 @@ DebugBus.registerState(name, fn);     // 注册状态快照钩子
 DebugBus.getState();                  // 获取所有状态快照
 ```
 
-### 10.2 AI 调试模式
+### 11.2 AI 调试模式
 
 URL 加 `?debug=ai` 参数时，`app.js` 动态加载 `debug.js`，功能：
 - 订阅 DebugBus 所有事件
@@ -420,7 +547,7 @@ URL 加 `?debug=ai` 参数时，`app.js` 动态加载 `debug.js`，功能：
 
 ---
 
-## 十一、Tailwind 构建流程
+## 十二、Tailwind 构建流程
 
 ```bash
 # 开发：监听 input.css 变更，自动编译到 output.css
@@ -434,9 +561,9 @@ npm run build
 
 ---
 
-## 十二、地图缩放/平移/居中
+## 十三、地图缩放/平移/居中
 
-### 12.1 缩放
+### 13.1 缩放
 
 - **状态**: `zoomLevel`（map.js 模块内部变量，默认智能计算）
 - **范围**: 0.5x ~ 2.5x，步进 0.15
@@ -447,18 +574,18 @@ npm run build
   - +/- 按钮（地图面板右下角）
 - **效果**: 改变 cellSize/cellHeight/字号，grid 超出容器时自动出现滚动区域
 
-### 12.2 平移
+### 13.2 平移
 
 - **鼠标拖拽**: 桌面端左键拖拽空白处/地图格
 - **单指滑动**: 移动端由浏览器原生滚动处理
 - **滚动条**: 隐藏（`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`）
 
-### 12.3 自动居中
+### 13.3 自动居中
 
 - **触发时机**: `loadMap()` 渲染后、`applyZoom()` 缩放后、`resize` 事件后
 - **实现**: `centerOnPlayer()` 用 `offsetLeft/offsetTop` 链计算玩家格位置，`scrollTo` 居中
 - **边界**: 玩家在地图边缘时滚动到极限位置，不超出
 
-### 12.4 小地图居中
+### 13.4 小地图居中
 
 当 grid 尺寸小于容器时，容器自动切换为 `align-items: center; justify-content: center`，地图居中显示无需滚动。

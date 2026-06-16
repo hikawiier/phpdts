@@ -85,6 +85,21 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 - 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
 - 当前仅记录，不驱动任何系统（战斗/NPC AI 未实现）
 
+### 2.8 结构化日志 (Structured Log)
+
+Oblivions 模式下的日志传递机制，**完全替代传统 `$log` HTML 字符串**：
+
+| | 传统模式 | Oblivions 模式 |
+|---|---|---|
+| **数据形态** | HTML 字符串拼接 | 结构化数组（id + action + params） |
+| **全局变量** | `$log` | `$obl_log`（`OblivionsLogger` 实例） |
+| **输出方式** | `$log .= '...<br>'` | `$obl_log->emit($id, $action, $params)` |
+| **样式控制** | 后端写 `<span class="xxx">` | 前端模板控制（`log-templates.js`） |
+| **持久化** | `vex/cache/log_{groomid}_{pid}.php` | `vex/cache/obl_log_{groomid}_{pid}.json` |
+| **API 端点** | `game_log` | `obl_log` |
+
+**关键设计**：后端只输出事件结构（发生了什么 + 参数），前端完全控制视觉呈现（文案、样式、随机化）。详见第十二章。
+
 ---
 
 ## 三、目录结构
@@ -93,8 +108,8 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 oblivions/
 ├── include/game/
 │   ├── explore.func.php      # 探索/搜索/拾取/丢弃核心逻辑
-│   ├── move.func.php         # 移动/地图数据加载/BFS距离计算/地形描述
-│   └── generate.func.php     # 资源生成（POI + 野生散落道具）
+│   ├── move.func.php         # 移动/地图数据加载/BFS距离计算
+│   └── log.func.php          # 结构化日志收集器 + 持久化/读取
 ├── gamedata/
 │   ├── obl_config.php        # 可调参数配置
 │   ├── item_table.php        # 道具模板表
@@ -102,7 +117,6 @@ oblivions/
 │   ├── poi_loot.php          # POI 掉落表
 │   ├── poi_pool.php          # POI 刷新池（按潮汐区配置）
 │   ├── scatter_pool.php      # 野生散落道具池（按潮汐区配置）
-│   ├── terrain_desc.php      # 地形描述文本配置（随机组合生成无名格描述）
 │   ├── map.php               # 区域元数据 + 网格布局
 │   └── tiles/
 │       ├── region_1.php      # 区域1（垃圾平原）地图格数据
@@ -123,7 +137,8 @@ oblivions/
 | `include/command/router.php` | Oblivions 命令路由注册 |
 | `include/command/handlers/oblivions_commands.php` | 4个Oblivions命令处理器 |
 | `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支 |
-| `api_v2.php` | `game_map` 扩展 + `tile_actions` 端点 |
+| `api_v2.php` | `game_map` 扩展 + `tile_actions` + `obl_log` 端点 |
+| `command.php` | Oblivions 模式下初始化 `$obl_log` + 持久化 + 跳过 `$log` 文件化 |
 | `valid.php` | 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex/index.html` |
 
@@ -295,6 +310,36 @@ oblivions/
 - 近视道具（`discovered=2`）额外返回 `display_name`（带"？"后缀）、`fake_item_id`、`is_trap`
 - 机制型POI额外返回 `mechanic`/`mechanic_value`/`mechanic_params`
 
+### 5.4 `obl_log` — 结构化日志
+
+- **请求**: `GET api_v2.php?action=obl_log`
+- **前置条件**: 必须在 Oblivions 模式下
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "entries": [LogEntry, LogEntry, ...],
+    "total": 42
+  }
+}
+```
+
+**LogEntry 结构**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 细粒度 ID，命名规则 `{action}.{subevent}`，如 `move.success`、`pickup.trap` |
+| `action` | string | 粗粒度动作标记，6 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system` |
+| `params` | object | 模板参数，值限 string/number/boolean。可为空对象 `{}` |
+| `html` | string\|null | fallback HTML，正常为 `null`。仅用于前端模板无法覆盖的极端情况 |
+| `ts` | number | `time()` 返回的 Unix 秒级时间戳 |
+
+- `entries`：日志条目数组，按时间正序（旧→新）
+- `total`：当前存储的条目总数（受 200 条上限裁剪）
+
+**ID 命名规则**：`{action}.{subevent}`，如 `move.success`、`pickup.bag_full`、`search.result`。完整 ID 清单见前端 `vex/data/log-templates.js`。
+
 ---
 
 ## 六、命令路由
@@ -331,6 +376,7 @@ command.php
     → oblivions_commands.php: cmd_handle_obl_xxx($params, $pdata)
       → explore.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
   → player_save($pdata)  // 写回数据库
+  → obl_log_persist($obl_log, $groomid, $pid)  // Oblivions 模式：持久化结构化日志
 ```
 
 **关键**: Oblivions 命令在 router.php 中优先处理，独立于 `itm0` 阻塞检查（传统模式下手持道具会阻塞其他命令）。
@@ -347,6 +393,7 @@ return [
     'vision_range'     => 1,    // 视野范围等级（BFS跳数）
     'memory_range'     => 3,    // 每次探索最多发现道具数
     'move_sp_cost'     => 0,    // 每格移动消耗体力
+    'log_max_entries'  => 200,  // 结构化日志最大条目数
 ];
 ```
 
@@ -454,41 +501,6 @@ return [
 ]
 ```
 
-### 7.8 `terrain_desc.php` — 地形描述文本配置（⚠️已废弃）
-
-> **已废弃**：词库已迁移到前端 `vex/data/terrain-desc.js` 的 `generateTerrainDesc()`。
-> 后端不再生成描述文案，只传原始属性（floor/tide/passable），前端负责组合。
-> 本文件保留仅供历史参考，不再被任何代码引用。
-
-为无名地块提供随机组合的描述文本，用于移动日志。按 `floor` + `tide` + `passable` 三个属性组合：
-
-```php
-return [
-    'floor_adj' => [
-        'standard'    => ['荒芜的', '空旷的', '布满灰尘的', ...],
-        'metal'       => ['金属覆盖的', '锈迹斑斑的', '残骸堆积的', ...],
-        'water'       => ['泥泞的', '潮湿的', '积水覆盖的', ...],
-        'vegetation'  => ['杂草丛生的', '藤蔓缠绕的', '灌木密布的', ...],
-    ],
-    'floor_name' => [
-        'standard'    => ['荒地', '平地', '碎石地', ...],
-        'metal'       => ['废铁地', '锈蚀地', '金属地', ...],
-        'water'       => ['湿地', '泥潭', '浅滩', ...],
-        'vegetation'  => ['灌木丛', '草丛', '荒野', ...],
-    ],
-    'tide_adj' => [
-        'deep'  => ['深', '幽深的', '令人窒息的', ...],
-        'abyss' => ['深渊般的', '无尽的', '吞噬一切的', ...],
-    ],
-    'impassable_suffix' => ['，无法通行', '，挡住了去路', '，请绕道', ...],
-];
-```
-
-**组合规则**（`obl_get_tile_display_name()`）：
-- 有名格：直接返回 `name`
-- 无名格：`"一片" + tide_adj? + floor_adj + floor_name + impassable_suffix?`
-- 每次调用 `array_rand()` 随机选取，同一格每次移动日志可能不同
-
 ---
 
 ## 八、核心函数索引
@@ -520,8 +532,9 @@ return [
 | `obl_get_distance` | `(int $pgroup, int $from, int $to): int` | BFS最短路径（不可达返回-1） |
 | `obl_move` | `(int $moveto, array &$pdata): void` | 移动（含区域切换/体力/自动探索） |
 | `obl_check_move_sp` | `(array &$pdata, int $distance = 1): bool` | 移动体力检查+扣除 |
-| `obl_get_tile_display_name` | `(array $tile): string` | 获取地块显示名称（有名格用name，无名格用terrain_desc随机组合） |
 | `obl_post_move_hook` | `(array &$pdata): void` | 移动后钩子：自动探索（跳过体力检查） |
+
+> **注**：原 `obl_get_tile_display_name()` 已删除，地块显示名由前端 `vex/data/terrain-desc.js` 的 `generateTerrainDesc()` 生成。
 
 ### 8.3 generate.func.php
 
@@ -530,6 +543,17 @@ return [
 | `obl_generate_region_items` | `(int $pgroup, array $tiles, array $cfg): void` | 区域资源生成入口 |
 | `obl_generate_region_pois` | `(int $pgroup, array $tiles, array $poi_pool, array $poi_table): void` | POI生成 |
 | `obl_generate_wild_items` | `(int $pgroup, array $tiles, array $scatter_pool, array $item_table): void` | 野生道具生成 |
+
+### 8.4 log.func.php
+
+| 函数/类 | 签名 | 说明 |
+|---------|------|------|
+| `OblivionsLogger` | 类 | 结构化日志收集器，单次请求内累积 |
+| `OblivionsLogger::emit` | `($id, $action, $params = [], $html = null): void` | 追加一条日志 |
+| `OblivionsLogger::getEntries` | `(): array` | 获取本请求累积的日志条目 |
+| `OblivionsLogger::hasEntries` | `(): bool` | 本请求是否有日志 |
+| `obl_log_persist` | `($logger, $groomid, $pid, $max_entries = 200): void` | 持久化日志到 JSON 文件（追加+裁剪+LOCK_EX） |
+| `obl_log_load` | `($groomid, $pid): array` | 从文件读取日志条目（按时间正序） |
 
 ---
 
@@ -544,11 +568,13 @@ return [
 | 命令处理器 | `cmd_handle_obl_{command}` | `cmd_handle_obl_explore` |
 | 数据库表 | `{$tablepre}oblmap{suffix}` | `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
+| 日志 ID | `{action}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
 
 ### 9.2 数据传递规范
 
 - **`$pdata` 引用传递**: 所有修改玩家数据的函数接受 `&$pdata`，禁止函数内 `extract()`
-- **日志输出**: 通过全局 `$log` 变量追加，格式 `$log .= '消息<br>';`
+- **日志输出（Oblivions 模式）**: 通过 `global $obl_log` + `$obl_log->emit($id, $action, $params)`，**不再使用** `global $log` + `$log .=`
+- **日志输出（传统模式）**: 仍通过全局 `$log` 变量追加，格式 `$log .= '消息<br>';`
 - **数据库操作**: 使用全局 `$db` + `$tablepre`，SQL中表名写 `{$tablepre}oblmapxxx`
 - **配置读取**: 通过 `obl_get_config()` 获取，带静态缓存，不直接 include
 
@@ -557,6 +583,7 @@ return [
 - **拾取竞态**: `DELETE ... WHERE iid='$iid' AND discovered>0`，检查 `affected_rows()` 防重复拾取
 - **搜索计数**: `UPDATE ... SET search_count=search_count+1` 原子递增
 - **迷雾写入**: `INSERT ... ON DUPLICATE KEY UPDATE fog=1` 幂等操作
+- **日志写入**: `file_put_contents` 加 `LOCK_EX`，多请求并发写入不丢数据
 
 ### 9.4 itmpara 约定
 
@@ -582,6 +609,8 @@ return [
 6. 移动 → 移动后自动探索（跳过体力检查）
 ```
 
+每一步操作产生的日志通过 `$obl_log->emit()` 收集，请求结束前由 `obl_log_persist()` 持久化。
+
 ---
 
 ## 十一、前端集成速查
@@ -597,6 +626,7 @@ Oblivions 模式下 `game.php` 重定向到 `vex/index.html`（SPA前端）。
 | 地图网格+连通性 | `game_map` | `links.tiles[pgroup][pls].neighbors`, `links.grids[pgroup]` |
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
 | 玩家位置 | `player_info` | `pgroup`(区域), `pls`(格子) |
+| 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
 
 ### 11.3 命令提交
 
@@ -625,3 +655,89 @@ submitCommand('move', { moveto: targetPls });
 - **近视道具**: `discovered=2` 时显示 `display_name`（带"？"），拾取后揭示真实身份
 - **道具分组**: POI关联道具在 `pois[].items`，散落道具在 `ground_items`
 - **背包槽位**: `itm1~itm6`，对应 `slot` 参数 1-6
+- **结构化日志渲染**: 前端按 `entry.id` 查 `log-templates.js` 模板渲染，后端不参与视觉呈现
+- **地块描述生成**: 无名格描述由前端 `terrain-desc.js` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
+
+---
+
+## 十二、结构化日志系统
+
+### 12.1 设计原则
+
+- **后端只输出事件结构**（发生了什么 + 参数），前端完全控制视觉呈现（文案、样式、随机化）
+- **完全替代** `$log` HTML 字符串机制（Oblivions 模式下不再使用 `$log`）
+- **隔离性**：改动只影响 Oblivions 模式和 Vex 前端，不侵入传统模式
+
+### 12.2 数据流
+
+```
+obl_* 函数执行
+  → $obl_log->emit($id, $action, $params)  // 收集日志条目
+  ↓
+command.php: player_save() 之后
+  → obl_log_persist($obl_log, $groomid, $pid)  // 持久化到 JSON 文件
+  ↓
+前端 refreshLog()
+  → gameApi('obl_log')  // 拉取结构化日志
+  → renderLogEntry(entry)  // 按 ID 查模板渲染
+  → 同时触发 Toast（若 2 级页面打开 + 命中白名单）
+```
+
+### 12.3 后端实现
+
+**`oblivions/include/game/log.func.php`**：
+- `OblivionsLogger` 类：单次请求内累积日志条目
+- `obl_log_persist()`：追加模式写入 `vex/cache/obl_log_{groomid}_{pid}.json`，带 200 条上限裁剪和 `LOCK_EX` 并发保护
+- `obl_log_load()`：读取日志文件，返回按时间正序的数组
+
+**`command.php` 改动（3 处）**：
+1. 入口初始化：`$obl_log = oblivions_is_active() ? new OblivionsLogger() : null;`
+2. `player_save` 之前持久化：`obl_log_persist($obl_log, $groomid, $pid);`
+3. 移除 Oblivions 模式下的 `$log` 文件化（传统模式仍走 `$log`）
+
+**`obl_*` 函数改造模式**：
+
+```php
+// 改造前
+global $log;
+$log .= "从{$from_name}移动到了<span class=\"yellow\">{$to_name}</span>。<br>";
+
+// 改造后
+global $obl_log;
+$obl_log->emit('move.success', 'move', [
+    'from_name' => $from_name,
+    'to_name'   => $to_name,
+]);
+```
+
+### 12.4 前端实现
+
+**`vex/data/log-templates.js`**：
+- `LOG_TEMPLATES`：按 ID 索引的模板配置（text 模板 / render 函数 / 高亮参数）
+- `renderLogEntry(entry)`：渲染单条日志为 HTML，未知 ID 显示 `[未知日志]` 占位
+
+**`vex/data/terrain-desc.js`**：
+- `TERRAIN_DESC`：从后端迁移的地形描述词库（floor/tide/impassable_suffix/templates）
+- `generateTerrainDesc(floor, tide, passable)`：为无名格随机组合描述文案
+
+**`vex/js/log.js`**：
+- 调用 `obl_log` API 拉取结构化日志
+- 委托 `renderLogEntry` 渲染，过滤空内容（如 `move.tile_desc` 无 desc 时）
+- 动作标签映射：`move→[MOV]` / `explore→[EXP]` / `search→[SRC]` / `pickup→[PKG]` / `discard→[DSC]` / `system→[SYS]`
+
+### 12.5 区域切换日志拆分
+
+区域切换（无论前进还是回退）统一拆分为三条独立日志：
+1. `move.region_leave` — 离开当前区域
+2. `move.region_enter` — 进入目标区域（含区域描述）
+3. `move.tile_desc` — 落脚格描述（复用已有 ID）
+
+这样"从 A 出来"和"到了 B"是两个独立事件，语义更清晰。
+
+### 12.6 日志文件清理
+
+`vex/cache/obl_log_{groomid}_{pid}.json` 在游戏重置时清理（`rs_game()` 钩子），避免跨游戏残留。日常依赖 200 条上限自然轮转。
+
+---
+
+**文档结束。** 结构化日志系统的完整 ID 清单见 `vex/data/log-templates.js`，Toast 即时反馈机制详见 `vex/CODEBASE.md`。

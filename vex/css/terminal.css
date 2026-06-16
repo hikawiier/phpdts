@@ -642,6 +642,34 @@ body::after {
 
 /* ═══ Toast ═══ */
 
+/* 容器定位：默认右上角，根据 2 级页面状态动态切换位置 */
+.toast-container {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    left: auto;
+    transform: none;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+    transition: left 0.2s, right 0.2s, transform 0.2s;
+}
+
+/* 右抽屉开：左上角（避免被抽屉遮挡） */
+.toast-container.pos-left {
+    right: auto;
+    left: 12px;
+}
+
+/* 模态框开：中上（避免被模态框遮挡） */
+.toast-container.pos-center {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
 .toast {
     padding: 6px 12px;
     border: 1px solid #888;
