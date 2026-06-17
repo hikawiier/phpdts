@@ -529,44 +529,36 @@ function obl_pickup_item($iid, &$pdata) {
         ]);
     }
 
-    // 5. 写入玩家背包（寻找空槽位 itm1~itm6）
-    $slot = -1;
-    for ($i = 1; $i <= 6; $i++) {
-        $key = 'itm' . $i;
-        if (empty($pdata[$key]) || $pdata[$key] === '') {
-            $slot = $i;
-            break;
-        }
-    }
-
-    if ($slot === -1) {
+    // 5. 写入玩家背包（寻找空槽位，使用 itempara JSON 结构）
+    $slot = obl_find_empty_slot($pdata);
+    if ($slot === false) {
         $obl_log->emit('pickup.bag_full', 'pickup');
         return;
     }
 
-    // 写入背包槽位；item_id 注入 itmpara JSON 数组，丢弃时可还原
-    $pdata['itm' . $slot]  = $item['itm'];
-    $pdata['itmk' . $slot] = $item['itmk'];
-    $pdata['itme' . $slot] = (int)$item['itme'];
-    $pdata['itms' . $slot] = $item['itms'];
-    $pdata['itmsk' . $slot] = $item['itmsk'];
+    // 构建道具对象（遵循 itempara JSON 七字段规范：itm/itmk/itme/itms/itmsk/itmpara/itmid）
+    // itmid 为独立字段（地图道具实例 ID），丢弃时直接还原
+    // itmpara 保持原始数据，不注入 obl_item_id
+    $itmpara = json_decode((string)$item['itmpara'], true);
+    if (!is_array($itmpara)) $itmpara = [];
 
-    $para = json_decode((string)$item['itmpara'], true);
-    if (!is_array($para)) $para = [];
-    $para['obl_item_id'] = $item['item_id'];
-    $pdata['itmpara' . $slot] = json_encode($para, JSON_UNESCAPED_UNICODE);
+    $new_item = array(
+        'itm'     => $item['itm'],
+        'itmk'    => $item['itmk'],
+        'itme'    => (int)$item['itme'],
+        'itms'    => $item['itms'],
+        'itmsk'   => $item['itmsk'],
+        'itmpara' => $itmpara,
+        'itmid'   => (string)$item['item_id'],
+    );
+    obl_set_item($pdata, $slot, $new_item);
 
     // 6. 原子删除地图道具实例：仅当 discovered>0 时删除，防止并发拾取同一道具
     //    如果 affected_rows=0 说明道具已被其他请求拾取，回滚背包写入
     $db->query("DELETE FROM {$tablepre}oblmapitem WHERE iid='$iid' AND discovered>0");
     if ($db->affected_rows() <= 0) {
         // 道具已被并发请求拾取，回滚背包
-        $pdata['itm' . $slot]     = '';
-        $pdata['itmk' . $slot]    = '';
-        $pdata['itme' . $slot]    = 0;
-        $pdata['itms' . $slot]    = '';
-        $pdata['itmsk' . $slot]   = '';
-        $pdata['itmpara' . $slot] = '';
+        obl_set_item($pdata, $slot, null);
         $obl_log->emit('system.pickup_concurrent_loss', 'system');
         return;
     }
@@ -589,7 +581,7 @@ function obl_pickup_item($iid, &$pdata) {
  * 其他玩家/后续可拾取
  *
  * item_id 还原（统一 JSON）：
- *   从 itmpara JSON 数组中取出 'obl_item_id' 键还原，其余作为原 itmpara 保留。
+ *   从 itempara[].para.obl_item_id 取出还原，剩余作为原 itmpara 保留。
  *
  * @param int   $slot   背包槽位号（1~6）
  * @param array &$pdata 玩家数据
@@ -598,60 +590,47 @@ function obl_discard_item($slot, &$pdata) {
     global $db, $tablepre, $obl_log;
 
     $slot = (int)$slot;
-    if ($slot < 1 || $slot > 6) {
+    $maxslots = isset($pdata['itemmaxslots']) ? (int)$pdata['itemmaxslots'] : 6;
+    if ($slot < 1 || $slot > $maxslots) {
         $obl_log->emit('discard.invalid_slot', 'discard', ['slot' => $slot]);
         return;
     }
 
-    $key = 'itm' . $slot;
-    if (empty($pdata[$key]) || $pdata[$key] === '') {
+    $item = obl_get_item($pdata, $slot);
+    if (empty($item) || !is_array($item)) {
         $obl_log->emit('discard.empty_slot', 'discard', ['slot' => $slot]);
         return;
     }
 
-    // 读取道具数据
-    $itm         = $pdata['itm' . $slot];
-    $itmk        = $pdata['itmk' . $slot];
-    $itme        = (int)$pdata['itme' . $slot];
-    $itms        = $pdata['itms' . $slot];
-    $itmsk       = $pdata['itmsk' . $slot];
-    $itmpara_raw = (string)$pdata['itmpara' . $slot];
+    // 读取道具数据（从 itempara JSON 七字段结构还原为地图道具表字段）
+    $itm     = isset($item['itm']) ? $item['itm'] : '';
+    $itmk    = isset($item['itmk']) ? $item['itmk'] : '';
+    $itme    = isset($item['itme']) ? (int)$item['itme'] : 0;
+    $itms    = isset($item['itms']) ? $item['itms'] : '';
+    $itmsk   = isset($item['itmsk']) ? $item['itmsk'] : '';
+    $itmpara = isset($item['itmpara']) && is_array($item['itmpara']) ? $item['itmpara'] : [];
+    $item_id = isset($item['itmid']) ? (string)$item['itmid'] : '';
 
-    // 从 itmpara JSON 中还原 item_id，并还原原始 itmpara
-    $para = json_decode($itmpara_raw, true);
-    if (is_array($para) && isset($para['obl_item_id'])) {
-        $item_id = (string)$para['obl_item_id'];
-        unset($para['obl_item_id']);
-        // 还原原始 itmpara（剩余键重新编码，空则留空字符串）
-        $itmpara = empty($para) ? '' : json_encode($para, JSON_UNESCAPED_UNICODE);
-    } else {
-        // 未记录 item_id（异常情况，如非 Oblivions 来源道具），用空串兜底
-        $item_id = '';
-        $itmpara = $itmpara_raw;
-    }
+    // 还原 itmpara 为字符串（空数组留空字符串）
+    $itmpara_str = empty($itmpara) ? '' : json_encode($itmpara, JSON_UNESCAPED_UNICODE);
 
     $cur_pgroup = (int)$pdata['pgroup'];
     $cur_pls = (int)$pdata['pls'];
 
     // 写入地图道具表（iaid=0 散落道具，discovered=1 立即可见）
-    $itm_e     = $db->escape_string($itm);
-    $itmk_e    = $db->escape_string($itmk);
-    $itms_e    = $db->escape_string($itms);
-    $itmsk_e   = $db->escape_string($itmsk);
-    $itmpara_e = $db->escape_string($itmpara);
-    $item_id_e = $db->escape_string($item_id);
+    $itm_e       = $db->escape_string($itm);
+    $itmk_e      = $db->escape_string($itmk);
+    $itms_e      = $db->escape_string($itms);
+    $itmsk_e     = $db->escape_string($itmsk);
+    $itmpara_e   = $db->escape_string($itmpara_str);
+    $item_id_e   = $db->escape_string($item_id);
 
     $db->query("INSERT INTO {$tablepre}oblmapitem
                 (pgroup, pls, iaid, item_id, itm, itmk, itme, itms, itmsk, itmpara, discovered, fake_item_id, is_trap)
                 VALUES ('$cur_pgroup', '$cur_pls', 0, '$item_id_e', '$itm_e', '$itmk_e', $itme, '$itms_e', '$itmsk_e', '$itmpara_e', 1, '', 0)");
 
     // 清空背包槽位
-    $pdata['itm' . $slot]     = '';
-    $pdata['itmk' . $slot]    = '';
-    $pdata['itme' . $slot]    = 0;
-    $pdata['itms' . $slot]    = '';
-    $pdata['itmsk' . $slot]   = '';
-    $pdata['itmpara' . $slot] = '';
+    obl_set_item($pdata, $slot, null);
 
     $obl_log->emit('discard.success', 'discard', [
         'item_name' => $itm,

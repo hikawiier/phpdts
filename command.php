@@ -8,7 +8,13 @@ require GAME_ROOT.'./include/game/render.func.php';
 require GAME_ROOT.'./include/gamectl/player_auth.func.php';
 require GAME_ROOT.'./include/core/entrypoint.php';
 
-// [A] 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
+// Oblivions 模式：独立入口，处理全部 Oblivions 命令流程
+if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+	require GAME_ROOT.'./oblivions/include/core/obl_command.php';
+	exit;
+}
+
+// 传统模式（原逻辑保持不变）/ Traditional mode (original logic unchanged)
 $pdata = game_entrypoint('command');
 
 // [B] 公共初始化 / Common initialization
@@ -171,14 +177,14 @@ $main ? include template($main) : include template('profile');
 $gamedata['innerHTML']['main'] = ob_get_contents();
 
 // Oblivions 模式不走传统 $log 文件化（已由 obl_log_persist 处理）
-if (!$obl_log) {
+/*if (!$obl_log) {
 	$gamedata['innerHTML']['log'] = $log;
 	$log_dir = GAME_ROOT . './vex/cache/';
 	if (!is_dir($log_dir)) {
 		mkdir($log_dir, 0777, true);
 	}
 	writeover($log_dir . 'log_' . $groomid . '_' . $pid . '.php', $log);
-}
+}*/
 
 if (isset($error)) {
 	$gamedata['innerHTML']['error'] = $error;

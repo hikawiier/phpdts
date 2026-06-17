@@ -340,12 +340,18 @@ function save_gameinfo()
 
 	if($gamestate > 10)
 	{
-		$result = $db->query("SELECT pid FROM {$tablepre}players WHERE type=0");
-		$validnum = $db->num_rows($result);
-		$result = $db->query("SELECT pid FROM {$tablepre}players WHERE hp>0 AND type=0");
-		$alivenum = $db->num_rows($result);
-		$result = $db->query("SELECT pid FROM {$tablepre}players WHERE hp<=0 OR state>=10");
-		$deathnum = $db->num_rows($result);
+		// OBLIVIONS 模式：不依赖 bra_players 查询，alivenum/deathnum/validnum 直接默认 0
+		// obl 模式下 bra_players 仅作为防御性保留，不参与任何 gameplay 逻辑
+		if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+			$validnum = $alivenum = $deathnum = 0;
+		} else {
+			$result = $db->query("SELECT pid FROM {$tablepre}players WHERE type=0");
+			$validnum = $db->num_rows($result);
+			$result = $db->query("SELECT pid FROM {$tablepre}players WHERE hp>0 AND type=0");
+			$alivenum = $db->num_rows($result);
+			$result = $db->query("SELECT pid FROM {$tablepre}players WHERE hp<=0 OR state>=10");
+			$deathnum = $db->num_rows($result);
+		}
 	}
 	else
 	{

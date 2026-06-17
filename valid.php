@@ -343,6 +343,17 @@ if($mode == 'enter') {
 	$ndata = player_format_with_db_structure($ndata);
 	if(!empty($ndata)) $db->array_insert("{$tablepre}players", $ndata);
 
+	// Oblivions 模式：同时在 oblplayers 创建记录（独立数据层）
+	// bra_players 仍由上方原逻辑插入（开发阶段防御性保留），但 Oblivions 模式不依赖它：
+	// obl_save_player() 不同步任何数据到 bra_players，save_gameinfo() 在 obl 模式下跳过 bra_players 查询。
+	if (oblivions_is_active() && !empty($ndata)) {
+		include_once GAME_ROOT . './oblivions/include/game/player.func.php';
+		// 测试：加入 2 个初始道具（itm1=面包, itm2=矿泉水）
+		$ndata['itm1'] = '面包';  $ndata['itmk1'] = 'HH'; $ndata['itme1'] = 120; $ndata['itms1'] = '15'; $ndata['itmsk1'] = ''; $ndata['itmpara1'] = '';
+		$ndata['itm2'] = '矿泉水'; $ndata['itmk2'] = 'HS'; $ndata['itme2'] = 140; $ndata['itms2'] = '15'; $ndata['itmsk2'] = ''; $ndata['itmpara2'] = '';
+		obl_create_player_record($ndata);
+	}
+
 	// Oblivions 模式：出生时点亮出生格迷雾 + 视野范围道具发现
 	// 玩家已入库，pgroup/pls 已确定（第 264-269 行设置）
 	if (oblivions_is_active() && !empty($ndata['pgroup']) && isset($ndata['pls'])) {

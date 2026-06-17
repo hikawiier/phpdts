@@ -2,8 +2,8 @@
 // 玩家信息 / Player info (左侧抽屉 + 状态栏)
 // ══════════════════════════════════════════════════
 
-import { DebugBus, RAGE_STATUS, POSE_NAMES, TACTIC_NAMES, mapData, BASE_URL } from './data.js';
-import { escapeHtml, getPlaceName, getGenderText, getRaceText, getClubText } from './utils.js';
+import { DebugBus, mapData, BASE_URL } from './data.js';
+import { escapeHtml, getPlaceName, getGenderText } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { updateToastPosition } from './toast-position.js';
 
@@ -93,6 +93,11 @@ export async function loadPlayerInfo() {
     const hpPct = d.mhp ? (d.hp / d.mhp) * 100 : 0;
     const spPct = d.msp ? (d.sp / d.msp) * 100 : 0;
     const expPct = d.upexp ? (d.exp / d.upexp) * 100 : 0;
+    const apPct = d.max_ap ? (d.ap / d.max_ap) * 100 : 0;
+
+    // 从 oblpara 读取 obl 专属杂项数据（如 killnum）
+    const oblpara = d.oblpara || {};
+    const killnum = oblpara.killnum || 0;
 
     let html = '';
 
@@ -109,6 +114,12 @@ export async function loadPlayerInfo() {
         + '</div>';
 
     html += '<div>'
+        + '<div class="drawer-section-title">├─ ACTION POINTS</div>'
+        + '<div class="stat-bar"><div class="stat-fill ap" style="width:' + apPct + '%"></div></div>'
+        + '<div class="drawer-stat-line">' + (d.ap || 0) + ' / ' + (d.max_ap || 0) + '</div>'
+        + '</div>';
+
+    html += '<div>'
         + '<div class="drawer-section-title">├─ EXPERIENCE</div>'
         + '<div class="stat-bar"><div class="stat-fill exp" style="width:' + expPct + '%"></div></div>'
         + '<div class="drawer-stat-line">LV' + (d.lvl || 0) + ' — ' + (d.exp || 0) + ' / ' + (d.upexp || 100) + '</div>'
@@ -116,18 +127,15 @@ export async function loadPlayerInfo() {
 
     html += '<div class="drawer-stat-line" style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);">'
         + '<div>├─ ATK: ' + (d.att || 0) + ' | DEF: ' + (d.def || 0) + '</div>'
-        + '<div>├─ KILLS: ' + (d.killnum || 0) + ' | MONEY: ' + (d.money || 0) + '</div>'
-        + '<div>├─ RAGE: ' + escapeHtml(RAGE_STATUS[d.rage] || d.rage) + '</div>'
+        + '<div>├─ KILLS: ' + killnum + '</div>'
         + '<div>├─ POS: ' + escapeHtml(getPlaceName(d.pls)) + ' [' + d.pls + ']</div>'
-        + '<div>└─ POSE: ' + escapeHtml(POSE_NAMES[d.pose] || d.pose) + ' | TAC: ' + escapeHtml(TACTIC_NAMES[d.tactic] || d.tactic) + '</div>'
+        + '<div>└─ STATE: ' + (d.state || 0) + '</div>'
         + '</div>';
 
     html += '<div class="drawer-stat-line" style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);">'
         + '<div class="drawer-section-title">├─ PROFILE</div>'
         + '<div>├─ name: ' + escapeHtml(d.name) + '</div>'
-        + '<div>├─ ' + escapeHtml(getGenderText(d.gd)) + ' | ' + escapeHtml(getRaceText(d.race)) + '</div>'
-        + '<div>├─ club: ' + escapeHtml(getClubText(d.club)) + '</div>'
-        + '<div>└─ nick: ' + escapeHtml(d.nick) + '</div>'
+        + '<div>└─ ' + escapeHtml(getGenderText(d.gd)) + '</div>'
         + '</div>';
 
     el.innerHTML = html;

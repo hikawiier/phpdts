@@ -269,6 +269,20 @@ if(CURSCRIPT !== 'chat')
 			if ($func()) $ginfochange = true;
 		}
 
+		// Oblivions 游戏刻事件处理（在锁内，确保原子性）
+		// 检测 obl_pretick < obl_tick → 执行 tick 事件 → 同步 pretick
+		if (function_exists('oblivions_is_active') && oblivions_is_active()
+			&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
+			&& $gamevars['obl_pretick'] < $gamevars['obl_tick']) {
+			include_once GAME_ROOT.'./oblivions/include/game/player.func.php';
+			$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
+			if (function_exists('obl_resolve_tick_events')) {
+				obl_resolve_tick_events($delta);
+			}
+			$gamevars['obl_pretick'] = $gamevars['obl_tick'];
+			$ginfochange = true;  // 触发 save_gameinfo() 持久化 pretick
+		}
+
 		if($ginfochange || $lostfocus){
 			save_gameinfo();
 		}

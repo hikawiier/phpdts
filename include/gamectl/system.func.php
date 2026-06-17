@@ -451,10 +451,15 @@ function rs_init_shops() {
  * @return void
  */
 function rs_init_oblivions() {
-	global $db, $tablepre;
+	global $db, $tablepre, $gamevars;
 
 	// 1. 建表（DROP IF EXISTS + CREATE，与 reset.sql 模式一致但完全独立）
 	rs_init_oblivions_tables();
+
+	// 1b. 初始化游戏刻双变量（Oblivions 专属，common.inc.php 检测并驱动后续系统）
+	if (!isset($gamevars)) $gamevars = array();
+	$gamevars['obl_tick'] = 0;
+	$gamevars['obl_pretick'] = 0;
 
 	// 2. 按需加载生成函数库（避免非 Oblivions 模式污染全局 scope）
 	include_once GAME_ROOT.'./oblivions/include/game/generate.func.php';
@@ -507,7 +512,7 @@ function rs_init_oblivions_tables() {
 	global $db, $tablepre;
 	$sqldir = GAME_ROOT.'./oblivions/sql/';
 
-	$tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql'];
+	$tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql', 'oblplayers.sql'];
 	foreach ($tables as $file) {
 		$sql = file_get_contents($sqldir . $file);
 		// 与 rs_reset_social() 一致：CR→LF，再替换表前缀

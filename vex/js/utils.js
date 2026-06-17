@@ -2,7 +2,7 @@
 // 工具函数 / Utility functions
 // ══════════════════════════════════════════════════
 
-import { BASE_URL, GENDER_NAMES, RACE_NAMES, CLUB_NAMES, mapData } from './data.js';
+import { BASE_URL, GENDER_NAMES, mapData } from './data.js';
 
 export function escapeHtml(str) {
     if (typeof str !== 'string') str = String(str);
@@ -20,8 +20,6 @@ export function getPlaceName(pls) {
 }
 
 export function getGenderText(g)   { return GENDER_NAMES[g] || '未知'; }
-export function getRaceText(r)     { return RACE_NAMES[r] || '未知'; }
-export function getClubText(c)     { return CLUB_NAMES[c] || ('社团' + c); }
 
 // ══════════════════════════════════════════════════
 // API请求 / API request (只读)
