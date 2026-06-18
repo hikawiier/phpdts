@@ -214,14 +214,15 @@ app.js
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | string | 细粒度 ID，命名规则 `{action}.{subevent}`，如 `move.success`、`pickup.bag_full` |
-| `action` | string | 粗粒度动作标记，6 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system` |
+| `id` | string | 细粒度 ID，命名规则 `{logcategory}.{subevent}`，如 `move.success`、`pickup.bag_full` |
+| `logcategory` | string | 粗粒度日志类别，8 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system`/`enemy`/`battle` |
 | `params` | object | 模板参数，值限 string/number/boolean。可为空对象 `{}` |
 | `html` | string\|null | fallback HTML，正常为 `null` |
+| `debug` | bool | 是否为 debug 日志，前端默认不渲染（`?debug=ai` 模式下显示并加 `[DBG]` 前缀） |
 | `ts` | number | Unix 秒级时间戳，用于排序和增量检测 |
 
 - `entries`：按时间正序（旧→新）
-- `total`：当前存储的条目总数（受 200 条上限裁剪）
+- `total`：当前存储的条目总数（正式日志 200 条 + debug 日志 50 条，分开计数）
 
 ---
 
@@ -444,16 +445,20 @@ refreshLog()
 - `data/terrain-desc.js`：无名格描述词库 + `generateTerrainDesc(floor, tide, passable)`
 - `js/log.js`：拉取日志 + 渲染 + 增量检测 + Toast 触发 + 新日志高亮 + 未读提示
 
-**动作标签映射**（`log.js` 的 `ACTION_TAGS`）：
+**日志类别标签映射**（`log.js` 的 `LOGCATEGORY_TAGS`）：
 
-| action | 标签 |
+| logcategory | 标签 |
 |--------|------|
 | `move` | `[MOV]` |
 | `explore` | `[EXP]` |
 | `search` | `[SRC]` |
 | `pickup` | `[PKG]` |
 | `discard` | `[DSC]` |
+| `enemy` | `[EMY]` |
+| `battle` | `[BTL]` |
 | `system` | `[SYS]` |
+
+**debug 日志**：`entry.debug === true` 的条目默认不渲染。`?debug=ai` 模式下显示，加 `[DBG]` 前缀 + `opacity: 0.5` 暗化样式（`.log-debug` / `.log-tag-dbg`）。debug 日志不触发 Toast、不计入未读计数。
 
 **样式控制**：日志颜色/高亮完全由前端模板控制（`<span class="yellow">` 等），后端不输出样式标记。颜色映射见 9.4。
 

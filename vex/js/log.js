@@ -21,8 +21,8 @@ import { renderLogEntry } from '../data/log-templates.js';
 import { showToast } from './tile-action.js';
 import { isAnyOverlayOpen } from './toast-position.js';
 
-// 动作标记 → 前端显示标签
-const ACTION_TAGS = {
+// 日志类别 → 前端显示标签
+const LOGCATEGORY_TAGS = {
     move:    'MOV',
     explore: 'EXP',
     search:  'SRC',
@@ -44,6 +44,9 @@ const TOAST_RULES = {
     'search.already_searched': { style: 'error' },
     'discard.success':         { style: 'success' },
 };
+
+// debug 日志开关：?debug=ai 启用时显示 debug 日志（默认隐藏）
+const isDebugLogMode = new URLSearchParams(window.location.search).get('debug') === 'ai';
 
 let lastTs = 0;        // 增量检测：记录上次拉取的最大 ts
 let unreadCount = 0;   // 未读新日志计数（forceScroll=false 场景累加）
@@ -138,8 +141,9 @@ export async function refreshLog(forceScroll = true) {
 
     // ── 增量检测 ──
     // prevLastTs 用于 Toast 增量触发（2 级页面打开时按白名单弹 Toast）
+    // debug 日志不触发 Toast、不计入未读（即使 debug 模式开启）
     const prevLastTs = lastTs;
-    const newEntries = entries.filter(e => e.ts > prevLastTs);
+    const newEntries = entries.filter(e => e.ts > prevLastTs && !e.debug);
 
     // ── Toast 触发（仅在 2 级页面打开时，避免遮罩遮挡日志区） ──
     if (isAnyOverlayOpen() && newEntries.length > 0) {
@@ -167,14 +171,19 @@ export async function refreshLog(forceScroll = true) {
     // 渲染所有条目，过滤空内容（如 move.tile_desc 无 desc 时返回空字符串）
     // 每条日志包裹在 <span class="log-entry"> 中（CSS 设为 display:block，每条独占一行）
     // 最后一条加 log-new 类，触发 1.5s 高亮动画，作为"最新操作结果"的视觉提示
+    // debug 日志：非 debug 模式下跳过；debug 模式下加 [DBG] 前缀 + log-debug 暗化样式
     const lastIdx = entries.length - 1;
     const htmlParts = entries.map((entry, idx) => {
-        const tag = ACTION_TAGS[entry.action] || 'SYS';
+        // debug 日志过滤：非 debug 模式下跳过
+        if (entry.debug && !isDebugLogMode) return '';
+        const tag = LOGCATEGORY_TAGS[entry.logcategory] || 'SYS';
         const content = renderLogEntry(entry);
         if (!content) return '';
         const isNew = idx === lastIdx;
         const newClass = isNew ? ' log-new' : '';
-        return `<span class="log-entry${newClass}"><span class="log-tag">[${tag}]</span>${content}</span>`;
+        const debugClass = entry.debug ? ' log-debug' : '';
+        const debugPrefix = entry.debug ? '<span class="log-tag-dbg">[DBG]</span>' : '';
+        return `<span class="log-entry${newClass}${debugClass}">${debugPrefix}<span class="log-tag">[${tag}]</span>${content}</span>`;
     }).filter(p => p);
 
     el.innerHTML = htmlParts.join('');

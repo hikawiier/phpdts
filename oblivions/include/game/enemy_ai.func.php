@@ -422,12 +422,12 @@ function obl_resolve_collision_battle(&$a, &$b) {
 	obl_save_player($a);
 	obl_save_player($b);
 
-	// emit 结构化日志：碰撞战斗
+	// emit 结构化日志：碰撞战斗（$a 永远是发起方/移动方，通过 type 判定玩家身份）
+	$a_is_player = ($a['type'] == 0);
 	$obl_log->emit('battle.skirmish', 'battle', array(
-		'a_name' => $a['name'],
-		'a_pid'  => $a['pid'],
-		'b_name' => $b['name'],
-		'b_pid'  => $b['pid'],
+		'enemy_name' => $a_is_player ? $b['name'] : $a['name'],
+		'enemy_pid'  => $a_is_player ? $b['pid']  : $a['pid'],
+		'initiator'  => $a_is_player ? 'player' : 'enemy',
 	));
 
 	// 立即清除战斗状态（过渡实现：战斗瞬间结束，不卡住流程）

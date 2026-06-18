@@ -149,6 +149,7 @@ window.__vex_base_url = BASE_URL;
 
 // 动态加载 debug.js（仅 ?debug=ai 时）
 if (new URLSearchParams(window.location.search).get('debug') === 'ai') {
+    document.body.classList.add('debug-ai');
     const script = document.createElement('script');
     script.src = 'js/debug.js';
     document.head.appendChild(script);

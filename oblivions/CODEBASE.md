@@ -115,7 +115,7 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 ### 2.7 游戏刻 (tick)
 
 - 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
-- 当前仅记录，不驱动任何系统（战斗/NPC AI 未实现）
+- 每次 tick 增长触发 `obl_resolve_tick_events($delta)`，循环调用 `obl_resolve_all_enemy_ai()` 结算所有 NPC 敌人行动
 
 ### 2.8 结构化日志 (Structured Log)
 
@@ -123,9 +123,9 @@ Oblivions 模式下的日志传递机制，**完全替代传统 `$log` HTML 字�
 
 | | 传统模式 | Oblivions 模式 |
 |---|---|---|
-| **数据形态** | HTML 字符串拼接 | 结构化数组（id + action + params） |
+| **数据形态** | HTML 字符串拼接 | 结构化数组（id + logcategory + params） |
 | **全局变量** | `$log` | `$obl_log`（`OblivionsLogger` 实例） |
-| **输出方式** | `$log .= '...<br>'` | `$obl_log->emit($id, $action, $params)` |
+| **输出方式** | `$log .= '...<br>'` | `$obl_log->emit($id, $logcategory, $params)` |
 | **样式控制** | 后端写 `<span class="xxx">` | 前端模板控制（`log-templates.js`） |
 | **持久化** | `vex/cache/log_{groomid}_{pid}.php` | `vex/cache/obl_log_{groomid}_{pid}.json` |
 | **API 端点** | `game_log` | `obl_log` |
@@ -145,7 +145,8 @@ oblivions/
 │       ├── player.func.php     # 玩家数据层：认证/抓取/格式化/保存 + 道具栏辅助函数
 │       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
 │       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
-│       └── log.func.php        # 结构化日志收集器 + 持久化/读取
+│       ├── log.func.php        # 结构化日志收集器 + 持久化/读取
+│       └── enemy_ai.func.php   # NPC 敌人 AI 核心（17 函数：初始化/tick 结算/感知/决策/碰撞）
 ├── gamedata/
 │   ├── obl_config.php          # 可调参数配置
 │   ├── item_table.php          # 道具模板表
@@ -153,6 +154,8 @@ oblivions/
 │   ├── poi_loot.php            # POI 掉落表
 │   ├── poi_pool.php            # POI 刷新池（按潮汐区配置）
 │   ├── scatter_pool.php        # 野生散落道具池（按潮汐区配置）
+│   ├── enemies_config.php      # NPC 敌人类型定义（名称/属性/AI 类型/技能/策略槽）
+│   ├── enemy_pool.php          # NPC 敌人刷新池（按潮汐区分桶配置类型与数量）
 │   ├── map.php                 # 区域元数据 + 网格布局
 │   └── tiles/
 │       ├── region_1.php        # 区域1（垃圾平原）地图格数据
@@ -174,8 +177,10 @@ oblivions/
 | `include/command/router.php` | Oblivions 命令路由注册 |
 | `include/command/handlers/oblivions_commands.php` | 4个Oblivions命令处理器 |
 | `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支 |
-| `api_v2.php` | 6个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/ai_dump_save） |
+| `api_v2.php` | 7个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/enemies/ai_dump_save） |
 | `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
+| `include/core/common.inc.php` | tick 事件触发入口（检测 `obl_pretick < obl_tick` → 调用 `obl_resolve_tick_events()`） |
+| `include/gamectl/system.func.php` | 游戏初始化时调用 `obl_init_enemies()` 生成 NPC 敌人 |
 | `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex/index.html` |
 
@@ -393,16 +398,19 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | string | 细粒度 ID，命名规则 `{action}.{subevent}`，如 `move.success`、`pickup.trap` |
-| `action` | string | 粗粒度动作标记，6 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system` |
+| `id` | string | 细粒度 ID，命名规则 `{logcategory}.{subevent}`，如 `move.success`、`pickup.trap` |
+| `logcategory` | string | 粗粒度日志类别，8 类之一：`move`/`explore`/`search`/`pickup`/`discard`/`system`/`enemy`/`battle` |
 | `params` | object | 模板参数，值限 string/number/boolean。可为空对象 `{}` |
 | `html` | string\|null | fallback HTML，正常为 `null`。仅用于前端模板无法覆盖的极端情况 |
+| `debug` | bool | 是否为 debug 日志（由 `OblivionsLogger::DEBUG_IDS` 清单自动判定），前端默认不渲染 |
 | `ts` | number | `time()` 返回的 Unix 秒级时间戳 |
 
 - `entries`：日志条目数组，按时间正序（旧→新）
-- `total`：当前存储的条目总数（受 200 条上限裁剪）
+- `total`：当前存储的条目总数（正式日志 200 条 + debug 日志 50 条，分开计数）
 
-**ID 命名规则**：`{action}.{subevent}`，如 `move.success`、`pickup.bag_full`、`search.result`。完整 ID 清单见前端 `vex/data/log-templates.js`。
+**ID 命名规则**：`{logcategory}.{subevent}`，如 `move.success`、`pickup.bag_full`、`search.result`。完整 ID 清单见前端 `vex/data/log-templates.js`。
+
+**debug 分类**：`OblivionsLogger::DEBUG_IDS` 常量声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）。这些日志持久化保留但前端默认不渲染，`?debug=ai` 模式下显示并加 `[DBG]` 前缀。
 
 ---
 
@@ -608,7 +616,7 @@ return [
 | `obl_is_bag_full` | `(array &$pdata): bool` | 背包是否已满 |
 | `obl_create_player_record` | `($ndata): int\|false` | valid.php 激活时创建 oblplayers 记录（从 $ndata itm1~itm6 构建 itempara） |
 | `obl_command_advances_tick` | `($command): bool` | 命令是否推进游戏刻（黑名单机制） |
-| `obl_resolve_tick_events` | `($delta): void` | 处理游戏刻事件（NPC AI/buff 结算，MVP 仅框架） |
+| `obl_resolve_tick_events` | `($delta): void` | 处理游戏刻事件（循环 $delta 次调用 obl_resolve_all_enemy_ai() 结算 NPC 行动） |
 
 ### 8.2 explore.func.php
 

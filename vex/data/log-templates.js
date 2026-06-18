@@ -205,7 +205,11 @@ export const LOG_TEMPLATES = {
     // ─── battle ────────────────────────────────────
     'battle.skirmish': {
         render: (params) => {
-            return `与<span class="red">${escapeHtml(params.b_name)}</span>发生碰撞，经过短暂交火后各自退回原地。`;
+            const enemy = `<span class="red">${escapeHtml(params.enemy_name)}</span>`;
+            if (params.initiator === 'player') {
+                return `你与${enemy}发生碰撞，经过短暂交火后各自退回原地。`;
+            }
+            return `${enemy}与你发生碰撞，经过短暂交火后各自退回原地。`;
         },
     },
     'battle.invalid': {

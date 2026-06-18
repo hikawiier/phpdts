@@ -23,24 +23,31 @@ if (!defined('IN_GAME')) {
  */
 class OblivionsLogger {
 
+    /** debug 日志 ID 清单（这些 ID 的日志标记为 debug，前端默认不渲染） */
+    const DEBUG_IDS = [
+        'enemy.move',      // 敌人移动位置（地图渲染已体现，日志冗余）
+        'battle.invalid',  // 防呆机制清除脏状态（系统内部清理）
+    ];
+
     /** @var array 本请求累积的日志条目 */
     private $entries = [];
 
     /**
      * 追加一条日志
      *
-     * @param string $id     细粒度 ID（如 'move.success'），命名规则 {action}.{subevent}
-     * @param string $action 粗粒度动作标记（move/explore/search/pickup/discard/system）
-     * @param array  $params 模板参数，值限 string/number/boolean
-     * @param string|null $html fallback HTML，正常为 null（仅用于前端模板无法覆盖的极端情况）
+     * @param string $id           细粒度 ID（如 'move.success'），命名规则 {logcategory}.{subevent}
+     * @param string $logcategory  粗粒度日志类别（move/explore/search/pickup/discard/system/enemy/battle）
+     * @param array  $params       模板参数，值限 string/number/boolean
+     * @param string|null $html    fallback HTML，正常为 null（仅用于前端模板无法覆盖的极端情况）
      */
-    public function emit($id, $action, $params = [], $html = null) {
+    public function emit($id, $logcategory, $params = [], $html = null) {
         $this->entries[] = [
-            'id'     => $id,
-            'action' => $action,
-            'params' => $params ?: [],
-            'html'   => $html,
-            'ts'     => time(),
+            'id'           => $id,
+            'logcategory'  => $logcategory,
+            'params'       => $params ?: [],
+            'html'         => $html,
+            'debug'        => in_array($id, self::DEBUG_IDS),
+            'ts'           => time(),
         ];
     }
 
@@ -62,7 +69,7 @@ class OblivionsLogger {
 }
 
 /**
- * 读取日志最大条目数配置（带静态缓存）
+ * 读取正式日志最大条目数配置（带静态缓存）
  * @return int
  */
 function obl_log_get_max_entries() {
@@ -75,13 +82,32 @@ function obl_log_get_max_entries() {
 }
 
 /**
- * 持久化日志到文件（追加模式，带条目上限裁剪）
+ * 读取 debug 日志最大条目数配置（带静态缓存）
+ * @return int
+ */
+function obl_log_get_max_debug_entries() {
+    static $max = null;
+    if ($max === null) {
+        $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
+        $max = (int)($cfg['log_max_debug_entries'] ?? 50);
+    }
+    return $max;
+}
+
+/**
+ * 持久化日志到文件（追加模式，正式/debug 分计数裁剪）
  *
  * 文件路径：vex/cache/obl_log_{groomid}_{pid}.json
  * 格式：JSON 数组，按时间正序（旧→新）
  *
- * 轮转逻辑：读取全量 → 追加新条目 → 超过上限则保留最新 N 条 → 写回。
- * array_slice($all, -$max) 实现"新增替换旧的"，无需额外逻辑。
+ * 轮转逻辑：
+ * 1. 读取已有日志 → 追加新条目（保持时间顺序）
+ * 2. 从末尾（最新）倒序计数，正式日志和 debug 日志各自独立裁剪
+ * 3. 正式日志上限 log_max_entries（默认 200），debug 日志上限 log_max_debug_entries（默认 50）
+ * 4. 按原顺序输出保留的条目（时间正序，无需重排序）
+ *
+ * 分计数设计：debug 日志（如 enemy.move）频率较高，若与正式日志共用配额会
+ * 把玩家操作反馈挤掉。独立计数确保两类日志互不挤占。
  *
  * @param OblivionsLogger $logger
  * @param int $groomid 房间 ID
@@ -93,7 +119,7 @@ function obl_log_persist($logger, $groomid, $pid) {
     $new_entries = $logger->getEntries();
     $log_file = GAME_ROOT . './vex/cache/obl_log_' . (int)$groomid . '_' . (int)$pid . '.json';
 
-    // 读取已有日志
+    // 读取已有日志（已按时间正序：旧→新）
     $existing = [];
     if (file_exists($log_file)) {
         $raw = file_get_contents($log_file);
@@ -101,17 +127,41 @@ function obl_log_persist($logger, $groomid, $pid) {
         if (!is_array($existing)) $existing = [];
     }
 
-    // 追加新条目
+    // 合并（保持时间顺序：existing 旧 → new 新）
     $all = array_merge($existing, $new_entries);
 
-    // 裁剪到上限（保留最新的 N 条）
-    $max_entries = obl_log_get_max_entries();
-    if (count($all) > $max_entries) {
-        $all = array_slice($all, -$max_entries);
+    // 从末尾（最新）开始计数，标记保留的条目
+    // 正式日志和 debug 日志各自独立计数，互不挤占
+    $max_official   = obl_log_get_max_entries();
+    $max_debug      = obl_log_get_max_debug_entries();
+    $official_count = 0;
+    $debug_count    = 0;
+    $keep = array_fill(0, count($all), false);
+
+    for ($i = count($all) - 1; $i >= 0; $i--) {
+        if (!empty($all[$i]['debug'])) {
+            if ($debug_count < $max_debug) {
+                $keep[$i] = true;
+                $debug_count++;
+            }
+        } else {
+            if ($official_count < $max_official) {
+                $keep[$i] = true;
+                $official_count++;
+            }
+        }
+    }
+
+    // 按原顺序输出保留的条目（时间正序：旧→新，无需重排序）
+    $result = [];
+    for ($i = 0; $i < count($all); $i++) {
+        if ($keep[$i]) {
+            $result[] = $all[$i];
+        }
     }
 
     // 写入文件（加锁防并发）
-    file_put_contents($log_file, json_encode($all, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    file_put_contents($log_file, json_encode($result, JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
 
 /**

@@ -350,6 +350,15 @@ body::after {
     animation: log-new-flash 1.5s ease-out;
 }
 
+/* debug 日志：暗化 + [DBG] 标签（?debug=ai 模式下可见） */
+.log-entry.log-debug {
+    opacity: 0.5;
+}
+.log-tag-dbg {
+    color: #666;
+    margin-right: 2px;
+}
+
 /* 日志未读提示按钮（CHRONICLE 标题栏） */
 .log-unread-btn {
     color: #fff;
@@ -566,11 +575,15 @@ body::after {
 .status-bar-btn:hover { color: #fff; }
 
 .status-tick-debug {
+    display: none;        /* 默认隐藏，?debug=ai 时显示 */
     margin-left: auto;
     color: #888;
     font-size: 10px;
     letter-spacing: 0.5px;
     cursor: help;
+}
+.debug-ai .status-tick-debug {
+    display: inline;
 }
 .status-tick-debug.pending {
     color: #ffaa00;
