@@ -225,7 +225,12 @@ function renderMapGrid() {
 
                 const prefix = isExit ? '▸' : (isEntrance ? '◂' : '');
                 const label = prefix + name;
-                cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-coord">' + coordLabel + '</span>';
+                const enemy = mapData.enemies.find(e => parseInt(e.pls) === tileInfo.pls);
+                if (enemy) {
+                    cell.innerHTML = '<span class="cell-name"><span class="cell-enemy">[' + escapeHtml(enemy.name) + ']</span>' + escapeHtml(label) + '</span>';
+                } else {
+                    cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-coord">' + coordLabel + '</span>';
+                }
 
                 if (reachable) {
                     cell.addEventListener('click', () => clickMove(tileInfo.pls));
@@ -642,6 +647,16 @@ export async function loadMap() {
             grid.classList.add('crt-transition');
             setTimeout(() => grid.classList.remove('crt-transition'), 500);
         }
+    }
+
+    // 加载敌人数据（在渲染前获取，确保敌人标记与地图同步显示）
+    try {
+        const enemiesResult = await gameApi('enemies');
+        mapData.enemies = (enemiesResult.status === 'success' && enemiesResult.data)
+            ? (enemiesResult.data.enemies || [])
+            : [];
+    } catch (e) {
+        mapData.enemies = [];
     }
 
     renderMapGrid();

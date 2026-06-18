@@ -185,6 +185,34 @@ export const LOG_TEMPLATES = {
     'system.pickup_concurrent_loss': {
         text: '那个道具已经不在那里了。',
     },
+
+    // ─── enemy ──────────────────────────────────────
+    'enemy.discovered': {
+        render: (params) => {
+            return `你发现了<span class="red">${escapeHtml(params.enemy_name)}</span>的踪迹。`;
+        },
+    },
+    'enemy.move': {
+        render: (params) => {
+            return `<span class="red">${escapeHtml(params.enemy_name)}</span>移动了位置。`;
+        },
+    },
+    'enemy.ambush': {
+        render: (params) => {
+            return `<span class="red">${escapeHtml(params.enemy_name)}</span>突然向你发起了突袭！`;
+        },
+    },
+    // ─── battle ────────────────────────────────────
+    'battle.skirmish': {
+        render: (params) => {
+            return `与<span class="red">${escapeHtml(params.b_name)}</span>发生碰撞，经过短暂交火后各自退回原地。`;
+        },
+    },
+    'battle.invalid': {
+        render: (params) => {
+            return `<span class="yellow">[系统]</span>检测到异常战斗状态（${escapeHtml(params.reason)}），已自动清除。`;
+        },
+    },
 };
 
 /**

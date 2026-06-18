@@ -10,8 +10,15 @@
 Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷雾探索机制，区别于传统模式的线性地点列表。通过全局变量 `$gruleset === 'OBLIVIONS'` 切换激活，所有模式分支由 `oblivions_is_active()` 守卫。
 
 **核心差异**：
-- 传统模式：`$plsinfo` 线性地点列表，`move()` 切换地点
-- Oblivions：网格地图 + 迷雾 + POI + 道具散落，`obl_move()` 移动 + `obl_explore()` 探索
+- 传统模式：`$plsinfo` 线性地点列表，`move()` 切换地点，玩家数据存 `bra_players`
+- Oblivions：网格地图 + 迷雾 + POI + 道具散落，`obl_move()` 移动 + `obl_explore()` 探索，玩家数据存 `bra_oblplayers`（独立数据层）
+
+**设计原则：Oblivions 完全独立于 bra_players**
+- 玩家+敌人统一存储在 `bra_oblplayers` 表，不依赖 `bra_players`
+- `obl_save_player()` 不同步任何数据到 `bra_players`
+- `save_gameinfo()` 在 Oblivions 模式下跳过 `bra_players` 查询，`alivenum`/`deathnum`/`validnum` 默认 0
+- `valid.php` 仍向 `bra_players` 插入记录（开发阶段防御性保留），但 Oblivions 模式不读取它
+- 未来完整完成后将清理 `bra_players` 的防御性保留代码
 
 ---
 
@@ -72,13 +79,38 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 | **搜索次数** | 有 `search_count` 上限 | 无搜索概念 |
 | **生成池** | `poi_pool.php` | `scatter_pool.php` |
 
-### 2.6 itmpara
+### 2.6 itmpara 与 itempara
 
-道具的 JSON 附加参数字段（`$pdata['itmpara']`）。Oblivions 利用它追踪道具的原始索引：
+**itmpara**（地图道具实例的 JSON 附加参数，`bra_oblmapitem.itmpara`）：
+- 拾取时将 `item_id`（地图道具实例ID）注入 `itmpara` 的 `obl_item_id` 键
+- 丢弃时从 `itmpara` 读取 `obl_item_id`，还原为地图道具实例
+- 格式：JSON 对象，如 `{"obl_item_id": "42"}`
 
-- **拾取时**：将 `item_id`（地图道具实例ID）注入 `itmpara` 的 `obl_item_id` 键
-- **丢弃时**：从 `itmpara` 读取 `obl_item_id`，还原为地图道具实例
-- **格式**：JSON 对象，如 `{"obl_item_id": "42"}`
+**itempara**（玩家道具栏 JSON 大字段，`bra_oblplayers.itempara`）：
+- 替代传统模式的 `itm0~itm6`（42 字段），改为 1 个 JSON 数组
+- 数组长度 = `itemmaxslots + 1`（index 0=特殊槽，1~itemmaxslots=普通槽）
+- 每个元素是一个道具对象或 `null`（空槽）
+
+**道具对象七字段规范**（itempara 数组元素 + 地图道具实例均遵循）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `itm` | string | 道具名 |
+| `itmk` | string | 道具种类 |
+| `itme` | int | 效果值 |
+| `itms` | string | 耐久 |
+| `itmsk` | string | 耐久种类 |
+| `itmpara` | object | 参数（JSON 对象，含 `obl_item_id` 等） |
+| `itmid` | string | 地图道具实例ID（拾取时注入，丢弃时用于还原） |
+
+```json
+[
+  null,
+  {"itm":"面包","itmk":"HH","itme":120,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
+  {"itm":"矿泉水","itmk":"HS","itme":140,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
+  null, null, null, null
+]
+```
 
 ### 2.7 游戏刻 (tick)
 
@@ -106,47 +138,82 @@ Oblivions 模式下的日志传递机制，**完全替代传统 `$log` HTML 字�
 
 ```
 oblivions/
-├── include/game/
-│   ├── explore.func.php      # 探索/搜索/拾取/丢弃核心逻辑
-│   ├── move.func.php         # 移动/地图数据加载/BFS距离计算
-│   └── log.func.php          # 结构化日志收集器 + 持久化/读取
+├── include/
+│   ├── core/
+│   │   └── obl_command.php     # Oblivions 命令入口（由 command.php require，处理全部命令流程）
+│   └── game/
+│       ├── player.func.php     # 玩家数据层：认证/抓取/格式化/保存 + 道具栏辅助函数
+│       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
+│       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
+│       └── log.func.php        # 结构化日志收集器 + 持久化/读取
 ├── gamedata/
-│   ├── obl_config.php        # 可调参数配置
-│   ├── item_table.php        # 道具模板表
-│   ├── poi_table.php         # POI 模板表
-│   ├── poi_loot.php          # POI 掉落表
-│   ├── poi_pool.php          # POI 刷新池（按潮汐区配置）
-│   ├── scatter_pool.php      # 野生散落道具池（按潮汐区配置）
-│   ├── map.php               # 区域元数据 + 网格布局
+│   ├── obl_config.php          # 可调参数配置
+│   ├── item_table.php          # 道具模板表
+│   ├── poi_table.php           # POI 模板表
+│   ├── poi_loot.php            # POI 掉落表
+│   ├── poi_pool.php            # POI 刷新池（按潮汐区配置）
+│   ├── scatter_pool.php        # 野生散落道具池（按潮汐区配置）
+│   ├── map.php                 # 区域元数据 + 网格布局
 │   └── tiles/
-│       ├── region_1.php      # 区域1（垃圾平原）地图格数据
-│       └── region_2.php      # 区域2（腐烂沼泽）地图格数据
+│       ├── region_1.php        # 区域1（垃圾平原）地图格数据
+│       └── region_2.php        # 区域2（腐烂沼泽）地图格数据
 ├── sql/
-│   ├── oblmapstates.sql      # 图格状态表DDL
-│   ├── oblmappoi.sql         # POI实例表DDL
-│   └── oblmapitem.sql        # 地图道具实例表DDL
-├── editor/                   # 地图编辑器（Node.js/Vite前端工具）
-└── docs/                     # 设计文档
+│   ├── oblplayers.sql          # 玩家表DDL（bra_oblplayers）
+│   ├── oblmapstates.sql        # 图格状态表DDL
+│   ├── oblmappoi.sql           # POI实例表DDL
+│   └── oblmapitem.sql          # 地图道具实例表DDL
+├── editor/                     # 地图编辑器（Node.js/Vite前端工具）
+└── docs/                       # 设计文档
 ```
 
 **外部集成文件**（不在 oblivions/ 目录下）：
 
 | 文件 | 作用 |
 |------|------|
-| `include/core/global.func.php` | `oblivions_is_active()` 定义 |
+| `include/core/global.func.php` | `oblivions_is_active()` 定义 + `save_gameinfo()` Oblivions 分支 |
 | `include/command/router.php` | Oblivions 命令路由注册 |
 | `include/command/handlers/oblivions_commands.php` | 4个Oblivions命令处理器 |
 | `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支 |
-| `api_v2.php` | `game_map` 扩展 + `tile_actions` + `obl_log` 端点 |
-| `command.php` | Oblivions 模式下初始化 `$obl_log` + 持久化 + 跳过 `$log` 文件化 |
-| `valid.php` | 出生点迷雾点亮 |
+| `api_v2.php` | 6个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/ai_dump_save） |
+| `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
+| `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex/index.html` |
 
 ---
 
 ## 四、数据库表
 
-所有表前缀为 `$tablepre`（默认 `bra_`），建表由 `rs_init_oblivions_tables()` 读取 `oblivions/sql/` 下SQL文件执行。
+所有表前缀为 `$tablepre`（默认 `bra_`），建表由 `rs_init_oblivions_tables()` 读取 `oblivions/sql/` 下SQL文件执行。命名规范：`bra_obl` 前缀 + 实体名连写（无下划线）。
+
+### 4.0 `bra_oblplayers` — 玩家+敌人统一数据表
+
+Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传统模式的 `bra_players`。
+
+| 字段分类 | 字段 | 说明 |
+|---------|------|------|
+| **身份** | `pid` | 主键（smallint auto_increment） |
+| | `type` | 0=玩家, >0=敌人类型 |
+| | `name`/`pass`/`gd`/`icon` | 基础信息（pass 与 user 表双重校验） |
+| **战斗状态** | `action` | null/prebattle/battle |
+| | `bid` | 战斗目标 pid |
+| **属性** | `hp`/`mhp`/`sp`/`msp`/`att`/`def` | 战斗属性 |
+| | `ap`/`max_ap` | AP 值（独立字段，便于频繁读写） |
+| **位置** | `pgroup`/`pls` | 区域ID + 格子ID |
+| **进度** | `lvl`/`exp`/`state` | 等级/经验/状态 |
+| **装备** | `wep`/`wep2`/`arb`/`arh`/`ara`/`arf`/`art` | 7 槽装备（每槽 6 字段：name/k/e/s/sk/para） |
+| **道具栏** | `itempara` | JSON 数组（七字段规范，详见 2.6） |
+| | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=特殊槽） |
+| **Oblivions专属** | `tacpara` | 策略槽（JSON） |
+| | `skillpara` | 技能数据（JSON） |
+| | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range` 等） |
+| | `discovered` | 敌人发现状态（0=未发现, 1=已发现） |
+
+**相对 bra_players 的关键变更**：
+- 删除 50+ 字段（race/sNo/club/endtime/nick/skills/cdsec/money/rage/pose/tactic/wp~wf/teamID/extrabag_*/itm0~6/clbpara/flare/aura/souls/debuff/status/element 等）
+- 道具栏 `itm0~itm6`（42 字段）→ `itempara`（1 个 JSON 字段）
+- 技能数据 `clbpara` → `skillpara`（JSON）
+- 杂项数据 → `oblpara`（JSON，含原 `killnum` 等）
+- 新增 `ap`/`max_ap`（独立字段）/`itemmaxslots`/`tacpara`/`discovered`
 
 ### 4.1 `bra_oblmapstates` — 图格状态
 
@@ -220,11 +287,6 @@ oblivions/
   "data": {
     "currentLocation": 1,
     "currentRegion": 1,
-    "arealist": [],
-    "areanum": 0,
-    "areaadd": 0,
-    "hack": 0,
-    "totalAreas": 25,
     "links": {
       "regions": {
         "1": { "name": "垃圾平原", "entrance_pls": 1, "exit_pls": 10, ... },
@@ -244,6 +306,8 @@ oblivions/
 ```
 
 **前端用途**: `links.tiles[pgroup][pls].neighbors` 用于渲染可移动方向；`links.grids` 用于网格布局；`links.regions` 用于区域信息展示。
+
+> **注**：传统模式的 `arealist`/`areanum`/`areaadd`/`hack`/`totalAreas` 字段在 Oblivions 模式下不再返回（前端从未使用）。
 
 ### 5.3 `tile_actions` — 当前格交互数据
 
@@ -358,7 +422,7 @@ oblivions/
 | `obl_explore` | 无 | `obl_explore($pdata)` | 探索（点亮迷雾+发现道具） |
 | `obl_search` | `iaid` (int) | `obl_search_poi($iaid, $pdata)` | 搜索POI |
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
-| `obl_discard` | `slot` (int 1-6) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
+| `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -369,17 +433,37 @@ oblivions/
 
 ### 6.4 命令执行流程
 
+Oblivions 模式下，`command.php` 仅做模式判定，业务逻辑全部委托给独立文件 `oblivions/include/core/obl_command.php`：
+
 ```
 command.php
-  → extract($pdata, EXTR_REFS)
-  → router.php: switch($command)
-    → oblivions_commands.php: cmd_handle_obl_xxx($params, $pdata)
-      → explore.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
-  → player_save($pdata)  // 写回数据库
-  → obl_log_persist($obl_log, $groomid, $pid)  // Oblivions 模式：持久化结构化日志
+  → oblivions_is_active() === true
+  → require GAME_ROOT.'./oblivions/include/core/obl_command.php'
+  → exit
+
+obl_command.php 内部流程：
+  [A] require player.func.php
+  [B] obl_game_entrypoint('command')           // 认证 + 抓取 + 格式化 $pdata
+  [C] $obl_log = new OblivionsLogger()         // 结构化日志收集器
+  [D] if ($pdata['hp'] > 0):
+        require router_helpers.php + router.php
+        cmd_router_dispatch($command, $mode, $pdata, $cmdcdtime, $post)
+          → oblivions_commands.php: cmd_handle_obl_xxx($params, $pdata)
+            → explore.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
+  [E] obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化结构化日志
+  [F] if obl_command_advances_tick($command):
+        $gamevars['obl_tick']++; save_gameinfo()          // 推进游戏刻
+  [G] obl_save_player($pdata)                             // 写回 oblplayers
+  [H] echo compatible_json_encode(array())                // 返回空 JSON {}
 ```
 
-**关键**: Oblivions 命令在 router.php 中优先处理，独立于 `itm0` 阻塞检查（传统模式下手持道具会阻塞其他命令）。
+**关键设计**：
+- **不使用 `extract($pdata, EXTR_REFS)`**：直接操作 `$pdata` 数组，避免全局变量污染
+- **跳过传统预检查**：眩晕/冷却/对话框/追击/物品索引等传统模式预检查全部跳过
+- **跳过模板渲染**：SPA 前端不需要 HTML 模板，响应只返回最小确认 `{}`
+- **使用 `obl_save_player()`** 替代 `player_save()`，仅写 `bra_oblplayers`，不同步 `bra_players`
+- **Oblivions 命令在 router.php 中优先处理**，独立于 `itm0` 阻塞检查（传统模式下手持道具会阻塞其他命令）
+- **前端通过 `api_v2.php` 获取业务数据**，命令响应不再包含 `$gamedata`（旧版组装的 5 行 `$gamedata` 已删除，前端从未使用）
 
 ---
 
@@ -505,7 +589,28 @@ return [
 
 ## 八、核心函数索引
 
-### 8.1 explore.func.php
+### 8.1 player.func.php — 玩家数据层
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_auth_player` | `($username, $password): int\|false` | user 表双重校验，返回 oblplayers.pid |
+| `obl_fetch_playerdata_by_pid` | `($pid): array\|false` | 按 pid 抓取原始数据（JSON 未解码） |
+| `obl_fetch_playerdata_by_name` | `($name): array\|false` | 按 name 抓取并格式化（type=0 玩家） |
+| `obl_fetch_enemies_by_region` | `($pgroup): array` | 批量获取区域内敌人（type>0，已格式化） |
+| `obl_format_playerdata` | `(array &$pdata): void` | 解码所有 JSON 字段，保证结构合法（itempara/tacpara/skillpara/oblpara/装备 para） |
+| `obl_save_player` | `(array &$pdata): void` | 编码 JSON 字段并 UPDATE 到 oblplayers（不同步 bra_players） |
+| `obl_game_entrypoint` | `($entry_type = 'game'): array` | 入口封装：cookie 校验 → 抓取 → 格式化 |
+| `obl_entrypoint_handle_failure` | `($status, $entry_type): void` | 认证失败处理（command 返回 JSON，game 跳转登录） |
+| `obl_get_items` | `(array &$pdata): array` | 获取道具栏数组（index 0=特殊槽，1~itemmaxslots=普通） |
+| `obl_get_item` | `(array &$pdata, $slot): array\|null` | 获取指定槽位道具 |
+| `obl_set_item` | `(array &$pdata, $slot, $item): void` | 设置指定槽位道具（null=清空） |
+| `obl_find_empty_slot` | `(array &$pdata): int\|false` | 找空普通槽（1~itemmaxslots），无空位返回 false |
+| `obl_is_bag_full` | `(array &$pdata): bool` | 背包是否已满 |
+| `obl_create_player_record` | `($ndata): int\|false` | valid.php 激活时创建 oblplayers 记录（从 $ndata itm1~itm6 构建 itempara） |
+| `obl_command_advances_tick` | `($command): bool` | 命令是否推进游戏刻（黑名单机制） |
+| `obl_resolve_tick_events` | `($delta): void` | 处理游戏刻事件（NPC AI/buff 结算，MVP 仅框架） |
+
+### 8.2 explore.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -523,7 +628,7 @@ return [
 | `obl_pickup_item` | `(int $iid, array &$pdata): void` | 拾取道具（含近视揭示/陷阱/并发保护） |
 | `obl_discard_item` | `(int $slot, array &$pdata): void` | 丢弃道具（含item_id还原到地图） |
 
-### 8.2 move.func.php
+### 8.3 move.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -536,7 +641,7 @@ return [
 
 > **注**：原 `obl_get_tile_display_name()` 已删除，地块显示名由前端 `vex/data/terrain-desc.js` 的 `generateTerrainDesc()` 生成。
 
-### 8.3 generate.func.php
+### 8.4 generate.func.php
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -544,7 +649,7 @@ return [
 | `obl_generate_region_pois` | `(int $pgroup, array $tiles, array $poi_pool, array $poi_table): void` | POI生成 |
 | `obl_generate_wild_items` | `(int $pgroup, array $tiles, array $scatter_pool, array $item_table): void` | 野生道具生成 |
 
-### 8.4 log.func.php
+### 8.5 log.func.php
 
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
@@ -566,7 +671,7 @@ return [
 | 函数 | `obl_` 前缀 + 蛇形命名 | `obl_update_vision`, `obl_search_poi` |
 | 机制函数 | `obl_mechanic_{name}` | `obl_mechanic_max_hp_up` |
 | 命令处理器 | `cmd_handle_obl_{command}` | `cmd_handle_obl_explore` |
-| 数据库表 | `{$tablepre}oblmap{suffix}` | `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
+| 数据库表 | `{$tablepre}obl{entity}`（无下划线连写） | `bra_oblplayers`, `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
 | 日志 ID | `{action}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
 
@@ -654,7 +759,7 @@ submitCommand('move', { moveto: targetPls });
 - **道具可见性**: 仅 `discovered>0` 的道具返回（由API过滤）
 - **近视道具**: `discovered=2` 时显示 `display_name`（带"？"），拾取后揭示真实身份
 - **道具分组**: POI关联道具在 `pois[].items`，散落道具在 `ground_items`
-- **背包槽位**: `itm1~itm6`，对应 `slot` 参数 1-6
+- **背包槽位**: `itempara` JSON 数组（index 0=特殊槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots
 - **结构化日志渲染**: 前端按 `entry.id` 查 `log-templates.js` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `terrain-desc.js` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 
@@ -674,8 +779,8 @@ submitCommand('move', { moveto: targetPls });
 obl_* 函数执行
   → $obl_log->emit($id, $action, $params)  // 收集日志条目
   ↓
-command.php: player_save() 之后
-  → obl_log_persist($obl_log, $groomid, $pid)  // 持久化到 JSON 文件
+obl_command.php: 路由分发后
+  → obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化到 JSON 文件
   ↓
 前端 refreshLog()
   → gameApi('obl_log')  // 拉取结构化日志
@@ -690,10 +795,22 @@ command.php: player_save() 之后
 - `obl_log_persist()`：追加模式写入 `vex/cache/obl_log_{groomid}_{pid}.json`，带 200 条上限裁剪和 `LOCK_EX` 并发保护
 - `obl_log_load()`：读取日志文件，返回按时间正序的数组
 
-**`command.php` 改动（3 处）**：
-1. 入口初始化：`$obl_log = oblivions_is_active() ? new OblivionsLogger() : null;`
-2. `player_save` 之前持久化：`obl_log_persist($obl_log, $groomid, $pid);`
-3. 移除 Oblivions 模式下的 `$log` 文件化（传统模式仍走 `$log`）
+**`oblivions/include/core/obl_command.php` 改动**（从 `command.php` 抽离）：
+
+Oblivions 模式下的命令处理逻辑已从 `command.php` 完全抽离到独立文件 `obl_command.php`，由 `command.php` 在模式判定后 `require` 并 `exit`。日志相关流程：
+
+1. 入口初始化：`$obl_log = new OblivionsLogger();`（无条件创建，Oblivions 模式专用）
+2. 路由分发后持久化：`if ($obl_log && $obl_log->hasEntries()) { obl_log_persist($obl_log, $groomid, $pdata['pid']); }`
+3. 响应只返回空 JSON `{}`（前端通过 `api_v2.php` 获取业务数据，不依赖命令响应）
+
+**`command.php` 改动**：Oblivions 分支精简为 3 行：
+```php
+if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+    require GAME_ROOT.'./oblivions/include/core/obl_command.php';
+    exit;
+}
+```
+传统模式仍走原 `command.php` 流程（`$log` HTML 字符串机制不变）。
 
 **`obl_*` 函数改造模式**：
 

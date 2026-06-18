@@ -16,7 +16,7 @@
 - **发现 (discovered)**: discovered=0 的道具不返回给前端，discovered=2 显示假名+？
 - **POI vs 散落道具**: pois[] 和 ground_items[] 两个独立列表，在动作条中以 2 列网格并排显示
 - **区域 vs 地图格**: currentRegion 对应 pgroup，currentLocation 对应 pls
-- **itmpara**: 拾取时前端无需处理，丢弃时 slot 参数 1-6 对应 itm1~itm6
+- **itempara（七字段规范）**: 玩家道具栏 JSON 数组（index 0=特殊槽，1~itemmaxslots=普通槽），每个元素含 `itm/itmk/itme/itms/itmsk/itmpara/itmid` 七字段。前端丢弃时 `slot` 参数 1~itemmaxslots 对应普通槽
 - **结构化日志**: 后端 emit 结构化条目（id+action+params），前端按 ID 查模板渲染，详见第八章
 
 ---
@@ -48,13 +48,13 @@ vex/
 │   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
 ├── js/
 │   ├── app.js              # 入口：初始化 + 全局事件绑定 + 抽屉/模态框管理
-│   ├── data.js             # 全局配置：BASE_URL / DebugBus / mapData / 常量
+│   ├── data.js             # 全局配置：BASE_URL / DebugBus / mapData / GENDER_NAMES
 │   ├── data-manager.js     # 数据层：缓存 + 去重 + 订阅/广播
 │   ├── command-queue.js    # 命令队列：防抖 + 锁定 + 冷却
 │   ├── map.js              # 地图：渲染 + 移动 + 可达性判定
 │   ├── tile-action.js      # 地图格交互：探索/搜索/拾取 + 居中模态框 + Toast
 │   ├── inventory.js        # 背包 + 装备渲染 + 丢弃（右侧抽屉）
-│   ├── player.js           # 玩家信息（左侧抽屉）+ 状态栏渲染
+│   ├── player.js           # 玩家信息（左侧抽屉，含 AP 条 + oblpara.killnum）+ 状态栏渲染
 │   ├── log.js              # 日志：结构化渲染 + 增量检测 + Toast 触发
 │   ├── toast-position.js   # Toast 位置管理：isAnyOverlayOpen + updateToastPosition
 │   ├── utils.js            # 工具：escapeHtml / API请求 / 命令提交
@@ -142,9 +142,21 @@ app.js
 |--------|---------|---------|
 | `game_map` | 地图网格+连通性+迷雾+区域信息 | map.js |
 | `tile_actions` | 当前格 POI + 脚边道具 | tile-action.js |
-| `player_inventory` | 背包槽位 + 装备 | inventory.js |
-| `player_info` | 玩家属性 + 装备详情 + gd/icon | player.js（状态栏+抽屉）, inventory.js |
+| `player_inventory` | 背包槽位（itempara 渲染） + 装备 | inventory.js |
+| `player_info` | 玩家属性 + AP + 装备 + oblpara（含 killnum） | player.js（状态栏+抽屉）, inventory.js |
 | `obl_log` | 结构化日志条目数组（LogEntry[]） | log.js |
+
+**`player_info` 字段说明**（Oblivions 模式独立数据层 `bra_oblplayers`）：
+- 基本信息：`pid`/`type`/`name`/`gd`/`icon`
+- 战斗状态：`action`/`bid`
+- 战斗属性：`hp`/`mhp`/`sp`/`msp`/`att`/`def`
+- **AP（Oblivions 专属）**：`ap`/`max_ap`
+- 位置与进度：`pgroup`/`pls`/`lvl`/`exp`/`upexp`/`state`
+- 道具栏：`itemmaxslots`（道具栏上限，道具详情走 `player_inventory`）
+- **Oblivions 专属 JSON 字段**：`tacpara`/`skillpara`/`oblpara`（含 `killnum` 等杂项数据）
+- 装备：`equipment`（7 槽 × 6 字段：wep/wep2/arb/arh/ara/arf/art）
+
+> **注**：传统模式字段（race/club/nick/money/rage/pose/tactic/killnum/skills 等）在 Oblivions 模式下不再返回。`killnum` 改为从 `oblpara.killnum` 读取。
 
 ### 5.2 写入 API（POST `command.php`）
 
@@ -161,7 +173,7 @@ app.js
 { mode: 'command', command: 'obl_pickup', iid: number }
 
 // 丢弃背包道具
-{ mode: 'command', command: 'obl_discard', slot: number }  // slot: 1-6
+{ mode: 'command', command: 'obl_discard', slot: number }  // slot: 1~itemmaxslots
 
 // 移动
 { command: 'move', moveto: number }  // moveto = 目标格 pls
@@ -177,10 +189,14 @@ app.js
 { "status": "success"|"error", "data": {...} }
 ```
 
-写入 API：
+写入 API（Oblivions 模式）：
 ```json
-{ "success": true|false, "error": "...", "gamedata": {...}, "timer": number|null }
+{}
 ```
+
+**说明**：Oblivions 模式下 `command.php` 仅做模式判定后委托给 `oblivions/include/core/obl_command.php`，响应只返回空 JSON `{}`。前端不依赖命令响应获取业务数据，而是通过 `dataManager.invalidateAll()` + 重新拉取只读 API 获取最新状态。
+
+> **注**：传统模式下 `command.php` 仍返回 `{ "success": ..., "gamedata": {...}, "timer": ... }` 格式，但 Vex 前端仅在 Oblivions 模式下运行，不消费这些字段。`utils.js:submitCommand()` 仍兼容解析 JSON 响应，但 Oblivions 模式下 `gamedata` 为空对象。
 
 ### 5.4 `obl_log` 响应格式
 
@@ -296,7 +312,7 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 
 | 组件 | 触发 | 位置 | 说明 |
 |------|------|------|------|
-| 左侧抽屉 | `[属性]` 按钮 | 页面左侧滑出 | 玩家属性详情 |
+| 左侧抽屉 | `[属性]` 按钮 | 页面左侧滑出 | 玩家属性详情（VITALITY/STAMINA/ACTION POINTS/EXPERIENCE 四条进度条 + ATK/DEF/KILLS/POS/STATE + PROFILE） |
 | 右侧抽屉 | `[背包]` 按钮 | 页面右侧滑出 | 背包(INVENTORY) + 装备(ARMAMENT) 标签切换 |
 | 居中模态框 | POI/脚边道具点击 | 画面中央 | 360px 宽，半透明遮罩，scale 动画 |
 | Toast | `ui:toast` 事件 / 日志增量 | 动态位置（右上/左上/中上） | 自动消失通知，同类合并，详见第八章 |

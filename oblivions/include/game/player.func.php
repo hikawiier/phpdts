@@ -231,7 +231,6 @@ function obl_save_player(&$pdata) {
  */
 function obl_game_entrypoint($entry_type = 'game') {
 	global $cuser, $cpass, $gamestate;
-
 	// 1. 检查登录态
 	if (!$cuser || !$cpass) {
 		obl_entrypoint_handle_failure('no_login', $entry_type);
@@ -256,6 +255,99 @@ function obl_game_entrypoint($entry_type = 'game') {
 
 	// 5. gamestate 检查（与旧逻辑一致：gamestate==0 时仍返回数据，由调用方处理）
 	return $pdata;
+}
+
+/**
+ * battle 状态防呆校验
+ *
+ * 检测玩家 action='battle' 时战斗关系是否合法，不合法则清除双方 action/bid。
+ * 覆盖场景：战斗系统未实装的过渡期、异常中断、数据库脏数据、未来战斗系统变更。
+ *
+ * 合法性校验（任一不满足即判定为脏状态）：
+ *  - bid 非空且为有效 pid
+ *  - bid 指向的单位存在
+ *  - 该单位 state==0（活着）
+ *  - 双向关联完整：该单位 action=='battle' 且其 bid 指回自己
+ *  - 双方在同一 pgroup（同一区域）
+ *
+ * @param array &$pdata 玩家数据（引用传递，可能被清除 action/bid）
+ * @return void
+ */
+function obl_validate_battle_state(&$pdata) {
+	// 只检查 action='battle' 的单位
+	if ($pdata['action'] !== 'battle') return;
+
+	$pid = (int)$pdata['pid'];
+	$bid = (int)$pdata['bid'];
+
+	// 校验 1：bid 非空
+	if ($bid <= 0) {
+		obl_clear_invalid_battle_state($pdata, null, 'empty_bid');
+		return;
+	}
+
+	// 加载战斗对象
+	$opponent = obl_fetch_playerdata_by_pid($bid);
+	if (!$opponent) {
+		// 校验 2：战斗对象不存在
+		obl_clear_invalid_battle_state($pdata, null, 'opponent_not_found');
+		return;
+	}
+	obl_format_playerdata($opponent);
+
+	// 校验 3：战斗对象已死亡
+	if ((int)$opponent['state'] !== 0) {
+		obl_clear_invalid_battle_state($pdata, $opponent, 'opponent_dead');
+		return;
+	}
+
+	// 校验 4：双向关联完整（对方也处于 battle 状态且 bid 指回自己）
+	if ($opponent['action'] !== 'battle' || (int)$opponent['bid'] !== $pid) {
+		obl_clear_invalid_battle_state($pdata, $opponent, 'broken_link');
+		return;
+	}
+
+	// 校验 5：双方在同一区域
+	if ((int)$opponent['pgroup'] !== (int)$pdata['pgroup']) {
+		obl_clear_invalid_battle_state($pdata, $opponent, 'cross_region');
+		return;
+	}
+
+	// 所有校验通过，battle 状态合法，保留
+}
+
+/**
+ * 清除脏的 battle 状态（obl_validate_battle_state 的辅助函数）
+ *
+ * @param array     &$pdata   玩家数据（引用传递）
+ * @param array|null &$opponent 战斗对象数据（引用传递，null 表示不存在/无需清除）
+ * @param string    $reason   失效原因（用于日志排查）
+ * @return void
+ */
+function obl_clear_invalid_battle_state(&$pdata, &$opponent, $reason) {
+	global $obl_log;
+
+	// 清除玩家的 battle 状态
+	$pdata['action'] = '';
+	$pdata['bid']    = 0;
+	obl_save_player($pdata);
+
+	// 如果对方也存在脏的 battle 状态，一并清除
+	if ($opponent !== null && $opponent['action'] === 'battle') {
+		$opponent['action'] = '';
+		$opponent['bid']    = 0;
+		obl_save_player($opponent);
+	}
+
+	// emit 结构化日志（如果 $obl_log 已初始化）
+	if ($obl_log) {
+		$obl_log->emit('battle.invalid', 'battle', array(
+			'pid'    => $pdata['pid'],
+			'name'   => $pdata['name'],
+			'bid'    => $pdata['bid'],
+			'reason' => $reason,
+		));
+	}
 }
 
 /**
@@ -513,8 +605,11 @@ function obl_resolve_tick_events($delta) {
 	$delta = min((int)$delta, 100);
 
 	for ($i = 0; $i < $delta; $i++) {
-		// 1. 全局结算敌人 AI（所有敌人，不管 discovered）
-		// obl_resolve_all_enemy_ai();  // NPC 设计案实现
+		// 1. 全局结算敌人 AI（查询所有玩家所在区域的敌人）
+		if (!function_exists('obl_resolve_all_enemy_ai')) {
+			include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
+		}
+		obl_resolve_all_enemy_ai();
 
 		// 2. buff/dot 结算（未来扩展）
 		// obl_resolve_buffs_dots();

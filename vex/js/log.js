@@ -28,6 +28,8 @@ const ACTION_TAGS = {
     search:  'SRC',
     pickup:  'PKG',
     discard: 'DSC',
+    enemy:   'EMY',
+    battle:  'BTL',
     system:  'SYS',
 };
 

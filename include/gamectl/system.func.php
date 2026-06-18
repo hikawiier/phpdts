@@ -463,6 +463,7 @@ function rs_init_oblivions() {
 
 	// 2. 按需加载生成函数库（避免非 Oblivions 模式污染全局 scope）
 	include_once GAME_ROOT.'./oblivions/include/game/generate.func.php';
+	include_once GAME_ROOT.'./oblivions/include/game/enemy_ai.func.php';
 
 	// 3. 载入配置文件（仅在 Oblivions 模式才加载）
 	$poi_pool     = include GAME_ROOT.'./oblivions/gamedata/poi_pool.php';
@@ -496,6 +497,9 @@ function rs_init_oblivions() {
 
 	// 5. 初始化迷雾（所有可通行格 fog=0，玩家出生时再点亮视野）
 	rs_init_oblivions_fog($map_data);
+
+	// 6. 生成 NPC 敌人（按 enemy_pool.php 配置，分潮汐区放置）
+	obl_init_enemies();
 }
 
 /**

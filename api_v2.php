@@ -18,6 +18,18 @@ require_once './include/core/entrypoint.php';
 if (function_exists('oblivions_is_active') && oblivions_is_active()) {
 	require_once GAME_ROOT.'./oblivions/include/game/player.func.php';
 	$pdata = obl_game_entrypoint('api');
+
+	// battle 状态防呆校验（action 分发前，确保玩家操作不被脏状态卡住）
+	obl_validate_battle_state($pdata);
+
+	// 日志持久化：$obl_log 在 common.inc.php 中初始化，请求结束时统一持久化
+	// 用 register_shutdown_function 确保所有 exit 路径都能持久化
+	register_shutdown_function(function() {
+		global $obl_log, $groomid, $pdata;
+		if ($obl_log && $obl_log->hasEntries() && isset($pdata['pid'])) {
+			obl_log_persist($obl_log, $groomid, $pdata['pid']);
+		}
+	});
 } else {
 	$pdata = game_entrypoint('api');
 }
@@ -84,6 +96,9 @@ switch ($action) {
     case 'obl_log':
         handle_obl_log();
         break;
+    case 'enemies':
+        handle_obl_enemies();
+        break;
     case 'ai_dump_save':
         handle_ai_dump_save();
         break;
@@ -92,7 +107,7 @@ switch ($action) {
 }
 
 function handle_player_info() {
-    global $upexp, $pdata;
+    global $upexp, $pdata, $gamevars;
 
     // Oblivions 模式：oblplayers 独立数据层，字段精简
     // 只返回 oblplayers 表中存在的字段 + obl 专属 JSON 字段
@@ -135,6 +150,10 @@ function handle_player_info() {
         'tacpara'   => $pdata['tacpara'],
         'skillpara' => $pdata['skillpara'],
         'oblpara'   => $pdata['oblpara'],
+
+        // 调试用：游戏刻状态 / Debug: tick state
+        'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
+        'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
 
         // 装备信息 / Equipment（7 槽 × 6 字段）
         'equipment' => array(
@@ -407,6 +426,90 @@ function handle_obl_log() {
         'entries' => $entries,
         'total'   => count($entries),
     ));
+}
+
+/**
+ * enemies API：返回当前区域已发现的敌人
+ *
+ * 返回 discovered=1 的敌人列表。如果玩家处于战斗状态，
+ * 确保返回战斗对象（即使 discovered=0）。
+ */
+function handle_obl_enemies() {
+    global $pdata;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    // 获取当前区域 discovered=1 的敌人
+    $enemies = obl_fetch_discovered_enemies($pdata['pgroup']);
+
+    // 如果玩家处于战斗状态，确保返回战斗对象（即使 discovered=0）
+    if ($pdata['action'] == 'battle' && $pdata['bid']) {
+        $battle_enemy = obl_fetch_playerdata_by_pid($pdata['bid']);
+        if ($battle_enemy) {
+            obl_format_playerdata($battle_enemy);
+            $already_in_list = false;
+            foreach ($enemies as $e) {
+                if ($e['pid'] == $battle_enemy['pid']) {
+                    $already_in_list = true;
+                    break;
+                }
+            }
+            if (!$already_in_list) {
+                $enemies[] = $battle_enemy;
+            }
+        }
+    }
+
+    // 返回敌人数据（精简字段）
+    $result = array();
+    foreach ($enemies as &$enemy) {
+        $result[] = obl_simplify_enemy_data($enemy);
+    }
+
+    api_response('success', array('enemies' => $result));
+}
+
+/**
+ * 获取当前区域 discovered=1 的敌人
+ *
+ * @param int $pgroup 区域 ID
+ * @return array 敌人数据数组（每个元素已格式化）
+ */
+function obl_fetch_discovered_enemies($pgroup) {
+    global $db, $tablepre;
+    $enemies = array();
+    $result = $db->query("SELECT * FROM {$tablepre}oblplayers
+                          WHERE type > 0 AND pgroup='{$pgroup}' AND discovered=1 AND state=0");
+    while ($edata = $db->fetch_array($result)) {
+        obl_format_playerdata($edata);
+        $enemies[] = $edata;
+    }
+    return $enemies;
+}
+
+/**
+ * 精简敌人数据（只返回前端需要的字段）
+ *
+ * @param array &$enemy 敌人数据（已格式化）
+ * @return array 精简后的敌人数据
+ */
+function obl_simplify_enemy_data(&$enemy) {
+    return array(
+        'pid'        => $enemy['pid'],
+        'type'       => $enemy['type'],
+        'name'       => $enemy['name'],
+        'icon'       => $enemy['icon'],
+        'gd'         => $enemy['gd'],
+        'pgroup'     => $enemy['pgroup'],
+        'pls'        => $enemy['pls'],
+        'hp'         => $enemy['hp'],
+        'mhp'        => $enemy['mhp'],
+        'lvl'        => $enemy['lvl'],
+        'state'      => $enemy['state'],
+        'discovered' => $enemy['discovered'],
+    );
 }
 
 ?>

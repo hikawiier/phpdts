@@ -81,4 +81,4 @@ export const GENDER_NAMES = {0:'未定', m:'男生', f:'女生', n:'投影'};
 // 地图状态 / Map state (Oblivions dynamic links map)
 // ══════════════════════════════════════════════════
 
-export const mapData = { curLoc: null, curRegion: null, links: null };
+export const mapData = { curLoc: null, curRegion: null, links: null, enemies: [] };

@@ -269,6 +269,15 @@ if(CURSCRIPT !== 'chat')
 			if ($func()) $ginfochange = true;
 		}
 
+		// Oblivions 日志收集器初始化（核心机制，放全局入口）
+		// tick 解析、防呆、命令处理都会 emit 日志到 $obl_log，请求结束时统一持久化
+		if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+			include_once GAME_ROOT.'./oblivions/include/game/log.func.php';
+			if (class_exists('OblivionsLogger') && !isset($obl_log)) {
+				$obl_log = new OblivionsLogger();
+			}
+		}
+
 		// Oblivions 游戏刻事件处理（在锁内，确保原子性）
 		// 检测 obl_pretick < obl_tick → 执行 tick 事件 → 同步 pretick
 		if (function_exists('oblivions_is_active') && oblivions_is_active()

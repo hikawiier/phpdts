@@ -78,6 +78,20 @@ function applyStatusBar() {
     const spText = document.getElementById('spText');
     if (spBar) spBar.style.width = spPct + '%';
     if (spText) spText.textContent = 'SP ' + sp + '/' + msp;
+
+    // 调试：tick 状态 / Debug: tick state
+    const tickEl = document.getElementById('tickDebug');
+    if (tickEl) {
+        const tick = d.obl_tick !== undefined ? d.obl_tick : 0;
+        const pretick = d.obl_pretick !== undefined ? d.obl_pretick : 0;
+        tickEl.textContent = 'T: ' + tick + '/' + pretick;
+        // tick > pretick 表示有待解决的 tick 事件（NPC AI 应该触发）
+        if (tick > pretick) {
+            tickEl.classList.add('pending');
+        } else {
+            tickEl.classList.remove('pending');
+        }
+    }
 }
 
 export async function loadPlayerInfo() {

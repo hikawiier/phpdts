@@ -148,6 +148,20 @@ function obl_move($moveto, &$pdata) {
         return;
     }
 
+    // 3.5 占用检查（1 格 1 单位：移动到有敌人的格子 → 碰撞战斗）
+    global $db, $tablepre;
+    $occ_result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE pgroup='{$cur_pgroup}' AND pls='{$moveto}' AND state=0 AND pid != '{$pdata['pid']}' LIMIT 1");
+    $occupier = $db->fetch_array($occ_result);
+    if ($occupier) {
+        obl_format_playerdata($occupier);
+        // 碰撞战斗：双方留在原地，战斗瞬间结束（过渡实现）
+        if (!function_exists('obl_resolve_collision_battle')) {
+            include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
+        }
+        obl_resolve_collision_battle($pdata, $occupier);
+        return;
+    }
+
     // 4. 体力检查（首格预扣，独立函数配置驱动）
     if (!obl_check_move_sp($pdata, 1)) {
         return;
