@@ -412,6 +412,42 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 
 **debug 分类**：`OblivionsLogger::DEBUG_IDS` 常量声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）。这些日志持久化保留但前端默认不渲染，`?debug=ai` 模式下显示并加 `[DBG]` 前缀。
 
+### 5.5 `enemies` — 当前区域敌人列表
+
+- **请求**: `GET api_v2.php?action=enemies`
+- **前置条件**: 必须在 Oblivions 模式下
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "enemies": [
+      {
+        "pid": 101,
+        "type": 1,
+        "name": "废铁史莱姆",
+        "icon": "enemy_slime",
+        "gd": "m",
+        "pgroup": 1,
+        "pls": 5,
+        "hp": 50,
+        "mhp": 50,
+        "lvl": 1,
+        "state": 0,
+        "discovered": 1
+      }
+    ]
+  }
+}
+```
+
+**字段说明**:
+- `enemies[]`：当前区域已发现的敌人列表（`discovered=1` 且 `state=0` 存活）
+- 若玩家处于战斗状态（`action='battle'`），确保返回战斗对象（即使 `discovered=0`）
+- 字段由 `obl_simplify_enemy_data()` 精简，仅返回前端渲染所需字段
+
+**前端用途**: 渲染当前区域的敌人列表，玩家可看到已发现敌人的位置、名称、等级、HP。战斗状态下用于显示战斗对象信息。
+
 ---
 
 ## 六、命令路由
@@ -593,6 +629,64 @@ return [
 ]
 ```
 
+### 7.8 `enemies_config.php` — NPC 敌人类型定义
+
+定义每种敌人的静态属性。与 `item_table.php` / `poi_table.php` 同层，只定义属性，不关心分布（分布由 `enemy_pool.php` 按潮汐区控制）。NPC 与玩家共用 `bra_oblplayers` 表，通过 `type` 字段区分（`type>0` 为敌人类型 ID）。
+
+```php
+$obl_enemies_config = array(
+    // 敌人类型 ID => 配置
+    1 => array(
+        'name'            => string,   // 敌人名称
+        'icon'            => string,   // 图标标识
+        'gd'              => string,   // 性别
+        'hp'/'mhp'        => int,      // 当前/最大 HP
+        'sp'/'msp'        => int,      // 当前/最大 SP
+        'att'/'def'       => int,      // 攻击/防御
+        'lvl'             => int,      // 等级
+        'ai_type'         => string,   // AI 类型：patrol/aggressive/idle
+        'vision_range'    => int,      // 感知范围（BFS 跳数）
+        'action_chance'   => float,    // 行动意愿（每 tick 行动概率，0-1）
+        'skills'          => [string], // 技能 ID 列表
+        'strategy_slots'  => [         // 初始策略槽（4 槽）
+            ['type' => 'skill', 'id' => 'basic_attack'],
+            null, null, null,
+        ],
+    ),
+);
+```
+
+**当前定义的敌人类型**：
+
+| type | 名称 | AI 类型 | 感知范围 | 行动意愿 | 等级 |
+|------|------|---------|---------|---------|------|
+| 1 | 废铁史莱姆 | patrol | 3 | 0.4 | 1 |
+| 2 | 锈蚀守卫 | aggressive | 5 | 0.7 | 2 |
+
+### 7.9 `enemy_pool.php` — NPC 敌人刷新池
+
+按潮汐区分桶，控制每个潮汐区生成哪些敌人 + 数量。与 `scatter_pool.php` / `poi_pool.php` 完全对齐。
+
+```php
+return [
+    'shallow' => [
+        ['enemy_type' => 1, 'count' => [3, 5]],  // 废铁史莱姆 3-5 个
+        ['enemy_type' => 2, 'count' => [1, 2]],  // 锈蚀守卫 1-2 个
+    ],
+    'deep' => [
+        ['enemy_type' => 2, 'count' => [3, 5]],
+    ],
+    'abyss' => [],
+];
+```
+
+**生成规则**：
+- `count` 为 `[min, max]` 区间，初始化时随机取值
+- 每个潮汐区独立配置，互不影响
+- 区域的潮汐区由 `tiles/region_{pgroup}.php` 中每个格的 `tide` 字段决定
+- 只选 `passable=1` 的格，排除区域出入口（`entrance_pls` / `exit_pls`）
+- 排除已被其他单位占用的格（一个格一个单位）
+
 ---
 
 ## 八、核心函数索引
@@ -662,11 +756,62 @@ return [
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
 | `OblivionsLogger` | 类 | 结构化日志收集器，单次请求内累积 |
-| `OblivionsLogger::emit` | `($id, $action, $params = [], $html = null): void` | 追加一条日志 |
+| `OblivionsLogger::emit` | `($id, $logcategory, $params = [], $html = null): void` | 追加一条日志（自动判定 debug 标记） |
 | `OblivionsLogger::getEntries` | `(): array` | 获取本请求累积的日志条目 |
 | `OblivionsLogger::hasEntries` | `(): bool` | 本请求是否有日志 |
-| `obl_log_persist` | `($logger, $groomid, $pid, $max_entries = 200): void` | 持久化日志到 JSON 文件（追加+裁剪+LOCK_EX） |
+| `obl_log_persist` | `($logger, $groomid, $pid, $max_entries = 200): void` | 持久化日志到 JSON 文件（追加+裁剪+LOCK_EX，正式/debug 分开计数） |
 | `obl_log_load` | `($groomid, $pid): array` | 从文件读取日志条目（按时间正序） |
+
+### 8.6 enemy_ai.func.php — NPC 敌人 AI
+
+NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
+
+**模块 1：NPC 生成**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_init_enemies` | `(): void` | 生成所有区域的 NPC 敌人（在 `rs_init_oblivions` 中调用，按 `enemy_pool.php` 配置） |
+| `obl_create_enemy_record` | `($enemy_type, $pgroup, $pls): int\|false` | 创建敌人记录（从 `enemies_config.php` 读属性，写入 oblplayers） |
+| `obl_get_occupied_positions` | `($pgroup): array` | 获取指定区域已占用的 pls（玩家+NPC，`{pls => true}`） |
+| `obl_pick_available_tile` | `($available_pls, &$occupied): int\|false` | 从可用格列表随机选一个未被占用的 |
+
+**模块 2：NPC AI 结算**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_resolve_all_enemy_ai` | `(): void` | 全局结算入口（在 `obl_resolve_tick_events` 中调用，查询所有玩家并结算其所在区域敌人） |
+| `obl_enemy_tick` | `(&$enemy, &$player): void` | 单个敌人的 AI 决策：行动意愿门控 → 感知范围内追击 / 否则按 ai_type 行动 |
+
+**模块 3：移动逻辑**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_enemy_move` | `(&$enemy, $target_pls, &$player): bool` | 敌人移动（可在雾中移动，目标格=玩家格时触发碰撞战斗，移动后更新 discovered） |
+| `obl_enemy_chase_player` | `(&$enemy, &$player): void` | 追击玩家（计算向玩家移动的下一步） |
+| `obl_enemy_patrol` | `(&$enemy, &$player): void` | 巡逻（随机选邻居格移动） |
+| `obl_enemy_hunt` | `(&$enemy, &$player): void` | 主动搜寻（MVP 简化为巡逻） |
+
+**模块 4：碰撞战斗**（1 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_resolve_collision_battle` | `(&$a, &$b): void` | 碰撞战斗结算（过渡实现：设 action='battle' → emit 日志 → 立即清除。`$a` 永远是发起方/移动方） |
+
+**模块 5：discovered 状态管理**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_discover_enemies` | `($player_pgroup, $player_pls, $vision_range): void` | 玩家探索时发现敌人（设 discovered=1 + 清除敌人格迷雾 + emit 日志） |
+| `obl_update_enemy_discovered` | `(&$enemy, &$player): void` | 敌人移动后更新 discovered（超出玩家视野→0，仍在视野内→清除迷雾） |
+
+**模块 6：占用检查与辅助函数**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_is_tile_occupied_by_others` | `($pgroup, $pls, $exclude_pid): bool` | 检查地图格是否被其他单位占用 |
+| `obl_calc_next_step_towards` | `($pgroup, $from_pls, $to_pls): int\|false` | 计算向目标移动的下一步（选距离最近的邻居格） |
+| `obl_get_tile_neighbors` | `($pgroup, $pls): array` | 获取地图格的邻居列表 |
+| `obl_get_player_vision_range` | `(&$player): int` | 获取玩家视野范围（MVP 固定值 3，用于敌人 discovered 管理） |
 
 ---
 
@@ -681,12 +826,12 @@ return [
 | 命令处理器 | `cmd_handle_obl_{command}` | `cmd_handle_obl_explore` |
 | 数据库表 | `{$tablepre}obl{entity}`（无下划线连写） | `bra_oblplayers`, `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
-| 日志 ID | `{action}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
+| 日志 ID | `{logcategory}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
 
 ### 9.2 数据传递规范
 
 - **`$pdata` 引用传递**: 所有修改玩家数据的函数接受 `&$pdata`，禁止函数内 `extract()`
-- **日志输出（Oblivions 模式）**: 通过 `global $obl_log` + `$obl_log->emit($id, $action, $params)`，**不再使用** `global $log` + `$log .=`
+- **日志输出（Oblivions 模式）**: 通过 `global $obl_log` + `$obl_log->emit($id, $logcategory, $params)`，**不再使用** `global $log` + `$log .=`
 - **日志输出（传统模式）**: 仍通过全局 `$log` 变量追加，格式 `$log .= '消息<br>';`
 - **数据库操作**: 使用全局 `$db` + `$tablepre`，SQL中表名写 `{$tablepre}oblmapxxx`
 - **配置读取**: 通过 `obl_get_config()` 获取，带静态缓存，不直接 include
@@ -709,17 +854,24 @@ return [
 ## 十、玩家生命周期（Oblivions模式）
 
 ```
-0. 地图初始化 → 所有格子迷雾覆盖
+0. 地图初始化 → 所有格子迷雾覆盖 → obl_init_enemies() 生成 NPC 敌人
 1. 玩家出生 → 出生格点亮迷雾 → POI显示在界面
 2. 仅可执行探索（迷雾中无法移动）
 3. 探索流程:
    3.0 体力检查（obl_check_explore_sp）
    3.1 点亮迷雾（obl_clear_fog，范围=vision_range）
    3.2 发现道具（obl_discover_items，上限=memory_range）
-   3.3 探索后钩子（obl_post_explore_hook）
+   3.3 发现敌人（obl_discover_enemies，设 discovered=1 + 清除敌人格迷雾）
+   3.4 探索后钩子（obl_post_explore_hook）
 4. 拾取/丢弃道具
 5. 搜索POI → 掉落表生成 + 机制触发
 6. 移动 → 移动后自动探索（跳过体力检查）
+7. 移动推进游戏刻 → obl_resolve_tick_events($delta)
+   → 循环 $delta 次调用 obl_resolve_all_enemy_ai()
+     → 逐个玩家所在区域的敌人执行 obl_enemy_tick()
+       → 感知范围内：追击玩家（obl_enemy_chase_player）
+       → 感知范围外：按 ai_type 行动（patrol/aggressive/idle）
+       → 敌人移动到玩家格 → 碰撞战斗（obl_resolve_collision_battle）
 ```
 
 每一步操作产生的日志通过 `$obl_log->emit()` 收集，请求结束前由 `obl_log_persist()` 持久化。
@@ -740,6 +892,7 @@ Oblivions 模式下 `game.php` 重定向到 `vex/index.html`（SPA前端）。
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
 | 玩家位置 | `player_info` | `pgroup`(区域), `pls`(格子) |
 | 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
+| 当前区域敌人 | `enemies` | `enemies[]`（已发现敌人列表） |
 
 ### 11.3 命令提交
 
@@ -770,6 +923,7 @@ submitCommand('move', { moveto: targetPls });
 - **背包槽位**: `itempara` JSON 数组（index 0=特殊槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots
 - **结构化日志渲染**: 前端按 `entry.id` 查 `log-templates.js` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `terrain-desc.js` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
+- **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
 
 ---
 
@@ -785,7 +939,7 @@ submitCommand('move', { moveto: targetPls });
 
 ```
 obl_* 函数执行
-  → $obl_log->emit($id, $action, $params)  // 收集日志条目
+  → $obl_log->emit($id, $logcategory, $params)  // 收集日志条目
   ↓
 obl_command.php: 路由分发后
   → obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化到 JSON 文件
@@ -800,7 +954,8 @@ obl_command.php: 路由分发后
 
 **`oblivions/include/game/log.func.php`**：
 - `OblivionsLogger` 类：单次请求内累积日志条目
-- `obl_log_persist()`：追加模式写入 `vex/cache/obl_log_{groomid}_{pid}.json`，带 200 条上限裁剪和 `LOCK_EX` 并发保护
+- `OblivionsLogger::DEBUG_IDS` 常量：声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）
+- `obl_log_persist()`：追加模式写入 `vex/cache/obl_log_{groomid}_{pid}.json`，正式日志 200 条 + debug 日志 50 条分开计数裁剪，带 `LOCK_EX` 并发保护
 - `obl_log_load()`：读取日志文件，返回按时间正序的数组
 
 **`oblivions/include/core/obl_command.php` 改动**（从 `command.php` 抽离）：
@@ -848,7 +1003,8 @@ $obl_log->emit('move.success', 'move', [
 **`vex/js/log.js`**：
 - 调用 `obl_log` API 拉取结构化日志
 - 委托 `renderLogEntry` 渲染，过滤空内容（如 `move.tile_desc` 无 desc 时）
-- 动作标签映射：`move→[MOV]` / `explore→[EXP]` / `search→[SRC]` / `pickup→[PKG]` / `discard→[DSC]` / `system→[SYS]`
+- 动作标签映射：`move→[MOV]` / `explore→[EXP]` / `search→[SRC]` / `pickup→[PKG]` / `discard→[DSC]` / `system→[SYS]` / `enemy→[ENM]` / `battle→[BAT]`
+- debug 日志过滤：默认不渲染 `debug=true` 的条目，`?debug=ai` 模式下显示并加 `[DBG]` 前缀
 
 ### 12.5 区域切换日志拆分
 

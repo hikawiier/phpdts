@@ -224,6 +224,43 @@ app.js
 - `entries`：按时间正序（旧→新）
 - `total`：当前存储的条目总数（正式日志 200 条 + debug 日志 50 条，分开计数）
 
+### 5.5 `enemies` 响应格式
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enemies": [
+      {
+        "pid": 101,
+        "type": 1,
+        "name": "废铁史莱姆",
+        "icon": "enemy_slime",
+        "gd": "m",
+        "pgroup": 1,
+        "pls": 5,
+        "hp": 50,
+        "mhp": 50,
+        "lvl": 1,
+        "state": 0,
+        "discovered": 1
+      }
+    ]
+  }
+}
+```
+
+**字段说明**：
+- `enemies[]`：当前区域已发现的敌人列表（`discovered=1` 且 `state=0` 存活）
+- 若玩家处于战斗状态（`action='battle'`），确保返回战斗对象（即使 `discovered=0`）
+- 字段由后端 `obl_simplify_enemy_data()` 精简，仅返回前端渲染所需字段
+
+**敌人渲染逻辑**（map.js）：
+- 仅 `discovered=1` 的敌人在地图上渲染（敌人移动超出玩家视野后自动从列表移除）
+- 敌人图标渲染在对应 `(pgroup, pls)` 格子上
+- 战斗状态下（`action='battle'`），战斗对象始终显示（即使 `discovered=0`）
+- 敌人 HP 条显示在图标下方（`hp`/`mhp`）
+
 ---
 
 ## 六、全局状态
