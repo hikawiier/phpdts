@@ -114,7 +114,7 @@ switch ($action) {
 }
 
 function handle_player_info() {
-    global $upexp, $pdata, $gamevars;
+    global $upexp, $pdata, $gamevars, $groomid;
 
     // Oblivions 模式：oblplayers 独立数据层，字段精简
     // 只返回 oblplayers 表中存在的字段 + obl 专属 JSON 字段
@@ -125,6 +125,9 @@ function handle_player_info() {
         'name'  => $pdata['name'],
         'gd'    => $pdata['gd'],
         'icon'  => $pdata['icon'],
+
+        // 房间 ID（供前端调用零依赖接口如 mark_battle_log_played.php）
+        'groomid' => $groomid,
 
         // 战斗状态 / Combat state
         'action' => $pdata['action'],

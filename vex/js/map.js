@@ -229,17 +229,17 @@ function renderMapGrid() {
                 const enemy = mapData.enemies.find(e => parseInt(e.pls) === tileInfo.pls);
                 if (enemy) {
                     cell.innerHTML = '<span class="cell-name"><span class="cell-enemy">[' + escapeHtml(enemy.name) + ']</span>' + escapeHtml(label) + '</span>';
+                    cell.setAttribute('data-enemy-pid', enemy.pid);
                 } else {
                     cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-coord">' + coordLabel + '</span>';
                 }
 
                 if (enemy) {
-                    // 敌人格：点击发起攻击（进入 prebattle）
+                    // 敌人格：点击触发战斗确认界面（纯前端确认，不再直接提交）
                     cell.style.cursor = 'crosshair';
                     cell.title = '点击攻击 ' + enemy.name;
                     cell.addEventListener('click', () => {
                         // 前端校验攻击距离（阶段一射程=1，相邻格）
-                        // Oblivions 命令返回空 {}，无法依赖后端错误反馈，需前端自行拦截
                         const path = findPath(mapData.curLoc, tileInfo.pls);
                         const distance = path ? path.length - 1 : -1;
                         if (distance !== 1) {

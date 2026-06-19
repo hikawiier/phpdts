@@ -59,7 +59,11 @@ function cmd_handle_obl_discard($slot, &$pdata) {
 // ================================================================
 
 /**
- * 玩家主动攻击：进入 prebattle 状态
+ * 玩家主动攻击：直接进入战斗状态
+ *
+ * 取消 prebattle 中间态，obl_battle_start 命令直接完成：
+ * 校验 + 状态检测 + 先攻判定（玩家强制先攻）+ NPC 自动执行。
+ *
  * @param int   $enemy_pid 目标敌人 PID
  * @param array &$pdata    玩家数据
  */
@@ -68,7 +72,7 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
     include_once GAME_ROOT . './oblivions/include/game/battle.func.php';
     include_once GAME_ROOT . './oblivions/include/game/move.func.php';
 
-    $error = obl_battle_enter_prebattle($enemy_pid, $pdata);
+    $error = obl_battle_initiate($enemy_pid, $pdata);
     if ($error !== '') {
         global $obl_log;
         $obl_log->emit('battle.invalid', 'battle', array(
@@ -79,27 +83,14 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
 }
 
 /**
- * 取消 prebattle 状态
- * @param array &$pdata 玩家数据
- */
-function cmd_handle_obl_battle_cancel(&$pdata) {
-    if (!oblivions_is_active()) return;
-    include_once GAME_ROOT . './oblivions/include/game/battle.func.php';
-
-    if ($pdata['action'] === 'prebattle') {
-        obl_battle_cancel($pdata);
-    }
-}
-
-/**
  * 战斗载入流程入口：结算玩家先攻轮 + NPC 自动执行
  *
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
  * 内部调用 obl_battle_resolve_round()，处理：
- * - prebattle → battle 转换（首次进入战斗）
- * - 先攻判定
  * - 玩家先攻轮执行
  * - NPC 自动执行直到玩家顺位或战斗结束
+ *
+ * 注意：prebattle → battle 转换已前移到 obl_battle_initiate()。
  *
  * @param string $action_id 玩家选择的动作 ID（如 'unarmed_strike'）
  * @param array  &$pdata    玩家数据

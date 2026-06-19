@@ -107,7 +107,7 @@ function roommng_create_oblivions_room(&$udata)
 	$new_gamenum = $db->fetch_array($result)['max_value'];
 
 	# 新建并初始化房间状态
-	$starttime = $now + $startmin*5;
+	$starttime = $now + $startmin*2;
 	$db->query("INSERT INTO {$gtablepre}game (gamenum,groomid,groomownid,gamestate,starttime,gruleset) VALUES ('$new_gamenum','$new_room_id','{$udata['username']}','0','$starttime','OBLIVIONS')");
 
 	# 加入房间

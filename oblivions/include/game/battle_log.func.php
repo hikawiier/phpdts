@@ -10,12 +10,14 @@ if (!defined('IN_GAME')) {
 // 与 obl_log（结构化日志）分离：obl_log 只存战斗摘要（battle.start/battle.end），
 // battle_log 存战斗细节（每步动作）。
 //
-// 存储模式：待播放队列（追加合并）
-// - 待播放文件：vex/cache/obl_battle_log_{groomid}_{pid}.json — 存未播放的 battle_log
-// - 产生新 battle_log 时，追加到待播放文件（不覆盖旧条目）
-// - 前端拉取后清空待播放文件（读后即清）
+// 存储模式：played 标记机制
+// - 文件：vex/cache/obl_battle_log_{groomid}_{pid}.json — 存所有 battle_log 条目
+// - 每条带 log_id（文件内自增）、enemy_pid（战斗对象）、played（0=未播放，1=已播放）
+// - 产生新 battle_log 时，追加到文件（分配 log_id，played=0）
+// - 前端拉取 played=0 的条目播放，播完调 mark_battle_log_played.php 标记 played=1
+// - 文件不被清空，保留历史记录
 //
-// 相关文档：oblivions/docs/战斗系统设计案.md
+// 相关文档：oblivions/docs/战斗演出系统设计案.md
 // ================================================================
 
 /**
@@ -42,8 +44,9 @@ class BattleLogCollector {
      * @param int|float   $effect_value 效果值（伤害值等）
      * @param array|null  $extra        额外信息（如 escape 成功/失败）
      * @param array|null  $position     位置信息（阶段一未使用）
+     * @param int         $enemy_pid    战斗对象 PID（用于前端按战斗分组播放）
      */
-    public function emit($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null) {
+    public function emit($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0) {
         $this->entries[] = [
             'id'           => 'battle.action',
             'turn'         => (int)$turn,
@@ -55,6 +58,7 @@ class BattleLogCollector {
             'extra'        => $extra,
             'position'     => $position,
             'ts'           => time(),
+            'enemy_pid'    => (int)$enemy_pid,
         ];
     }
 
@@ -89,18 +93,16 @@ function obl_battle_log_get_old_max() {
 }
 
 /**
- * 持久化战斗日志到文件（追加模式）
+ * 持久化战斗日志到文件（追加模式 + log_id 分配）
  *
  * 文件路径：
- * - 待播放：vex/cache/obl_battle_log_{groomid}_{pid}.json
+ * - vex/cache/obl_battle_log_{groomid}_{pid}.json
  *
  * 追加逻辑：
- * 1. 读取待播放文件现有内容（未播放的旧条目）
- * 2. 追加新条目
- * 3. 写回待播放文件
- *
- * 注意：不再使用覆盖模式。突袭和玩家执行可能在不同请求中产生 battle_log，
- * 追加模式确保所有未播放的条目都保留，前端拉取后由 obl_battle_log_load 清空。
+ * 1. 读取现有文件，找最大 log_id
+ * 2. 给新条目分配 log_id（从 max+1 开始）和 played=0
+ * 3. 追加到现有条目后
+ * 4. 写回文件（LOCK_EX 防并发）
  *
  * @param BattleLogCollector $logger
  * @param int $groomid 房间 ID
@@ -112,7 +114,7 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
     $new_entries = $logger->getEntries();
     $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
 
-    // 1. 读取待播放文件现有内容（未播放的旧条目）
+    // 1. 读取现有文件
     $existing = [];
     if (file_exists($log_file)) {
         $raw = file_get_contents($log_file);
@@ -120,22 +122,35 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
         if (!is_array($existing)) $existing = [];
     }
 
-    // 2. 追加新条目
-    $merged = array_merge($existing, $new_entries);
+    // 2. 找最大 log_id
+    $max_log_id = 0;
+    foreach ($existing as $e) {
+        if (!empty($e['log_id']) && (int)$e['log_id'] > $max_log_id) {
+            $max_log_id = (int)$e['log_id'];
+        }
+    }
 
-    // 3. 写回待播放文件
+    // 3. 给新条目分配 log_id 和 played=0
+    foreach ($new_entries as &$e) {
+        $max_log_id++;
+        $e['log_id'] = $max_log_id;
+        $e['played'] = 0;
+    }
+    unset($e);
+
+    // 4. 追加并写回
+    $merged = array_merge($existing, $new_entries);
     file_put_contents($log_file, json_encode($merged, JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
 
 /**
- * 从文件读取待播放的战斗日志，读取后清空文件
+ * 从文件读取未播放的战斗日志（played=0）
  *
- * 前端拉取后视为已播放，清空待播放文件。
- * 后续新产生的 battle_log 会追加到空文件。
+ * 不清空文件。前端播放后通过 mark_battle_log_played.php 标记 played=1。
  *
  * @param int $groomid 房间 ID
  * @param int $pid      玩家 ID
- * @return array 战斗日志条目数组
+ * @return array 未播放的战斗日志条目数组（played=0）
  */
 function obl_battle_log_load($groomid, $pid) {
     $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
@@ -145,12 +160,56 @@ function obl_battle_log_load($groomid, $pid) {
     $entries = json_decode($raw, true);
     $entries = is_array($entries) ? $entries : [];
 
-    // 清空待播放文件（前端拉取后视为已播放）
-    if (!empty($entries)) {
-        file_put_contents($log_file, json_encode([], JSON_UNESCAPED_UNICODE), LOCK_EX);
+    // 只返回 played=0 的条目
+    $unplayed = [];
+    foreach ($entries as $e) {
+        if (empty($e['played']) || (int)$e['played'] === 0) {
+            $unplayed[] = $e;
+        }
     }
 
-    return $entries;
+    return $unplayed;
+}
+
+/**
+ * 标记指定 log_id 的战斗日志为已播放（played=1）
+ *
+ * 供 mark_battle_log_played.php（零依赖接口）调用。
+ *
+ * @param int   $groomid 房间 ID
+ * @param int   $pid      玩家 ID
+ * @param array $log_ids  要标记的 log_id 数组
+ * @return int 标记的条目数
+ */
+function obl_battle_log_mark_played($groomid, $pid, $log_ids) {
+    $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    if (!file_exists($log_file)) return 0;
+
+    $raw = file_get_contents($log_file);
+    $entries = json_decode($raw, true);
+    if (!is_array($entries)) return 0;
+
+    $log_ids_map = array();
+    foreach ($log_ids as $lid) {
+        $log_ids_map[(int)$lid] = true;
+    }
+
+    $marked = 0;
+    foreach ($entries as &$e) {
+        if (!empty($e['log_id']) && isset($log_ids_map[(int)$e['log_id']])) {
+            if (empty($e['played']) || (int)$e['played'] === 0) {
+                $e['played'] = 1;
+                $marked++;
+            }
+        }
+    }
+    unset($e);
+
+    if ($marked > 0) {
+        file_put_contents($log_file, json_encode($entries, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    }
+
+    return $marked;
 }
 
 /**

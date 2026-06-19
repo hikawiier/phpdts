@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="css/output.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
     <link rel="stylesheet" href="css/terminal.css">
+    <link rel="stylesheet" href="css/battle.css">
 </head>
 <body class="h-screen overflow-hidden bg-bg text-fg-mid font-mono text-xs leading-[1.6] select-none">
 
@@ -105,30 +106,17 @@
                     </div>
                 </div>
 
-                <!-- 战斗模式：Battle Log + Battle Actions -->
+                <!-- 战斗模式：Battle Actions（无日志区，动作区扩展） -->
                 <div id="battleMode" class="flex flex-col min-h-0 overflow-hidden flex-1" style="display:none;">
 
-                    <!-- Battle Log (flex:6) -->
-                    <div class="min-h-0 flex flex-col p-3 overflow-hidden border-b border-fg-dim/30" style="flex:6 1 0%;">
+                    <!-- Battle Actions (flex:1，扩展占满) -->
+                    <div class="min-h-0 flex flex-col p-3 overflow-hidden flex-1">
                         <div class="ascii-title flex-none mb-1.5">
                             <span>┌─</span>
-                            <span class="ascii-label">COMBAT LOG</span>
+                            <span class="ascii-label">COMBAT</span>
                             <span>─</span>
                             <span class="flex-1 ascii-line"></span>
-                            <span>┐</span>
-                        </div>
-                        <div class="flex-1 overflow-y-auto pl-2 border-l border-fg-dim/20 min-h-0">
-                            <div id="battleLogContent" class="text-fg-mid leading-[1.8]"></div>
-                        </div>
-                    </div>
-
-                    <!-- Battle Actions (flex:4) -->
-                    <div class="min-h-0 flex flex-col p-3 overflow-hidden" style="flex:4 1 0%;">
-                        <div class="ascii-title flex-none mb-1.5">
-                            <span>┌─</span>
-                            <span class="ascii-label">ACTIONS</span>
-                            <span>─</span>
-                            <span class="flex-1 ascii-line"></span>
+                            <span id="battleEnemyName" class="text-fg-dim text-[10px]"></span>
                             <span>┐</span>
                         </div>
                         <div id="battleActionBar" class="flex-1 overflow-y-auto min-h-0"></div>
@@ -146,6 +134,43 @@
                 <button class="modal-close" id="modalCloseBtn">[X]</button>
             </div>
             <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <!-- ═══ BATTLE MODAL（战斗演出模态框，纯展示） ═══ -->
+    <div class="battle-modal-overlay" id="battleModalOverlay">
+        <div class="battle-modal" id="battleModal">
+            <div class="battle-modal-header" id="battleModalHeader">
+                <div class="battle-modal-combatant enemy">
+                    <div class="battle-modal-combatant-name" id="battleModalEnemyName">敌人</div>
+                    <div class="battle-modal-hp-bar">
+                        <div class="battle-modal-hp-fill" id="battleModalEnemyHpFill" style="width:100%"></div>
+                    </div>
+                    <div class="battle-modal-hp-text" id="battleModalEnemyHpText">HP: ?</div>
+                </div>
+                <div class="battle-modal-combatant player">
+                    <div class="battle-modal-combatant-name" id="battleModalPlayerName">你</div>
+                    <div class="battle-modal-hp-bar">
+                        <div class="battle-modal-hp-fill" id="battleModalPlayerHpFill" style="width:100%"></div>
+                    </div>
+                    <div class="battle-modal-hp-text" id="battleModalPlayerHpText">HP: ?</div>
+                </div>
+            </div>
+            <div class="battle-modal-body" id="battleModalBody"></div>
+            <div class="battle-modal-footer" id="battleModalFooter">▼</div>
+        </div>
+    </div>
+
+    <!-- ═══ BATTLE CONFIRM（战斗确认界面，纯前端） ═══ -->
+    <div class="battle-confirm-overlay" id="battleConfirmOverlay">
+        <div class="battle-confirm">
+            <div class="battle-confirm-title">
+                是否攻击 <span class="battle-confirm-enemy" id="battleConfirmEnemyName">敌人</span>？
+            </div>
+            <div class="battle-confirm-actions">
+                <button class="battle-confirm-btn primary" id="battleConfirmYes">[攻击]</button>
+                <button class="battle-confirm-btn" id="battleConfirmNo">[取消]</button>
+            </div>
         </div>
     </div>
 

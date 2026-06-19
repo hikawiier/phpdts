@@ -358,7 +358,6 @@ function obl_clear_invalid_battle_state(&$pdata, &$opponent, $reason) {
  *
  * 规则：
  * - action='battle'：只允许 obl_battle_action
- * - action='prebattle'：只允许 obl_battle_action、obl_battle_cancel
  * - action=''（正常）：允许所有非战斗命令 + obl_battle_start（发起战斗）
  *
  * @param string $command 命令名
@@ -370,13 +369,9 @@ function obl_command_allowed_by_state($command, $action) {
 		// 战斗中：只允许战斗动作
 		return in_array($command, array('obl_battle_action'), true);
 	}
-	if ($action === 'prebattle') {
-		// 战斗准备：允许战斗动作 + 取消战斗
-		return in_array($command, array('obl_battle_action', 'obl_battle_cancel'), true);
-	}
-	// 正常状态：不允许战斗中命令（obl_battle_action/obl_battle_cancel），
+	// 正常状态：不允许战斗中命令（obl_battle_action），
 	// 但允许 obl_battle_start（发起战斗）和所有探索命令
-	if (in_array($command, array('obl_battle_action', 'obl_battle_cancel'), true)) {
+	if (in_array($command, array('obl_battle_action'), true)) {
 		return false;
 	}
 	return true;

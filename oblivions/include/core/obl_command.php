@@ -20,6 +20,18 @@ require GAME_ROOT.'./oblivions/include/game/player.func.php';
 // [A] 玩家认证 + 数据抓取
 $pdata = obl_game_entrypoint('command');
 
+// [A2] 并发锁：同一玩家同时只能处理一个命令（防止多标签页/脚本攻击并发）
+// 使用 flock 非阻塞模式，获取失败直接返回错误；进程结束 OS 自动释放锁
+$obl_lock_file = GAME_ROOT . './vex/cache/obl_lock_' . $groomid . '_' . $pdata['pid'] . '.php';
+$obl_lock_fp = fopen($obl_lock_file, 'w');
+if (!$obl_lock_fp || !flock($obl_lock_fp, LOCK_EX | LOCK_NB)) {
+    // 另一个请求正在处理
+    ob_clean();
+    echo compatible_json_encode(array('error' => 'COMMAND_IN_PROGRESS'));
+    ob_end_flush();
+    exit;
+}
+
 // [B] 公共初始化（不使用 extract，不调用 init_playerdata()）
 // obl_* 命令处理器仅依赖 $pdata 参数 + $obl_log，不依赖 extracted 全局变量
 $cmd = $main = '';
@@ -59,8 +71,10 @@ if ($obl_log && $obl_log->hasEntries()) {
 	obl_log_persist($obl_log, $groomid, $pdata['pid']);
 }
 
-// [E2] 战斗日志持久化（待播放队列 + 历史归档）
-// 遭遇战（tick 结算）和 obl_battle_action 都会 emit 到 $obl_battle_log
+// [E2] 战斗日志持久化
+// 所有 battlelog（含玩家命令 obl_battle_start/obl_battle_action 和遭遇战）都持久化到文件，
+// 前端通过 api_v2.php handle_battle_log 拉取 played=0 的条目播放，
+// 播完后调 mark_battle_log_played.php 标记 played=1。
 if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
 	obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
 }
@@ -82,7 +96,8 @@ if (!$command_rejected && !$escape_skip_tick && function_exists('obl_command_adv
 // [G] 保存到 oblplayers（替代 player_save）
 obl_save_player($pdata);
 
-// [H] 响应（前端通过 api_v2.php 获取数据，本文件只返回最小确认）
+// [H] 响应（前端通过 api_v2.php 获取数据，本文件返回最小确认）
+// battlelog 不再随响应返回：所有 battlelog 持久化到文件，前端统一通过 api_v2.php 拉取 played=0 的条目。
 ob_clean();
 echo compatible_json_encode(array());
 ob_end_flush();

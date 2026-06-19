@@ -245,7 +245,9 @@ function obl_battle_roll_initiative(&$player, &$enemy, $player_roll_override = n
             'player_roll'  => $player_roll,
             'enemy_roll'   => $enemy_roll,
             'player_first' => $player_first,
-        )
+        ),
+        null,
+        (int)$enemy['pid']
     );
 
     return $queue;
@@ -298,20 +300,21 @@ function obl_battle_all_done(&$pdata) {
 }
 
 // ----------------------------------------------------------------
-// prebattle 管理
+// 战斗发起（取消 prebattle 中间态，直接进入 battle）
 // ----------------------------------------------------------------
 
 /**
- * 玩家主动攻击：进入 prebattle 状态
+ * 校验攻击目标合法性
  *
  * 校验敌人存在、discovered=1、在同一区域、BFS 距离 ≤ obl_get_range()。
- * 设 action='prebattle'，bid=enemy_pid。
+ * 不修改玩家状态，只返回校验结果和敌人数据。
  *
  * @param int   $enemy_pid 敌人 PID
  * @param array &$pdata    玩家数据
+ * @param array &$enemy    输出参数：校验成功时填充敌人数据
  * @return string 错误信息（空字符串=成功）
  */
-function obl_battle_enter_prebattle($enemy_pid, &$pdata) {
+function obl_battle_validate_target($enemy_pid, &$pdata, &$enemy) {
     $enemy_pid = (int)$enemy_pid;
     if ($enemy_pid <= 0) return '无效的目标';
 
@@ -334,23 +337,61 @@ function obl_battle_enter_prebattle($enemy_pid, &$pdata) {
     $distance = obl_get_distance($pdata['pgroup'], $pdata['pls'], $enemy['pls']);
     if ($distance < 0 || $distance > obl_get_range($pdata)) return '目标距离过远';
 
-    // 进入 prebattle 状态
-    $pdata['action'] = 'prebattle';
-    $pdata['bid']    = $enemy_pid;
-
     return '';
 }
 
 /**
- * 取消 prebattle 状态
+ * 玩家主动攻击：直接进入战斗状态
  *
- * 清空 action, bid。
+ * 取消原 prebattle 中间态，obl_battle_start 命令直接完成：
+ * 1. 校验目标（obl_battle_validate_target）
+ * 2. 状态检测（obl_battle_enter_battle）→ 双方 action='battle'
+ * 3. emit battle.start 日志
+ * 4. 先攻判定（玩家强制先攻，roll=101 确保绝对先攻）
+ * 5. NPC 自动执行（玩家100%先攻，NPC 不会立即行动）
  *
- * @param array &$pdata 玩家数据
+ * @param int   $enemy_pid 目标敌人 PID
+ * @param array &$pdata    玩家数据
+ * @return string 错误信息（空字符串=成功）
  */
-function obl_battle_cancel(&$pdata) {
-    $pdata['action'] = '';
-    $pdata['bid']    = 0;
+function obl_battle_initiate($enemy_pid, &$pdata) {
+    global $obl_log, $obl_battle_log;
+
+    // 步骤 1：校验目标
+    $enemy = null;
+    $error = obl_battle_validate_target($enemy_pid, $pdata, $enemy);
+    if ($error !== '') return $error;
+
+    // 步骤 2：状态检测（双方进入 battle 状态）
+    obl_battle_enter_battle($pdata, $enemy);
+
+    // 步骤 3：emit 战斗摘要日志
+    $obl_log->emit('battle.start', 'battle', array(
+        'enemy_name' => $enemy['name'],
+        'enemy_pid'  => $enemy['pid'],
+        'initiator'  => 'player',
+    ));
+
+    // emit 战斗细节日志：战斗开始（玩家主动攻击）
+    $obl_battle_log->emit(
+        0,
+        'player',
+        'battle.start',
+        '开战',
+        'enemy_' . $enemy['pid'],
+        0,
+        array('initiator' => 'player', 'enemy_name' => $enemy['name']),
+        null,
+        (int)$enemy['pid']
+    );
+
+    // 步骤 4：先攻判定（玩家主动攻击强制先攻，roll=101 确保绝对先攻）
+    obl_battle_roll_initiative($pdata, $enemy, 101);
+
+    // 步骤 5：NPC 自动执行（玩家100%先攻，NPC 不会立即行动，但保持流程一致性）
+    obl_battle_auto_npc($pdata, $enemy);
+
+    return '';
 }
 
 // ----------------------------------------------------------------
@@ -381,9 +422,11 @@ function obl_battle_enter_battle(&$player, &$enemy) {
  * 战斗载入流程入口（玩家提交 obl_battle_action 时调用）
  *
  * 流程：
- * 1. 如果是 prebattle → battle 转换：步骤 1（状态检测）+ 步骤 2（先攻判定）
- * 2. 执行玩家先攻轮（玩家应该是当前顺位）
- * 3. NPC 自动执行直到玩家顺位或战斗结束
+ * 1. 执行玩家先攻轮（玩家应该是当前顺位）
+ * 2. NPC 自动执行直到玩家顺位或战斗结束
+ *
+ * 注意：prebattle → battle 转换已前移到 obl_battle_initiate()，
+ * 本函数只处理 action='battle' 状态下的先攻轮执行。
  *
  * @param string $action_id 玩家选择的动作 ID
  * @param array  &$pdata    玩家数据
@@ -392,8 +435,8 @@ function obl_battle_enter_battle(&$player, &$enemy) {
 function obl_battle_resolve_round($action_id, &$pdata) {
     global $obl_log, $obl_battle_log;
 
-    // 校验：action 状态
-    if ($pdata['action'] !== 'prebattle' && $pdata['action'] !== 'battle') {
+    // 校验：action 状态（必须是 battle，prebattle 已取消）
+    if ($pdata['action'] !== 'battle') {
         return '当前不在战斗状态';
     }
 
@@ -408,33 +451,6 @@ function obl_battle_resolve_round($action_id, &$pdata) {
 
     // 校验：敌人已死亡
     if ((int)$enemy['state'] !== 0) return '战斗目标已死亡';
-
-    // prebattle → battle 转换（首次进入战斗）
-    if ($pdata['action'] === 'prebattle') {
-        // 步骤 1：状态检测
-        obl_battle_enter_battle($pdata, $enemy);
-
-        // emit 战斗摘要日志
-        $obl_log->emit('battle.start', 'battle', array(
-            'enemy_name' => $enemy['name'],
-            'enemy_pid'  => $enemy['pid'],
-            'initiator'  => 'player',
-        ));
-
-        // emit 战斗细节日志：战斗开始（玩家主动攻击）
-        $obl_battle_log->emit(
-            0,
-            'player',
-            'battle.start',
-            '开战',
-            'enemy_' . $enemy['pid'],
-            0,
-            array('initiator' => 'player', 'enemy_name' => $enemy['name'])
-        );
-
-        // 步骤 2：先攻判定（玩家主动攻击强制先攻，roll=101 确保绝对先攻）
-        obl_battle_roll_initiative($pdata, $enemy, 101);
-    }
 
     // 获取当前顺位
     $current = obl_battle_get_current_initiator($pdata);
@@ -564,7 +580,9 @@ function obl_battle_encounter(&$player, &$enemy) {
         '遭遇',
         'player',
         0,
-        array('initiator' => 'enemy', 'enemy_name' => $enemy['name'])
+        array('initiator' => 'enemy', 'enemy_name' => $enemy['name']),
+        null,
+        (int)$enemy['pid']
     );
 
     // 步骤 2：先攻判定
@@ -712,6 +730,10 @@ function obl_battle_do_action(&$actor, &$target, $action_id, $turn) {
     $target_id  = obl_battle_actor_id($target);
     $action_name = obl_battle_action_name($action_id);
 
+    // 计算战斗对象 PID（用于前端按战斗分组）
+    // actor 是玩家时，enemy 是 target；actor 是敌人时，enemy 是 actor
+    $enemy_pid = ($actor['type'] == 0) ? (int)$target['pid'] : (int)$actor['pid'];
+
     switch ($action_id) {
         case 'unarmed_strike':
             // 计算伤害
@@ -727,7 +749,10 @@ function obl_battle_do_action(&$actor, &$target, $action_id, $turn) {
                 $action_id,
                 $action_name,
                 $target_id,
-                $damage
+                $damage,
+                null,
+                null,
+                $enemy_pid
             );
             return true;
 
@@ -743,7 +768,9 @@ function obl_battle_do_action(&$actor, &$target, $action_id, $turn) {
                 $action_name,
                 $target_id,
                 0,
-                array('success' => $success)
+                array('success' => $success),
+                null,
+                $enemy_pid
             );
 
             return !$success;  // 成功=false（战斗结束），失败=true（继续）
@@ -757,7 +784,9 @@ function obl_battle_do_action(&$actor, &$target, $action_id, $turn) {
                 $action_name,
                 $target_id,
                 0,
-                array('error' => 'unknown_action')
+                array('error' => 'unknown_action'),
+                null,
+                $enemy_pid
             );
             return true;
     }
@@ -795,6 +824,9 @@ function obl_battle_check_end(&$player, &$enemy) {
 function obl_battle_end(&$player, &$enemy, $result) {
     global $obl_log, $obl_battle_log;
 
+    // 在清空状态前获取 turn（清空后 obl_battle_get_turn 返回 0，导致 battle.end 日志排序错误）
+    $turn = obl_battle_get_turn($player);
+
     // 清空战斗状态
     $player['action'] = '';
     $player['bid']    = 0;
@@ -821,7 +853,6 @@ function obl_battle_end(&$player, &$enemy, $result) {
     ));
 
     // emit 战斗细节日志（obl_battle_log）— 让前端能在战斗日志区显示战斗结果
-    $turn = obl_battle_get_turn($player);
     $result_name = array(
         'victory' => '胜利',
         'defeat'  => '失败',
@@ -834,7 +865,9 @@ function obl_battle_end(&$player, &$enemy, $result) {
         '战斗结束',
         $result,
         0,
-        array('result' => $result, 'result_name' => isset($result_name[$result]) ? $result_name[$result] : $result)
+        array('result' => $result, 'result_name' => isset($result_name[$result]) ? $result_name[$result] : $result),
+        null,
+        (int)$enemy['pid']
     );
 
     // 逃跑成功时设置标志：跳过本次命令的 tick 推进

@@ -11,7 +11,7 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 
 **核心差异**：
 - 传统模式：`$plsinfo` 线性地点列表，`move()` 切换地点，玩家数据存 `bra_players`
-- Oblivions：网格地图 + 迷雾 + POI + 道具散落，`obl_move()` 移动 + `obl_explore()` 探索，玩家数据存 `bra_oblplayers`（独立数据层）
+- Oblivions：网格地图 + 迷雾 + POI + 道具散落 + 战斗演出，`obl_move()` 移动 + `obl_explore()` 探索，玩家数据存 `bra_oblplayers`（独立数据层）
 
 **设计原则：Oblivions 完全独立于 bra_players**
 - 玩家+敌人统一存储在 `bra_oblplayers` 表，不依赖 `bra_players`
@@ -132,6 +132,53 @@ Oblivions 模式下的日志传递机制，**完全替代传统 `$log` HTML 字�
 
 **关键设计**：后端只输出事件结构（发生了什么 + 参数），前端完全控制视觉呈现（文案、样式、随机化）。详见第十二章。
 
+### 2.9 战斗日志 (Battle Log) 与 played 标记机制
+
+**与 obl_log 分离的第二套日志系统**，专门记录战斗细节（每一步动作），obl_log 只存战斗摘要（`battle.start`/`battle.end`）。
+
+| | obl_log（结构化日志） | obl_battle_log（战斗日志） |
+|---|---|---|
+| **存储内容** | 探索/移动/拾取/战斗摘要 | 战斗内每一步动作（攻击/反击/先攻判定/逃跑） |
+| **全局变量** | `$obl_log`（`OblivionsLogger`） | `$obl_battle_log`（`BattleLogCollector`） |
+| **持久化文件** | `vex/cache/obl_log_{groomid}_{pid}.json` | `vex/cache/obl_battle_log_{groomid}_{pid}.json` |
+| **API 端点** | `obl_log` | `battle_log` |
+| **前端用途** | 日志区渲染 + Toast 触发 | 战斗模态框播放 + 碰撞动画 |
+
+**played 标记机制**（替代"命令响应附带 battlelog"的双路径方案）：
+
+```
+后端 emit battlelog（played=0）
+  → obl_battle_log_persist() 追加到文件，分配 log_id，played=0
+  → 命令响应只返回 {}（不再附带 battlelog 字段）
+
+前端 fetchAndPlayBattleLog()
+  → gameApi('battle_log') → 返回 played=0 的条目
+  → 按 enemy_pid 分组 → 每组播放（碰撞动画 + 模态框 + 残留伤害数字）
+  → POST mark_battle_log_played.php 标记 played=1
+```
+
+**BattleLogEntry 字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 固定 `'battle.action'` |
+| `log_id` | int | 文件内自增 ID（持久化时分配），用于标记 played |
+| `turn` | int | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
+| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
+| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`initiative.roll`/`battle.end`） |
+| `action_name` | string | 动作显示名（如 `'空手攻击'`） |
+| `target` | string | 目标标识（`'player'`/`'enemy_{pid}'`/结果标识） |
+| `effect_value` | int | 效果值（伤害值等） |
+| `extra` | object\|null | 额外信息（如 `{'success': true}`、`{'player_roll': 50, 'enemy_roll': 30}`） |
+| `enemy_pid` | int | 战斗对象 PID（前端按战斗分组播放） |
+| `played` | int | 0=未播放，1=已播放（前端播放后通过 mark 接口标记） |
+| `ts` | int | Unix 时间戳 |
+
+**关键设计决策**：
+- **零依赖 mark 接口**：`vex/mark_battle_log_played.php` 不依赖任何游戏框架（无 common.inc.php、无 player.func.php、无 DB），只做文件读写。安全性靠 `(int)` 强制转换防路径遍历。理由：mark 请求即使被伪造也无严重后果（最多让玩家少看一条 battlelog）。
+- **文件不被清空**：played=1 的条目仍保留在文件中，作为历史记录。游戏重置时由 `obl_battle_log_clear_all()` 清理。
+- **log_id 而非 turn 排序**：前端按 `log_id`（emit 顺序）排序播放，而非 `turn`（非唯一，回合内多条日志 turn 相同）。
+
 ---
 
 ## 三、目录结构
@@ -140,12 +187,14 @@ Oblivions 模式下的日志传递机制，**完全替代传统 `$log` HTML 字�
 oblivions/
 ├── include/
 │   ├── core/
-│   │   └── obl_command.php     # Oblivions 命令入口（由 command.php require，处理全部命令流程）
+│   │   └── obl_command.php     # Oblivions 命令入口（由 command.php require，处理全部命令流程 + 并发锁）
 │   └── game/
-│       ├── player.func.php     # 玩家数据层：认证/抓取/格式化/保存 + 道具栏辅助函数
+│       ├── player.func.php     # 玩家数据层：认证/抓取/格式化/保存 + 道具栏 + battle 状态防呆 + 命令状态过滤
 │       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
 │       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
 │       ├── log.func.php        # 结构化日志收集器 + 持久化/读取
+│       ├── battle.func.php     # 战斗系统：先攻轮/动作执行/战斗结束（详见第八章 8.7）
+│       ├── battle_log.func.php # 战斗日志收集器 + played 标记机制（详见第八章 8.8）
 │       └── enemy_ai.func.php   # NPC 敌人 AI 核心（17 函数：初始化/tick 结算/感知/决策/碰撞）
 ├── gamedata/
 │   ├── obl_config.php          # 可调参数配置
@@ -174,15 +223,16 @@ oblivions/
 | 文件 | 作用 |
 |------|------|
 | `include/core/global.func.php` | `oblivions_is_active()` 定义 + `save_gameinfo()` Oblivions 分支 |
-| `include/command/router.php` | Oblivions 命令路由注册 |
-| `include/command/handlers/oblivions_commands.php` | 4个Oblivions命令处理器 |
+| `include/core/common.inc.php` | 全局入口：初始化 `$obl_log` + `$obl_battle_log` + tick 事件触发 |
+| `include/command/router.php` | Oblivions 命令路由注册（含 obl_battle_start / obl_battle_action） |
+| `include/command/handlers/oblivions_commands.php` | 6个Oblivions命令处理器（explore/search/pickup/discard + battle_start/battle_action） |
 | `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支 |
-| `api_v2.php` | 7个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/enemies/ai_dump_save） |
+| `api_v2.php` | 8个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/battle_log/enemies/ai_dump_save） |
 | `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
-| `include/core/common.inc.php` | tick 事件触发入口（检测 `obl_pretick < obl_tick` → 调用 `obl_resolve_tick_events()`） |
 | `include/gamectl/system.func.php` | 游戏初始化时调用 `obl_init_enemies()` 生成 NPC 敌人 |
 | `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex/index.html` |
+| `vex/mark_battle_log_played.php` | 零依赖 battlelog 标记接口（无 auth/DB，只文件读写） |
 
 ---
 
@@ -199,19 +249,37 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 | **身份** | `pid` | 主键（smallint auto_increment） |
 | | `type` | 0=玩家, >0=敌人类型 |
 | | `name`/`pass`/`gd`/`icon` | 基础信息（pass 与 user 表双重校验） |
-| **战斗状态** | `action` | null/prebattle/battle |
+| **战斗状态** | `action` | 空=正常 / `'battle'`=战斗中（prebattle 中间态已取消） |
 | | `bid` | 战斗目标 pid |
 | **属性** | `hp`/`mhp`/`sp`/`msp`/`att`/`def` | 战斗属性 |
 | | `ap`/`max_ap` | AP 值（独立字段，便于频繁读写） |
 | **位置** | `pgroup`/`pls` | 区域ID + 格子ID |
-| **进度** | `lvl`/`exp`/`state` | 等级/经验/状态 |
+| **进度** | `lvl`/`exp`/`state` | 等级/经验/状态（0=存活, 1=死亡） |
 | **装备** | `wep`/`wep2`/`arb`/`arh`/`ara`/`arf`/`art` | 7 槽装备（每槽 6 字段：name/k/e/s/sk/para） |
 | **道具栏** | `itempara` | JSON 数组（七字段规范，详见 2.6） |
 | | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=特殊槽） |
 | **Oblivions专属** | `tacpara` | 策略槽（JSON） |
 | | `skillpara` | 技能数据（JSON） |
-| | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range` 等） |
+| | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range`/`battle`/`escape_skip_tick` 等） |
 | | `discovered` | 敌人发现状态（0=未发现, 1=已发现） |
+
+**`action` 字段取值**（prebattle 中间态已取消）：
+- 空（`''`）= 正常探索状态
+- `'battle'` = 战斗中（玩家主动攻击或遭遇战触发后直接进入）
+
+**`oblpara['battle']` 战斗状态结构**（战斗中存在，战斗结束清除）：
+
+```php
+$oblpara['battle'] = [
+    'turn'  => int,    // 先攻轮序号（递增，用于日志排序）
+    'queue' => [        // 先攻队列（双方同步保存）
+        ['pid' => 101, 'done' => 0],
+        ['pid' => 5,   'done' => 0],
+    ],
+];
+```
+
+**`oblpara['escape_skip_tick']`**：逃跑成功时设置的标志，跳过本次命令的 tick 推进（一次性，避免 NPC 在同 tick 内再次遭遇玩家）。
 
 **相对 bra_players 的关键变更**：
 - 删除 50+ 字段（race/sNo/club/endtime/nick/skills/cdsec/money/rage/pose/tactic/wp~wf/teamID/extrabag_*/itm0~6/clbpara/flare/aura/souls/debuff/status/element 等）
@@ -412,7 +480,28 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 
 **debug 分类**：`OblivionsLogger::DEBUG_IDS` 常量声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）。这些日志持久化保留但前端默认不渲染，`?debug=ai` 模式下显示并加 `[DBG]` 前缀。
 
-### 5.5 `enemies` — 当前区域敌人列表
+### 5.5 `battle_log` — 战斗日志（未播放条目）
+
+- **请求**: `GET api_v2.php?action=battle_log`
+- **前置条件**: 必须在 Oblivions 模式下
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "entries": [BattleLogEntry, ...],
+    "total": 3
+  }
+}
+```
+
+**只返回 `played=0` 的条目**。文件中 `played=1` 的条目保留但不返回（历史归档）。
+
+**BattleLogEntry 结构**：详见 2.9 节。
+
+**前端用途**：拉取后按 `enemy_pid` 分组，每组按 `log_id` 排序播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 `mark_battle_log_played.php` 标记 `played=1`。
+
+### 5.6 `enemies` — 当前区域敌人列表
 
 - **请求**: `GET api_v2.php?action=enemies`
 - **前置条件**: 必须在 Oblivions 模式下
@@ -448,6 +537,47 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 
 **前端用途**: 渲染当前区域的敌人列表，玩家可看到已发现敌人的位置、名称、等级、HP。战斗状态下用于显示战斗对象信息。
 
+### 5.7 `player_info` — 玩家信息（含 groomid）
+
+Oblivions 模式下 `player_info` 额外返回 `groomid` 字段，供前端调用零依赖接口（如 `mark_battle_log_played.php`）：
+
+```php
+api_response('success', array(
+    'pid'     => $pdata['pid'],
+    'groomid' => $groomid,  // 房间 ID（供前端调用零依赖接口）
+    'action'  => $pdata['action'],
+    'bid'     => $pdata['bid'],
+    // ... 其他字段
+));
+```
+
+### 5.8 `mark_battle_log_played.php` — 零依赖标记接口
+
+**独立文件**（不走 `api_v2.php`），位于 `vex/mark_battle_log_played.php`。
+
+- **请求**: `POST vex/mark_battle_log_played.php`
+- **Content-Type**: `application/x-www-form-urlencoded`
+- **参数**:
+  - `groomid` (int) — 房间 ID
+  - `pid` (int) — 玩家 ID
+  - `log_ids` (array 或逗号分隔字符串) — 要标记的 log_id 数组
+- **响应**:
+```json
+{ "success": true, "marked": 3 }
+```
+或
+```json
+{ "success": false, "error": "invalid_params" }
+```
+
+**零依赖设计**：
+- 不 require 任何游戏框架文件（无 common.inc.php / player.func.php / DB 连接）
+- 只做文件读写操作
+- 安全性靠 `(int)` 强制转换防路径遍历（`groomid`/`pid`/`log_ids` 全部 `(int)` 化）
+- 并发写靠 `LOCK_EX` 保护
+
+**设计理由**：mark 请求的唯一目的是"修改文件中某些条目的 played 字段"，即使被伪造也无严重后果（最多让玩家少看一条 battlelog），不值得走完整的 auth + DB 流程。
+
 ---
 
 ## 六、命令路由
@@ -467,6 +597,10 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。替代传�
 | `obl_search` | `iaid` (int) | `obl_search_poi($iaid, $pdata)` | 搜索POI |
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
 | `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
+| `obl_battle_start` | `enemy_pid` (int) | `obl_battle_initiate($enemy_pid, $pdata)` | 玩家主动攻击：直接进入 battle 状态（取消 prebattle 中间态） |
+| `obl_battle_action` | `action_id` (string) | `obl_battle_resolve_round($action_id, $pdata)` | 战斗动作（玩家先攻轮执行 + NPC 自动执行） |
+
+> **注**：原 `obl_battle_cancel` 命令已移除（prebattle 中间态取消后，取消攻击是纯前端确认界面的"取消"按钮，无需后端命令）。
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -486,19 +620,27 @@ command.php
   → exit
 
 obl_command.php 内部流程：
-  [A] require player.func.php
-  [B] obl_game_entrypoint('command')           // 认证 + 抓取 + 格式化 $pdata
-  [C] $obl_log = new OblivionsLogger()         // 结构化日志收集器
-  [D] if ($pdata['hp'] > 0):
+  [A]  require player.func.php
+  [A2] 并发锁：flock(LOCK_EX|LOCK_NB) — 同一玩家同时只能处理一个命令
+       → 获取失败返回 {'error': 'COMMAND_IN_PROGRESS'} 并 exit
+  [B]  obl_game_entrypoint('command')           // 认证 + 抓取 + 格式化 $pdata
+  [C]  obl_validate_battle_state($pdata)         // battle 状态防呆校验（脏状态自动清除）
+  [C2] obl_command_allowed_by_state($command, $action)  // 命令状态过滤
+       → action='battle' 时只允许 obl_battle_action
+       → 非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许）
+       → 被拒绝的命令 emit 'command.rejected' 日志，不推进 tick
+  [D]  if (!$command_rejected && $pdata['hp'] > 0):
         require router_helpers.php + router.php
         cmd_router_dispatch($command, $mode, $pdata, $cmdcdtime, $post)
           → oblivions_commands.php: cmd_handle_obl_xxx($params, $pdata)
-            → explore.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
-  [E] obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化结构化日志
-  [F] if obl_command_advances_tick($command):
+            → explore.func.php / battle.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
+  [E]   obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化结构化日志
+  [E2]  obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid'])  // 持久化战斗日志（played=0）
+  [F]   if obl_command_advances_tick($command) && !escape_skip_tick:
         $gamevars['obl_tick']++; save_gameinfo()          // 推进游戏刻
-  [G] obl_save_player($pdata)                             // 写回 oblplayers
-  [H] echo compatible_json_encode(array())                // 返回空 JSON {}
+  [G]   obl_save_player($pdata)                             // 写回 oblplayers
+  [H]   echo compatible_json_encode(array())                // 返回空 JSON {}
+       （flock 在进程结束/脚本结束时由 OS 自动释放）
 ```
 
 **关键设计**：
@@ -507,7 +649,35 @@ obl_command.php 内部流程：
 - **跳过模板渲染**：SPA 前端不需要 HTML 模板，响应只返回最小确认 `{}`
 - **使用 `obl_save_player()`** 替代 `player_save()`，仅写 `bra_oblplayers`，不同步 `bra_players`
 - **Oblivions 命令在 router.php 中优先处理**，独立于 `itm0` 阻塞检查（传统模式下手持道具会阻塞其他命令）
-- **前端通过 `api_v2.php` 获取业务数据**，命令响应不再包含 `$gamedata`（旧版组装的 5 行 `$gamedata` 已删除，前端从未使用）
+- **前端通过 `api_v2.php` 获取业务数据**，命令响应不再包含 `$gamedata` 或 `battlelog` 字段（旧版组装的 5 行 `$gamedata` 已删除，battlelog 改为 played 标记机制，详见 2.9）
+
+### 6.5 并发锁机制（三层防护）
+
+防止短时间多次请求导致重复提交/状态错乱，前后端三层防护：
+
+| 层 | 位置 | 机制 | 释放时机 |
+|----|------|------|---------|
+| 前端全生命周期锁 | `vex/js/battle.js: isProcessingBattle` | 布尔标志，覆盖"提交命令 → 拉取播放 battlelog → 刷新状态"全流程 | `try/finally` 末尾 |
+| 前端 HTTP 锁 | `vex/js/command-queue.js: _locked` | 布尔标志，仅覆盖 HTTP 请求期间 | `try/finally` 末尾 |
+| 后端文件锁 | `obl_command.php [A2]: flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
+
+**后端锁实现**：
+```php
+$obl_lock_file = GAME_ROOT . './vex/cache/obl_lock_' . $groomid . '_' . $pdata['pid'] . '.php';
+$obl_lock_fp = fopen($obl_lock_file, 'w');
+if (!$obl_lock_fp || !flock($obl_lock_fp, LOCK_EX | LOCK_NB)) {
+    // 另一个请求正在处理
+    echo compatible_json_encode(array('error' => 'COMMAND_IN_PROGRESS'));
+    exit;
+}
+// 锁在进程结束/脚本 exit 时由 OS 自动释放，无需显式释放
+```
+
+**为什么选 flock 而非 DB 锁**：
+- flock 在进程异常退出时由 OS 自动释放，不会死锁
+- DB 锁需要额外的"超时清理"逻辑，复杂度高
+- 单机部署足够，无需分布式锁
+- 性能优于 DB 锁
 
 ---
 
@@ -517,11 +687,12 @@ obl_command.php 内部流程：
 
 ```php
 return [
-    'explore_sp_cost'  => 0,    // 探索消耗体力
-    'vision_range'     => 1,    // 视野范围等级（BFS跳数）
-    'memory_range'     => 3,    // 每次探索最多发现道具数
-    'move_sp_cost'     => 0,    // 每格移动消耗体力
-    'log_max_entries'  => 200,  // 结构化日志最大条目数
+    'explore_sp_cost'    => 0,    // 探索消耗体力
+    'vision_range'       => 1,    // 视野范围等级（BFS跳数）
+    'memory_range'       => 3,    // 每次探索最多发现道具数
+    'move_sp_cost'       => 0,    // 每格移动消耗体力
+    'log_max_entries'    => 200,  // 结构化日志最大条目数
+    'battle_log_old_max' => 10,   // 战斗日志历史归档最大批次（保留量）
 ];
 ```
 
@@ -709,8 +880,11 @@ return [
 | `obl_find_empty_slot` | `(array &$pdata): int\|false` | 找空普通槽（1~itemmaxslots），无空位返回 false |
 | `obl_is_bag_full` | `(array &$pdata): bool` | 背包是否已满 |
 | `obl_create_player_record` | `($ndata): int\|false` | valid.php 激活时创建 oblplayers 记录（从 $ndata itm1~itm6 构建 itempara） |
-| `obl_command_advances_tick` | `($command): bool` | 命令是否推进游戏刻（黑名单机制） |
+| `obl_command_advances_tick` | `($command): bool` | 命令是否推进游戏刻（白名单：move/obl_explore/obl_search/obl_battle_action） |
 | `obl_resolve_tick_events` | `($delta): void` | 处理游戏刻事件（循环 $delta 次调用 obl_resolve_all_enemy_ai() 结算 NPC 行动） |
+| `obl_validate_battle_state` | `(array &$pdata): void` | battle 状态防呆校验：bid 非空/对手存在/对手存活/双向关联完整/同区域，脏状态自动清除 |
+| `obl_clear_invalid_battle_state` | `(&$pdata, &$opponent, $reason): void` | 清除脏的 battle 状态（obl_validate_battle_state 辅助函数，emit `battle.invalid` 日志） |
+| `obl_command_allowed_by_state` | `($command, $action): bool` | 命令状态过滤：action='battle' 只允许 obl_battle_action；非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许） |
 
 ### 8.2 explore.func.php
 
@@ -813,6 +987,93 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_get_tile_neighbors` | `($pgroup, $pls): array` | 获取地图格的邻居列表 |
 | `obl_get_player_vision_range` | `(&$player): int` | 获取玩家视野范围（MVP 固定值 3，用于敌人 discovered 管理） |
 
+### 8.7 battle.func.php — 战斗系统
+
+战斗系统核心，先攻轮机制。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
+
+**模块 1：接口预留函数**（4 函数，阶段一返回固定值，未来由技能/装备系统覆盖）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_get_range` | `(&$pdata): int` | 玩家攻击射程（阶段一固定 1，未来由武器类型决定） |
+| `obl_get_weapon_attack_modes` | `(&$pdata): array` | 玩家可用攻击模式（阶段一固定 `['unarmed_strike']`） |
+| `obl_calc_damage` | `($att, $def, $weapon_bonus = 0): int` | 伤害公式 `max(1, att - def + weapon_bonus)`，保底 1 |
+| `obl_get_initiative_rate` | `(&$pdata): int` | 先攻率（阶段一固定 50，未来由敏捷/技能/装备覆盖） |
+
+**模块 2：辅助函数**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_actor_id` | `(&$pdata): string` | 战斗单位标识符（`'player'` 或 `'enemy_{pid}'`） |
+| `obl_battle_action_name` | `($action_id): string` | 动作显示名（`unarmed_strike`→`空手攻击`，`escape`→`逃跑`） |
+
+**模块 3：战斗状态管理**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_init_state` | `(&$pdata): void` | 初始化 `oblpara['battle']`（含 turn 计数器和先攻队列占位） |
+| `obl_battle_clear_state` | `(&$pdata): void` | 清除 `oblpara['battle']`（战斗结束时调用） |
+| `obl_battle_get_turn` | `(&$pdata): int` | 获取当前先攻轮序号（用于日志排序） |
+| `obl_battle_inc_turn` | `(&$pdata): void` | 递增先攻轮序号 |
+
+**模块 4：先攻队列管理**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_roll_initiative` | `(&$player, &$enemy, $player_roll_override = null): array` | 先攻判定：摇随机数 + 排序 + 生成队列。玩家主动攻击时传 101 强制先攻。含先攻补正（玩家非第一顺位时随机数 += 第一顺位者 × 25%，1v1 中无实际效果，为 1vN 预留） |
+| `obl_battle_get_current_initiator` | `(&$pdata): array\|null` | 获取当前顺位（第一个 done=0 的队列项） |
+| `obl_battle_mark_done` | `(&$pdata, $pid): void` | 标记某个 pid 的先攻轮已完成（done=1） |
+| `obl_battle_all_done` | `(&$pdata): bool` | 检查是否所有人都已完成先攻轮 |
+
+**模块 5：战斗发起与载入**（4 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_validate_target` | `($enemy_pid, &$pdata, &$enemy): string` | 校验攻击目标合法性（敌人存在/已发现/同区域/BFS 距离 ≤ 射程），不修改状态，返回错误信息（空=成功） |
+| `obl_battle_initiate` | `($enemy_pid, &$pdata): string` | 玩家主动攻击入口：校验 + 状态检测 + emit `battle.start` + 先攻判定（强制先攻）+ NPC 自动执行。取消 prebattle 中间态 |
+| `obl_battle_enter_battle` | `(&$player, &$enemy): void` | 状态检测：双方 `action='battle'` + `bid` 互指 + 初始化战斗状态 |
+| `obl_battle_resolve_round` | `($action_id, &$pdata): string` | 战斗载入流程入口（玩家提交 obl_battle_action 时调用）：执行玩家先攻轮 + NPC 自动执行直到玩家顺位或战斗结束 |
+
+**模块 6：NPC 自动执行**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_auto_npc` | `(&$player, &$enemy): string` | NPC 自动执行循环：NPC 是当前顺位时自动执行先攻轮，直到轮到玩家或战斗结束。所有人都完成时重新先攻判定 |
+| `obl_battle_encounter` | `(&$player, &$enemy): void` | 遭遇战入口（tick 结算中 NPC 移动到玩家格时调用）：状态检测 + 互相 discovered=1 + emit `battle.start` + 先攻判定 + NPC 自动执行 + 立即持久化 battlelog（避免写到错误 pid 文件） |
+
+**模块 7：先攻轮执行**（5 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_load_attack_queue` | `(&$actor, $action_id): array` | 加载先攻者攻击动作队列（玩家用提交的 action_id，敌人 AI 行为树固定 unarmed_strike） |
+| `obl_battle_check_counter` | `(&$defender): array\|null` | 检查被攻击者是否有反击策略（留接口，阶段一返回 null） |
+| `obl_battle_execute_counter` | `(&$defender, &$attacker): void` | 执行被攻击者的反击动作（留接口，阶段一空实现） |
+| `obl_battle_execute` | `(&$actor, &$target, $action_id): string` | 先攻轮执行：加载攻击队列 → foreach 执行动作 → 检查反击 → 死亡判定。返回 `'continue'`/`'escape'`/`'victory'` |
+| `obl_battle_do_action` | `(&$actor, &$target, $action_id, $turn): bool` | 执行单个攻击动作（unarmed_strike 计算伤害扣 HP / escape 50% 概率成功）。emit battlelog 时附带 `enemy_pid` 用于前端分组。返回 true=继续，false=战斗结束 |
+
+**模块 8：战斗结束**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_battle_check_end` | `(&$player, &$enemy): string` | 检查战斗是否结束（`'continue'`/`'victory'`/`'defeat'`） |
+| `obl_battle_end` | `(&$player, &$enemy, $result): void` | 结束战斗：**先获取 turn 再清空状态**（避免清空后 turn=0 导致 battle.end 日志排序错误）→ 清空 action/bid/oblpara['battle'] → 设置死亡方 state=1 → emit `battle.end` → 逃跑成功时设置 `escape_skip_tick` 标志 → 保存双方数据 |
+
+### 8.8 battle_log.func.php — 战斗日志系统
+
+战斗日志收集与持久化，与 obl_log 分离（详见 2.9）。
+
+| 函数/类 | 签名 | 说明 |
+|---------|------|------|
+| `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。在 `common.inc.php` 入口初始化为全局 `$obl_battle_log` |
+| `BattleLogCollector::emit` | `($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0): void` | 追加一条战斗日志（含 `enemy_pid` 用于前端按战斗分组） |
+| `BattleLogCollector::getEntries` | `(): array` | 获取本请求累积的战斗日志条目 |
+| `BattleLogCollector::hasEntries` | `(): bool` | 本请求是否有战斗日志 |
+| `obl_battle_log_get_old_max` | `(): int` | 读取 battle_log 历史归档最大批次配置（带静态缓存） |
+| `obl_battle_log_persist` | `($logger, $groomid, $pid): void` | 持久化战斗日志到文件（追加模式 + log_id 分配 + played=0 + LOCK_EX）。读取现有文件找最大 log_id，给新条目分配 log_id（从 max+1 开始）和 played=0，追加到现有条目后写回 |
+| `obl_battle_log_load` | `($groomid, $pid): array` | 从文件读取**未播放**的战斗日志（played=0），不清空文件 |
+| `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
+| `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `vex/cache/obl_battle_log*.json`） |
+
 ---
 
 ## 九、代码规范
@@ -827,11 +1088,13 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | 数据库表 | `{$tablepre}obl{entity}`（无下划线连写） | `bra_oblplayers`, `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
 | 日志 ID | `{logcategory}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
+| 战斗日志 action_id | 蛇形命名 | `unarmed_strike`, `escape`, `battle.start`, `initiative.roll`, `battle.end` |
 
 ### 9.2 数据传递规范
 
 - **`$pdata` 引用传递**: 所有修改玩家数据的函数接受 `&$pdata`，禁止函数内 `extract()`
 - **日志输出（Oblivions 模式）**: 通过 `global $obl_log` + `$obl_log->emit($id, $logcategory, $params)`，**不再使用** `global $log` + `$log .=`
+- **战斗日志输出**: 通过 `global $obl_battle_log` + `$obl_battle_log->emit($turn, $actor, $action_id, $action_name, $target, $effect_value, $extra, $position, $enemy_pid)`
 - **日志输出（传统模式）**: 仍通过全局 `$log` 变量追加，格式 `$log .= '消息<br>';`
 - **数据库操作**: 使用全局 `$db` + `$tablepre`，SQL中表名写 `{$tablepre}oblmapxxx`
 - **配置读取**: 通过 `obl_get_config()` 获取，带静态缓存，不直接 include
@@ -842,12 +1105,22 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 - **搜索计数**: `UPDATE ... SET search_count=search_count+1` 原子递增
 - **迷雾写入**: `INSERT ... ON DUPLICATE KEY UPDATE fog=1` 幂等操作
 - **日志写入**: `file_put_contents` 加 `LOCK_EX`，多请求并发写入不丢数据
+- **战斗日志写入**: `obl_battle_log_persist()` 加 `LOCK_EX`，多请求并发写入不丢数据
+- **命令并发锁**: `obl_command.php [A2]` 使用 `flock(LOCK_EX|LOCK_NB)`，同一玩家同时只能处理一个命令。获取失败返回 `{'error': 'COMMAND_IN_PROGRESS'}` 并 exit。锁在进程结束/脚本 exit 时由 OS 自动释放（详见 6.5）
 
 ### 9.4 itmpara 约定
 
 - 数据库中为 JSON 数组格式
 - 拾取时注入 `obl_item_id` 键保存原始地图道具ID
 - 丢弃时取出 `obl_item_id` 并 `unset`，还原原始 itmpara 写回地图
+
+### 9.5 战斗日志 emit 规范
+
+- **必须传 `enemy_pid`**：所有 `$obl_battle_log->emit()` 调用必须传第 9 个参数 `enemy_pid`，用于前端按战斗分组播放
+- **actor 是玩家时**：`enemy_pid = target['pid']`
+- **actor 是敌人时**：`enemy_pid = actor['pid']`
+- **turn=0 用于非回合事件**：`battle.start` / `initiative.roll` / `battle.end` 用 turn=0，前端显示为"战斗开始"分隔符
+- **turn>=1 用于回合内动作**：`unarmed_strike` / `escape` 用实际回合号，前端显示为"回合 N"分隔符
 
 ---
 
@@ -872,9 +1145,15 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
        → 感知范围内：追击玩家（obl_enemy_chase_player）
        → 感知范围外：按 ai_type 行动（patrol/aggressive/idle）
        → 敌人移动到玩家格 → 碰撞战斗（obl_resolve_collision_battle）
+8. 战斗流程（详见第十三章）:
+   8.1 玩家主动攻击：obl_battle_start 命令 → obl_battle_initiate（校验+状态检测+先攻判定+NPC自动执行）
+   8.2 遭遇战：tick 结算中 NPC 移动到玩家格 → obl_battle_encounter（状态检测+先攻判定+NPC自动执行）
+   8.3 战斗动作：obl_battle_action 命令 → obl_battle_resolve_round（玩家先攻轮+NPC自动执行）
+   8.4 战斗结束：obl_battle_end（清空状态+设置死亡+emit 日志+保存）
 ```
 
 每一步操作产生的日志通过 `$obl_log->emit()` 收集，请求结束前由 `obl_log_persist()` 持久化。
+战斗细节日志通过 `$obl_battle_log->emit()` 收集，请求结束前由 `obl_battle_log_persist()` 持久化（played=0）。
 
 ---
 
@@ -890,8 +1169,9 @@ Oblivions 模式下 `game.php` 重定向到 `vex/index.html`（SPA前端）。
 |------|-----|----------|
 | 地图网格+连通性 | `game_map` | `links.tiles[pgroup][pls].neighbors`, `links.grids[pgroup]` |
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
-| 玩家位置 | `player_info` | `pgroup`(区域), `pls`(格子) |
+| 玩家位置 + 房间ID | `player_info` | `pgroup`(区域), `pls`(格子), `groomid`(房间ID, 供 mark 接口用) |
 | 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
+| 战斗日志（未播放） | `battle_log` | `entries[]`（BattleLogEntry 数组，played=0）, `total` |
 | 当前区域敌人 | `enemies` | `enemies[]`（已发现敌人列表） |
 
 ### 11.3 命令提交
@@ -911,9 +1191,31 @@ submitCommand('obl_discard', { slot: slotNumber }); // slot: 1-6
 
 // 移动
 submitCommand('move', { moveto: targetPls });
+
+// 玩家主动攻击（直接进入 battle 状态，取消 prebattle）
+submitCommand('obl_battle_start', { enemy_pid: enemyPid });
+
+// 战斗动作（玩家先攻轮）
+submitCommand('obl_battle_action', { action_id: 'unarmed_strike' });
 ```
 
-### 11.4 前端关键逻辑
+### 11.4 战斗日志标记
+
+```javascript
+// 播完 battlelog 后标记 played=1（零依赖接口）
+fetch('/phpdts/vex/mark_battle_log_played.php', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+        groomid: groomid,
+        pid: pid,
+        log_ids: logIds.join(',')
+    }).toString()
+});
+```
+
+### 11.5 前端关键逻辑
 
 - **迷雾渲染**: `fog=0` 的格子不可见（不渲染/灰色覆盖），`fog=1` 的格子正常显示
 - **POI可见性**: 仅迷雾清除后的POI返回（由API过滤）
@@ -924,6 +1226,8 @@ submitCommand('move', { moveto: targetPls });
 - **结构化日志渲染**: 前端按 `entry.id` 查 `log-templates.js` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `terrain-desc.js` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
+- **战斗日志播放**: 前端按 `enemy_pid` 分组，每组按 `log_id` 排序，三阶段播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 mark 接口
+- **战斗状态过滤**: `action='battle'` 时前端只允许提交 `obl_battle_action`；非战斗状态不允许提交 `obl_battle_action`（后端 `obl_command_allowed_by_state` 强制）
 
 ---
 
@@ -1018,6 +1322,90 @@ $obl_log->emit('move.success', 'move', [
 ### 12.6 日志文件清理
 
 `vex/cache/obl_log_{groomid}_{pid}.json` 在游戏重置时清理（`rs_game()` 钩子），避免跨游戏残留。日常依赖 200 条上限自然轮转。
+
+`vex/cache/obl_battle_log_{groomid}_{pid}.json` 在游戏重置时由 `obl_battle_log_clear_all()` 清理（删除所有 `obl_battle_log*.json` 文件）。
+
+---
+
+## 十三、战斗演出系统
+
+### 13.1 设计目标
+
+建立可扩展的战斗演出框架，包含战斗地图、碰撞动画、模态框播放三大核心模块。基于战斗系统重构设计案（先攻轮机制）的后续演进。
+
+**核心问题解决**：
+1. 战斗结束日志丢失 → played 标记机制 + 文件持久化
+2. 缺乏演出反馈 → 三阶段播放（碰撞动画 + 模态框 + 残留伤害数字）
+3. 状态机冗余 → normal/battle 两态，取消 prebattle/ended
+4. 战斗与探索界限模糊 → 后端 `obl_command_allowed_by_state` 强制过滤
+5. 短时间多次请求 → 三层并发锁（前端 isProcessingBattle + commandQueue._locked + 后端 flock）
+
+### 13.2 状态机
+
+```
+normal（探索）←→ battle（战斗）
+```
+
+- **prebattle 取消**：玩家点击敌人 → 纯前端确认界面（"是否攻击？"）→ 确认后直接提交 `obl_battle_start`，后端直接进入 `action='battle'`
+- **ended 取消**：模态框播放完自动关闭，关闭后刷新状态决定去留
+
+### 13.3 battlelog 数据流（played 标记机制）
+
+```
+后端 emit battlelog（played=0）
+  → obl_battle_log_persist() 追加到文件，分配 log_id，played=0
+  → 命令响应只返回 {}（不再附带 battlelog 字段）
+
+前端 fetchAndPlayBattleLog()
+  → gameApi('battle_log') → 返回 played=0 的条目
+  → 按 enemy_pid 分组 → 每组三阶段播放
+  → POST mark_battle_log_played.php 标记 played=1
+```
+
+**关键决策**：
+- **统一单路径**：所有 battlelog（玩家命令 + 遭遇战）都走"持久化 → 前端拉取 → 标记"统一流程，不再有"命令响应附带"的双路径
+- **零依赖 mark 接口**：`vex/mark_battle_log_played.php` 不走 api_v2，无 auth/DB，只文件读写
+- **文件不被清空**：played=1 的条目保留作为历史记录
+
+### 13.4 三阶段播放流程
+
+前端 `playBattleLogGroup(entries, enemyPid)` 实现：
+
+```
+1. 碰撞动画阶段（地图上）
+   → foreach entries: 若 action_id='unarmed_strike' → playCollisionAnimation
+   → 攻击方冲刺（向受击方位移 4px 后回位，300ms）
+   → 受击方抖动（延迟 120ms，300ms）
+   → 不含伤害数字（避免"未卜先知"）
+
+2. 模态框阶段（中央遮罩）
+   → 播放前移除动作按钮 turn-active 光效（避免透过模态框遮罩闪烁）
+   → 按 log_id 排序播放 battlelog
+   → turn=0 显示"── 战斗开始 ──"分隔符
+   → turn>=1 显示"── 回合 N ──"分隔符
+   → 逐条显示，每条间隔 500ms
+   → 播放完停留 1200ms 自动关闭
+
+3. 残留伤害数字阶段（地图格上）
+   → 模态框关闭后，在受击方格子上淡入显示伤害数字
+   → 使用 position: fixed + 视口坐标（避免依赖容器定位上下文）
+   → 2s 后自动移除
+   → 恢复动作按钮 turn-active 光效（如果仍是玩家回合）
+```
+
+### 13.5 玩家回合提示
+
+战斗模态框关闭后，若仍是玩家回合：
+- 显示"你的回合"Toast
+- Toast 位置：header 下方（`top: 100px`，水平居中），使用 `.pos-screen-center` class
+- 动作按钮添加 `turn-active` class，触发 `turn-glow` 呼吸动画（2s 周期，边框渐变 + 内发光）
+
+### 13.6 相关文档
+
+- `oblivions/docs/战斗演出系统设计案.md` — 战斗演出系统设计案（前端框架）
+- `oblivions/docs/战斗系统重构设计案.md` — 先攻轮机制设计案（后端逻辑基础）
+- `oblivions/docs/战斗系统设计案.md` — 原始战斗系统设计案（含 prebattle 定义，已部分过时）
+- `vex/CODEBASE.md` — Vex 前端代码库地图（含战斗模块详细说明）
 
 ---
 

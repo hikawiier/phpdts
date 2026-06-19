@@ -739,6 +739,14 @@ body::after {
     transform: translateX(-50%);
 }
 
+/* 战斗模态框关闭后：header 下方（水平居中） */
+.toast-container.pos-screen-center {
+    right: auto;
+    left: 50%;
+    top: 100px;
+    transform: translateX(-50%);
+}
+
 .toast {
     padding: 6px 12px;
     border: 1px solid #888;

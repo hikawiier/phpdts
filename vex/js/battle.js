@@ -1,31 +1,36 @@
 // ══════════════════════════════════════════════════
 // 战斗状态机 / Battle state machine
 //
-// 检测 player_info.action 变化，进入/退出战斗模式：
-// - action='prebattle' → prebattle 模式（显示动作按钮，等待玩家选择）
-// - action='battle'    → battle 模式（拉取 battle_log，播放）
-//   - 检查 oblpara.battle.queue 判断玩家是否当前顺位：
-//     - 玩家顺位 → 显示动作按钮
-//     - 敌人顺位 → 显示"敌人正在行动..."等待提示
-// - action=''          → 退出战斗模式，恢复 normalMode
+// 简化为 normal/battle 两态：
+// - normal（探索）→ 玩家点击敌人 → 纯前端确认界面 → 提交 obl_battle_start → battle
+// - battle（战斗）→ 玩家提交 obl_battle_action → 播放碰撞动画+模态框 → 继续 battle 或回 normal
 //
-// 战斗模式下右侧 CHRONICLE + ACTIONS 替换为 COMBAT LOG + ACTIONS。
-// 战斗日志通过 api_v2.php?action=battle_log 拉取（待播放队列）。
+// battlelog 数据流（played 标记机制）：
+// - 后端所有 battlelog 持久化到文件，每条带 log_id + enemy_pid + played=0
+// - 前端拉取 played=0 的条目 → 按 enemy_pid 分组 → 每组先播碰撞动画再播模态框
+// - 播完调 mark_battle_log_played.php 标记 played=1
 // ══════════════════════════════════════════════════
 
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
-import { renderBattleLog, renderBattleActions, renderBattleEndActions } from './battle-render.js';
+import { renderBattleActions, renderBattleWaiting, renderBattleHeader } from './battle-render.js';
+import { playBattleLog } from './battle-modal.js';
+import { playCollisionAnimation, playDamageNumbersAfterModal } from './battle-animation.js';
+import { BASE_URL } from './data.js';
 
 // 战斗状态
-let currentMode = 'normal';   // 'normal' | 'prebattle' | 'battle' | 'ended'
+let currentMode = 'normal';   // 'normal' | 'battle'
 let currentBid = 0;           // 当前战斗对象 PID
 let currentEnemyName = '';    // 当前战斗对象名称
+let currentGroomid = 0;       // 当前房间 ID（用于标记接口）
+let currentPid = 0;           // 当前玩家 PID（用于标记接口）
+let isPlayingBattleLog = false; // 是否正在播放 battlelog（防重入）
+let isProcessingBattle = false; // 命令处理中（覆盖提交+播放全流程，屏蔽快速重复点击）
 
 /**
  * 刷新战斗状态：检测 action 变化，进入/退出战斗模式
  *
- * 在 app.js 的 refreshAll 中调用。
+ * 在 app.js 的 refreshAll 和 game:action-completed 事件中调用。
  */
 export async function refreshBattle() {
     try {
@@ -37,20 +42,17 @@ export async function refreshBattle() {
         const oblpara = result.data.oblpara || {};
         const battleState = oblpara.battle || null;
 
-        if (action === 'prebattle') {
-            await enterPrebattleMode(bid);
-        } else if (action === 'battle') {
+        // 记录 groomid 和 pid（用于标记接口）
+        currentGroomid = parseInt(result.data.groomid) || 0;
+        currentPid = parseInt(result.data.pid) || 0;
+
+        if (action === 'battle') {
             // 检查先攻队列，判断玩家是否当前顺位
             const isPlayerTurn = checkPlayerTurn(battleState, bid);
             await enterBattleMode(bid, isPlayerTurn);
         } else {
             // action='' 战斗已结束
-            // 若当前仍在战斗界面，先拉取最后的 battle_log 显示，再展示继续按钮
-            if (currentMode !== 'normal' && currentMode !== 'ended') {
-                await enterBattleEndMode();
-            } else if (currentMode === 'ended') {
-                // 已在结束态，保持等待玩家点击继续
-            } else {
+            if (currentMode !== 'normal') {
                 exitBattleMode();
             }
         }
@@ -81,40 +83,14 @@ function checkPlayerTurn(battleState, enemyPid) {
 }
 
 /**
- * 进入 prebattle 模式
- *
- * @param {number} bid 敌人 PID
- */
-async function enterPrebattleMode(bid) {
-    // 已在 prebattle 模式且 bid 未变，无需重复渲染
-    if (currentMode === 'prebattle' && currentBid === bid) return;
-
-    currentMode = 'prebattle';
-    currentBid = bid;
-
-    // 获取敌人名称
-    await fetchEnemyName(bid);
-
-    // 切换 DOM
-    showBattleMode();
-
-    // 渲染空战斗日志（prebattle 阶段无动作日志）
-    renderBattleLog([], currentEnemyName);
-
-    // 渲染动作按钮：空手攻击（开始战斗）+ 取消战斗（无条件退出）
-    renderBattleActions('prebattle', onBattleAction, cancelBattle);
-}
-
-/**
  * 进入 battle 模式
  *
  * @param {number} bid 敌人 PID
- * @param {boolean} isPlayerTurn 玩家是否当前顺位（true=显示动作按钮，false=显示等待提示）
+ * @param {boolean} isPlayerTurn 玩家是否当前顺位
  */
 async function enterBattleMode(bid, isPlayerTurn) {
-    // 已在 battle 模式且 bid 未变，只拉取新日志 + 更新动作面板
+    // 已在 battle 模式且 bid 未变，只更新动作面板
     if (currentMode === 'battle' && currentBid === bid) {
-        await fetchAndRenderBattleLog();
         updateActionPanel(isPlayerTurn);
         return;
     }
@@ -127,28 +103,13 @@ async function enterBattleMode(bid, isPlayerTurn) {
 
     // 切换 DOM
     showBattleMode();
-
-    // 拉取并渲染战斗日志
-    await fetchAndRenderBattleLog();
+    renderBattleHeader(currentEnemyName);
 
     // 根据顺位渲染动作面板
     updateActionPanel(isPlayerTurn);
-}
 
-/**
- * 更新动作面板：玩家顺位时显示动作按钮，否则显示等待提示
- *
- * @param {boolean} isPlayerTurn 玩家是否当前顺位
- */
-function updateActionPanel(isPlayerTurn) {
-    if (isPlayerTurn) {
-        renderBattleActions('battle', onBattleAction);
-    } else {
-        const el = document.getElementById('battleActionBar');
-        if (el) {
-            el.innerHTML = '<div class="text-fg-dim text-[10px] py-2 text-center">敌人正在行动...</div>';
-        }
-    }
+    // 拉取并播放未播放的 battlelog
+    await fetchAndPlayBattleLog();
 }
 
 /**
@@ -161,120 +122,92 @@ function exitBattleMode() {
     currentBid = 0;
     currentEnemyName = '';
 
-    // 移除 ended 状态的全局 click 监听器（防御性，防止泄漏）
-    document.removeEventListener('click', autoExitBattleEnd, true);
-
     // 切换 DOM
     showNormalMode();
 
+    // 移除战斗边框光效
+    document.body.classList.remove('battle-active');
+
     // 广播战斗结束事件，触发地图和动作条刷新
-    // （杀死敌人后敌人需从地图消失，动作条需恢复探索选项）
     dataManager.invalidateAll();
     dataManager.broadcast('battle:ended');
 }
 
 /**
- * 进入战斗结束态
+ * 更新动作面板：玩家顺位时显示动作按钮，否则显示等待提示
  *
- * 战斗已结束（action=''），但玩家尚未确认。
- * 拉取最后的 battle_log（含 battle.end 条目）渲染，并显示"继续探索"按钮。
- * 玩家点击继续后才真正 exitBattleMode。
- *
- * 体验优化：ended 状态下，点击 battleMode 外的任何元素（如地图）等效于
- * 先点"继续探索"退出结束态，再执行原本的点击操作。
+ * @param {boolean} isPlayerTurn 玩家是否当前顺位
  */
-async function enterBattleEndMode() {
-    currentMode = 'ended';
+function updateActionPanel(isPlayerTurn) {
+    if (isPlayerTurn) {
+        renderBattleActions(onBattleAction);
+    } else {
+        renderBattleWaiting();
+    }
+}
 
-    // 确保战斗界面可见（玩家可能从 prebattle/battle 直接进入结束态）
-    showBattleMode();
+// ══════════════════════════════════════════════════
+// 玩家主动攻击流程
+// ══════════════════════════════════════════════════
 
-    // 拉取并渲染最后的战斗日志（含最后一击 + battle.end）
-    await fetchAndRenderBattleLog();
+/**
+ * 玩家主动攻击：显示确认界面
+ *
+ * 供外部调用（如地图点击敌人）。
+ * 纯前端确认界面，玩家确认后提交 obl_battle_start 命令。
+ *
+ * @param {number} enemyPid 敌人 PID
+ */
+export async function startBattle(enemyPid) {
+    if (currentMode !== 'normal') return;
 
-    // 显示继续按钮
-    renderBattleEndActions(() => {
-        exitBattleMode();
+    // 获取敌人名称
+    const enemyName = await fetchEnemyNameByPid(enemyPid);
+
+    // 显示确认界面
+    showBattleConfirm(enemyName, async () => {
+        await confirmStartBattle(enemyPid);
     });
-
-    // 监听全局 click：ended 状态下点击 battleMode 外的元素，自动退出结束态
-    // capture 阶段拦截，先 exitBattleMode，不阻止事件传播，让原本的点击继续执行
-    document.addEventListener('click', autoExitBattleEnd, true);
 }
 
 /**
- * ended 状态下的全局 click 拦截器
+ * 确认发起攻击
  *
- * 点击 battleMode 外的元素时，先 exitBattleMode，让原本的点击操作继续执行。
- * 点击 battleMode 内的元素（如"继续探索"按钮）不处理，由按钮自身 handler 处理。
+ * @param {number} enemyPid 敌人 PID
  */
-function autoExitBattleEnd(e) {
-    // 只在 ended 状态下生效（防御性，正常情况下退出 ended 后会移除监听器）
-    if (currentMode !== 'ended') {
-        document.removeEventListener('click', autoExitBattleEnd, true);
-        return;
-    }
-
-    // 点击 battleMode 内的元素，不处理
-    if (e.target.closest('#battleMode')) return;
-
-    // 点击了 battleMode 外的元素，退出结束态
-    document.removeEventListener('click', autoExitBattleEnd, true);
-    exitBattleMode();
-    // 不调用 e.stopPropagation()，让事件继续传播到原本的 target（如地图点击）
-}
-
-/**
- * 从 enemies API 获取敌人名称
- *
- * @param {number} bid 敌人 PID
- */
-async function fetchEnemyName(bid) {
-    if (!bid) {
-        currentEnemyName = '';
-        return;
-    }
-
+async function confirmStartBattle(enemyPid) {
+    if (isProcessingBattle) return;
+    isProcessingBattle = true;
     try {
-        const result = await dataManager.fetch('enemies', true);
-        if (result.status !== 'success' || !result.data) {
-            currentEnemyName = '敌人';
+        hideBattleConfirm();
+
+        // 提交 obl_battle_start 命令
+        const result = await commandQueue.execute({
+            command: 'obl_battle_start',
+            enemy_pid: enemyPid,
+        });
+
+        if (!result.success) {
+            console.error('[Battle] start failed:', result);
+            dataManager.broadcast('ui:toast', { type: 'error', msg: result.error || '无法发起攻击' });
             return;
         }
 
-        const enemies = result.data.enemies || [];
-        for (let i = 0; i < enemies.length; i++) {
-            if (parseInt(enemies[i].pid) === bid) {
-                currentEnemyName = enemies[i].name || '敌人';
-                return;
-            }
-        }
-        currentEnemyName = '敌人';
-    } catch (e) {
-        currentEnemyName = '敌人';
+        // 失效缓存，确保下次拉取最新数据
+        dataManager.invalidate('player_info');
+        dataManager.invalidate('enemies');
+        dataManager.invalidate('battle_log');
+
+        // 刷新战斗状态（会进入 battle 模式并拉取播放 battlelog）
+        await refreshBattle();
+    } finally {
+        isProcessingBattle = false;
     }
 }
 
-/**
- * 拉取并渲染战斗日志
- *
- * 只在有新日志时更新渲染，避免空数组覆盖已有日志
- * （obl_battle_log_load 返回后清空文件，定时刷新时第二次拉取会拿到空数组）
- */
-async function fetchAndRenderBattleLog() {
-    try {
-        const result = await dataManager.fetch('battle_log', true);
-        if (result.status !== 'success' || !result.data) return;
-
-        const entries = result.data.entries || [];
-        // 只在有新日志时更新渲染
-        if (entries.length > 0) {
-            renderBattleLog(entries, currentEnemyName);
-        }
-    } catch (e) {
-        console.error('[Battle] fetchAndRenderBattleLog error:', e);
-    }
-}
+// ══════════════════════════════════════════════════
+// 战斗动作流程
+// ══════════════════════════════════════════════════
 
 /**
  * 战斗动作回调
@@ -282,71 +215,273 @@ async function fetchAndRenderBattleLog() {
  * @param {string} actionId 动作 ID（如 'unarmed_strike'）
  */
 async function onBattleAction(actionId) {
-    if (currentMode !== 'prebattle' && currentMode !== 'battle') return;
+    if (currentMode !== 'battle') return;
     if (!currentBid) return;
+    if (isProcessingBattle) return;
+    isProcessingBattle = true;
+    try {
+        // 提交战斗动作
+        const result = await commandQueue.execute({
+            command: 'obl_battle_action',
+            action_id: actionId,
+        });
 
-    // 提交战斗动作
-    const result = await commandQueue.execute({
-        command: 'obl_battle_action',
-        action_id: actionId,
-    });
+        if (!result.success) {
+            console.error('[Battle] action failed:', result);
+            return;
+        }
 
-    if (!result.success) {
-        console.error('[Battle] action failed:', result);
-        return;
+        // 失效缓存
+        dataManager.invalidate('player_info');
+        dataManager.invalidate('enemies');
+        dataManager.invalidate('battle_log');
+
+        // 拉取并播放新产生的 battlelog
+        await fetchAndPlayBattleLog();
+
+        // 刷新战斗状态
+        await refreshBattle();
+    } finally {
+        isProcessingBattle = false;
     }
+}
 
-    // 失效缓存，确保下次拉取最新数据
-    dataManager.invalidate('player_info');
-    dataManager.invalidate('battle_log');
-    dataManager.invalidate('enemies');
+// ══════════════════════════════════════════════════
+// battlelog 拉取 + 分组 + 播放 + 标记
+// ══════════════════════════════════════════════════
 
-    // 刷新战斗状态（拉取新的 battle_log 并播放）
-    await refreshBattle();
+/**
+ * 拉取未播放的 battlelog，按 enemy_pid 分组播放，播完标记
+ */
+async function fetchAndPlayBattleLog() {
+    if (isPlayingBattleLog) return;  // 防重入
+    if (!currentGroomid || !currentPid) return;
+
+    try {
+        // 失效缓存，确保拉取最新
+        dataManager.invalidate('battle_log');
+        const result = await dataManager.fetch('battle_log', true);
+        if (result.status !== 'success' || !result.data) return;
+
+        const entries = result.data.entries || [];
+        if (entries.length === 0) return;
+
+        isPlayingBattleLog = true;
+
+        // 按 enemy_pid 分组
+        const groups = groupByEnemyPid(entries);
+
+        // 收集所有要标记的 log_id
+        const allLogIds = entries.map(e => e.log_id).filter(id => id);
+
+        // 逐组播放
+        for (const enemyPid of Object.keys(groups)) {
+            const groupEntries = groups[enemyPid];
+            await playBattleLogGroup(groupEntries, parseInt(enemyPid));
+        }
+
+        // 标记为已播放
+        await markBattleLogPlayed(allLogIds);
+
+        // 播放完后，如果当前是玩家回合，显示"你的回合"提示
+        const playerInfo = await dataManager.fetch('player_info', true);
+        if (playerInfo.status === 'success' && playerInfo.data) {
+            const action = playerInfo.data.action || '';
+            if (action === 'battle') {
+                const battleState = (playerInfo.data.oblpara || {}).battle || null;
+                const isPlayerTurn = checkPlayerTurn(battleState, parseInt(playerInfo.data.bid));
+                if (isPlayerTurn) {
+                    // 定位到屏幕正中央（模态框消失的位置）
+                    const toastContainer = document.getElementById('toastContainer');
+                    if (toastContainer) {
+                        toastContainer.classList.add('pos-screen-center');
+                    }
+                    dataManager.broadcast('ui:toast', { type: 'info', msg: '你的回合' });
+                    // toast 消失后恢复默认位置（显示 2000ms + 淡出 300ms + 缓冲）
+                    setTimeout(() => {
+                        if (toastContainer) toastContainer.classList.remove('pos-screen-center');
+                    }, 2500);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[Battle] fetchAndPlayBattleLog error:', e);
+    } finally {
+        isPlayingBattleLog = false;
+    }
 }
 
 /**
- * 玩家主动攻击：进入 prebattle 状态
+ * 按 enemy_pid 分组
  *
- * 供外部调用（如敌人列表的攻击按钮）。
+ * @param {Array} entries battlelog 条目数组
+ * @returns {Object} { enemy_pid: [entries...] }
+ */
+function groupByEnemyPid(entries) {
+    const groups = {};
+    for (const entry of entries) {
+        const key = entry.enemy_pid || 0;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(entry);
+    }
+    return groups;
+}
+
+/**
+ * 播放一组的 battlelog：先碰撞动画，再模态框
  *
+ * @param {Array} entries 同一 enemy_pid 的 battlelog 条目
  * @param {number} enemyPid 敌人 PID
  */
-export async function startBattle(enemyPid) {
-    if (currentMode !== 'normal') return;
+async function playBattleLogGroup(entries, enemyPid) {
+    // 获取敌人名称和 HP 信息
+    const context = await buildPlayContext(enemyPid);
 
-    const result = await commandQueue.execute({
-        command: 'obl_battle_start',
-        enemy_pid: enemyPid,
-    });
-
-    if (!result.success) {
-        console.error('[Battle] start failed:', result);
-        dataManager.broadcast('ui:toast', { type: 'error', msg: result.error || '无法发起攻击' });
-        return;
+    // 1. 先播放碰撞动画（冲刺+抖动，不含伤害数字）
+    for (const entry of entries) {
+        if (entry.action_id === 'unarmed_strike') {
+            await playCollisionAnimation(entry, enemyPid);
+        }
     }
 
-    dataManager.invalidate('player_info');
-    await refreshBattle();
+    // 2. 播放模态框前移除按钮光效（避免透过模态框遮罩闪烁）
+    removeTurnActiveGlow();
+
+    // 3. 播放模态框（详细战斗日志）
+    await playBattleLog(entries, context, null);
+
+    // 4. 模态框关闭后，伤害数字淡入显示在地图格上（残留反馈）
+    playDamageNumbersAfterModal(entries, enemyPid);
+
+    // 5. 恢复按钮光效（如果仍是玩家回合）
+    restoreTurnActiveGlow();
 }
 
 /**
- * 取消 prebattle 状态
+ * 移除动作按钮的回合光效
  */
-export async function cancelBattle() {
-    if (currentMode !== 'prebattle') return;
+function removeTurnActiveGlow() {
+    const buttons = document.querySelectorAll('#battleActionBar .action-btn.turn-active');
+    for (let i = 0; i < buttons.length; i++) {
+        buttons[i].classList.remove('turn-active');
+    }
+}
 
-    const result = await commandQueue.execute({
-        command: 'obl_battle_cancel',
-    });
+/**
+ * 恢复动作按钮的回合光效（仅当动作按钮可见时，即玩家回合）
+ */
+function restoreTurnActiveGlow() {
+    const buttons = document.querySelectorAll('#battleActionBar .action-btn[data-action-id]');
+    for (let i = 0; i < buttons.length; i++) {
+        buttons[i].classList.add('turn-active');
+    }
+}
 
-    if (!result.success) {
-        console.error('[Battle] cancel failed:', result);
-        return;
+/**
+ * 构建播放上下文（敌人名称 + HP 信息）
+ *
+ * @param {number} enemyPid 敌人 PID
+ * @returns {Promise<Object>} { enemyName, enemyHp, enemyMaxHp, playerHp, playerMaxHp }
+ */
+async function buildPlayContext(enemyPid) {
+    let enemyName = '敌人';
+    let enemyHp = 0, enemyMaxHp = 1;
+    let playerHp = 0, playerMaxHp = 1;
+
+    try {
+        const playerInfo = await dataManager.fetch('player_info', true);
+        if (playerInfo.status === 'success' && playerInfo.data) {
+            playerHp = playerInfo.data.hp || 0;
+            playerMaxHp = playerInfo.data.mhp || 1;
+        }
+
+        const enemiesResult = await dataManager.fetch('enemies', true);
+        if (enemiesResult.status === 'success' && enemiesResult.data) {
+            const enemies = enemiesResult.data.enemies || [];
+            for (let i = 0; i < enemies.length; i++) {
+                if (parseInt(enemies[i].pid) === parseInt(enemyPid)) {
+                    enemyName = enemies[i].name || '敌人';
+                    enemyHp = enemies[i].hp || 0;
+                    enemyMaxHp = enemies[i].mhp || 1;
+                    break;
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[Battle] buildPlayContext error:', e);
     }
 
-    dataManager.invalidate('player_info');
-    await refreshBattle();
+    return {
+        enemyName: enemyName,
+        enemyHp: enemyHp,
+        enemyMaxHp: enemyMaxHp,
+        playerHp: playerHp,
+        playerMaxHp: playerMaxHp,
+    };
+}
+
+/**
+ * 调用零依赖接口标记 battlelog 为已播放
+ *
+ * @param {Array} logIds log_id 数组
+ */
+async function markBattleLogPlayed(logIds) {
+    if (!logIds || logIds.length === 0) return;
+    if (!currentGroomid || !currentPid) return;
+
+    try {
+        const body = new URLSearchParams();
+        body.append('groomid', currentGroomid);
+        body.append('pid', currentPid);
+        body.append('log_ids', logIds.join(','));
+
+        await fetch(BASE_URL + '/vex/mark_battle_log_played.php', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+    } catch (e) {
+        console.error('[Battle] markBattleLogPlayed error:', e);
+    }
+}
+
+// ══════════════════════════════════════════════════
+// 敌人信息获取
+// ══════════════════════════════════════════════════
+
+/**
+ * 从 enemies API 获取敌人名称（内部使用，设置 currentEnemyName）
+ *
+ * @param {number} bid 敌人 PID
+ */
+async function fetchEnemyName(bid) {
+    currentEnemyName = await fetchEnemyNameByPid(bid);
+}
+
+/**
+ * 从 enemies API 获取敌人名称
+ *
+ * @param {number} pid 敌人 PID
+ * @returns {Promise<string>} 敌人名称
+ */
+async function fetchEnemyNameByPid(pid) {
+    if (!pid) return '';
+
+    try {
+        const result = await dataManager.fetch('enemies', true);
+        if (result.status !== 'success' || !result.data) return '敌人';
+
+        const enemies = result.data.enemies || [];
+        for (let i = 0; i < enemies.length; i++) {
+            if (parseInt(enemies[i].pid) === pid) {
+                return enemies[i].name || '敌人';
+            }
+        }
+        return '敌人';
+    } catch (e) {
+        return '敌人';
+    }
 }
 
 // ══════════════════════════════════════════════════
@@ -358,6 +493,13 @@ function showBattleMode() {
     const battle = document.getElementById('battleMode');
     if (normal) normal.style.display = 'none';
     if (battle) battle.style.display = '';
+
+    // 添加战斗边框光效
+    document.body.classList.add('battle-active');
+
+    // 地图切换到战斗模式
+    const mapContainer = document.querySelector('.map-container');
+    if (mapContainer) mapContainer.classList.add('battle-mode');
 }
 
 function showNormalMode() {
@@ -365,15 +507,68 @@ function showNormalMode() {
     const battle = document.getElementById('battleMode');
     if (normal) normal.style.display = '';
     if (battle) battle.style.display = 'none';
+
+    // 移除战斗边框光效
+    document.body.classList.remove('battle-active');
+
+    // 地图切换回探索模式
+    const mapContainer = document.querySelector('.map-container');
+    if (mapContainer) mapContainer.classList.remove('battle-mode');
 }
+
+// ══════════════════════════════════════════════════
+// 战斗确认界面（纯前端）
+// ══════════════════════════════════════════════════
+
+/**
+ * 显示战斗确认界面
+ *
+ * @param {string} enemyName 敌人名称
+ * @param {Function} onConfirm 确认回调
+ */
+function showBattleConfirm(enemyName, onConfirm) {
+    const overlay = document.getElementById('battleConfirmOverlay');
+    const nameEl = document.getElementById('battleConfirmEnemyName');
+    const yesBtn = document.getElementById('battleConfirmYes');
+    const noBtn = document.getElementById('battleConfirmNo');
+
+    if (!overlay) return;
+
+    if (nameEl) nameEl.textContent = enemyName || '敌人';
+
+    // 移除旧的事件监听器（通过克隆节点）
+    if (yesBtn) {
+        const newYes = yesBtn.cloneNode(true);
+        yesBtn.parentNode.replaceChild(newYes, yesBtn);
+        newYes.addEventListener('click', onConfirm);
+    }
+
+    if (noBtn) {
+        const newNo = noBtn.cloneNode(true);
+        noBtn.parentNode.replaceChild(newNo, noBtn);
+        newNo.addEventListener('click', () => hideBattleConfirm());
+    }
+
+    overlay.classList.add('open');
+}
+
+/**
+ * 隐藏战斗确认界面
+ */
+function hideBattleConfirm() {
+    const overlay = document.getElementById('battleConfirmOverlay');
+    if (overlay) overlay.classList.remove('open');
+}
+
+// ══════════════════════════════════════════════════
+// 初始化
+// ══════════════════════════════════════════════════
 
 /**
  * 初始化战斗模块
  *
  * 订阅 game:action-completed 事件：任何推进 tick 的命令（move/obl_explore/obl_search）
  * 都可能触发遭遇战（NPC 移动到玩家格），需要刷新战斗状态以及时进入战斗界面。
- * 战斗内部命令（obl_battle_action/obl_battle_start/obl_battle_cancel）不广播此事件，
- * 已手动调用 refreshBattle()，不会重复刷新。
  */
 export function initBattle() {
     dataManager.listen('game:action-completed', function() {
@@ -384,7 +579,7 @@ export function initBattle() {
 /**
  * 获取当前战斗模式（供外部查询）
  *
- * @returns {string} 'normal' | 'prebattle' | 'battle' | 'ended'
+ * @returns {string} 'normal' | 'battle'
  */
 export function getBattleMode() {
     return currentMode;

@@ -18,6 +18,8 @@
 - **区域 vs 地图格**: currentRegion 对应 pgroup，currentLocation 对应 pls
 - **itempara（七字段规范）**: 玩家道具栏 JSON 数组（index 0=特殊槽，1~itemmaxslots=普通槽），每个元素含 `itm/itmk/itme/itms/itmsk/itmpara/itmid` 七字段。前端丢弃时 `slot` 参数 1~itemmaxslots 对应普通槽
 - **结构化日志**: 后端 emit 结构化条目（id+action+params），前端按 ID 查模板渲染，详见第八章
+- **战斗日志 (battlelog)**: 与 obl_log 分离的第二套日志，存战斗细节动作。前端按 `enemy_pid` 分组播放，播完调零依赖接口标记 played=1，详见第十四章
+- **战斗状态机**: normal/battle 两态，取消 prebattle/ended 中间态。玩家点击敌人 → 纯前端确认界面 → 提交 obl_battle_start 直接进入 battle
 
 ---
 
@@ -28,7 +30,7 @@ Vex 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用 ASC
 **技术栈**：
 - ES Modules（原生 JS，无 React/Vue）
 - Tailwind CSS v4（构建版，`npm run build` 编译到 `css/output.css`）
-- 自定义 CSS（`css/terminal.css`，覆盖 Tailwind 无法处理的部分）
+- 自定义 CSS（`css/terminal.css` + `css/battle.css`，覆盖 Tailwind 无法处理的部分）
 - IBM Plex Mono 等宽字体
 - 原生 fetch API
 
@@ -42,21 +44,27 @@ Vex 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用 ASC
 vex/
 ├── index.html              # SPA 入口（含 Tailwind 类名 + HTML 结构）
 ├── package.json            # Tailwind CSS v4 构建配置
+├── mark_battle_log_played.php  # 零依赖 battlelog 标记接口（无 auth/DB，只文件读写）
 ├── css/
 │   ├── input.css           # Tailwind 源文件（@theme 色板定义）
 │   ├── output.css          # Tailwind 编译输出（勿手动编辑）
-│   └── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
+│   ├── terminal.css        # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
+│   └── battle.css          # 战斗样式（战斗模态框/碰撞动画/伤害数字/回合光效/确认界面）
 ├── js/
 │   ├── app.js              # 入口：初始化 + 全局事件绑定 + 抽屉/模态框管理
 │   ├── data.js             # 全局配置：BASE_URL / DebugBus / mapData / GENDER_NAMES
 │   ├── data-manager.js     # 数据层：缓存 + 去重 + 订阅/广播
-│   ├── command-queue.js    # 命令队列：防抖 + 锁定 + 冷却
-│   ├── map.js              # 地图：渲染 + 移动 + 可达性判定
+│   ├── command-queue.js    # 命令队列：防抖 + 锁定 + 冷却（HTTP 请求级锁）
+│   ├── map.js              # 地图：渲染 + 移动 + 可达性判定 + 敌人渲染
 │   ├── tile-action.js      # 地图格交互：探索/搜索/拾取 + 居中模态框 + Toast
 │   ├── inventory.js        # 背包 + 装备渲染 + 丢弃（右侧抽屉）
 │   ├── player.js           # 玩家信息（左侧抽屉，含 AP 条 + oblpara.killnum）+ 状态栏渲染
 │   ├── log.js              # 日志：结构化渲染 + 增量检测 + Toast 触发
 │   ├── toast-position.js   # Toast 位置管理：isAnyOverlayOpen + updateToastPosition
+│   ├── battle.js           # 战斗状态机：normal/battle 切换 + battlelog 拉取/分组/播放/标记
+│   ├── battle-modal.js     # 战斗模态框：播放 battlelog + 打字机效果 + 自动关闭
+│   ├── battle-animation.js # 战斗碰撞动画：冲刺 + 抖动 + 残留伤害数字
+│   ├── battle-render.js    # 战斗渲染：BattleLogEntry → HTML + 动作按钮
 │   ├── utils.js            # 工具：escapeHtml / API请求 / 命令提交
 │   └── debug.js            # AI调试模块（仅 ?debug=ai 时加载）
 ├── data/
@@ -75,18 +83,22 @@ app.js
   ├── inventory.js ────┤
   ├── tile-action.js ──┤── data-manager.js ── data.js
   ├── player.js ───────┤── command-queue.js ── utils.js
-  └── log.js ──────────┤── toast-position.js ──┘
+  ├── log.js ──────────┤── toast-position.js ──┘
+  └── battle.js ───────┤── battle-modal.js ── battle-render.js
+                       │   battle-animation.js
                        └── data/log-templates.js ── data/terrain-desc.js
 ```
 
 **关键依赖**：
 - 所有面板模块依赖 `data-manager.js`（订阅刷新）和 `data.js`（全局状态）
-- 所有写操作依赖 `command-queue.js`（防重复提交）
+- 所有写操作依赖 `command-queue.js`（防重复提交，HTTP 请求级锁）
 - `utils.js` 提供 `gameApi()`（只读）和 `submitCommand()`（写操作）
 - `player.js` 同时负责状态栏渲染和左侧玩家抽屉
 - `log.js` 依赖 `log-templates.js`（渲染）和 `toast-position.js`（Toast 触发判定）
 - `tile-action.js` / `app.js` / `player.js` 都依赖 `toast-position.js`（2 级页面开关时更新 Toast 位置）
 - `log-templates.js` 依赖 `terrain-desc.js`（无名格描述生成）
+- `battle.js` 依赖 `battle-modal.js`（模态框播放）+ `battle-animation.js`（碰撞动画）+ `battle-render.js`（渲染）
+- `battle-modal.js` 依赖 `battle-render.js`（BattleLogEntry → HTML）
 
 ---
 
@@ -106,6 +118,7 @@ app.js
   → loadTileAction()             // gameApi('tile_actions')
   → refreshLog()                 // gameApi('obl_log')
   → loadPlayerInfo()             // gameApi('player_info') → 渲染状态栏
+  → refreshBattle()              // 检测 action 状态，进入/退出战斗模式
 ```
 
 ### 4.2 写入流
@@ -121,16 +134,36 @@ app.js
       → tile-action.js: loadTileAction() // 订阅 game:action-completed
       → log.js: refreshLog()            // 订阅 game:action-completed（含 Toast 触发）
       → player.js: loadPlayerInfo()     // 订阅 game:action-completed（渲染状态栏+抽屉打开时更新内容）
+      → battle.js: refreshBattle()      // 订阅 game:action-completed（检测遭遇战）
 ```
 
-### 4.3 事件清单
+### 4.3 战斗数据流（played 标记机制）
+
+```
+后端 emit battlelog（played=0）
+  → obl_battle_log_persist() 追加到文件
+  → 命令响应只返回 {}（不附带 battlelog）
+
+前端 fetchAndPlayBattleLog()
+  → gameApi('battle_log') → 返回 played=0 的条目
+  → 按 enemy_pid 分组
+  → 逐组三阶段播放：
+    1. 碰撞动画（地图上，冲刺+抖动，无伤害数字）
+    2. 模态框（中央遮罩，逐条播放 battlelog，含伤害信息）
+    3. 残留伤害数字（地图格上，模态框关闭后淡入显示）
+  → POST mark_battle_log_played.php 标记 played=1
+  → 若仍是玩家回合，显示"你的回合"Toast + 动作按钮 turn-active 光效
+```
+
+### 4.4 事件清单
 
 | 事件名 | 触发者 | 订阅者 | 说明 |
 |--------|--------|--------|------|
 | `map:loaded` | map.js | inventory, tile-action, log | 地图数据加载完成 |
-| `game:action-completed` | map.js, tile-action.js, inventory.js | inventory, tile-action, log, player | 任何游戏操作成功后 |
+| `game:action-completed` | map.js, tile-action.js, inventory.js, battle.js | inventory, tile-action, log, player, battle | 任何游戏操作成功后 |
 | `map:click-current` | map.js | tile-action.js | 点击当前格触发探索 |
-| `ui:toast` | 各模块 | tile-action.js | 显示 Toast 通知 |
+| `ui:toast` | 各模块（含 battle.js） | tile-action.js | 显示 Toast 通知 |
+| `battle:ended` | battle.js | （map.js 等监听刷新） | 战斗结束，触发地图和动作条刷新 |
 
 ---
 
@@ -143,17 +176,20 @@ app.js
 | `game_map` | 地图网格+连通性+迷雾+区域信息 | map.js |
 | `tile_actions` | 当前格 POI + 脚边道具 | tile-action.js |
 | `player_inventory` | 背包槽位（itempara 渲染） + 装备 | inventory.js |
-| `player_info` | 玩家属性 + AP + 装备 + oblpara（含 killnum） | player.js（状态栏+抽屉）, inventory.js |
+| `player_info` | 玩家属性 + AP + 装备 + oblpara（含 killnum）+ groomid | player.js（状态栏+抽屉）, inventory.js, battle.js |
 | `obl_log` | 结构化日志条目数组（LogEntry[]） | log.js |
+| `battle_log` | 战斗日志条目数组（BattleLogEntry[]，played=0） | battle.js |
+| `enemies` | 当前区域敌人列表 | map.js（敌人渲染）, battle.js（敌人名称查询） |
 
 **`player_info` 字段说明**（Oblivions 模式独立数据层 `bra_oblplayers`）：
 - 基本信息：`pid`/`type`/`name`/`gd`/`icon`
+- **房间 ID**：`groomid`（供前端调用零依赖接口如 `mark_battle_log_played.php`）
 - 战斗状态：`action`/`bid`
 - 战斗属性：`hp`/`mhp`/`sp`/`msp`/`att`/`def`
 - **AP（Oblivions 专属）**：`ap`/`max_ap`
 - 位置与进度：`pgroup`/`pls`/`lvl`/`exp`/`upexp`/`state`
 - 道具栏：`itemmaxslots`（道具栏上限，道具详情走 `player_inventory`）
-- **Oblivions 专属 JSON 字段**：`tacpara`/`skillpara`/`oblpara`（含 `killnum` 等杂项数据）
+- **Oblivions 专属 JSON 字段**：`tacpara`/`skillpara`/`oblpara`（含 `killnum`/`battle` 等杂项数据）
 - 装备：`equipment`（7 槽 × 6 字段：wep/wep2/arb/arh/ara/arf/art）
 
 > **注**：传统模式字段（race/club/nick/money/rage/pose/tactic/killnum/skills 等）在 Oblivions 模式下不再返回。`killnum` 改为从 `oblpara.killnum` 读取。
@@ -178,8 +214,11 @@ app.js
 // 移动
 { command: 'move', moveto: number }  // moveto = 目标格 pls
 
-// 区域切换（站在出入口格时移动到当前位置触发）
-{ command: 'move', moveto: number }  // moveto = 出入口格 pls
+// 玩家主动攻击（直接进入 battle 状态，取消 prebattle）
+{ command: 'obl_battle_start', enemy_pid: number }
+
+// 战斗动作（玩家先攻轮）
+{ command: 'obl_battle_action', action_id: 'unarmed_strike' }
 ```
 
 ### 5.3 响应格式
@@ -195,6 +234,12 @@ app.js
 ```
 
 **说明**：Oblivions 模式下 `command.php` 仅做模式判定后委托给 `oblivions/include/core/obl_command.php`，响应只返回空 JSON `{}`。前端不依赖命令响应获取业务数据，而是通过 `dataManager.invalidateAll()` + 重新拉取只读 API 获取最新状态。
+
+**并发冲突响应**：若同一玩家同时提交多个命令，后端 `flock` 锁会拒绝后续请求：
+```json
+{ "error": "COMMAND_IN_PROGRESS" }
+```
+前端 `commandQueue.execute()` 会将此视为失败，但 `isProcessingBattle` 全生命周期锁通常会在前端就拦截重复点击。
 
 > **注**：传统模式下 `command.php` 仍返回 `{ "success": ..., "gamedata": {...}, "timer": ... }` 格式，但 Vex 前端仅在 Oblivions 模式下运行，不消费这些字段。`utils.js:submitCommand()` 仍兼容解析 JSON 响应，但 Oblivions 模式下 `gamedata` 为空对象。
 
@@ -224,7 +269,67 @@ app.js
 - `entries`：按时间正序（旧→新）
 - `total`：当前存储的条目总数（正式日志 200 条 + debug 日志 50 条，分开计数）
 
-### 5.5 `enemies` 响应格式
+### 5.5 `battle_log` 响应格式
+
+```json
+{
+  "status": "success",
+  "data": {
+    "entries": [BattleLogEntry, ...],
+    "total": 3
+  }
+}
+```
+
+**只返回 `played=0` 的条目**。
+
+**BattleLogEntry 结构**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 固定 `'battle.action'` |
+| `log_id` | int | 文件内自增 ID，用于标记 played |
+| `turn` | int | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
+| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
+| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`initiative.roll`/`battle.end`） |
+| `action_name` | string | 动作显示名 |
+| `target` | string | 目标标识 |
+| `effect_value` | int | 效果值（伤害值等） |
+| `extra` | object\|null | 额外信息 |
+| `enemy_pid` | int | 战斗对象 PID（前端按战斗分组播放） |
+| `played` | int | 0=未播放（API 总是返回 0） |
+| `ts` | int | Unix 时间戳 |
+
+### 5.6 `mark_battle_log_played.php` — 零依赖标记接口
+
+**独立文件**（不走 `api_v2.php`），位于 `vex/mark_battle_log_played.php`。
+
+- **请求**: `POST vex/mark_battle_log_played.php`
+- **Content-Type**: `application/x-www-form-urlencoded`
+- **参数**:
+  - `groomid` (int) — 房间 ID
+  - `pid` (int) — 玩家 ID
+  - `log_ids` (逗号分隔字符串) — 要标记的 log_id 数组
+- **响应**: `{ "success": true, "marked": N }`
+
+**前端调用**（`battle.js: markBattleLogPlayed()`）：
+```javascript
+const body = new URLSearchParams();
+body.append('groomid', currentGroomid);
+body.append('pid', currentPid);
+body.append('log_ids', logIds.join(','));
+
+await fetch(BASE_URL + '/vex/mark_battle_log_played.php', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+});
+```
+
+**零依赖设计**：不依赖任何游戏框架（无 auth/DB），只文件读写。安全性靠 `(int)` 强制转换防路径遍历。设计理由：mark 请求即使被伪造也无严重后果（最多让玩家少看一条 battlelog）。
+
+### 5.7 `enemies` 响应格式
 
 ```json
 {
@@ -257,7 +362,7 @@ app.js
 
 **敌人渲染逻辑**（map.js）：
 - 仅 `discovered=1` 的敌人在地图上渲染（敌人移动超出玩家视野后自动从列表移除）
-- 敌人图标渲染在对应 `(pgroup, pls)` 格子上
+- 敌人图标渲染在对应 `(pgroup, pls)` 格子上，带 `data-enemy-pid` 属性供战斗动画定位
 - 战斗状态下（`action='battle'`），战斗对象始终显示（即使 `discovered=0`）
 - 敌人 HP 条显示在图标下方（`hp`/`mhp`）
 
@@ -298,6 +403,20 @@ links = {
 - `isLocked` — 当前是否锁定中
 - `remainingCooldown` — 剩余冷却毫秒数
 
+**注意**：`_locked` 仅覆盖 HTTP 请求期间，不覆盖"播放 battlelog + 刷新状态"的全生命周期。全生命周期锁由 `battle.js: isProcessingBattle` 负责（详见 14.4）。
+
+### 6.4 Battle 模块状态（battle.js 内部）
+
+```javascript
+let currentMode = 'normal';        // 'normal' | 'battle'
+let currentBid = 0;                // 当前战斗对象 PID
+let currentEnemyName = '';         // 当前战斗对象名称
+let currentGroomid = 0;            // 当前房间 ID（用于 mark 接口）
+let currentPid = 0;                // 当前玩家 PID（用于 mark 接口）
+let isPlayingBattleLog = false;    // 是否正在播放 battlelog（防重入）
+let isProcessingBattle = false;    // 命令处理中（全生命周期锁，屏蔽快速重复点击）
+```
+
 ---
 
 ## 七、UI 组件
@@ -315,20 +434,17 @@ links = {
 ├──────────────────────────┬───────────────────────────────┤
 │ LEFT (65%)               │ RIGHT (35%)                   │
 │ ┌──────────────────────┐ │ ┌───────────────────────────┐ │
-│ │ CARTOGRAPHY          │ │ │ CHRONICLE (flex:4)        │ │
-│ │ (地图网格)            │ │ │ (日志，带 [TAG] 前缀)     │ │
-│ │                      │ │ │                           │ │
-│ │                      │ │ ├───────────────────────────┤ │
-│ │                      │ │ │ ACTIONS (flex:6)          │ │
-│ │                      │ │ │ [E] 探索周围              │ │
-│ │                      │ │ │ ┌────────┬────────────┐  │ │
-│ │                      │ │ │ │[G]脚边 │ [S]废料堆  │  │ │
-│ │                      │ │ │ │ 道具×6 │ (已搜索)   │  │ │
-│ │                      │ │ │ └────────┴────────────┘  │ │
-│ └──────────────────────┘ │ └───────────────────────────┘ │
+│ │ CARTOGRAPHY          │ │ │ 探索模式：CHRONICLE + ACTIONS │
+│ │ (地图网格)            │ │ │ 战斗模式：vs 敌人名 + 动作按钮│
+│ │                      │ │ │ (battleMode 切换)         │ │
+│ │                      │ │ └───────────────────────────┘ │
+│ └──────────────────────┘ │                               │
 ├──────────────────────────┴───────────────────────────────┤
 │ 浮动组件：左侧抽屉(玩家属性) / 右侧抽屉(背包+装备)       │
-│           居中模态框(POI搜索/道具拾取) / Toast通知         │
+│           居中模态框(POI搜索/道具拾取)                    │
+│           战斗模态框(battlelog 播放)                      │
+│           战斗确认界面(玩家主动攻击)                      │
+│           Toast通知                                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -353,15 +469,26 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 | 左侧抽屉 | `[属性]` 按钮 | 页面左侧滑出 | 玩家属性详情（VITALITY/STAMINA/ACTION POINTS/EXPERIENCE 四条进度条 + ATK/DEF/KILLS/POS/STATE + PROFILE） |
 | 右侧抽屉 | `[背包]` 按钮 | 页面右侧滑出 | 背包(INVENTORY) + 装备(ARMAMENT) 标签切换 |
 | 居中模态框 | POI/脚边道具点击 | 画面中央 | 360px 宽，半透明遮罩，scale 动画 |
-| Toast | `ui:toast` 事件 / 日志增量 | 动态位置（右上/左上/中上） | 自动消失通知，同类合并，详见第八章 |
+| 战斗模态框 | battlelog 播放 | 画面中央 | 半透明遮罩 + 双方 HP 条 + 逐条打字机显示 battlelog，详见 14.3 |
+| 战斗确认界面 | 玩家点击敌人攻击 | 画面中央 | "是否攻击 [敌人名]？" + [攻击]/[取消] 按钮，纯前端确认 |
+| 碰撞动画 | battlelog 播放阶段 1 | 地图格上 | 攻击方冲刺 + 受击方抖动，详见 14.5 |
+| 残留伤害数字 | battlelog 播放阶段 3 | 地图格上 | 模态框关闭后淡入显示，2s 后淡出 |
+| 回合光效 | 玩家回合时 | 动作按钮 | 边框渐变 + 内发光呼吸动画（2s 周期） |
+| Toast | `ui:toast` 事件 / 日志增量 / 战斗回合提示 | 动态位置（右上/左上/中上/header下方） | 自动消失通知，同类合并，详见第八章 |
 | 未读日志提示 | `forceScroll=false` + 新日志 | CHRONICLE 标题栏右侧 | `↓ N 条新日志`，点击滚动到底部，详见 8.4 |
 
 ### 7.4 动作条 (ACTIONS)
 
-动作条分为三个区域：
+**探索模式**（`#normalMode`）：
 1. **常驻按钮区**：`[E] 探索周围`、`前往下一区域`（满宽）
 2. **交互网格区**：2 列网格 (`.poi-grid`)，脚边道具和 POI 并排显示
 3. **空状态**：无可交互对象时显示"此处无可交互对象"
+
+**战斗模式**（`#battleMode`）：
+1. **标题区**：`vs [敌人名]`（`#battleEnemyName`）
+2. **动作按钮区**（`#battleActionBar`）：
+   - 玩家回合：渲染 `[空手攻击]` + `[逃跑]` 按钮，带 `turn-active` 光效
+   - NPC 回合：渲染"敌人正在行动..."等待提示
 
 ### 7.5 DOM ID 索引
 
@@ -376,14 +503,27 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 | `statusAvatar` | index.html | 头像容器（140×80） |
 | `mapGrid` | index.html | 地图网格容器（map.js 渲染） |
 | `mapInfo` | index.html | 地图状态行（LOC/REGION） |
-| `tileActionBar` | index.html | 动作条容器（tile-action.js 渲染） |
+| `normalMode` | index.html | 探索模式容器（tile-action.js 渲染） |
+| `tileActionBar` | index.html | 探索模式动作条容器 |
+| `battleMode` | index.html | 战斗模式容器（battle.js 切换显示） |
+| `battleEnemyName` | index.html | 战斗模式标题（vs 敌人名） |
+| `battleActionBar` | index.html | 战斗模式动作按钮容器 |
+| `battleModalOverlay` | index.html | 战斗模态框遮罩 |
+| `battleModal` | index.html | 战斗模态框主体 |
+| `battleModalEnemyName` / `battleModalPlayerName` | index.html | 战斗模态框双方名称 |
+| `battleModalEnemyHpFill` / `battleModalEnemyHpText` | index.html | 战斗模态框敌人 HP 条/文字 |
+| `battleModalPlayerHpFill` / `battleModalPlayerHpText` | index.html | 战斗模态框玩家 HP 条/文字 |
+| `battleModalBody` | index.html | 战斗模态框正文（battlelog 逐条显示） |
+| `battleConfirmOverlay` | index.html | 战斗确认界面遮罩 |
+| `battleConfirmEnemyName` | index.html | 战斗确认界面敌人名 |
+| `battleConfirmYes` / `battleConfirmNo` | index.html | 战斗确认界面 [攻击] / [取消] 按钮 |
 | `logContent` | index.html | 日志容器（log.js 渲染） |
 | `inventoryList` | index.html | 背包容器（inventory.js 渲染） |
 | `equipment` | index.html | 装备容器（inventory.js 渲染） |
 | `playerInfo` | index.html | 左侧抽屉内容容器（player.js 渲染） |
-| `modalOverlay` | index.html | 模态框遮罩 |
-| `modalBox` | index.html | 模态框主体 |
-| `modalTitle` / `modalBody` | index.html | 模态框标题 / 内容区 |
+| `modalOverlay` | index.html | 居中模态框遮罩（POI/道具） |
+| `modalBox` | index.html | 居中模态框主体 |
+| `modalTitle` / `modalBody` | index.html | 居中模态框标题 / 内容区 |
 | `toastContainer` | index.html | Toast 容器（动态定位） |
 | `drawerOverlay` | index.html | 左抽屉遮罩 |
 | `invDrawerOverlay` | index.html | 右抽屉遮罩 |
@@ -448,7 +588,7 @@ HP/SP 条：CSS 窄条（6px 高），HP 正常灰色 `#888`，HP<30% 白色闪�
 
 **新增 Toast 调用点的判断规则**：
 - 同一操作可能批量触发的同类反馈 → 传 `mergeId`（如拾取、搜索）
-- 独立的一次性通知 → 不传 `mergeId`（如"移动失败"、"体力不足"）
+- 独立的一次性通知 → 不传 `mergeId`（如"移动失败"、"体力不足"、"你的回合"）
 
 #### 8.1.5 `log-entry` 的 display:block 决策
 
@@ -570,8 +710,11 @@ refreshLog()
 | 开左抽屉（属性） | 右上角（保持默认） | （无 class） |
 | 开右抽屉（背包） | 左上角 | `.pos-left` |
 | 开模态框 | 中上 | `.pos-center` |
+| 战斗模态框关闭后（你的回合提示） | header 下方（水平居中） | `.pos-screen-center` |
 
 优先级：`模态框 > 右抽屉 > 左抽屉/默认`。
+
+`.pos-screen-center` 是战斗模块专用的临时位置：战斗模态框关闭后显示"你的回合"Toast，2.5s 后自动移除该 class 恢复默认位置。
 
 **位置切换时机**：在 `openModal`/`closeModal`/`openInvDrawer`/`closeInvDrawer`/`toggleDrawer`/`closeDrawer` 等函数末尾调用 `updateToastPosition()`。
 
@@ -604,6 +747,7 @@ refreshLog()
 | Tailwind 编译 | `css/output.css` | 工具类 + 主题 token（由 `input.css` 编译） |
 | Tailwind 源 | `css/input.css` | `@theme` 色板定义（bg/fg-dim/fg-mid/fg-bright/fg-glow/hi） |
 | 自定义 | `css/terminal.css` | CRT 特效、地图格、按钮、动画、日志类、状态栏、模态框、抽屉、Toast |
+| 自定义 | `css/battle.css` | 战斗模态框、碰撞动画、伤害数字、回合光效、战斗确认界面 |
 
 ### 9.2 Tailwind 主题色
 
@@ -619,7 +763,7 @@ refreshLog()
 
 ### 9.3 JS 动态生成的 CSS 类名
 
-JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不用 Tailwind 工具类：
+JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css` / `battle.css`），不用 Tailwind 工具类：
 
 | 类名 | 用途 | 定义位置 |
 |------|------|---------|
@@ -631,12 +775,23 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 | `.slot-card` / `.slot-filled` / `.slot-empty` | 背包格 | terminal.css |
 | `.eq-slot` / `.eq-label` / `.eq-name` | 装备槽 | terminal.css |
 | `.modal-item` / `.item-tag` / `.item-name` | 模态框道具行 | terminal.css |
-| `.toast-container` / `.toast-container.pos-left` / `.toast-container.pos-center` | Toast 容器（动态定位） | terminal.css |
+| `.toast-container` / `.toast-container.pos-left` / `.toast-container.pos-center` / `.toast-container.pos-screen-center` | Toast 容器（动态定位） | terminal.css |
 | `.toast` / `.toast.show` / `.toast-error` / `.toast-success` | Toast 通知 | terminal.css |
 | `.log-tag` / `.log-content .yellow` 等 | 日志样式 | terminal.css |
 | `.status-bar` / `.status-bar-row` / `.bar-fill` / `.bar-container` | 状态栏 | terminal.css |
 | `.status-avatar` / `.status-avatar-fallback` | 头像框 | terminal.css |
 | `.modal-overlay` / `.modal-box` | 居中模态框 | terminal.css |
+| `.battle-modal-overlay` / `.battle-modal` / `.battle-modal-header` / `.battle-modal-body` | 战斗模态框 | battle.css |
+| `.battle-modal-hp-fill` / `.battle-modal-hp-text` | 战斗模态框 HP 条 | battle.css |
+| `.battle-log-entry` / `.battle-log-entry.shown` / `.turn-divider` | 战斗模态框日志条目 | battle.css |
+| `.battle-confirm-overlay` / `.battle-confirm-btn` | 战斗确认界面 | battle.css |
+| `.attack-lunge` | 攻击方冲刺动画 | battle.css |
+| `.hit-shake` | 受击方抖动动画 | battle.css |
+| `.damage-number` / `.damage-number.heal` | 碰撞动画伤害数字（浮起） | battle.css |
+| `.damage-number-linger` | 模态框关闭后残留伤害数字（淡入淡出） | battle.css |
+| `.action-btn.turn-active` | 玩家回合动作按钮光效（边框渐变 + 内发光呼吸） | battle.css |
+| `.battle-active`（body class） | 战斗模式全界面边框光效 | battle.css |
+| `.battle-mode`（.map-container class） | 地图战斗模式 | battle.css |
 
 ### 9.4 日志颜色映射
 
@@ -665,12 +820,13 @@ JS 中拼接 HTML 时使用语义短类名（定义在 `terminal.css`），不�
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
-| 导出函数 | camelCase | `loadMap`, `loadInventory`, `refreshLog` |
-| 模块内部函数 | camelCase | `renderMapGrid`, `handleExplore`, `isReachable` |
-| DOM 事件处理 | `handle` 前缀 | `handleExplore`, `handleSearch`, `handlePickup` |
-| CSS 类名 | kebab-case | `map-cell`, `tile-row`, `slot-card` |
-| 数据事件 | `namespace:action` | `game:action-completed`, `map:loaded`, `ui:toast` |
+| 导出函数 | camelCase | `loadMap`, `loadInventory`, `refreshLog`, `refreshBattle` |
+| 模块内部函数 | camelCase | `renderMapGrid`, `handleExplore`, `isReachable`, `playBattleLogGroup` |
+| DOM 事件处理 | `handle` / `on` 前缀 | `handleExplore`, `handleSearch`, `onBattleAction` |
+| CSS 类名 | kebab-case | `map-cell`, `tile-row`, `slot-card`, `battle-modal`, `turn-active` |
+| 数据事件 | `namespace:action` | `game:action-completed`, `map:loaded`, `ui:toast`, `battle:ended` |
 | 日志 ID | `{action}.{subevent}` | `move.success`, `pickup.bag_full`（与后端一致） |
+| 战斗日志 action_id | 蛇形命名 | `unarmed_strike`, `escape`, `battle.start`, `initiative.roll`, `battle.end` |
 
 ### 10.3 HTML 拼接规范
 
@@ -688,6 +844,34 @@ dataManager.broadcast('game:action-completed');
 ```
 
 各面板模块在初始化时订阅 `game:action-completed` 事件自行刷新，无需手动列举刷新函数。
+
+**战斗模块例外**：`battle.js` 的 `confirmStartBattle()` / `onBattleAction()` 不直接广播 `game:action-completed`，而是：
+1. 失效 `player_info` / `enemies` / `battle_log` 缓存
+2. 调用 `fetchAndPlayBattleLog()` 播放 battlelog
+3. 调用 `refreshBattle()` 刷新战斗状态
+4. `isProcessingBattle` 全生命周期锁在 `finally` 块中释放
+
+### 10.5 并发控制规范
+
+**三层防护**（详见 14.4）：
+1. `battle.js: isProcessingBattle` — 全生命周期锁（覆盖提交+播放+刷新）
+2. `command-queue.js: _locked` — HTTP 请求锁
+3. 后端 `flock(LOCK_EX|LOCK_NB)` — 文件锁
+
+**前端锁使用模式**：
+```javascript
+async function someBattleAction() {
+    if (isProcessingBattle) return;  // 重复点击直接丢弃
+    isProcessingBattle = true;
+    try {
+        // 提交命令 + 播放 battlelog + 刷新状态
+    } finally {
+        isProcessingBattle = false;  // 确保异常时也释放
+    }
+}
+```
+
+**设计决策**：选择"丢弃模式"而非"队列模式"。理由：战斗指令需要根据最新状态决策，缓存旧指令依次执行会导致状态错乱。
 
 ---
 
@@ -725,7 +909,7 @@ npm run dev
 npm run build
 ```
 
-**注意**：修改 `input.css` 中的 `@theme` 后需运行 `npm run dev` 或 `npm run build` 重新编译。修改 `terminal.css` 无需构建（浏览器直接加载）。
+**注意**：修改 `input.css` 中的 `@theme` 后需运行 `npm run dev` 或 `npm run build` 重新编译。修改 `terminal.css` / `battle.css` 无需构建（浏览器直接加载）。
 
 ---
 
@@ -757,3 +941,262 @@ npm run build
 ### 13.4 小地图居中
 
 当 grid 尺寸小于容器时，容器自动切换为 `align-items: center; justify-content: center`，地图居中显示无需滚动。
+
+---
+
+## 十四、战斗演出系统
+
+### 14.1 设计目标
+
+建立可扩展的战斗演出框架，三阶段播放（碰撞动画 + 模态框 + 残留伤害数字），配合 played 标记机制实现可靠的 battlelog 投递。
+
+**核心问题解决**：
+1. **battlelog 投递可靠**：played 标记机制（后端持久化 played=0 → 前端拉取播放 → 标记 played=1）
+2. **演出反馈**：三阶段播放（碰撞动画 + 模态框 + 残留伤害数字）
+3. **状态机简化**：normal/battle 两态，取消 prebattle/ended
+4. **并发控制**：三层锁（isProcessingBattle + commandQueue._locked + 后端 flock）
+5. **玩家回合提示**：动作按钮 turn-active 光效 + "你的回合" Toast
+
+### 14.2 模块结构
+
+| 模块 | 职责 |
+|------|------|
+| `battle.js` | 战斗状态机 + battlelog 拉取/分组/播放/标记 + 全生命周期锁 |
+| `battle-modal.js` | 战斗模态框：播放 battlelog + 打字机效果 + 自动关闭 |
+| `battle-animation.js` | 碰撞动画：冲刺 + 抖动 + 残留伤害数字 |
+| `battle-render.js` | BattleLogEntry → HTML 渲染 + 动作按钮渲染 |
+| `battle.css` | 战斗模态框/碰撞动画/伤害数字/回合光效/确认界面样式 |
+
+### 14.3 战斗模态框（battle-modal.js）
+
+**接口**：
+- `playBattleLog(entries, context, onComplete)` — 播放 battlelog
+- `closeBattleModal()` — 关闭模态框
+- `isBattleModalPlaying()` — 是否正在播放
+
+**播放参数**：
+```javascript
+const TYPEWRITER_SPEED = 25;      // 打字机速度 ms/字符
+const ENTRY_INTERVAL = 500;       // 条目间隔 ms
+const COMPLETE_HOLD = 1200;       // 播放完停留 ms
+const TRANSITION_INTERVAL = 200;  // 连续模态框过渡 ms
+```
+
+**播放流程**：
+1. 渲染头部（双方名称 + HP 条）
+2. 显示模态框遮罩，等待 250ms 淡入
+3. **按 `log_id` 排序**（emit 顺序，非 turn——turn 非唯一会导致排序不稳定）
+4. 逐条播放：
+   - turn 变化时插入分隔符（turn=0 显示"── 战斗开始 ──"，turn>=1 显示"── 回合 N ──"）
+   - 渲染条目 HTML（委托 `battle-render.js: renderBattleLogEntryHtml`）
+   - 更新 HP 条（若 extra 中有 hp_after）
+   - 间隔 500ms
+5. 播放完停留 1200ms
+6. 自动关闭（淡出 200ms）
+
+**连续模态框过渡**：若正在播放时调用 `playBattleLog`，先关闭当前模态框（淡出 200ms）→ 短暂过渡 → 新模态框淡入。
+
+**关键设计**：
+- **按 log_id 排序而非 turn**：turn 非唯一（回合内多条日志 turn 相同），按 turn 排序会导致顺序不稳定
+- **turn=0 显示"战斗开始"**：battle.start / initiative.roll / battle.end 用 turn=0，避免显示"回合 0"
+
+### 14.4 并发控制（三层锁）
+
+防止短时间多次请求导致重复提交/状态错乱，前后端三层防护：
+
+| 层 | 位置 | 覆盖范围 | 释放时机 |
+|----|------|---------|---------|
+| 前端全生命周期锁 | `battle.js: isProcessingBattle` | 提交命令 → 拉取播放 battlelog → 刷新状态 | `try/finally` 末尾 |
+| 前端 HTTP 锁 | `command-queue.js: _locked` | HTTP 请求期间 | `try/finally` 末尾 |
+| 后端文件锁 | `obl_command.php: flock(LOCK_EX\|LOCK_NB)` | 命令处理期间 | 进程结束/脚本 exit 时 OS 自动释放 |
+
+**前端锁使用模式**（`confirmStartBattle` / `onBattleAction`）：
+```javascript
+async function onBattleAction(actionId) {
+    if (currentMode !== 'battle') return;
+    if (!currentBid) return;
+    if (isProcessingBattle) return;  // 重复点击直接丢弃
+    isProcessingBattle = true;
+    try {
+        const result = await commandQueue.execute({...});
+        if (!result.success) return;
+        dataManager.invalidate('player_info');
+        dataManager.invalidate('enemies');
+        dataManager.invalidate('battle_log');
+        await fetchAndPlayBattleLog();  // 播放 battlelog
+        await refreshBattle();          // 刷新状态
+    } finally {
+        isProcessingBattle = false;     // 确保异常时也释放
+    }
+}
+```
+
+**设计决策**：选择"丢弃模式"而非"队列模式"。理由：战斗指令需要根据最新状态决策，缓存旧指令依次执行会导致状态错乱。
+
+### 14.5 碰撞动画（battle-animation.js）
+
+**接口**：
+- `playCollisionAnimation(entry, enemyPid)` — 播放碰撞动画（冲刺+抖动，无伤害数字）
+- `playDamageNumbersAfterModal(entries, enemyPid)` — 模态框关闭后残留伤害数字
+
+**碰撞动画流程**（`playCollisionAnimation`）：
+1. 跳过非攻击动作（`battle.start`/`initiative.roll`/`battle.end`/`escape`）
+2. 判断攻击方/受击方：
+   - `actor === 'player'` → 攻击方=玩家元素（`.map-cell.current`），受击方=敌人元素（`[data-enemy-pid="X"]`）
+   - 否则反之
+3. 计算冲刺向量（攻击方 → 受击方方向，缩放到 4px）
+4. 攻击方冲刺（`attack-lunge` CSS 动画，300ms）
+5. 受击方抖动（延迟 120ms，`hit-shake` CSS 动画，300ms）
+6. 等待 450ms 动画完成
+
+**关键设计**：
+- **不含伤害数字**：避免"未卜先知"（玩家还没看到模态框就知道伤害值）。伤害数字在模态框关闭后才显示
+- **CSS 选择器**：`.map-cell.current`（不是 `.cell.current`，曾因此导致动画不播放）
+
+**残留伤害数字**（`playDamageNumbersAfterModal`）：
+1. 遍历 entries，只处理 `action_id === 'unarmed_strike'` 且 `effect_value > 0` 的条目
+2. 定位受击方元素（玩家或敌人）
+3. 用 `position: fixed` + 视口坐标（`getBoundingClientRect`），附加到 `document.body`
+4. 多条伤害数字错开显示（`marginTop: i * 18px`）
+5. 2s 后自动移除
+
+**为什么用 `position: fixed` 而非 `position: absolute`**：
+- `.map-container` 缺少 `position: relative`，`position: absolute` 会定位到错误的祖先元素
+- `position: fixed` + 视口坐标不受容器定位上下文影响
+
+### 14.6 三阶段播放流程（battle.js: playBattleLogGroup）
+
+```javascript
+async function playBattleLogGroup(entries, enemyPid) {
+    const context = await buildPlayContext(enemyPid);
+
+    // 1. 碰撞动画（地图上，无伤害数字）
+    for (const entry of entries) {
+        if (entry.action_id === 'unarmed_strike') {
+            await playCollisionAnimation(entry, enemyPid);
+        }
+    }
+
+    // 2. 模态框前移除按钮光效（避免透过模态框遮罩闪烁）
+    removeTurnActiveGlow();
+
+    // 3. 模态框（中央遮罩，逐条播放 battlelog，含伤害信息）
+    await playBattleLog(entries, context, null);
+
+    // 4. 残留伤害数字（地图格上，模态框关闭后淡入）
+    playDamageNumbersAfterModal(entries, enemyPid);
+
+    // 5. 恢复按钮光效（如果仍是玩家回合）
+    restoreTurnActiveGlow();
+}
+```
+
+**阶段顺序的理由**：
+- 碰撞动画在模态框前：让玩家先看到"谁打谁"的视觉反馈
+- 伤害数字在模态框后：避免"未卜先知"，模态框关闭后伤害数字作为残留反馈
+- 移除/恢复 turn-active 光效：模态框遮罩 75% 透明，黄色光效会透过遮罩闪烁，影响体验
+
+### 14.7 玩家回合提示
+
+战斗模态框关闭后，`fetchAndPlayBattleLog()` 检查是否仍是玩家回合：
+1. 拉取 `player_info`，检查 `action === 'battle'`
+2. 检查先攻队列（`oblpara.battle.queue`），判断玩家是否当前顺位
+3. 若是玩家回合：
+   - 添加 `.pos-screen-center` class 到 `#toastContainer`（header 下方水平居中）
+   - 广播 `ui:toast` 事件显示"你的回合"
+   - 2.5s 后移除 `.pos-screen-center` class 恢复默认位置
+4. 动作按钮渲染时带 `turn-active` class（`battle-render.js: renderBattleActions`）
+
+**回合光效 CSS**（方案D：边框渐变 + 内发光）：
+```css
+.action-btn.turn-active {
+    animation: turn-glow 2s ease-in-out infinite;
+}
+@keyframes turn-glow {
+    0%, 100% {
+        border-color: rgba(255, 200, 0, 0.3);
+        box-shadow: inset 0 0 4px rgba(255, 200, 0, 0.1);
+    }
+    50% {
+        border-color: rgba(255, 200, 0, 0.7);
+        box-shadow: inset 0 0 10px rgba(255, 200, 0, 0.2);
+    }
+}
+```
+
+**设计决策**：选择"边框渐变 + 内发光"而非"外发光"，理由：
+- 外发光过于刺眼，破坏终端风格
+- 内发光更克制，与现有按钮风格协调
+- 2s 呼吸周期足够明显但不打扰
+
+### 14.8 战斗确认界面（纯前端）
+
+玩家点击地图敌人时，`battle.js: startBattle(enemyPid)` 显示确认界面：
+1. 从 `enemies` API 获取敌人名称
+2. 显示 `.battle-confirm-overlay`（"是否攻击 [敌人名]？"）
+3. 玩家点击 [攻击] → `confirmStartBattle(enemyPid)` → 提交 `obl_battle_start` 命令
+4. 玩家点击 [取消] → 隐藏确认界面，不提交命令
+
+**关键设计**：取消 prebattle 中间态后，"是否攻击"的确认完全是前端行为，后端只接收最终的 `obl_battle_start` 命令。
+
+### 14.9 battlelog 数据流（played 标记机制）
+
+```
+后端 emit battlelog（played=0）
+  → obl_battle_log_persist() 追加到文件，分配 log_id，played=0
+  → 命令响应只返回 {}（不附带 battlelog）
+
+前端 fetchAndPlayBattleLog()
+  → gameApi('battle_log') → 返回 played=0 的条目
+  → 按 enemy_pid 分组（groupByEnemyPid）
+  → 逐组三阶段播放（playBattleLogGroup）
+  → POST mark_battle_log_played.php 标记 played=1
+```
+
+**关键决策**：
+- **统一单路径**：所有 battlelog（玩家命令 + 遭遇战）都走"持久化 → 前端拉取 → 标记"统一流程，不再有"命令响应附带"的双路径
+- **零依赖 mark 接口**：`vex/mark_battle_log_played.php` 不走 api_v2，无 auth/DB，只文件读写
+- **文件不被清空**：played=1 的条目保留作为历史记录
+- **log_id 排序**：前端按 `log_id`（emit 顺序）排序播放，而非 `turn`（非唯一）
+
+### 14.10 战斗状态机
+
+```
+normal（探索模式）
+  └─ 玩家点击敌人 → 纯前端确认界面 → 提交 obl_battle_start
+     → 后端 action='battle' → 切换到 battle
+
+battle（战斗模式）
+  ├─ 玩家提交 obl_battle_action → 三阶段播放 → 仍在 battle → 继续
+  ├─ 战斗结束（action=''）→ 模态框播放结算 → 关闭 → 切换到 normal
+  └─ 遭遇战（tick 结算触发）→ game:action-completed → refreshBattle 检测 → 进入 battle
+```
+
+**状态切换**（`battle.js: refreshBattle`）：
+- 拉取 `player_info`，检查 `action` 字段
+- `action === 'battle'` → 进入 battle 模式（`enterBattleMode`）
+- `action === ''` → 退出 battle 模式（`exitBattleMode`）
+
+**进入 battle 模式**（`enterBattleMode`）：
+1. 切换 DOM（隐藏 `#normalMode`，显示 `#battleMode`）
+2. 添加 `body.battle-active` class（全界面边框光效）
+3. 添加 `.map-container.battle-mode` class（地图战斗模式）
+4. 渲染战斗标题（`vs [敌人名]`）
+5. 根据顺位渲染动作面板（玩家回合=动作按钮，NPC 回合=等待提示）
+6. 拉取并播放未播放的 battlelog（`fetchAndPlayBattleLog`）
+
+**退出 battle 模式**（`exitBattleMode`）：
+1. 切换 DOM（显示 `#normalMode`，隐藏 `#battleMode`）
+2. 移除 `body.battle-active` class
+3. 移除 `.map-container.battle-mode` class
+4. 失效所有缓存，广播 `battle:ended` 事件触发地图和动作条刷新
+
+### 14.11 相关文档
+
+- `oblivions/docs/战斗演出系统设计案.md` — 战斗演出系统设计案（前端框架）
+- `oblivions/docs/战斗系统重构设计案.md` — 先攻轮机制设计案（后端逻辑基础）
+- `oblivions/CODEBASE.md` — Oblivions 后端代码库地图（含战斗系统详细说明，第十三章）
+
+---
+
+**文档结束。** 结构化日志系统的完整 ID 清单见 `vex/data/log-templates.js`，后端战斗系统详见 `oblivions/CODEBASE.md` 第十三节。
