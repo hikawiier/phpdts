@@ -276,6 +276,12 @@ if(CURSCRIPT !== 'chat')
 			if (class_exists('OblivionsLogger') && !isset($obl_log)) {
 				$obl_log = new OblivionsLogger();
 			}
+			// 战斗日志收集器初始化（与 $obl_log 分离，存战斗细节动作）
+			// 遭遇战（tick 结算）和 obl_battle_action 都会 emit 到 $obl_battle_log
+			include_once GAME_ROOT.'./oblivions/include/game/battle_log.func.php';
+			if (class_exists('BattleLogCollector') && !isset($obl_battle_log)) {
+				$obl_battle_log = new BattleLogCollector();
+			}
 		}
 
 		// Oblivions 游戏刻事件处理（在锁内，确保原子性）

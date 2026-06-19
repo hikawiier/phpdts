@@ -74,31 +74,65 @@
             <!-- RIGHT: Log + Actions -->
             <div class="flex flex-col min-h-0 overflow-hidden">
 
-                <!-- Log (flex:4) -->
-                <div class="min-h-0 flex flex-col p-3 overflow-hidden border-b border-fg-dim/30" style="flex:4 1 0%;">
-                    <div class="ascii-title flex-none mb-1.5">
-                        <span>┌─</span>
-                        <span class="ascii-label">CHRONICLE</span>
-                        <span>─</span>
-                        <span class="flex-1 ascii-line"></span>
-                        <span id="logUnreadBtn" class="log-unread-btn" style="display:none;">↓ <span id="logUnreadCount">0</span> 条新日志</span>
-                        <span>┐</span>
+                <!-- 正常模式：Log + Actions -->
+                <div id="normalMode" class="flex flex-col min-h-0 overflow-hidden flex-1">
+
+                    <!-- Log (flex:4) -->
+                    <div class="min-h-0 flex flex-col p-3 overflow-hidden border-b border-fg-dim/30" style="flex:4 1 0%;">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">CHRONICLE</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span id="logUnreadBtn" class="log-unread-btn" style="display:none;">↓ <span id="logUnreadCount">0</span> 条新日志</span>
+                            <span>┐</span>
+                        </div>
+                        <div class="flex-1 overflow-y-auto pl-2 border-l border-fg-dim/20 min-h-0">
+                            <div id="logContent" class="text-fg-mid leading-[1.8]"></div>
+                        </div>
                     </div>
-                    <div class="flex-1 overflow-y-auto pl-2 border-l border-fg-dim/20 min-h-0">
-                        <div id="logContent" class="text-fg-mid leading-[1.8]"></div>
+
+                    <!-- Actions (flex:6) -->
+                    <div class="min-h-0 flex flex-col p-3 overflow-hidden" style="flex:6 1 0%;">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">ACTIONS</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span>┐</span>
+                        </div>
+                        <div id="tileActionBar" class="flex-1 overflow-y-auto min-h-0"></div>
                     </div>
                 </div>
 
-                <!-- Actions (flex:6) -->
-                <div class="min-h-0 flex flex-col p-3 overflow-hidden" style="flex:6 1 0%;">
-                    <div class="ascii-title flex-none mb-1.5">
-                        <span>┌─</span>
-                        <span class="ascii-label">ACTIONS</span>
-                        <span>─</span>
-                        <span class="flex-1 ascii-line"></span>
-                        <span>┐</span>
+                <!-- 战斗模式：Battle Log + Battle Actions -->
+                <div id="battleMode" class="flex flex-col min-h-0 overflow-hidden flex-1" style="display:none;">
+
+                    <!-- Battle Log (flex:6) -->
+                    <div class="min-h-0 flex flex-col p-3 overflow-hidden border-b border-fg-dim/30" style="flex:6 1 0%;">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">COMBAT LOG</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span>┐</span>
+                        </div>
+                        <div class="flex-1 overflow-y-auto pl-2 border-l border-fg-dim/20 min-h-0">
+                            <div id="battleLogContent" class="text-fg-mid leading-[1.8]"></div>
+                        </div>
                     </div>
-                    <div id="tileActionBar" class="flex-1 overflow-y-auto min-h-0"></div>
+
+                    <!-- Battle Actions (flex:4) -->
+                    <div class="min-h-0 flex flex-col p-3 overflow-hidden" style="flex:4 1 0%;">
+                        <div class="ascii-title flex-none mb-1.5">
+                            <span>┌─</span>
+                            <span class="ascii-label">ACTIONS</span>
+                            <span>─</span>
+                            <span class="flex-1 ascii-line"></span>
+                            <span>┐</span>
+                        </div>
+                        <div id="battleActionBar" class="flex-1 overflow-y-auto min-h-0"></div>
+                    </div>
                 </div>
             </div>
         </main>

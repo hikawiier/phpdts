@@ -8,6 +8,7 @@ import { DebugBus, mapData } from './data.js';
 import { escapeHtml, getPlaceName, gameApi } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
+import { startBattle } from './battle.js';
 
 // ══════════════════════════════════════════════════
 // 缩放状态
@@ -232,7 +233,22 @@ function renderMapGrid() {
                     cell.innerHTML = label ? '<span class="cell-name" style="font-size:' + nameFontSize + 'px">' + escapeHtml(label) + '</span>' : '<span class="cell-coord">' + coordLabel + '</span>';
                 }
 
-                if (reachable) {
+                if (enemy) {
+                    // 敌人格：点击发起攻击（进入 prebattle）
+                    cell.style.cursor = 'crosshair';
+                    cell.title = '点击攻击 ' + enemy.name;
+                    cell.addEventListener('click', () => {
+                        // 前端校验攻击距离（阶段一射程=1，相邻格）
+                        // Oblivions 命令返回空 {}，无法依赖后端错误反馈，需前端自行拦截
+                        const path = findPath(mapData.curLoc, tileInfo.pls);
+                        const distance = path ? path.length - 1 : -1;
+                        if (distance !== 1) {
+                            dataManager.broadcast('ui:toast', { type: 'error', msg: '目标距离过远，需先靠近' });
+                            return;
+                        }
+                        startBattle(parseInt(enemy.pid));
+                    });
+                } else if (reachable) {
                     cell.addEventListener('click', () => clickMove(tileInfo.pls));
                     // 路径预览：悬停时显示从当前格到目标格的最短路径
                     cell.addEventListener('mouseenter', () => showPathPreview(tileInfo.pls));
@@ -735,6 +751,11 @@ function highlightCell(areaId) {
 // ══════════════════════════════════════════════════
 // 调试状态钩子（保留）
 // ══════════════════════════════════════════════════
+
+// 战斗结束 → 刷新地图（敌人可能已死亡，需从地图移除）
+dataManager.listen('battle:ended', function() {
+    loadMap();
+});
 
 DebugBus.registerState('map', function() {
     const tiles = (mapData.links && mapData.curRegion) ? mapData.links.tiles[mapData.curRegion] : null;

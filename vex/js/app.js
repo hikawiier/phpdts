@@ -7,6 +7,7 @@ import { loadInventory, setActiveTab } from './inventory.js';
 import { toggleDrawer, closeDrawer, isDrawerOpen, renderStatusBar } from './player.js';
 import { refreshLog, initLog } from './log.js';
 import { loadTileAction, closeModal } from './tile-action.js';
+import { initBattle, refreshBattle } from './battle.js';
 import { DebugBus, BASE_URL } from './data.js';
 import { updateToastPosition } from './toast-position.js';
 
@@ -17,7 +18,8 @@ async function refreshAll() {
         await Promise.allSettled([
             loadInventory(),
             loadTileAction(),
-            refreshLog()
+            refreshLog(),
+            refreshBattle()
         ]);
     } catch (e) {
         console.error('[App] refreshAll error:', e);
@@ -27,6 +29,7 @@ async function refreshAll() {
 async function loadAll() {
     console.log('[App] loadAll() start');
     initLog();  // 绑定日志区滚动监听和未读提示按钮
+    initBattle();  // 战斗模块初始化
     await refreshAll();
     renderStatusBar();
 }

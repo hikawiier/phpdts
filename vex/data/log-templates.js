@@ -217,6 +217,30 @@ export const LOG_TEMPLATES = {
             return `<span class="yellow">[系统]</span>检测到异常战斗状态（${escapeHtml(params.reason)}），已自动清除。`;
         },
     },
+    'battle.start': {
+        render: (params) => {
+            const enemy = `<span class="red">${escapeHtml(params.enemy_name)}</span>`;
+            if (params.initiator === 'player') {
+                return `你向${enemy}发起了攻击，战斗开始！`;
+            }
+            return `${enemy}向你发起了突袭，战斗开始！`;
+        },
+    },
+    'battle.end': {
+        render: (params) => {
+            const enemy = `<span class="red">${escapeHtml(params.enemy_name)}</span>`;
+            switch (params.result) {
+                case 'victory':
+                    return `你击败了${enemy}，战斗结束。`;
+                case 'defeat':
+                    return `你被${enemy}击败了...`;
+                case 'escape':
+                    return `你成功逃离了战斗。`;
+                default:
+                    return `战斗结束。`;
+            }
+        },
+    },
 };
 
 /**

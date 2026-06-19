@@ -34,8 +34,19 @@ $cmdcdtime = 0;
 // [C] battle 状态防呆校验（路由分发前，确保玩家操作不被脏状态卡住）
 obl_validate_battle_state($pdata);
 
+// [C2] 命令过滤：根据 action 状态拒绝非法命令
+// 防止前端在 battleMode 下提交 move/explore 等命令，或在 normalMode 下提交战斗命令
+$command_rejected = !obl_command_allowed_by_state($command, $pdata['action']);
+if ($command_rejected) {
+	$obl_log->emit('command.rejected', 'system', array(
+		'command' => $command,
+		'action'  => $pdata['action'],
+		'reason'  => 'command_not_allowed_in_current_state',
+	));
+}
+
 // [D] 路由分发（跳过传统预检查：眩晕/冷却/对话框/追击/物品索引）
-if ($pdata['hp'] > 0) {
+if (!$command_rejected && $pdata['hp'] > 0) {
 	require GAME_ROOT.'./include/command/router_helpers.php';
 	require GAME_ROOT.'./include/command/router.php';
 
@@ -48,8 +59,21 @@ if ($obl_log && $obl_log->hasEntries()) {
 	obl_log_persist($obl_log, $groomid, $pdata['pid']);
 }
 
-// [F] 游戏刻推进（黑名单机制：不在黑名单的命令都推进 tick）
-if (function_exists('obl_command_advances_tick') && obl_command_advances_tick($command)) {
+// [E2] 战斗日志持久化（待播放队列 + 历史归档）
+// 遭遇战（tick 结算）和 obl_battle_action 都会 emit 到 $obl_battle_log
+if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
+	obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
+}
+
+// [F] 游戏刻推进（白名单机制：只有白名单内的命令才推进 tick）
+// 例外 1：逃跑成功时设置 escape_skip_tick 标志，跳过本次 tick 推进
+// 例外 2：被 [C2] 拒绝的命令不推进 tick
+$escape_skip_tick = isset($pdata['oblpara']['escape_skip_tick']) && $pdata['oblpara']['escape_skip_tick'];
+if ($escape_skip_tick) {
+    // 清除标志（一次性，仅跳过本次命令的 tick 推进）
+    unset($pdata['oblpara']['escape_skip_tick']);
+}
+if (!$command_rejected && !$escape_skip_tick && function_exists('obl_command_advances_tick') && obl_command_advances_tick($command)) {
 	if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
 	$gamevars['obl_tick']++;
 	save_gameinfo();  // 持久化 gamevars（common.inc.php 不会自动保存）

@@ -25,9 +25,13 @@ if (function_exists('oblivions_is_active') && oblivions_is_active()) {
 	// 日志持久化：$obl_log 在 common.inc.php 中初始化，请求结束时统一持久化
 	// 用 register_shutdown_function 确保所有 exit 路径都能持久化
 	register_shutdown_function(function() {
-		global $obl_log, $groomid, $pdata;
+		global $obl_log, $obl_battle_log, $groomid, $pdata;
 		if ($obl_log && $obl_log->hasEntries() && isset($pdata['pid'])) {
 			obl_log_persist($obl_log, $groomid, $pdata['pid']);
+		}
+		// 战斗日志持久化（突袭在 tick 结算中产生，需在请求结束时持久化）
+		if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries() && isset($pdata['pid'])) {
+			obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
 		}
 	});
 } else {
@@ -95,6 +99,9 @@ switch ($action) {
         break;
     case 'obl_log':
         handle_obl_log();
+        break;
+    case 'battle_log':
+        handle_battle_log();
         break;
     case 'enemies':
         handle_obl_enemies();
@@ -421,6 +428,31 @@ function handle_obl_log() {
 
     $pid = (int)$pdata['pid'];
     $entries = obl_log_load($groomid, $pid);
+
+    api_response('success', array(
+        'entries' => $entries,
+        'total'   => count($entries),
+    ));
+}
+
+/**
+ * battle_log — 读取待播放的战斗日志
+ *
+ * 返回当前玩家最近一批的战斗动作日志（BattleLogEntry 数组）。
+ * 前端检测 player_info.action='battle' 时拉取，播放完毕后等待玩家操作。
+ * 仅在 Oblivions 模式下可用。
+ */
+function handle_battle_log() {
+    global $pdata, $groomid;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
+
+    $pid = (int)$pdata['pid'];
+    $entries = obl_battle_log_load($groomid, $pid);
 
     api_response('success', array(
         'entries' => $entries,

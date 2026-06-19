@@ -253,6 +253,9 @@ function obl_enemy_tick(&$enemy, &$player) {
 	// 死亡敌人不行动
 	if ($enemy['state'] > 0) return;
 
+	// 战斗中的敌人不参与 tick 结算（由战斗系统接管行动）
+	if ($enemy['action'] == 'battle') return;
+
 	// 行动意愿门控：随机数决定这个 tick 要不要行动
 	$action_chance = isset($enemy['oblpara']['action_chance'])
 		? (float)$enemy['oblpara']['action_chance'] : 0.5;
@@ -390,54 +393,38 @@ function obl_enemy_hunt(&$enemy, &$player) {
 }
 
 // ================================================================
-// 模块 4：碰撞战斗（过渡实现）
+// 模块 4：碰撞战斗（遭遇战入口）
 // ================================================================
 
 /**
- * 碰撞战斗结算（过渡实现）
+ * 碰撞战斗结算（遭遇战入口）
  *
  * 两个单位因移动目标格冲突而碰撞，进入战斗状态。
  * 核心机制：1 格 1 单位 → 双方都留在原地，不实际移动。
  *
- * 当前为过渡实现：设置双方 action='battle' → emit 日志 → 立即清除 action/bid。
- * 战斗系统实装后替换为真正的战斗结算（此处只保留碰撞检测 + 调用入口）。
+ * 走正常战斗载入流程：状态检测 + 先攻判定 + NPC 自动执行。
+ * 取消原"突袭"特殊逻辑，先攻完全由先攻率决定。
  *
  * @param array &$a 单位 A（玩家或敌人，引用传递）
  * @param array &$b 单位 B（玩家或敌人，引用传递）
  * @return void
  */
 function obl_resolve_collision_battle(&$a, &$b) {
-	global $obl_log;
+	// $a 是发起方/移动方，$b 是另一方
+	// 通过 type 判定玩家身份：type=0 是玩家
+	if ($a['type'] == 0) {
+		$player = &$a;
+		$enemy  = &$b;
+	} else {
+		$player = &$b;
+		$enemy  = &$a;
+	}
 
-	// 双方进入战斗状态（规范化流程：即使过渡实现也走完整 action 生命周期）
-	$a['action'] = 'battle';
-	$a['bid']    = $b['pid'];
-	$b['action'] = 'battle';
-	$b['bid']    = $a['pid'];
-
-	// 交火后互相可见
-	$a['discovered'] = 1;
-	$b['discovered'] = 1;
-
-	obl_save_player($a);
-	obl_save_player($b);
-
-	// emit 结构化日志：碰撞战斗（$a 永远是发起方/移动方，通过 type 判定玩家身份）
-	$a_is_player = ($a['type'] == 0);
-	$obl_log->emit('battle.skirmish', 'battle', array(
-		'enemy_name' => $a_is_player ? $b['name'] : $a['name'],
-		'enemy_pid'  => $a_is_player ? $b['pid']  : $a['pid'],
-		'initiator'  => $a_is_player ? 'player' : 'enemy',
-	));
-
-	// 立即清除战斗状态（过渡实现：战斗瞬间结束，不卡住流程）
-	$a['action'] = '';
-	$a['bid']    = 0;
-	$b['action'] = '';
-	$b['bid']    = 0;
-
-	obl_save_player($a);
-	obl_save_player($b);
+	// 遭遇战：走正常战斗载入流程
+	if (!function_exists('obl_battle_encounter')) {
+		include_once GAME_ROOT . './oblivions/include/game/battle.func.php';
+	}
+	obl_battle_encounter($player, $enemy);
 }
 
 // ================================================================

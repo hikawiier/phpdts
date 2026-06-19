@@ -351,6 +351,38 @@ function obl_clear_invalid_battle_state(&$pdata, &$opponent, $reason) {
 }
 
 /**
+ * 根据玩家 action 状态过滤命令
+ *
+ * 防止前端在战斗状态下提交非战斗命令（move/explore/search 等），
+ * 或在非战斗状态下提交战斗命令，造成状态混乱。
+ *
+ * 规则：
+ * - action='battle'：只允许 obl_battle_action
+ * - action='prebattle'：只允许 obl_battle_action、obl_battle_cancel
+ * - action=''（正常）：允许所有非战斗命令 + obl_battle_start（发起战斗）
+ *
+ * @param string $command 命令名
+ * @param string $action  玩家当前 action 状态
+ * @return bool true=允许执行，false=拒绝
+ */
+function obl_command_allowed_by_state($command, $action) {
+	if ($action === 'battle') {
+		// 战斗中：只允许战斗动作
+		return in_array($command, array('obl_battle_action'), true);
+	}
+	if ($action === 'prebattle') {
+		// 战斗准备：允许战斗动作 + 取消战斗
+		return in_array($command, array('obl_battle_action', 'obl_battle_cancel'), true);
+	}
+	// 正常状态：不允许战斗中命令（obl_battle_action/obl_battle_cancel），
+	// 但允许 obl_battle_start（发起战斗）和所有探索命令
+	if (in_array($command, array('obl_battle_action', 'obl_battle_cancel'), true)) {
+		return false;
+	}
+	return true;
+}
+
+/**
  * 入口认证失败处理
  *
  * @param string $status 失败状态（no_login/no_player/wrong_pw）
@@ -572,21 +604,32 @@ function obl_create_player_record($ndata) {
 #=============================================================================
 
 /**
- * 判断命令是否推进游戏刻（黑名单机制）
+ * 判断命令是否推进游戏刻（白名单机制）
  *
- * 规则：不在黑名单里的命令都推进 tick，不需要双重判断。
- * 黑名单适用于纯查看类命令（不消耗时间/不影响世界状态）。
+ * 规则：只有白名单内的命令才推进 tick。
+ * 白名单 = 明确消耗时间/影响世界状态的行为。
+ *
+ * 当前白名单：
+ * - move              玩家移动
+ * - obl_explore       玩家原地探索（点亮迷雾+发现道具）
+ * - obl_search        玩家搜索建筑物 POI
+ * - obl_battle_action 玩家先攻轮完成（NPC 先攻轮不推进 tick）
+ *
+ * 设计原则：只有"玩家主动行动结束"才推进 tick。
+ * NPC 先攻轮在 obl_battle_resolve_round() 内部自动执行，不单独推进 tick。
  *
  * @param string $command 命令名
  * @return bool true=推进 tick，false=不推进
  */
 function obl_command_advances_tick($command) {
-	// 黑名单：不推进 tick 的命令
-	$no_tick_commands = array(
-		// 'obl_organize_bag',  // 整理背包（未来）
-		// 'obl_view_notes',    // 查看笔记（未来）
+	// 白名单：推进 tick 的命令
+	$tick_commands = array(
+		'move',             // 玩家移动
+		'obl_explore',      // 玩家探索
+		'obl_search',       // 玩家搜索建筑物
+		'obl_battle_action', // 玩家先攻轮完成
 	);
-	return !in_array($command, $no_tick_commands);
+	return in_array($command, $tick_commands);
 }
 
 /**

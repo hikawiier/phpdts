@@ -59,6 +59,14 @@ function rs_game($mode = 0) {
 	if (function_exists('obl_log_clear_all')) {
 		obl_log_clear_all();
 	}
+
+	// 清理 Oblivions 战斗日志文件（避免跨游戏残留）
+	if (!function_exists('obl_battle_log_clear_all')) {
+		@include_once GAME_ROOT.'./oblivions/include/game/battle_log.func.php';
+	}
+	if (function_exists('obl_battle_log_clear_all')) {
+		obl_battle_log_clear_all();
+	}
 }
 
 /**
