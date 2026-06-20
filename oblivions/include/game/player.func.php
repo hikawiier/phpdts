@@ -608,10 +608,11 @@ function obl_create_player_record($ndata) {
  * - move              玩家移动
  * - obl_explore       玩家原地探索（点亮迷雾+发现道具）
  * - obl_search        玩家搜索建筑物 POI
- * - obl_battle_action 玩家先攻轮完成（NPC 先攻轮不推进 tick）
+ * - obl_battle_start  玩家发起战斗（含玩家先攻轮，详见游戏刻机制设计案 6.1）
+ * - obl_battle_action 玩家先攻轮完成
  *
  * 设计原则：只有"玩家主动行动结束"才推进 tick。
- * NPC 先攻轮在 obl_battle_resolve_round() 内部自动执行，不单独推进 tick。
+ * NPC 先攻轮由 obl_resolve_tick_events() 末尾推进 tick（与玩家命令互斥）。
  *
  * @param string $command 命令名
  * @return bool true=推进 tick，false=不推进
@@ -622,6 +623,7 @@ function obl_command_advances_tick($command) {
 		'move',             // 玩家移动
 		'obl_explore',      // 玩家探索
 		'obl_search',       // 玩家搜索建筑物
+		'obl_battle_start',  // 玩家发起战斗（含玩家先攻轮）
 		'obl_battle_action', // 玩家先攻轮完成
 	);
 	return in_array($command, $tick_commands);
@@ -630,28 +632,39 @@ function obl_command_advances_tick($command) {
 /**
  * 处理游戏刻事件（tick event resolution）
  *
- * 由 common.inc.php 在检测到 obl_pretick < obl_tick 时调用。
- * 每个刻执行一次全局结算：敌人 AI、buff/dot 等。
+ * 由 common.inc.php 在检测到 obl_pretick < obl_tick 时调用（调用前已同步 obl_pretick = obl_tick）。
+ * 采用两阶段处理（详见 游戏刻机制设计案.md 第四节）：
+ *   阶段 1：战斗中 NPC 先攻轮（串行，检测标记，最多 1 个）
+ *   阶段 2：非战斗 NPC AI 行为（并行）
+ * 末尾：如果阶段 1 执行了 NPC 先攻轮（设置了 $obl_tick_advanced 标记），推进 obl_tick++。
  *
- * MVP 范围：仅框架，具体事件在 NPC 敌人系统设计案中实现。
+ * 循环模型：
+ *   - NPC 先攻轮执行 → 末尾 obl_tick++ → 下次请求 obl_pretick < obl_tick → 继续循环
+ *   - 玩家先攻轮（当前先攻者是玩家）→ 不执行 NPC 先攻轮 → 不推进 obl_tick → 循环终止
  *
- * @param int $delta 需要处理的刻数差（obl_tick - obl_pretick）
+ * @param int $delta 需要处理的刻数差（保留参数兼容，实际最多处理 1 个 NPC 先攻轮）
  * @return void
  */
 function obl_resolve_tick_events($delta) {
-	// 安全限制：单次请求最多处理 100 刻，防止异常情况下的死循环
-	$delta = min((int)$delta, 100);
+	global $gamevars, $obl_tick_advanced;
 
-	for ($i = 0; $i < $delta; $i++) {
-		// 1. 全局结算敌人 AI（查询所有玩家所在区域的敌人）
-		if (!function_exists('obl_resolve_all_enemy_ai')) {
-			include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
-		}
-		obl_resolve_all_enemy_ai();
+	// 清除"游戏刻已推进"标记（同一请求内有效）
+	$obl_tick_advanced = false;
 
-		// 2. buff/dot 结算（未来扩展）
-		// obl_resolve_buffs_dots();
+	// 加载敌人 AI（含两阶段处理：战斗中 NPC 先攻轮 + 非战斗 NPC AI 行为）
+	if (!function_exists('obl_resolve_all_enemy_ai')) {
+		include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
+	}
 
-		// 3. 其他周期性结算（未来扩展）
+	// 两阶段处理（阶段 1：战斗中 NPC 先攻轮；阶段 2：非战斗 NPC AI 行为）
+	// obl_resolve_all_enemy_ai 内部检测 $obl_tick_advanced 标记，阶段 1 最多处理 1 个 NPC 先攻轮
+	obl_resolve_all_enemy_ai();
+
+	// 末尾：统一游戏刻推进
+	// 如果 NPC 先攻轮执行了（设置了标记），推进 1 游戏刻
+	// 这会产生新的未处理游戏刻（obl_pretick < obl_tick），下次请求继续循环
+	if ($obl_tick_advanced) {
+		if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
+		$gamevars['obl_tick']++;
 	}
 }

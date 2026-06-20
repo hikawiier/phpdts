@@ -348,7 +348,10 @@ function obl_battle_validate_target($enemy_pid, &$pdata, &$enemy) {
  * 2. 状态检测（obl_battle_enter_battle）→ 双方 action='battle'
  * 3. emit battle.start 日志
  * 4. 先攻判定（玩家强制先攻，roll=101 确保绝对先攻）
- * 5. NPC 自动执行（玩家100%先攻，NPC 不会立即行动）
+ *
+ * 注意：本函数只做初始化，不执行先攻轮。
+ * 玩家先攻轮由调用方（cmd_handle_obl_battle_start）根据当前先攻者判断后执行。
+ * NPC 先攻轮由游戏刻更新驱动（obl_resolve_tick_events 阶段 1）。
  *
  * @param int   $enemy_pid 目标敌人 PID
  * @param array &$pdata    玩家数据
@@ -388,8 +391,9 @@ function obl_battle_initiate($enemy_pid, &$pdata) {
     // 步骤 4：先攻判定（玩家主动攻击强制先攻，roll=101 确保绝对先攻）
     obl_battle_roll_initiative($pdata, $enemy, 101);
 
-    // 步骤 5：NPC 自动执行（玩家100%先攻，NPC 不会立即行动，但保持流程一致性）
-    obl_battle_auto_npc($pdata, $enemy);
+    // 步骤 5：保存双方数据（先攻轮由调用方或游戏刻更新驱动）
+    obl_save_player($pdata);
+    obl_save_player($enemy);
 
     return '';
 }

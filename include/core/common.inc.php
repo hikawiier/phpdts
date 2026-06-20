@@ -285,17 +285,22 @@ if(CURSCRIPT !== 'chat')
 		}
 
 		// Oblivions 游戏刻事件处理（在锁内，确保原子性）
-		// 检测 obl_pretick < obl_tick → 执行 tick 事件 → 同步 pretick
+		// 模型：obl_pretick 同步到 obl_tick（处理已推进的游戏刻），再执行 tick 事件处理。
+		// tick 事件处理内部如果 NPC 先攻轮执行了，会推进 obl_tick++（产生新的未处理游戏刻），
+		// 下次请求 obl_pretick < obl_tick 仍成立，前端自动刷新循环。
+		// obl_tick 唯两处增加：NPC 先攻轮（obl_resolve_tick_events 末尾）/ 玩家先攻轮（obl_command [F] 段），互斥。
 		if (function_exists('oblivions_is_active') && oblivions_is_active()
 			&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
 			&& $gamevars['obl_pretick'] < $gamevars['obl_tick']) {
 			include_once GAME_ROOT.'./oblivions/include/game/player.func.php';
 			$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
+			// 先同步 obl_pretick（标记已处理的游戏刻）
+			$gamevars['obl_pretick'] = $gamevars['obl_tick'];
+			// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
 			if (function_exists('obl_resolve_tick_events')) {
 				obl_resolve_tick_events($delta);
 			}
-			$gamevars['obl_pretick'] = $gamevars['obl_tick'];
-			$ginfochange = true;  // 触发 save_gameinfo() 持久化 pretick
+			$ginfochange = true;  // 触发 save_gameinfo() 持久化 obl_tick/obl_pretick
 		}
 
 		if($ginfochange || $lostfocus){
