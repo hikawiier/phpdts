@@ -664,9 +664,6 @@ function obl_command_advances_tick($command) {
 	// 如果 NPC 先攻轮执行了（设置了标记），推进 1 游戏刻
 	// 这会产生新的未处理游戏刻（obl_pretick < obl_tick），下次请求继续循环
 	if ($obl_tick_advanced) {
-		$tickdebug_file = GAME_ROOT . './oblivions/tickdebug_from_npcevents.php';
-		$tickdebug_content = "当前tick：" . $gamevars['obl_tick'];
-		writeover($tickdebug_file, $tickdebug_content);
 		$gamevars['obl_tick']++;
 		save_gameinfo();
 	}

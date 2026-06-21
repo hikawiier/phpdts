@@ -93,14 +93,13 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
     $distance = obl_get_distance($pdata['pgroup'], $pdata['pls'], $enemy['pls']);
     if ($distance < 0 || $distance > obl_get_range($pdata)) return;
 
-    # 初始化 battle_log（入口处局部初始化，设置入口标识）
+    # 初始化 battle_log（入口处局部初始化）
     if (!$obl_battle_log) {
         include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
         $obl_battle_log = new BattleLogCollector();
     }
-    $obl_battle_log->setEntryType('player_ambush');
 
-    # 设置突袭标记（battle_queue_create 据此给玩家先攻优势，battle_main 尾部消除）
+    # 设置突袭标记（battle_queue_create 据此给玩家先攻优势）
     $pdata['oblpara']['ambush_flag'] = true;
 
     # 玩家进入战斗状态
@@ -136,12 +135,11 @@ function cmd_handle_obl_battle_action($action_id, $target_pid, &$pdata) {
     $target_pid = (int)$target_pid;
     if (empty($action_id) || $target_pid <= 0) return;
 
-    # 初始化 battle_log（入口处局部初始化，设置入口标识）
+    # 初始化 battle_log（入口处局部初始化）
     if (!$obl_battle_log) {
         include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
         $obl_battle_log = new BattleLogCollector();
     }
-    $obl_battle_log->setEntryType('player_turn');
 
     # 构造动作数组（数字索引，每项含 act_id + target）
     $atk_act = array(

@@ -13,7 +13,8 @@
 // - isBattleModalPlaying()
 // ══════════════════════════════════════════════════
 
-import { renderBattleLogEntryHtml } from './battle-render.js';
+import { renderBattleLogEntryHtml } from '../data/battle-templates.js';
+import { refreshContextFromApi } from './battle.js';
 
 // 播放状态
 let playing = false;
@@ -75,19 +76,19 @@ export async function playBattleLog(entries, context, onComplete) {
     const sorted = entries.slice().sort((a, b) => (a.log_id || 0) - (b.log_id || 0));
 
     // 逐条播放
-    let currentTurn = -1;
     for (let i = 0; i < sorted.length; i++) {
         if (cancelRequested) break;
 
         const entry = sorted[i];
 
-        // 回合分隔符（turn=0 显示"战斗开始"，turn>=1 显示"回合 N"）
-        if (entry.turn !== currentTurn) {
-            currentTurn = entry.turn;
-            const dividerText = currentTurn === 0 ? '── 战斗开始 ──' : '── 回合 ' + currentTurn + ' ──';
-            await appendDivider(body, dividerText);
+        // 首条 entry 前显示"战斗开始"分隔符
+        if (i === 0) {
+            await appendDivider(body, '── 战斗开始 ──');
             await sleep(ENTRY_INTERVAL / 2);
         }
+
+        // 每条 entry 播放前请求 API，同步全局状态（AP、state、位置等）
+        await refreshContextFromApi(ctx);
 
         // 渲染条目 HTML
         const html = renderBattleLogEntryHtml(entry, ctx);
@@ -95,7 +96,7 @@ export async function playBattleLog(entries, context, onComplete) {
             await appendEntry(body, html);
         }
 
-        // 更新 HP 条（如果 extra 中有 hp_after）
+        // 更新 HP 条（从 entry.extra 的 oldhp/newhp 读取）
         updateHpBars(entry, ctx);
 
         await sleep(ENTRY_INTERVAL);
@@ -221,22 +222,31 @@ function updateHpBar(fillId, textId, hp, maxHp) {
 /**
  * 根据 battlelog 条目更新 HP 条
  *
+ * 从 entry.extra 的 actor_oldhp/target_oldhp → actor_newhp/target_newhp 读取。
+ * 根据 actor_type/target_type 判断哪一方是玩家、哪一方是 NPC。
+ *
  * @param {Object} entry BattleLogEntry
  * @param {Object} ctx 播放上下文
  */
 function updateHpBars(entry, ctx) {
     if (!entry.extra) return;
 
-    // 玩家攻击敌人 → 更新敌人 HP
-    if (entry.actor_type === 0 && entry.extra.enemy_hp_after !== undefined) {
-        updateHpBar('battleModalEnemyHpFill', 'battleModalEnemyHpText',
-            entry.extra.enemy_hp_after, ctx.enemyMaxHp);
+    // 玩家攻击敌人 → 更新敌人 HP（target 是 NPC）
+    if (entry.actor_type === 0 && entry.target_type > 0) {
+        const newHp = entry.extra.target_newhp;
+        if (newHp !== undefined) {
+            updateHpBar('battleModalEnemyHpFill', 'battleModalEnemyHpText',
+                newHp, ctx.enemyMaxHp);
+        }
     }
 
-    // 敌人攻击玩家 → 更新玩家 HP
-    if (entry.actor_type !== 0 && entry.extra.player_hp_after !== undefined) {
-        updateHpBar('battleModalPlayerHpFill', 'battleModalPlayerHpText',
-            entry.extra.player_hp_after, ctx.playerMaxHp);
+    // 敌人攻击玩家 → 更新玩家 HP（target 是玩家）
+    if (entry.actor_type > 0 && entry.target_type === 0) {
+        const newHp = entry.extra.target_newhp;
+        if (newHp !== undefined) {
+            updateHpBar('battleModalPlayerHpFill', 'battleModalPlayerHpText',
+                newHp, ctx.playerMaxHp);
+        }
     }
 }
 

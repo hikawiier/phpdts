@@ -91,7 +91,7 @@ export function playDamageNumber(targetEl, value, isHeal) {
  * 与 playCollisionAnimation 不同，这里只显示数字（不播冲刺/抖动），
  * 且使用淡入动画（damage-fade-in）而非浮起动画（damage-float）。
  *
- * @param {Array} entries 同一 enemy_pid 的 battlelog 条目
+ * @param {Array} entries 同一 NPC 的 battlelog 条目
  * @param {number} enemyPid 敌人 PID
  */
 export function playDamageNumbersAfterModal(entries, enemyPid) {

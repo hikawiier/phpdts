@@ -104,30 +104,30 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
     # 受击目标进入战斗状态（突袭入口的受击目标在此初始化）
     battle_state_init($target_data);
 
+    // 扣血前保存 HP 快照
+    $actor_oldhp  = (int)$actor_data['hp'];
+    $target_oldhp = (int)$target_data['hp'];
+
     //执行act_id具体的打击动作
     $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
     battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
 
-    // 记录战斗日志（供前端播放碰撞动画+模态框，判断 NPC 行动是否结束）
+    // 记录战斗日志（此时 $actor_data['hp']/$target_data['hp'] 已是扣血后的值）
     if ($obl_battle_log) {
-        $actor_id  = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-        $target_id = ($target_data['type'] == 0) ? 'player' : 'enemy_' . $target_data['pid'];
-        $action_name = battle_action_name($act_id);
-        # enemy_pid 用于前端按战斗对象分组播放：actor 是玩家时 enemy 是 target，actor 是敌人时 enemy 是 actor
-        $enemy_pid = ($actor_data['type'] == 0) ? (int)$target_data['pid'] : (int)$actor_data['pid'];
-        $obl_battle_log->emit(
-            0,             // turn（暂用 0，前端不依赖此字段排序）
-            $actor_id,
-            $act_id,
-            $action_name,
-            $target_id,
-            $damage,
-            null,
-            null,
-            $enemy_pid,
-            $actor_data['name'],    // actor_name
-            (int)$actor_data['type'] // actor_type
-        );
+        $obl_battle_log->emit([
+            'actor_pid'    => (int)$actor_data['pid'],
+            'actor_type'   => (int)$actor_data['type'],
+            'target_pid'   => (int)$target_data['pid'],
+            'target_type'  => (int)$target_data['type'],
+            'action_id'    => $act_id,
+            'effect_value' => $damage,
+            'extra'        => [
+                'actor_oldhp'   => $actor_oldhp,
+                'target_oldhp'  => $target_oldhp,
+                'actor_newhp'   => (int)$actor_data['hp'],
+                'target_newhp'  => (int)$target_data['hp'],
+            ],
+        ]);
     }
 
     //defend_battle_prepare(); //反击策略准备函数

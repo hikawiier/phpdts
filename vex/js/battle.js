@@ -6,8 +6,8 @@
 // - battle（战斗）→ 玩家提交 obl_battle_action → 播放碰撞动画+模态框 → 继续 battle 或回 normal
 //
 // battlelog 数据流（played 标记机制）：
-// - 后端所有 battlelog 持久化到文件，每条带 log_id + enemy_pid + played=0
-// - 前端拉取 played=0 的条目 → 按 enemy_pid 分组 → 每组先播碰撞动画再播模态框
+// - 后端所有 battlelog 持久化到文件，每条带 log_id + played=0
+// - 前端拉取 played=0 的条目 → 按战斗分组 → 每组先播碰撞动画再播模态框
 // - 播完调 mark_battle_log_played.php 标记 played=1
 // ══════════════════════════════════════════════════
 
@@ -303,7 +303,7 @@ async function onBattleAction(actionId) {
 // ══════════════════════════════════════════════════
 
 /**
- * 拉取未播放的 battlelog，按 enemy_pid 分组播放，播完标记
+ * 拉取未播放的 battlelog，按战斗分组播放，播完标记
  */
 async function fetchAndPlayBattleLog() {
     if (isPlayingBattleLog) return;  // 防重入
@@ -326,8 +326,8 @@ async function fetchAndPlayBattleLog() {
             (e.phase === 'finish_check' && e.extra && e.extra.ended === true)
         );
 
-        // 按 enemy_pid 分组（非 excute 阶段的日志会被过滤掉，不播放动画）
-        const groups = groupByEnemyPid(entries);
+        // 按战斗分组（非 excute 阶段的日志会被过滤掉，不播放动画）
+        const groups = groupByEncounter(entries);
 
         // 收集所有要标记的 log_id（包括非 excute 阶段的日志）
         const allLogIds = entries.map(e => e.log_id).filter(id => id);
@@ -341,9 +341,11 @@ async function fetchAndPlayBattleLog() {
         // 标记为已播放
         await markBattleLogPlayed(allLogIds);
 
-        // 如果检测到战斗结束日志，停止 NPC 自动刷新
+        // 如果检测到战斗结束日志，停止 NPC 自动刷新并刷新地图（敌人可能已死亡）
         if (hasBattleEnd) {
             stopNpcTurnRefresh();
+            dataManager.invalidate('enemies');
+            dataManager.broadcast('battle:ended');
         }
 
         // 播放完后，如果当前是玩家回合，显示"你的回合"提示
@@ -375,44 +377,45 @@ async function fetchAndPlayBattleLog() {
 }
 
 /**
- * 按 enemy_pid 分组
+ * 按战斗分组（从 entries 推导 NPC pid）
+ *
+ * 单 NPC 战斗约束下，从 entries 中找 type>0 的一方作为 NPC pid，
+ * 所有条目归入同一组。
  *
  * @param {Array} entries battlelog 条目数组
- * @returns {Object} { enemy_pid: [entries...] }
+ * @returns {Object} { npcPid: [entries...] }
  */
-function groupByEnemyPid(entries) {
-    const groups = {};
-    for (const entry of entries) {
-        // 过滤掉 enemy_pid === 0 的日志（非 excute 阶段的日志，不需要播放动画）
-        const enemyPid = parseInt(entry.enemy_pid) || 0;
-        if (enemyPid === 0) continue;
-        if (!groups[enemyPid]) groups[enemyPid] = [];
-        groups[enemyPid].push(entry);
+function groupByEncounter(entries) {
+    let npcPid = 0;
+    for (const e of entries) {
+        if (e.actor_type > 0) { npcPid = e.actor_pid; break; }
+        if (e.target_type > 0) { npcPid = e.target_pid; break; }
     }
-    return groups;
+    if (npcPid === 0) return {};
+    return { [npcPid]: entries };
 }
 
 /**
  * 播放一组的 battlelog：先碰撞动画，再模态框
  *
- * @param {Array} entries 同一 enemy_pid 的 battlelog 条目
- * @param {number} enemyPid 敌人 PID
+ * @param {Array} entries 同一 NPC 的 battlelog 条目
+ * @param {number} npcPid NPC PID
  */
-async function playBattleLogGroup(entries, enemyPid) {
+async function playBattleLogGroup(entries, npcPid) {
     // 过滤出 excute 阶段的日志（核心伤害日志），其他阶段不播放动画
     const excuteEntries = entries.filter(e => e.phase === 'excute');
     if (excuteEntries.length === 0) return;
 
-    // 获取播放上下文（敌人名称从 entries 提取，HP 从 API 获取）
-    const context = await buildPlayContext(entries, enemyPid);
+    // 获取播放上下文（敌人名称+HP 从 API 获取）
+    const context = await buildPlayContext(npcPid);
 
-    // 更新战斗 header（敌人名称可能刚从 battlelog 中获取到）
-    renderBattleHeader(context.enemyName);
+    // 更新战斗 header（敌人名称+位置）
+    renderBattleHeader(context.enemyName, context.npcLocation);
 
     // 1. 先播放碰撞动画（冲刺+抖动，不含伤害数字）
     for (const entry of excuteEntries) {
         if (entry.action_id === 'unarmed_strike') {
-            await playCollisionAnimation(entry, enemyPid);
+            await playCollisionAnimation(entry, npcPid);
         }
     }
 
@@ -423,7 +426,7 @@ async function playBattleLogGroup(entries, enemyPid) {
     await playBattleLog(excuteEntries, context, null);
 
     // 4. 模态框关闭后，伤害数字淡入显示在地图格上（残留反馈）
-    playDamageNumbersAfterModal(excuteEntries, enemyPid);
+    playDamageNumbersAfterModal(excuteEntries, npcPid);
 
     // 5. 恢复按钮光效（如果仍是玩家回合）
     restoreTurnActiveGlow();
@@ -450,60 +453,63 @@ function restoreTurnActiveGlow() {
 }
 
 /**
- * 构建播放上下文（HP 信息 + 玩家名称）
- *
- * 敌人名称从 battlelog entries 中提取（不依赖 enemies API，避免敌人死亡后名称丢失）。
- * HP 信息仍从 API 获取。
- *
- * @param {Array} entries 同一 enemy_pid 的 battlelog 条目
- * @param {number} enemyPid 敌人 PID
- * @returns {Promise<Object>} { enemyName, enemyHp, enemyMaxHp, playerHp, playerMaxHp, playerName }
+ * 从 API 获取最新状态，更新 ctx
+ * 供 buildPlayContext（首次构建）和 playBattleLog 循环（每条 entry 前同步）共用
  */
-async function buildPlayContext(entries, enemyPid) {
-    let enemyName = '敌人';
-    let enemyHp = 0, enemyMaxHp = 1;
-    let playerHp = 0, playerMaxHp = 1;
-    let playerName = '';
-
-    // 从 battlelog entries 中提取敌人名称（actor_type !== 0 的条目的 actor_name）
-    for (const e of entries) {
-        if (e.actor_type !== 0 && e.actor_name) {
-            enemyName = e.actor_name;
-            break;
-        }
-    }
-
+export async function refreshContextFromApi(ctx) {
     try {
         const playerInfo = await dataManager.fetch('player_info', true);
         if (playerInfo.status === 'success' && playerInfo.data) {
-            playerHp = playerInfo.data.hp || 0;
-            playerMaxHp = playerInfo.data.mhp || 1;
-            playerName = playerInfo.data.name || '';
+            ctx.playerHp = playerInfo.data.hp || 0;
+            ctx.playerMaxHp = playerInfo.data.mhp || 1;
+            ctx.playerName = playerInfo.data.name || '';
         }
 
         const enemiesResult = await dataManager.fetch('enemies', true);
         if (enemiesResult.status === 'success' && enemiesResult.data) {
             const enemies = enemiesResult.data.enemies || [];
             for (let i = 0; i < enemies.length; i++) {
-                if (parseInt(enemies[i].pid) === parseInt(enemyPid)) {
-                    enemyHp = enemies[i].hp || 0;
-                    enemyMaxHp = enemies[i].mhp || 1;
+                if (parseInt(enemies[i].pid) === parseInt(ctx.npcPid)) {
+                    ctx.npcName = enemies[i].name || '敌人';
+                    ctx.npcHp = enemies[i].hp || 0;
+                    ctx.npcMaxHp = enemies[i].mhp || 1;
+                    if (enemies[i].pls) ctx.npcLocation = enemies[i].pls;
+                    // 兼容旧字段名（供 battle-modal.js 的 renderHeader 使用）
+                    ctx.enemyName = ctx.npcName;
+                    ctx.enemyHp = ctx.npcHp;
+                    ctx.enemyMaxHp = ctx.npcMaxHp;
                     break;
                 }
             }
         }
     } catch (e) {
-        console.error('[Battle] buildPlayContext error:', e);
+        console.error('[Battle] refreshContextFromApi error:', e);
     }
+}
 
-    return {
-        enemyName: enemyName,
-        enemyHp: enemyHp,
-        enemyMaxHp: enemyMaxHp,
-        playerHp: playerHp,
-        playerMaxHp: playerMaxHp,
-        playerName: playerName,
+/**
+ * 首次构建播放上下文
+ *
+ * @param {number} npcPid NPC PID
+ * @returns {Promise<Object>} 播放上下文
+ */
+async function buildPlayContext(npcPid) {
+    const ctx = {
+        npcPid,
+        npcName: '敌人',
+        npcHp: 0,
+        npcMaxHp: 1,
+        npcLocation: null,
+        playerHp: 0,
+        playerMaxHp: 1,
+        playerName: '',
+        // 兼容旧字段名
+        enemyName: '敌人',
+        enemyHp: 0,
+        enemyMaxHp: 1,
     };
+    await refreshContextFromApi(ctx);
+    return ctx;
 }
 
 /**

@@ -22,9 +22,9 @@ $obl_enemies_config = array(
         'ai_type' => 'patrol',        // AI 类型：patrol/aggressive/idle
         'vision_range' => 3,           // 感知范围（BFS 跳数）
         'action_chance' => 0.4,        // 行动意愿（每 tick 行动概率，0-1）
-        'skills' => ['basic_attack', 'escape'],
+        'skills' => ['unarmed_strike', 'escape'],
         'strategy_slots' => array(     // 初始策略槽（4 槽）
-            array('type' => 'skill', 'id' => 'basic_attack'),
+            array('type' => 'skill', 'id' => 'unarmed_strike'),
             null, null, null
         ),
     ),
@@ -39,10 +39,10 @@ $obl_enemies_config = array(
         'ai_type' => 'aggressive',
         'vision_range' => 5,
         'action_chance' => 0.7,
-        'skills' => ['basic_attack', 'escape'],
+        'skills' => ['unarmed_strike', 'escape'],
         'strategy_slots' => array(
-            array('type' => 'skill', 'id' => 'basic_attack'),
-            array('type' => 'skill', 'id' => 'basic_attack'),
+            array('type' => 'skill', 'id' => 'unarmed_strike'),
+            array('type' => 'skill', 'id' => 'unarmed_strike'),
             null, null
         ),
     ),

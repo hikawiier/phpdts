@@ -31,13 +31,14 @@ function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache)
 
     # 记录日志（DEBUG：战斗结束，清空战斗状态）
     if ($obl_battle_log) {
-        $actor_id = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-        $enemy_pid = ($actor_data['type'] == 0) ? 0 : (int)$actor_data['pid'];
-        $obl_battle_log->emit(
-            0, $actor_id, 'battle_end', '战斗结束', 'battle', 0,
-            array('ended' => true), null, $enemy_pid,
-            $actor_data['name'], (int)$actor_data['type']
-        );
+        $obl_battle_log->emit([
+            'actor_pid'   => (int)$actor_data['pid'],
+            'actor_type'  => (int)$actor_data['type'],
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => 'battle_end',
+            'extra'       => ['ended' => true],
+        ]);
     }
 }
 
@@ -95,14 +96,14 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log)
 
     # 记录日志（DEBUG：先攻队列创建）
     if ($obl_battle_log) {
-        $actor_id = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-        $enemy_pid = ($actor_data['type'] == 0) ? 0 : (int)$actor_data['pid'];
-        $obl_battle_log->emit(
-            0, $actor_id, 'queue_create', '先攻队列创建', 'queue', 0,
-            array('qid' => $qid, 'combatants' => $combatants, 'ambush' => $ambush_flag),
-            null, $enemy_pid,
-            $actor_data['name'], (int)$actor_data['type']
-        );
+        $obl_battle_log->emit([
+            'actor_pid'   => (int)$actor_data['pid'],
+            'actor_type'  => (int)$actor_data['type'],
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => 'queue_create',
+            'extra'       => ['qid' => $qid, 'combatants' => $combatants, 'ambush' => $ambush_flag],
+        ]);
     }
 }
 
@@ -149,17 +150,19 @@ function battle_queue_update(&$actor_data, &$obl_battle_log, &$battle_cache)
     $db->query("UPDATE {$tablepre}oblqueue SET done = 1 WHERE pid = " . (int)$actor_data['pid'] . " AND qid = " . $qid);
 
     # B. 兜底扫描：清理队列中的死亡参战者（battle_queue_exit 已处理的情况会跳过）
-    $queue_all = obl_fetch_queue_all_by_qid($qid);
-    foreach ($queue_all as $qrow) {
-        $pid = (int)$qrow['pid'];
-        if ($pid == $actor_data['pid']) continue; # 跳过自己
-        $combatant_data = obl_fetch_playerdata_by_pid($pid);
-        if (!$combatant_data || $combatant_data['state']) {
-            # 参战者不存在或已死亡，从队列移除并清空 bid
-            $db->query("DELETE FROM {$tablepre}oblqueue WHERE pid = " . $pid . " AND qid = " . $qid);
-            $db->query("UPDATE {$tablepre}oblplayers SET bid = 0 WHERE pid = " . $pid);
-        }
-    }
+    # 注：当前 battle_queue_exit 已在死亡时调用并清理队列，此兜底扫描暂注释，
+    # 待整体清理完成后按新设计重构（避免重复处理与潜在竞态）。
+    # $queue_all = obl_fetch_queue_all_by_qid($qid);
+    # foreach ($queue_all as $qrow) {
+    #     $pid = (int)$qrow['pid'];
+    #     if ($pid == $actor_data['pid']) continue; # 跳过自己
+    #     $combatant_data = obl_fetch_playerdata_by_pid($pid);
+    #     if (!$combatant_data || $combatant_data['state']) {
+    #         # 参战者不存在或已死亡，从队列移除并清空 bid
+    #         $db->query("DELETE FROM {$tablepre}oblqueue WHERE pid = " . $pid . " AND qid = " . $qid);
+    #         $db->query("UPDATE {$tablepre}oblplayers SET bid = 0 WHERE pid = " . $pid);
+    #     }
+    # }
 
     # C. 检查队列是否需要解散（队列中只剩 1 人或没人 → 解散）
     $count = obl_fetch_queue_count_by_qid($qid);
@@ -187,19 +190,19 @@ function battle_queue_update(&$actor_data, &$obl_battle_log, &$battle_cache)
     $my_queue = obl_fetch_queue_by_pid($actor_data['pid']);
     if ($my_queue) {
         $qorder = (int)$my_queue['myorder'];
-        $db->query("UPDATE {$tablepre}oblqueue SET qorder = " . $qorder . " WHERE qid = " . $qid);
+        $db->query("UPDATE {$tablepre}oblqueue SET qorder = " . $qorder . " WHERE qid = " . $qid . " AND pid = " . (int)$actor_data['pid']);
     }
 
     # 记录日志（DEBUG：先攻队列更新）
     if ($obl_battle_log) {
-        $actor_id = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-        $enemy_pid = ($actor_data['type'] == 0) ? 0 : (int)$actor_data['pid'];
-        $obl_battle_log->emit(
-            0, $actor_id, 'queue_update', '先攻队列更新', 'queue', 0,
-            array('qid' => $qid, 'remaining' => $count, 'rebuilt' => empty($undone)),
-            null, $enemy_pid,
-            $actor_data['name'], (int)$actor_data['type']
-        );
+        $obl_battle_log->emit([
+            'actor_pid'   => (int)$actor_data['pid'],
+            'actor_type'  => (int)$actor_data['type'],
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => 'queue_update',
+            'extra'       => ['qid' => $qid, 'remaining' => $count, 'rebuilt' => empty($undone)],
+        ]);
     }
 }
 function battle_queue_exit(&$actor_data, &$obl_battle_log, &$battle_cache)
@@ -227,10 +230,14 @@ function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
 
     # 记录日志（DEBUG：AP 恢复信息）
     if ($obl_battle_log) {
-        $actor_id = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-        $enemy_pid = ($actor_data['type'] == 0) ? 0 : (int)$actor_data['pid'];
-        $obl_battle_log->emit(0, $actor_id, 'ap_recover', 'AP恢复', $actor_id, $recovered, null, null, $enemy_pid,
-            $actor_data['name'], (int)$actor_data['type']);
+        $obl_battle_log->emit([
+            'actor_pid'    => (int)$actor_data['pid'],
+            'actor_type'   => (int)$actor_data['type'],
+            'target_pid'   => (int)$actor_data['pid'],
+            'target_type'  => (int)$actor_data['type'],
+            'action_id'    => 'ap_recover',
+            'effect_value' => $recovered,
+        ]);
     }
 }
 
@@ -240,19 +247,19 @@ function battle_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cac
     #检查$actor_data['skillpara']的键名act_id是否存在，不存在说明这个动作不合法，直接返回false；存在的话继续检查AP是否满足需求，不满足的话也返回false；满足的话实际扣除AP并返回true
     #ap_cost为0的动作可以无视AP限制直接执行
 
-    $actor_id = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
-    $enemy_pid = ($actor_data['type'] == 0) ? 0 : (int)$actor_data['pid'];
-
     //暂时跳过合法性检查
     $verified = true;
 
     # 记录日志（DEBUG：动作校验结果）
     if ($obl_battle_log) {
-        $obl_battle_log->emit(
-            0, $actor_id, $act_id, battle_action_name($act_id), 'verify', 0,
-            array('result' => $verified ? 'passed' : 'failed'), null, $enemy_pid,
-            $actor_data['name'], (int)$actor_data['type']
-        );
+        $obl_battle_log->emit([
+            'actor_pid'   => (int)$actor_data['pid'],
+            'actor_type'  => (int)$actor_data['type'],
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => $act_id,
+            'extra'       => ['result' => $verified ? 'passed' : 'failed'],
+        ]);
     }
     return $verified;
 

@@ -240,50 +240,41 @@ function obl_resolve_all_enemy_ai(&$obl_tick_advanced)
 
 	# 阶段 1：战斗中 NPC 先攻轮（串行，最多 1 个）
 
-	# 载入先攻队列
-	$result = $db->query("SELECT * FROM {$tablepre}oblqueue");
-	$qdata = $db->fetch_array($result);
+	# 载入所有活跃的先攻队列 qid（DISTINCT 去重，避免同队列多记录重复处理）
+	$result = $db->query("SELECT DISTINCT qid FROM {$tablepre}oblqueue WHERE qid > 0");
 
-	# 存在先攻队列的情况下
-	if($qdata)
+	while($qdata = $db->fetch_array($result))
 	{
-		$npc_battle_flag = false;
-		while($qdata = $db->fetch_array($result))
-		{
-			//obl_format_playerdata($pdata);
+		$qid = (int)$qdata['qid'];
+		if ($qid <= 0) continue;
 
-			$qid = (int)$qdata['qid'];
-			if ($qid <= 0) continue;
+		# 获取当前顺位者（myorder 最小且 done=0）
+		$current = obl_fetch_queue_current_initiator($qid);
+		if (!$current) continue;
 
-			# 获取当前顺位者（myorder 最小且 done=0）
-			$current = obl_fetch_queue_current_initiator($qid);
-			if (!$current) continue;
+		# 当前顺位者是玩家 → 不执行 NPC 先攻轮（等待玩家提交 obl_battle_action）
+		if ($current['type'] == 0) continue;
 
-			# 当前顺位者是玩家 → 不执行 NPC 先攻轮（等待玩家提交 obl_battle_action）
-			if ($current['type'] == 0) continue;
+		# 当前顺位者是 NPC → 执行 NPC 先攻轮
+		$npc_data = obl_fetch_playerdata_by_pid($current['pid']);
+		if (!$npc_data) continue;
 
-			# 当前顺位者是 NPC → 执行 NPC 先攻轮
-			$npc_data = obl_fetch_playerdata_by_pid($current['pid']);
-			if (!$npc_data) continue;
-
-			# 初始化 battle_log（入口处局部初始化，设置入口标识）
-			if (!$obl_battle_log) {
-				include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
-				$obl_battle_log = new BattleLogCollector();
-			}
-			$obl_battle_log->setEntryType('npc_turn');
-
-			# 构造 NPC 动作（MVP 固定 unarmed_strike，目标为玩家）
-			$atk_act = array(
-				array('act_id' => 'unarmed_strike', 'target' => $pdata['pid']),
-			);
-
-			# 调用 battle_main（内部会更新先攻队列）
-			battle_main($npc_data, $atk_act, $obl_battle_log);
-
-			$obl_tick_advanced = true;
-			break;  # 最多处理 1 个 NPC 先攻轮
+		# 初始化 battle_log（入口处局部初始化）
+		if (!$obl_battle_log) {
+			include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
+			$obl_battle_log = new BattleLogCollector();
 		}
+
+		# 构造 NPC 动作（MVP 固定 unarmed_strike，目标为玩家）
+		$atk_act = array(
+			array('act_id' => 'unarmed_strike', 'target' => $pdata['pid']),
+		);
+
+		# 调用 battle_main（内部会更新先攻队列）
+		battle_main($npc_data, $atk_act, $obl_battle_log);
+
+		$obl_tick_advanced = true;
+		break;  # 最多处理 1 个 NPC 先攻轮
 	}
 
 	# 阶段 2：非战斗 NPC AI 行为（并行）
@@ -295,7 +286,7 @@ function obl_resolve_all_enemy_ai(&$obl_tick_advanced)
 		foreach ($enemies as &$enemy) 
 		{
 			# 不处理在先攻队列内的敌人
-			if($enemie['bid']) continue;
+    if($enemy['bid']) continue;
 			# 处理其他敌人事件
 			obl_enemy_tick($enemy, $pdata);
 			# 敌人事件是否会推进tick
@@ -394,12 +385,11 @@ function obl_enemy_ambush_player(&$enemy, &$player)
 {
 	global $obl_battle_log;
 
-	# 初始化 battle_log（入口处局部初始化，设置入口标识）
+	# 初始化 battle_log（入口处局部初始化）
 	if (!$obl_battle_log) {
 		include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
 		$obl_battle_log = new BattleLogCollector();
 	}
-	$obl_battle_log->setEntryType('npc_ambush');
 
 	# 设置突袭标记
 	$enemy['oblpara']['ambush_flag'] = true;

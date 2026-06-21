@@ -544,7 +544,7 @@ function obl_fetch_discovered_enemies($pgroup) {
     global $db, $tablepre;
     $enemies = array();
     $result = $db->query("SELECT * FROM {$tablepre}oblplayers
-                          WHERE type > 0 AND pgroup='{$pgroup}' AND discovered=1 AND state=0");
+                          WHERE type > 0 AND pgroup='{$pgroup}' AND discovered=1");
     while ($edata = $db->fetch_array($result)) {
         obl_format_playerdata($edata);
         $enemies[] = $edata;

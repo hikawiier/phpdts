@@ -89,9 +89,6 @@ if ($escape_skip_tick) {
 }
 if (!$command_rejected && !$escape_skip_tick && function_exists('obl_command_advances_tick') && obl_command_advances_tick($command)) {
 	if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
-	$tickdebug_file = GAME_ROOT . './oblivions/tickdebug_from_oblcommand.php';
-	$tickdebug_content = "当前tick：".$gamevars['obl_tick'];
-	writeover($tickdebug_file, $tickdebug_content);
 	$gamevars['obl_tick']++;
 	save_gameinfo();  // 持久化 gamevars（common.inc.php 不会自动保存）
 }

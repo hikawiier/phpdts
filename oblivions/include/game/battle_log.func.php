@@ -12,7 +12,7 @@ if (!defined('IN_GAME')) {
 //
 // 存储模式：played 标记机制
 // - 文件：vex/cache/obl_battle_log_{groomid}_{pid}.json — 存所有 battle_log 条目
-// - 每条带 log_id（文件内自增）、enemy_pid（战斗对象）、played（0=未播放，1=已播放）
+// - 每条带 log_id（文件内自增）、played（0=未播放，1=已播放）
 // - 产生新 battle_log 时，追加到文件（分配 log_id，played=0）
 // - 前端拉取 played=0 的条目播放，播完调 mark_battle_log_played.php 标记 played=1
 // - 文件不被清空，保留历史记录
@@ -24,26 +24,15 @@ if (!defined('IN_GAME')) {
  * 战斗日志收集器（单次请求内累积，请求结束前持久化）
  *
  * 在 3 个战斗入口处局部初始化（玩家突袭/NPC突袭/NPC先攻轮），传入 battle_main()。
- * 入口处通过 setEntryType() 标记日志分类，battle_main 各阶段通过 setPhase() 标记阶段。
+ * battle_main 各阶段通过 setPhase() 标记阶段。
  */
 class BattleLogCollector {
 
     /** @var array 本请求累积的战斗日志条目 */
     private $entries = [];
 
-    /** @var string 入口标识（player_ambush / npc_ambush / npc_turn） */
-    private $entry_type = '';
-
     /** @var string 阶段标识（prepare / verify / excute / queue_check / finish_check） */
     private $phase = '';
-
-    /**
-     * 设置入口标识（标记这条日志在哪个入口被初始化）
-     * @param string $entry_type player_ambush / npc_ambush / npc_turn
-     */
-    public function setEntryType($entry_type) {
-        $this->entry_type = (string)$entry_type;
-    }
 
     /**
      * 设置当前阶段标识（battle_main 各阶段开始时调用）
@@ -56,34 +45,25 @@ class BattleLogCollector {
     /**
      * 追加一条战斗日志
      *
-     * @param int         $turn         先攻轮序号（从 1 开始）
-     * @param string      $actor        行动方标识（'player' 或 'enemy_{pid}'，向后兼容）
-     * @param string      $action_id    动作 ID（如 'unarmed_strike'）
-     * @param string      $action_name  动作名称（如 '空手攻击'）
-     * @param string      $target       目标标识（'player' 或 'enemy_{pid}'，向后兼容）
-     * @param int|float   $effect_value 效果值（伤害值等）
-     * @param array|null  $extra        额外信息（如 escape 成功/失败）
-     * @param array|null  $position     位置信息（阶段一未使用）
-     * @param int         $enemy_pid    战斗对象 PID（用于前端按战斗分组播放）
-     * @param string      $actor_name   动作者名字（前端人称渲染依据）
-     * @param int         $actor_type   动作者 type（0=玩家，>0=敌人，前端人称渲染依据）
+     * @param array $params 关联数组，支持键：
+     *   - actor_pid    (int)    行动者 PID
+     *   - actor_type   (int)    行动者类型：0=玩家，>0=NPC
+     *   - target_pid   (int)    目标 PID：0=无实体目标
+     *   - target_type  (int)    目标类型：-1=无实体目标，0=玩家，>0=NPC
+     *   - action_id    (string) 动作 ID（如 'unarmed_strike'）
+     *   - effect_value (int)    效果值（伤害值、恢复量等）
+     *   - extra        (array|null) 额外信息（HP 快照、事件元数据等）
      */
-    public function emit($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0, $actor_name = '', $actor_type = -1) {
+    public function emit(array $params) {
         $this->entries[] = [
-            'id'           => 'battle.action',
-            'turn'         => (int)$turn,
-            'actor'        => $actor,
-            'actor_name'   => (string)$actor_name,
-            'actor_type'   => (int)$actor_type,
-            'action_id'    => $action_id,
-            'action_name'  => $action_name,
-            'target'       => $target,
-            'effect_value' => $effect_value,
-            'extra'        => $extra,
-            'position'     => $position,
+            'actor_pid'    => (int)($params['actor_pid'] ?? 0),
+            'actor_type'   => (int)($params['actor_type'] ?? -1),
+            'target_pid'   => (int)($params['target_pid'] ?? 0),
+            'target_type'  => (int)($params['target_type'] ?? -1),
+            'action_id'    => (string)($params['action_id'] ?? ''),
+            'effect_value' => (int)($params['effect_value'] ?? 0),
+            'extra'        => isset($params['extra']) ? $params['extra'] : null,
             'ts'           => time(),
-            'enemy_pid'    => (int)$enemy_pid,
-            'entry_type'   => $this->entry_type,
             'phase'        => $this->phase,
         ];
     }

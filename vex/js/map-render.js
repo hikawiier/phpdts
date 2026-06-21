@@ -181,7 +181,7 @@ export function renderMapGrid() {
 
                 const prefix = isExit ? '▸' : (isEntrance ? '◂' : '');
                 const label = prefix + name;
-                const enemy = mapData.enemies.find(e => parseInt(e.pls) === tileInfo.pls);
+                const enemy = mapData.enemies.find(e => parseInt(e.pls) === tileInfo.pls && parseInt(e.state) === 0);
                 if (enemy) {
                     cell.innerHTML = '<span class="cell-name"><span class="cell-enemy">[' + escapeHtml(enemy.name) + ']</span>' + escapeHtml(label) + '</span>';
                     cell.setAttribute('data-enemy-pid', enemy.pid);
