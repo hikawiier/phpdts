@@ -15,10 +15,9 @@
 // ══════════════════════════════════════════════════
 
 import { DebugBus } from './data.js';
-import { gameApi } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { renderLogEntry } from '../data/log-templates.js';
-import { showToast } from './tile-action.js';
+import { showToast } from './toast.js';
 import { isAnyOverlayOpen } from './toast-position.js';
 
 // 日志类别 → 前端显示标签
@@ -134,7 +133,8 @@ export async function refreshLog(forceScroll = true) {
     const el = document.getElementById('logContent');
     if (!el) return;
 
-    const result = await gameApi('obl_log');
+    // 统一读取入口：经 dataManager.fetch（去重，obl_log 非白名单不缓存）
+    const result = await dataManager.fetch('obl_log', true);
     if (result.status !== 'success') return;
 
     const entries = result.data.entries || [];

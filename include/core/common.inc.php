@@ -108,13 +108,34 @@ if (!in_array(CURSCRIPT, array('chat', 'install'))) {
 }*/
 
 require GAME_ROOT.'./gamedata/system.php';
-require GAME_ROOT.'./include/gamectl/init.func.php';
-require GAME_ROOT.'./include/gamectl/news.func.php';
-require GAME_ROOT.'./include/gamectl/resources.func.php';
 require GAME_ROOT.'./include/room/roommng.func.php';
-require GAME_ROOT.'./include/game/club/revclubskills.func.php';
-require GAME_ROOT.'./include/game/dice.func.php';
-require GAME_ROOT.'./include/pregame/titles.func.php';
+$all_requires = array(
+	'./include/gamectl/init.func.php',
+	'./include/gamectl/news.func.php',
+	'./include/gamectl/resources.func.php',
+	'./include/game/club/revclubskills.func.php',
+	'./include/game/dice.func.php',
+	'./include/pregame/titles.func.php',
+);
+// 遗忘模式
+if (function_exists('oblivions_is_active') && oblivions_is_active()) 
+	{
+	/*define('REQUIRED_REQUIRES', [
+			'./include/gamectl/init.func.php',
+			'./include/gamectl/news.func.php',
+			'./include/gamectl/resources.func.php',
+		]);*/
+	}
+if (!defined('REQUIRED_REQUIRES')) {
+	$required_requires = $all_requires; // 默认加载全部，保持向后兼容
+} else {
+	$required_requires = REQUIRED_REQUIRES;
+}
+foreach ($all_requires as $requires_dir) {
+	if (in_array($requires_dir, $required_requires)) {
+		require GAME_ROOT . $requires_dir;
+	}
+}
 
 // $gtablepre 已在数据库连接时设置，这里不再重新赋值
 if(!isset($gtablepre)) {
@@ -220,6 +241,14 @@ if(CURSCRIPT !== 'chat')
 		'resources', 'gamecfg', 'combatcfg', 'clubskills',
 		'dialogue', 'audio', 'tooltip', 'titles',
 	);
+	// 遗忘模式
+	/*if (function_exists('oblivions_is_active') && oblivions_is_active()) 
+	{
+		define('REQUIRED_CONFIGS', [
+			'resources', 'gamecfg',
+			'combatcfg',
+		]);
+	}*/
 	if (!defined('REQUIRED_CONFIGS')) {
 		$required_configs = $all_configs; // 默认加载全部，保持向后兼容
 	} else {
@@ -291,12 +320,16 @@ if(CURSCRIPT !== 'chat')
 		// obl_tick 唯两处增加：NPC 先攻轮（obl_resolve_tick_events 末尾）/ 玩家先攻轮（obl_command [F] 段），互斥。
 		if (function_exists('oblivions_is_active') && oblivions_is_active()
 			&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
-			&& $gamevars['obl_pretick'] < $gamevars['obl_tick']) {
-			include_once GAME_ROOT.'./oblivions/include/game/player.func.php';
+			&& $gamevars['obl_pretick'] < $gamevars['obl_tick']) 
+		{
 			$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
 			// 先同步 obl_pretick（标记已处理的游戏刻）
 			$gamevars['obl_pretick'] = $gamevars['obl_tick'];
 			// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
+			if (!function_exists('obl_resolve_tick_events'))
+			{
+				include_once GAME_ROOT . './oblivions/include/game/player.func.php';
+			}
 			if (function_exists('obl_resolve_tick_events')) {
 				obl_resolve_tick_events($delta);
 			}

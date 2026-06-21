@@ -21,6 +21,13 @@ export function getPlaceName(pls) {
 
 export function getGenderText(g)   { return GENDER_NAMES[g] || '未知'; }
 
+/**
+ * 判断值是否为"空"（falsy 语义）
+ * 兼容 passable 字段可能为 true/1/''/false/0 等多种类型，
+ * 当值为 undefined/null/''/0/false 时返回 true。
+ */
+export function isFalsy(v) { return v === undefined || v === null || v === '' || v === 0 || v === false; }
+
 // ══════════════════════════════════════════════════
 // API请求 / API request (只读)
 // ══════════════════════════════════════════════════
@@ -81,12 +88,15 @@ export async function submitCommand(params) {
         const contentType = resp.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
             const gamedata = await resp.json();
+            // P2 修复：gamedata.error 存在时（如 COMMAND_IN_PROGRESS）不应误判为成功
+            const hasError = !!gamedata.error;
             return {
-                success: true,
+                success: !hasError,
                 gamedata: gamedata,
                 redirect: gamedata.redirect || null,
                 timer: gamedata.timer || null,
-                error: gamedata.error || null
+                error: gamedata.error || null,
+                message: hasError ? '命令执行中，请稍候' : null
             };
         }
 

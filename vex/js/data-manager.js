@@ -1,29 +1,56 @@
 // ══════════════════════════════════════════════════
 // DataManager — 统一数据层
-// 解决 API 重复请求问题：缓存 + 去重 + 订阅通知
+// 白名单缓存 + 去重 + 语义事件广播
+//
+// 缓存策略：仅白名单 action 缓存（game_map/tile_actions/player_inventory），
+//           高频数据（player_info/enemies/obl_log/battle_log）不缓存，每次实时拉取。
+// 去重策略：所有 action 共享 _pending 去重，并发请求合并为一个。
 // ══════════════════════════════════════════════════
 
 import { gameApi } from './utils.js';
 
 class DataManager {
     constructor() {
-        this._cache = new Map();       // action -> { data, timestamp }
-        this._pending = new Map();      // action -> Promise（去重）
-        this._ttl = 2000;              // 缓存有效期 2 秒
-        this._subscribers = new Map();  // action -> Set<callback>（API 数据订阅）
-        this._listeners = new Map();    // event -> Set<callback>（语义事件订阅）
+        this._cache = new Map();        // action -> { data, timestamp }（仅白名单 action）
+        this._pending = new Map();       // action -> Promise（去重，所有 action 都生效）
+        this._listeners = new Map();     // event -> Set<callback>（语义事件订阅）
+
+        // 白名单：只缓存这些 action，TTL 各自不同
+        this._cacheable = new Map([
+            ['game_map', 5000],           // 地图结构，5s（移动后 invalidate）
+            ['tile_actions', 3000],       // 当前格交互，3s（移动后 invalidate）
+            ['player_inventory', 2000],   // 背包，2s（拾取/丢弃后 invalidate）
+        ]);
+        // player_info, enemies, obl_log, battle_log 不缓存
     }
 
     async fetch(action, forceRefresh = false) {
+        const ttl = this._cacheable.get(action);
+
+        // ── 非白名单 action：不缓存，但保留去重 ──
+        if (ttl === undefined) {
+            if (this._pending.has(action)) {
+                return this._pending.get(action);
+            }
+            const promise = gameApi(action).then(result => {
+                this._pending.delete(action);
+                return result;
+            }).catch(err => {
+                this._pending.delete(action);
+                throw err;
+            });
+            this._pending.set(action, promise);
+            return promise;
+        }
+
+        // ── 白名单 action：走缓存逻辑 ──
         const now = Date.now();
         const cached = this._cache.get(action);
 
-        // 缓存有效且非强制刷新
-        if (!forceRefresh && cached && (now - cached.timestamp < this._ttl)) {
+        if (!forceRefresh && cached && (now - cached.timestamp < ttl)) {
             return cached.data;
         }
 
-        // 去重：同一 action 的并发请求合并为一个
         if (this._pending.has(action)) {
             return this._pending.get(action);
         }
@@ -31,7 +58,6 @@ class DataManager {
         const promise = gameApi(action).then(result => {
             this._cache.set(action, { data: result, timestamp: Date.now() });
             this._pending.delete(action);
-            this._notify(action, result);
             return result;
         }).catch(err => {
             this._pending.delete(action);
@@ -43,31 +69,15 @@ class DataManager {
     }
 
     invalidate(action) {
-        this._cache.delete(action);
+        // 白名单内才需要清缓存；非白名单本就无缓存
+        if (this._cacheable.has(action)) {
+            this._cache.delete(action);
+        }
     }
 
     invalidateAll() {
+        // 只清白名单缓存
         this._cache.clear();
-    }
-
-    subscribe(action, callback) {
-        if (!this._subscribers.has(action)) {
-            this._subscribers.set(action, new Set());
-        }
-        this._subscribers.get(action).add(callback);
-    }
-
-    unsubscribe(action, callback) {
-        const subs = this._subscribers.get(action);
-        if (subs) {
-            subs.delete(callback);
-            if (subs.size === 0) this._subscribers.delete(action);
-        }
-    }
-
-    _notify(action, data) {
-        const subs = this._subscribers.get(action);
-        if (subs) subs.forEach(cb => cb(data));
     }
 
     // ─── 语义事件机制（模块间通信，独立于 API action） ───

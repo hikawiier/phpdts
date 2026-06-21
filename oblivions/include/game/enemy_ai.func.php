@@ -226,7 +226,7 @@ function obl_pick_available_tile($available_pls, &$occupied) {
  *
  * @return void
  */
-function obl_resolve_all_enemy_ai() 
+function obl_resolve_all_enemy_ai(&$obl_tick_advanced) 
 {
 	global $db, $tablepre,$cuser;
 
@@ -234,10 +234,6 @@ function obl_resolve_all_enemy_ai()
 	if (!function_exists('battle_main')) {
 		include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
 	}
-	# 需要载入先攻队列
-	//include_once GAME_ROOT . './oblivions/include/game/sql.func.php';
-
-	$obl_tick_advanced = false;
 
 	# NPC行为需要玩家数据
 	$pdata = obl_fetch_playerdata_by_name($cuser);
@@ -269,7 +265,6 @@ function obl_resolve_all_enemy_ai()
 			# 当前顺位者是 NPC → 执行 NPC 先攻轮
 			$npc_data = obl_fetch_playerdata_by_pid($current['pid']);
 			if (!$npc_data) continue;
-			obl_format_playerdata($npc_data);
 
 			# 初始化 battle_log（入口处局部初始化，设置入口标识）
 			if (!$obl_battle_log) {
@@ -300,7 +295,7 @@ function obl_resolve_all_enemy_ai()
 		foreach ($enemies as &$enemy) 
 		{
 			# 不处理在先攻队列内的敌人
-			if($enemies['bid']) continue;
+			if($enemie['bid']) continue;
 			# 处理其他敌人事件
 			obl_enemy_tick($enemy, $pdata);
 			# 敌人事件是否会推进tick
@@ -327,7 +322,8 @@ function obl_resolve_all_enemy_ai()
  * @param array &$player 当前玩家数据（引用传递，突袭时会修改）
  * @return void
  */
-function obl_enemy_tick(&$enemy, &$player) {
+function obl_enemy_tick(&$enemy, &$player) 
+{
 	// 死亡敌人不行动
 	if ($enemy['state'] > 0) return;
 
@@ -354,7 +350,8 @@ function obl_enemy_tick(&$enemy, &$player) {
 	}
 
 	# NPC 突袭逻辑：未被发现 + 有偷袭倾向 + 在突袭范围内（distance <= 1，近战范围）
-	if ($should_chase && $distance <= 1 && empty($enemy['discovered'])) {
+	//if ($should_chase && $distance <= 1 && empty($enemy['discovered'])) {
+	if ($should_chase && $distance <= 1) {
 		if (in_array($ai_type, array('aggressive', 'ambush'))) {
 			obl_enemy_ambush_player($enemy, $player);
 			return;
@@ -393,7 +390,8 @@ function obl_enemy_tick(&$enemy, &$player) {
  * @param array &$player 玩家数据
  * @return void
  */
-function obl_enemy_ambush_player(&$enemy, &$player) {
+function obl_enemy_ambush_player(&$enemy, &$player) 
+{
 	global $obl_battle_log;
 
 	# 初始化 battle_log（入口处局部初始化，设置入口标识）

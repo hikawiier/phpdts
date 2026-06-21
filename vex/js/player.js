@@ -30,7 +30,15 @@ function applyStatusBar() {
         const gd = d.gd || 'f';
         const icon = d.icon || '0';
         const imgSrc = BASE_URL + '/img/' + gd + '_' + icon + '.gif';
-        avatarEl.innerHTML = '<img src="' + escapeHtml(imgSrc) + '" alt="avatar" onerror="this.parentElement.innerHTML=\'<span class=status-avatar-fallback>???</span>\'">';
+        // 使用 addEventListener 替代内联 onerror，符合 CSP 规范
+        const img = document.createElement('img');
+        img.src = imgSrc;
+        img.alt = 'avatar';
+        img.addEventListener('error', function() {
+            avatarEl.innerHTML = '<span class="status-avatar-fallback">???</span>';
+        });
+        avatarEl.innerHTML = '';
+        avatarEl.appendChild(img);
     }
 
     // 位置信息
@@ -100,7 +108,7 @@ export async function loadPlayerInfo() {
     el.innerHTML = '<div class="loading">loading...</div>';
     DebugBus.emit('api', 'loadPlayerInfo:start', { action: 'player_info' });
     const result = await dataManager.fetch('player_info', true);
-    if (result.status !== 'success') { el.innerHTML = '<div class="error">load failed</div>'; return; }
+    if (result.status !== 'success') { el.innerHTML = '<div class="error">数据加载失败</div>'; return; }
     const d = result.data;
     if (!d) { el.innerHTML = '<div class="error">no data</div>'; return; }
 

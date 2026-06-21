@@ -82,3 +82,16 @@ export const GENDER_NAMES = {0:'未定', m:'男生', f:'女生', n:'投影'};
 // ══════════════════════════════════════════════════
 
 export const mapData = { curLoc: null, curRegion: null, links: null, enemies: [] };
+
+/**
+ * 统一更新 mapData 属性（P10：集中修改权）
+ * 将 mapData 的属性修改从多模块直接赋值改为通过本函数更新，
+ * 便于集中管控、日志记录和未来引入响应式机制。
+ * @param {Object} patch - 要合并的属性，如 { curLoc: 1, curRegion: 2 }
+ * @returns {Object} { prevRegion } 更新前的 curRegion（供调用方做区域切换判断）
+ */
+export function updateMapData(patch) {
+    const prevRegion = mapData.curRegion;
+    Object.assign(mapData, patch);
+    return { prevRegion };
+}

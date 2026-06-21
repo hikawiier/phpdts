@@ -21,7 +21,6 @@ import { BASE_URL } from './data.js';
 // 战斗状态
 let currentMode = 'normal';   // 'normal' | 'battle'
 let currentEnemyPid = 0;      // 当前战斗对象 PID（敌人）
-let currentEnemyName = '';    // 当前战斗对象名称
 let currentGroomid = 0;       // 当前房间 ID（用于标记接口）
 let currentPid = 0;           // 当前玩家 PID（用于标记接口）
 let isPlayingBattleLog = false; // 是否正在播放 battlelog（防重入）
@@ -54,10 +53,6 @@ export async function refreshBattle() {
             const isPlayerTurn = checkPlayerTurn(battleQueue);
             await enterBattleMode(enemyPid, isPlayerTurn);
 
-            // 独立拉取播放 battlelog（每次 refreshBattle 都调用，防重入由 isPlayingBattleLog 保证）
-            // 这样 NPC 回合定时器触发的 refreshBattle 也能正常拉取新产生的 battlelog
-            await fetchAndPlayBattleLog();
-
             // NPC 顺位时启动自动刷新循环，玩家顺位时停止
             if (isPlayerTurn) {
                 stopNpcTurnRefresh();
@@ -67,13 +62,11 @@ export async function refreshBattle() {
         } else {
             // action='' 战斗已结束
             stopNpcTurnRefresh();
-            if (currentMode !== 'normal') {
-                // 战斗结束时先播放积压的 battlelog（如秒杀场景的最后一击日志）
-                // 再退出 battle 模式，避免日志丢失或积压到下次战斗
-                await fetchAndPlayBattleLog();
-                exitBattleMode();
-            }
+            exitBattleMode();
         }
+
+        // 独立播放积压的 battlelog（不管模式，有就播放，没有就跳过）
+        await fetchAndPlayBattleLog();
     } catch (e) {
         console.error('[Battle] refreshBattle error:', e);
     }
@@ -134,12 +127,9 @@ async function enterBattleMode(enemyPid, isPlayerTurn) {
     currentMode = 'battle';
     currentEnemyPid = enemyPid;
 
-    // 获取敌人名称
-    await fetchEnemyName(enemyPid);
-
-    // 切换 DOM
+    // 切换 DOM（敌人名称暂空，等 playBattleLogGroup 从 battlelog 提取后更新）
     showBattleMode();
-    renderBattleHeader(currentEnemyName);
+    renderBattleHeader('');
 
     // 根据顺位渲染动作面板
     updateActionPanel(isPlayerTurn);
@@ -153,7 +143,6 @@ function exitBattleMode() {
 
     currentMode = 'normal';
     currentEnemyPid = 0;
-    currentEnemyName = '';
 
     // 切换 DOM
     showNormalMode();
@@ -162,7 +151,8 @@ function exitBattleMode() {
     document.body.classList.remove('battle-active');
 
     // 广播战斗结束事件，触发地图和动作条刷新
-    dataManager.invalidateAll();
+    // 战斗不涉及白名单 action（game_map/tile_actions/player_inventory），
+    // loadMap 会重新拉取 game_map，无需 invalidateAll
     dataManager.broadcast('battle:ended');
 }
 
@@ -264,13 +254,6 @@ async function confirmStartBattle(enemyPid) {
 
         // 刷新战斗状态（会进入 battle 模式并拉取播放 battlelog）
         await refreshBattle();
-
-        // 秒杀场景：refreshBattle 拉取到 action='' 直接退出 battle 模式，
-        // 但 currentMode 从未进入 'battle'，所以 refreshBattle 的 else 分支不会播放 battlelog。
-        // 这里补充：如果 refreshBattle 后仍在 normal 模式，主动播放积压的 battlelog。
-        if (currentMode === 'normal') {
-            await fetchAndPlayBattleLog();
-        }
     } finally {
         isProcessingBattle = false;
     }
@@ -308,10 +291,7 @@ async function onBattleAction(actionId) {
         dataManager.invalidate('enemies');
         dataManager.invalidate('battle_log');
 
-        // 拉取并播放新产生的 battlelog
-        await fetchAndPlayBattleLog();
-
-        // 刷新战斗状态
+        // 刷新战斗状态（refreshBattle 末尾会调用 fetchAndPlayBattleLog）
         await refreshBattle();
     } finally {
         isProcessingBattle = false;
@@ -423,8 +403,11 @@ async function playBattleLogGroup(entries, enemyPid) {
     const excuteEntries = entries.filter(e => e.phase === 'excute');
     if (excuteEntries.length === 0) return;
 
-    // 获取敌人名称和 HP 信息
-    const context = await buildPlayContext(enemyPid);
+    // 获取播放上下文（敌人名称从 entries 提取，HP 从 API 获取）
+    const context = await buildPlayContext(entries, enemyPid);
+
+    // 更新战斗 header（敌人名称可能刚从 battlelog 中获取到）
+    renderBattleHeader(context.enemyName);
 
     // 1. 先播放碰撞动画（冲刺+抖动，不含伤害数字）
     for (const entry of excuteEntries) {
@@ -467,16 +450,28 @@ function restoreTurnActiveGlow() {
 }
 
 /**
- * 构建播放上下文（敌人名称 + HP 信息）
+ * 构建播放上下文（HP 信息 + 玩家名称）
  *
+ * 敌人名称从 battlelog entries 中提取（不依赖 enemies API，避免敌人死亡后名称丢失）。
+ * HP 信息仍从 API 获取。
+ *
+ * @param {Array} entries 同一 enemy_pid 的 battlelog 条目
  * @param {number} enemyPid 敌人 PID
- * @returns {Promise<Object>} { enemyName, enemyHp, enemyMaxHp, playerHp, playerMaxHp }
+ * @returns {Promise<Object>} { enemyName, enemyHp, enemyMaxHp, playerHp, playerMaxHp, playerName }
  */
-async function buildPlayContext(enemyPid) {
-    let enemyName = 'buildPlayContext里的敌人';
+async function buildPlayContext(entries, enemyPid) {
+    let enemyName = '敌人';
     let enemyHp = 0, enemyMaxHp = 1;
     let playerHp = 0, playerMaxHp = 1;
     let playerName = '';
+
+    // 从 battlelog entries 中提取敌人名称（actor_type !== 0 的条目的 actor_name）
+    for (const e of entries) {
+        if (e.actor_type !== 0 && e.actor_name) {
+            enemyName = e.actor_name;
+            break;
+        }
+    }
 
     try {
         const playerInfo = await dataManager.fetch('player_info', true);
@@ -491,7 +486,6 @@ async function buildPlayContext(enemyPid) {
             const enemies = enemiesResult.data.enemies || [];
             for (let i = 0; i < enemies.length; i++) {
                 if (parseInt(enemies[i].pid) === parseInt(enemyPid)) {
-                    enemyName = enemies[i].name || '构建播放上下文的敌人';
                     enemyHp = enemies[i].hp || 0;
                     enemyMaxHp = enemies[i].mhp || 1;
                     break;
@@ -543,16 +537,7 @@ async function markBattleLogPlayed(logIds) {
 // ══════════════════════════════════════════════════
 
 /**
- * 从 enemies API 获取敌人名称（内部使用，设置 currentEnemyName）
- *
- * @param {number} enemyPid 敌人 PID
- */
-async function fetchEnemyName(enemyPid) {
-    currentEnemyName = await fetchEnemyNameByPid(enemyPid);
-}
-
-/**
- * 从 enemies API 获取敌人名称
+ * 从 enemies API 获取敌人名称（仅用于 startBattle 确认界面）
  *
  * @param {number} pid 敌人 PID
  * @returns {Promise<string>} 敌人名称
@@ -562,17 +547,17 @@ async function fetchEnemyNameByPid(pid) {
 
     try {
         const result = await dataManager.fetch('enemies', true);
-        if (result.status !== 'success' || !result.data) return 'API获取失败的敌人';
+        if (result.status !== 'success' || !result.data) return '敌人';
 
         const enemies = result.data.enemies || [];
         for (let i = 0; i < enemies.length; i++) {
             if (parseInt(enemies[i].pid) === pid) {
-                return enemies[i].name || 'API数组中不存在的敌人';
+                return enemies[i].name || '敌人';
             }
         }
-        return 'API其他情况的敌人';
+        return '敌人';
     } catch (e) {
-        return 'APIcatch(e)的敌人';
+        return '敌人';
     }
 }
 

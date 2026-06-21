@@ -18,6 +18,7 @@ import { renderBattleLogEntryHtml } from './battle-render.js';
 // 播放状态
 let playing = false;
 let currentTimer = null;
+let currentSleepResolve = null;
 let cancelRequested = false;
 
 // 播放参数
@@ -147,10 +148,7 @@ export function isBattleModalPlaying() {
  */
 async function closeBattleModalInternal(isTransition) {
     cancelRequested = true;
-    if (currentTimer) {
-        clearTimeout(currentTimer);
-        currentTimer = null;
-    }
+    cancelCurrentSleep();
 
     const overlay = document.getElementById('battleModalOverlay');
     if (!overlay) return;
@@ -230,13 +228,13 @@ function updateHpBars(entry, ctx) {
     if (!entry.extra) return;
 
     // 玩家攻击敌人 → 更新敌人 HP
-    if (entry.actor === 'player' && entry.extra.enemy_hp_after !== undefined) {
+    if (entry.actor_type === 0 && entry.extra.enemy_hp_after !== undefined) {
         updateHpBar('battleModalEnemyHpFill', 'battleModalEnemyHpText',
             entry.extra.enemy_hp_after, ctx.enemyMaxHp);
     }
 
     // 敌人攻击玩家 → 更新玩家 HP
-    if (entry.actor !== 'player' && entry.extra.player_hp_after !== undefined) {
+    if (entry.actor_type !== 0 && entry.extra.player_hp_after !== undefined) {
         updateHpBar('battleModalPlayerHpFill', 'battleModalPlayerHpText',
             entry.extra.player_hp_after, ctx.playerMaxHp);
     }
@@ -287,9 +285,25 @@ async function appendEntry(body, html) {
  */
 function sleep(ms) {
     return new Promise(resolve => {
+        currentSleepResolve = resolve;
         currentTimer = setTimeout(() => {
             currentTimer = null;
+            currentSleepResolve = null;
             resolve();
         }, ms);
     });
+}
+
+/**
+ * 取消当前正在等待的 sleep，并 resolve 其 Promise（避免永久挂起）
+ */
+function cancelCurrentSleep() {
+    if (currentTimer) {
+        clearTimeout(currentTimer);
+        currentTimer = null;
+    }
+    if (currentSleepResolve) {
+        currentSleepResolve();
+        currentSleepResolve = null;
+    }
 }

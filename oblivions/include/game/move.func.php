@@ -156,7 +156,7 @@ function obl_move($moveto, &$pdata) {
         obl_format_playerdata($occupier);
         // 碰撞战斗：双方留在原地，战斗瞬间结束（过渡实现）
         if (!function_exists('obl_resolve_collision_battle')) {
-            include_once GAME_ROOT . './oblivions/include/game/npc/npc.main.php';
+            include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
         }
         //obl_resolve_collision_battle($pdata, $occupier);
         return;

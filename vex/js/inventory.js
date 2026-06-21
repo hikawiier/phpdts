@@ -4,7 +4,7 @@
 // ══════════════════════════════════════════════════
 
 import { DebugBus, mapData } from './data.js';
-import { escapeHtml, gameApi } from './utils.js';
+import { escapeHtml } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
 
@@ -43,7 +43,8 @@ function renderCurrentTab() {
 
 export async function loadInventory() {
     DebugBus.emit('api', 'loadInventory:start', { action: 'player_inventory' });
-    const result = await gameApi('player_inventory');
+    // 统一读取入口：经 dataManager.fetch（去重 + 白名单缓存）
+    const result = await dataManager.fetch('player_inventory', true);
     if (result.status !== 'success') {
         inventoryData = null;
         renderCurrentTab();
@@ -174,10 +175,11 @@ async function handleDiscard(slot) {
         slot: slot
     });
     if (result.success) {
-        dataManager.invalidateAll();
+        // 精准失效：obl_discard 只影响背包
+        dataManager.invalidate('player_inventory');
         dataManager.broadcast('game:action-completed');
     } else {
-        dataManager.broadcast('ui:toast', { type: 'error', msg: result.error || 'discard failed' });
+        dataManager.broadcast('ui:toast', { type: 'error', msg: result.error || '丢弃失败' });
     }
 }
 

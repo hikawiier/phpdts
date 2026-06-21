@@ -4,75 +4,14 @@
 // ══════════════════════════════════════════════════
 
 import { mapData } from './data.js';
-import { escapeHtml, gameApi } from './utils.js';
+import { escapeHtml } from './utils.js';
 import { loadMap } from './map.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
 import { updateToastPosition } from './toast-position.js';
+import { showToast } from './toast.js';
 
 let tileData = null;
-
-// ══════════════════════════════════════════════════
-// Toast（由 ui:toast 事件触发）
-// ══════════════════════════════════════════════════
-
-export function showToast(message, type, duration, isHtml, mergeId) {
-    type = type || 'info';
-    duration = duration || 2000;
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    const tag = type === 'error' ? '[ERR]' : (type === 'success' ? '[OK]' : '[i]');
-
-    // ── 同类合并：相邻同 mergeId + 同 type 的 Toast 合并显示 ×N ──
-    // 避免批量操作（如"全部拾取"触发 6 条 pickup.bag_full）刷屏
-    if (mergeId) {
-        const last = container.lastElementChild;
-        if (last && last.dataset.mergeId === mergeId && last.dataset.toastType === type) {
-            // 合并：更新计数
-            const count = parseInt(last.dataset.mergeCount || '1') + 1;
-            last.dataset.mergeCount = count;
-
-            // 更新计数显示
-            let countEl = last.querySelector('.toast-count');
-            if (!countEl) {
-                countEl = document.createElement('span');
-                countEl.className = 'toast-count';
-                last.appendChild(countEl);
-            }
-            countEl.textContent = ' ×' + count;
-
-            // 重置消失计时器
-            const timerId = parseInt(last.dataset.timerId);
-            if (timerId) clearTimeout(timerId);
-            const newTimerId = setTimeout(function() {
-                last.classList.remove('show');
-                setTimeout(function() { last.remove(); }, 300);
-            }, duration);
-            last.dataset.timerId = newTimerId;
-            return;
-        }
-    }
-
-    // ── 正常创建新 Toast ──
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + type;
-    if (mergeId) {
-        toast.dataset.mergeId = mergeId;
-        toast.dataset.mergeCount = '1';
-        toast.dataset.toastType = type;
-    }
-    // isHtml=true 时 message 视为已转义的 HTML（如 renderLogEntry 输出，含高亮 span）；
-    // 默认 false 转义纯文本，保持对 ui:toast 等现有调用方的兼容
-    const safeMessage = isHtml ? message : escapeHtml(message);
-    toast.innerHTML = '<span class="toast-tag">' + tag + '</span>' + safeMessage;
-    container.appendChild(toast);
-    requestAnimationFrame(function() { toast.classList.add('show'); });
-    const timerId = setTimeout(function() {
-        toast.classList.remove('show');
-        setTimeout(function() { toast.remove(); }, 300);
-    }, duration);
-    toast.dataset.timerId = timerId;
-}
 
 // ══════════════════════════════════════════════════
 // 加载当前格交互数据
@@ -89,9 +28,10 @@ export async function loadTileAction() {
 
     el.innerHTML = '<div class="loading">scanning...</div>';
 
-    const result = await gameApi('tile_actions');
+    // 统一读取入口：经 dataManager.fetch（去重 + 白名单缓存）
+    const result = await dataManager.fetch('tile_actions', true);
     if (result.status !== 'success') {
-        el.innerHTML = '<div class="error">load failed</div>';
+        el.innerHTML = '<div class="error">数据加载失败</div>';
         return;
     }
 
@@ -213,13 +153,21 @@ export function closeModal() {
     updateToastPosition();
 }
 
-function openModal(title, bodyHtml) {
+function openModal(title, bodyHtml, source) {
     const titleEl = document.getElementById('modalTitle');
     const bodyEl = document.getElementById('modalBody');
     if (titleEl) titleEl.textContent = title;
     if (bodyEl) bodyEl.innerHTML = bodyHtml;
     const overlay = document.getElementById('modalOverlay');
-    if (overlay) overlay.classList.add('open');
+    if (overlay) {
+        overlay.classList.add('open');
+        // 缓存来源标识，供 refreshOpenModal 精确匹配（避免同名 POI 误匹配）
+        if (source) {
+            overlay.dataset.modalSource = source;
+        } else {
+            delete overlay.dataset.modalSource;
+        }
+    }
     bindModalEvents();
     updateToastPosition();
 }
@@ -300,11 +248,14 @@ async function handleExplore() {
     try {
         const result = await commandQueue.execute({ mode: 'command', command: 'obl_explore' });
         if (result.success) {
-            dataManager.invalidateAll();
+            // 精准失效：obl_explore 影响动作条、背包、地图
+            dataManager.invalidate('tile_actions');
+            dataManager.invalidate('player_inventory');
+            dataManager.invalidate('game_map');
             await loadMap();
             dataManager.broadcast('game:action-completed');
         } else {
-            showToast(result.error || 'explore failed', 'error');
+            showToast(result.error || '探索失败', 'error');
         }
     } finally {
         setActionBarDisabled(false);
@@ -325,7 +276,10 @@ async function handleSwitchRegion() {
     try {
         const result = await commandQueue.execute({ command: 'move', moveto: targetPls });
         if (result.success) {
-            dataManager.invalidateAll();
+            // 精准失效：move 命令影响地图、动作条、背包
+            dataManager.invalidate('game_map');
+            dataManager.invalidate('tile_actions');
+            dataManager.invalidate('player_inventory');
             await loadMap();
             dataManager.broadcast('game:action-completed');
         } else {
@@ -341,14 +295,16 @@ async function handleSearch(iaid) {
     try {
         const result = await commandQueue.execute({ mode: 'command', command: 'obl_search', iaid: iaid });
         if (result.success) {
-            dataManager.invalidateAll();
+            // 精准失效：obl_search 影响动作条、背包
+            dataManager.invalidate('tile_actions');
+            dataManager.invalidate('player_inventory');
             dataManager.broadcast('game:action-completed');
             // 搜索成功后重新打开该 POI 的模态框（刷新内容）
             closeModal();
             await loadTileAction();
             checkPoi(iaid);
         } else {
-            showToast(result.error || 'search failed', 'error');
+            showToast(result.error || '搜索失败', 'error');
         }
     } finally {
         setActionBarDisabled(false);
@@ -362,32 +318,50 @@ async function handlePickup(iid) {
         // （不能仅移除 DOM 行，因为背包已满等失败情况下道具并未真正被拾取）
         await loadTileAction();
         refreshOpenModal();
-        dataManager.invalidateAll();
+        // 精准失效：obl_pickup 影响背包、动作条
+        dataManager.invalidate('player_inventory');
+        dataManager.invalidate('tile_actions');
         dataManager.broadcast('game:action-completed');
     } else {
-        showToast(result.error || 'pickup failed', 'error');
+        showToast(result.error || '拾取失败', 'error');
     }
 }
 
 /**
  * 刷新当前打开的模态框内容
- * 根据模态框标题判断来源（POI 名称 or "脚边道具"），重新渲染对应内容
+ * 优先通过 dataset.modalSource 精确匹配来源（避免同名 POI 误匹配），
+ * 回退到标题匹配（兼容旧逻辑）
  */
 function refreshOpenModal() {
     const overlay = document.getElementById('modalOverlay');
     if (!overlay || !overlay.classList.contains('open')) return;
 
+    // 优先使用 dataset.modalSource 精确匹配
+    const source = overlay.dataset.modalSource;
+    if (source) {
+        if (source === 'ground') {
+            checkGround();
+            return;
+        }
+        if (source.startsWith('poi:')) {
+            const iaid = parseInt(source.substring(4));
+            if (!isNaN(iaid)) {
+                checkPoi(iaid);
+                return;
+            }
+        }
+    }
+
+    // 回退：标题匹配（兼容无 source 标识的模态框）
     const titleEl = document.getElementById('modalTitle');
     if (!titleEl) return;
     const title = titleEl.textContent.trim();
 
-    // 脚边道具模态框
     if (title === '脚边道具') {
         checkGround();
         return;
     }
 
-    // POI 模态框：根据标题查找对应的 iaid
     if (tileData && tileData.pois) {
         for (let i = 0; i < tileData.pois.length; i++) {
             if (tileData.pois[i].name === title) {
@@ -397,15 +371,29 @@ function refreshOpenModal() {
         }
     }
 
-    // 未找到匹配的来源（可能是机制触发型 POI 等），关闭模态框
+    // 未找到匹配的来源，关闭模态框
     closeModal();
 }
 
 async function handlePickupAll(items) {
+    let failCount = 0;
     for (let i = 0; i < items.length; i++) {
-        await commandQueue.execute({ mode: 'command', command: 'obl_pickup', iid: items[i].iid });
+        const result = await commandQueue.execute({ mode: 'command', command: 'obl_pickup', iid: items[i].iid });
+        if (!result.success) {
+            failCount++;
+            // 背包已满等情况下继续拾取无意义，提前终止
+            if (result.error && result.error.indexOf('满') !== -1) {
+                showToast(result.error, 'error', 2000, false, 'pickup.bag_full');
+                break;
+            }
+        }
     }
-    dataManager.invalidateAll();
+    if (failCount > 0 && failCount < items.length) {
+        showToast('部分道具拾取失败（' + failCount + '件）', 'error');
+    }
+    // 精准失效：obl_pickup 影响背包、动作条
+    dataManager.invalidate('player_inventory');
+    dataManager.invalidate('tile_actions');
     dataManager.broadcast('game:action-completed');
     closeModal();
 }
@@ -437,7 +425,7 @@ function checkPoi(iaid) {
             + '<div class="mechanic-effect">✦ ' + escapeHtml(poi.mechanic) + ' +' + (poi.mechanic_value || 0) + '</div>'
             + '</div>'
             + '<div class="modal-footer"><button class="term-btn" data-action="close">[确认]</button></div>';
-        openModal(poi.name, body);
+        openModal(poi.name, body, 'poi:' + iaid);
         return;
     }
 
@@ -468,7 +456,7 @@ function checkPoi(iaid) {
         body += '<div class="tile-empty">无可交互内容</div>';
     }
 
-    openModal(poi.name, body);
+    openModal(poi.name, body, 'poi:' + iaid);
 }
 
 function checkGround() {
@@ -480,7 +468,7 @@ function checkGround() {
         body += renderItemRow(items[i]);
     }
     body += '<div class="modal-footer"><button class="term-btn" data-action="pickup-all" data-source="ground">[全部拾取]</button></div>';
-    openModal('脚边道具', body);
+    openModal('脚边道具', body, 'ground');
 }
 
 // ══════════════════════════════════════════════════

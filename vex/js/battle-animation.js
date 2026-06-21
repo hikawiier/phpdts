@@ -32,7 +32,7 @@ export async function playCollisionAnimation(entry, enemyPid) {
     }
 
     // 判断攻击方和受击方
-    const isPlayerAttacker = entry.actor === 'player';
+    const isPlayerAttacker = entry.actor_type === 0;
     const attackerEl = isPlayerAttacker ? getPlayerElement() : getEnemyElement(enemyPid);
     const targetEl = isPlayerAttacker ? getEnemyElement(enemyPid) : getPlayerElement();
 
@@ -104,7 +104,7 @@ export function playDamageNumbersAfterModal(entries, enemyPid) {
         const damage = entry.effect_value || 0;
         if (damage <= 0) continue;
 
-        const isPlayerAttacker = entry.actor === 'player';
+        const isPlayerAttacker = entry.actor_type === 0;
         const targetEl = isPlayerAttacker ? getEnemyElement(enemyPid) : getPlayerElement();
         if (!targetEl) continue;
 

@@ -282,7 +282,8 @@ export function renderLogEntry(entry) {
                 const escaped = escapeHtml(String(params[key]));
                 if (escaped) {
                     const wrapped = `<span class="${template.highlightClass}">${escaped}</span>`;
-                    text = text.replace(escaped, wrapped);
+                    // 使用函数形式 replace，避免 escaped 中的 $ 字符被当作特殊匹配模式
+                    text = text.replace(escaped, () => wrapped);
                 }
             }
         }

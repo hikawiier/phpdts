@@ -645,8 +645,8 @@ function obl_command_advances_tick($command) {
  *
  * @param int $delta 需要处理的刻数差（保留参数兼容，实际最多处理 1 个 NPC 先攻轮）
  * @return void
- */
-function obl_resolve_tick_events($delta) {
+ */ function obl_resolve_tick_events($delta)
+{
 	global $gamevars;
 
 	// 清除"游戏刻已推进"标记（同一请求内有效）
@@ -654,21 +654,18 @@ function obl_resolve_tick_events($delta) {
 
 	// 加载敌人 AI（含两阶段处理：战斗中 NPC 先攻轮 + 非战斗 NPC AI 行为）
 	if (!function_exists('obl_resolve_all_enemy_ai')) {
-		include_once GAME_ROOT . './oblivions/include/game/npc/npc.main.php';
-		include_once GAME_ROOT . './oblivions/include/game/npc/npc.func.php';
-		include_once GAME_ROOT . './oblivions/include/game/npc/npc.calc.php';
+		include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
 	}
-
 	// 两阶段处理（阶段 1：战斗中 NPC 先攻轮；阶段 2：非战斗 NPC AI 行为）
 	// obl_resolve_all_enemy_ai 内部检测 $obl_tick_advanced 标记，阶段 1 最多处理 1 个 NPC 先攻轮
-	$obl_tick_advanced = obl_resolve_all_enemy_ai();
+	$obl_tick_advanced = obl_resolve_all_enemy_ai($obl_tick_advanced);
 
 	// 末尾：统一游戏刻推进
 	// 如果 NPC 先攻轮执行了（设置了标记），推进 1 游戏刻
 	// 这会产生新的未处理游戏刻（obl_pretick < obl_tick），下次请求继续循环
 	if ($obl_tick_advanced) {
 		$tickdebug_file = GAME_ROOT . './oblivions/tickdebug_from_npcevents.php';
-		$tickdebug_content = "当前tick：".$gamevars['obl_tick'];
+		$tickdebug_content = "当前tick：" . $gamevars['obl_tick'];
 		writeover($tickdebug_file, $tickdebug_content);
 		$gamevars['obl_tick']++;
 		save_gameinfo();

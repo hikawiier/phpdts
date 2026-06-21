@@ -265,9 +265,7 @@ function obl_explore(&$pdata, $skip_sp_check = false) {
 
     // 3. 发现视野内的敌人（同时清除敌人所在格的迷雾）
     if (!function_exists('obl_discover_enemies')) {
-        //include_once GAME_ROOT . './oblivions/include/game/npc/npc.main.php';
-        include_once GAME_ROOT . './oblivions/include/game/npc/npc.func.php';
-        include_once GAME_ROOT . './oblivions/include/game/npc/npc.calc.php';
+        include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
     }
     $vision_range = obl_get_player_vision_range($pdata);
     obl_discover_enemies($pgroup, $pls, $vision_range);
