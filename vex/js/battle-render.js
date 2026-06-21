@@ -5,72 +5,54 @@
 // - 将 BattleLogEntry 渲染为 HTML（供模态框使用）
 // - 渲染战斗动作按钮（battle 模式）
 //
+// 人称渲染规则（后端只传 actor_name + actor_type，前端负责展示）：
+// - actor_type=0 且 actor_name===playerName → 显示"你"
+// - 否则一律显示 actor_name
+//
 // 注意：实时日志区已移除，battlelog 通过模态框播放。
 // ══════════════════════════════════════════════════
 
 import { escapeHtml } from './utils.js';
 
 /**
- * 将 actor/target 标识转换为显示名称
- *
- * @param {string} id  标识（'player' 或 'enemy_{pid}'）
- * @param {string} enemyName 敌人名称（用于替换 'enemy_{pid}'）
- * @returns {string} 显示名称
- */
-function actorDisplayName(id, enemyName) {
-    if (id === 'player') return '你';
-    if (id.indexOf('enemy_') === 0) return enemyName || '敌人';
-    return id;
-}
-
-/**
  * 渲染单条 BattleLogEntry 为 HTML（供模态框使用）
  *
  * @param {Object} entry 战斗日志条目
- * @param {string} enemyName 敌人名称
- * @returns {string} HTML 字符串
+ * @param {Object} context 播放上下文 { playerName, enemyName, ... }
+ * @returns {string} HTML 字符串（空字符串表示该条目不需要渲染）
  */
-export function renderBattleLogEntryHtml(entry, enemyName) {
-    const actor = actorDisplayName(entry.actor, enemyName);
-    const target = actorDisplayName(entry.target, enemyName);
-    const actorClass = entry.actor === 'player' ? 'yellow' : 'red';
+export function renderBattleLogEntryHtml(entry, context) {
+    const ctx = context || {};
+    const playerName = ctx.playerName || '';
+    const enemyName = ctx.enemyName || 'renderBattleLogEntryHtml里的敌人';
+
+    // actor 人称渲染：actor_type=0 且 actor_name=玩家名 → "你"，否则显示 actor_name
+    function displayActor(e) {
+        if (e.actor_type === 0 && e.actor_name === playerName) return '你';
+        return e.actor_name || '未知';
+    }
+
+    // target 显示（后端暂未加 target_name，用旧逻辑推断）
+    function displayTarget(e) {
+        if (e.target === 'player') return '你';
+        if (e.target && e.target.indexOf('enemy_') === 0) return enemyName;
+        return e.target || '';
+    }
+
+    const actor = displayActor(entry);
+    const target = displayTarget(entry);
+    const actorClass = entry.actor_type === 0 ? 'yellow' : 'red';
 
     switch (entry.action_id) {
-        case 'battle.start': {
-            // 战斗开始提示：根据 initiator 显示不同文案
-            const initiator = entry.extra && entry.extra.initiator;
-            if (initiator === 'enemy') {
-                // 遭遇战：NPC 移动到玩家格触发
-                return `你遭遇了<span class="red">${escapeHtml(actor)}</span>！战斗开始！`;
+        case 'battle_end': {
+            // 战斗结束事件，不作为"动作"渲染
+            // excute 阶段的 battle_end：actor 是被清除方
+            // actor_type != 0（敌人被清除）→ 玩家胜利
+            if (entry.actor_type !== 0) {
+                return `<span class="yellow">═══ 战斗胜利！你击败了 ${escapeHtml(enemyName)} ═══</span>`;
             }
-            // 玩家主动攻击
-            return `你向<span class="red">${escapeHtml(target)}</span>发起了攻击！`;
-        }
-
-        case 'initiative.roll': {
-            // 先攻判定：entry.target 直接是第一顺位者的名字（非标识符）
-            const firstName = entry.target || '';
-            const extra = entry.extra || {};
-            const playerRoll = extra.player_roll !== undefined ? extra.player_roll : '?';
-            const enemyRoll = extra.enemy_roll !== undefined ? extra.enemy_roll : '?';
-            return `<span class="text-fg-dim">先攻判定（你 ${playerRoll} vs 敌 ${enemyRoll}）：</span><span class="yellow">${escapeHtml(firstName)}</span> 抢得先机！`;
-        }
-
-        case 'battle.end': {
-            // 战斗结束：entry.target 是结果标识（victory/defeat/escape）
-            const result = entry.target || '';
-            const extra = entry.extra || {};
-            const resultName = extra.result_name || result;
-            if (result === 'victory') {
-                return `<span class="yellow">═══ 战斗胜利！你击败了敌人 ═══</span>`;
-            }
-            if (result === 'defeat') {
-                return `<span class="red">═══ 战斗失败...你被击败了 ═══</span>`;
-            }
-            if (result === 'escape') {
-                return `<span class="text-fg-dim">═══ 你成功逃离了战斗 ═══</span>`;
-            }
-            return `<span class="text-fg-dim">═══ 战斗结束（${escapeHtml(resultName)}）═══</span>`;
+            // actor_type == 0（玩家方战斗结束）
+            return `<span class="text-fg-dim">═══ 战斗结束 ═══</span>`;
         }
 
         case 'unarmed_strike':
@@ -83,6 +65,13 @@ export function renderBattleLogEntryHtml(entry, enemyName) {
             }
             return `<span class="${actorClass}">${escapeHtml(actor)}</span>尝试逃跑，但<span class="red">失败了</span>。`;
         }
+
+        // 系统事件（ap_recover / queue_create / queue_update / verify 阶段日志）
+        // 这些不在 excute 阶段播放，但以防万一返回空字符串
+        case 'ap_recover':
+        case 'queue_create':
+        case 'queue_update':
+            return '';
 
         default:
             return `<span class="${actorClass}">${escapeHtml(actor)}</span>使用了${escapeHtml(entry.action_name)}。`;

@@ -14,25 +14,37 @@ if(!function_exists('obl_fetch_playerdata_by_pid')) {
 include_once GAME_ROOT . './oblivions/include/game/sql.func.php'; //包含数据库抓取相关函数文件
 include_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php'; //包含战斗系统功能函数文件
 
-//先攻轮完整流程主函数 $actor_data=先攻者data $atk_act=动作ID $atk_target=动作目标pid
-function battle_main(&$actor_data, &$atk_act, &$atk_target, &$obl_battle_log)
+//先攻轮完整流程主函数 $actor_data=先攻者data $atk_act=动作数组（数字索引，每项含 act_id + target）
+function battle_main(&$actor_data, &$atk_act, &$obl_battle_log)
 {
     $battle_cache = []; //先攻轮中会产生的临时变量
-    $battle_cache['tick_flag'] = false; //初始化游戏刻flag
     $battle_cache['combatants'] = array($actor_data['pid']); //收集本次先攻轮中出现的所有参战者，第一个是动作发起者本人
 
-    battle_prepare($actor_data, $battle_cache, $obl_battle_log); //先攻轮准备函数：恢复AP
-    battle_verify($actor_data, $atk_act, $atk_target, $obl_battle_log, $battle_cache); //先攻轮校验函数：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
+    // 各阶段设置 phase 标识，供前端判断渲染内容
+    // 先攻轮准备函数：恢复AP
+    $obl_battle_log->setPhase('prepare');
+    battle_prepare($actor_data, $battle_cache, $obl_battle_log);
 
-    # battle_verify()会过滤掉$atk_act内所有不合法的act，$atk_act不为空时才会进入先攻轮结算
+    //先攻轮校验函数：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
+    //现在暂时没生效
+    $obl_battle_log->setPhase('verify');
+    battle_verify($actor_data, $atk_act, $obl_battle_log, $battle_cache); 
+
+    // battle_verify()会过滤掉$atk_act内所有不合法的act，$atk_act不为空时才会进入先攻轮结算
     if (!empty($atk_act)) {
-        battle_excute($actor_data, $atk_act, $atk_target, $obl_battle_log, $battle_cache);    //先攻轮结算函数
+        # 先攻轮结算函数
+        $obl_battle_log->setPhase('excute');
+        battle_excute($actor_data, $atk_act, $obl_battle_log, $battle_cache);    
     }
 
-    battle_queue_check($actor_data, $obl_battle_log, $battle_cache);  //先攻队列校验函数：检验是否所有人都已执行完先攻队列，是否需要重建先攻队列；
-    battle_finish_check($actor_data, $obl_battle_log, $battle_cache); //战斗结束检测函数：遍历先攻队列，检查是否满足战斗结束条件（玩家是唯一幸存者，或玩家成功逃跑）
-    
-    $battle_cache['tick_flag'] = true;    //游戏刻推进检测 - 返回游戏刻推进flag
+    //先攻队列校验函数：检验是否所有人都已执行完先攻队列，是否需要重建先攻队列；
+    $obl_battle_log->setPhase('queue_check');
+    battle_queue_check($actor_data, $obl_battle_log, $battle_cache);
+
+    //战斗结束检测函数：遍历先攻队列，检查是否满足战斗结束条件（玩家是唯一幸存者，或玩家成功逃跑）
+    $obl_battle_log->setPhase('finish_check');
+    battle_finish_check($actor_data, $obl_battle_log, $battle_cache); 
+
 }
 
 function battle_prepare(&$actor_data, &$battle_cache, &$obl_battle_log)
@@ -41,37 +53,42 @@ function battle_prepare(&$actor_data, &$battle_cache, &$obl_battle_log)
     battle_ap_recover($actor_data,$battle_cache,$obl_battle_log); //AP恢复函数
 }
 
-function battle_verify(&$actor_data, &$atk_act, &$atk_target, &$obl_battle_log, &$battle_cache)
+function battle_verify(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
 {
     //先攻轮校验函数：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
-    //校验失败的act_id会被从$atk_act中删除，校验成功的act_id会实际扣除AP
-    foreach ($atk_act as $act_id => $target) 
+    //校验失败的act会从$atk_act中删除，校验成功的act会实际扣除AP
+    //$atk_act 是数字索引数组，每项含 act_id + target
+    foreach ($atk_act as $key => $act)
     {
+        $act_id = $act['act_id'];
         if (!battle_act_verify($actor_data, $act_id, $obl_battle_log, $battle_cache)) { //单个动作校验函数：检验动作合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP；成功返回true，失败返回false；
-            unset($atk_act[$act_id]); //校验失败 从$atk_act中删除这个act_id
+            unset($atk_act[$key]); //校验失败 从$atk_act中删除这个act
         }
     }
+    # 重新索引数组，保证 key 连续
+    $atk_act = array_values($atk_act);
 }
 
-function battle_excute(&$actor_data, &$atk_act, &$atk_target, &$obl_battle_log, &$battle_cache)
+function battle_excute(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
 {
-    foreach ($atk_act as $act_id => $atk_target) {
-        // atk_target是数组的情况，代表act_id是一个能影响多个目标的动作，atk_target包含若干pid
-        // 否则act_id只影响单独的atk_target 值为pid
+    //$atk_act 是数字索引数组，每项含 act_id + target
+    //target 可以是单个 pid 或 pid 数组（影响多目标的动作）
+    foreach ($atk_act as $act) {
+        $act_id = $act['act_id'];
+        $target = $act['target'];
 
-        // 单独的atk_target也数组化 使用统一逻辑执行流程
-        $targets_array = [];
-        $targets_array = is_array($atk_target) ? $atk_target : $targets_array[] = $atk_target;
+        # target 统一数组化，使用统一逻辑执行流程
+        $targets_array = is_array($target) ? $target : array($target);
 
         foreach ($targets_array as $target_id) {
-            $target_data = battle_target_check($target_id, $actor_data, $battle_cache);  //目标合法性检测函数：检测目标是不是还活着，是不是在技能射程外；成功返回目标data，失败返回false；
+            $target_data = battle_target_check($target_id, $actor_data, $obl_battle_log, $battle_cache);  //目标合法性检测函数：检测目标是不是还活着，是不是在技能射程外；成功返回目标data，失败返回false；
             if (!$target_data) continue; //目标不合法 跳过执行
             battle_once_excute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache); //单次先攻动作结算
         }
     }
 }
 
-function battle_target_check($target_id, &$actor_data, &$battle_cache)
+function battle_target_check($target_id, &$actor_data, &$obl_battle_log, &$battle_cache)
 {
     $target_data = obl_fetch_playerdata_by_pid($target_id); //获取目标data
     if (!$target_data) return false; //目标不存在 不合法
@@ -84,9 +101,34 @@ function battle_target_check($target_id, &$actor_data, &$battle_cache)
 
 function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache)
 {
-    //执行act_id具体的打击动作 
+    # 受击目标进入战斗状态（突袭入口的受击目标在此初始化）
+    battle_state_init($target_data);
+
+    //执行act_id具体的打击动作
     $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
-    battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP，并且记录战斗日志
+    battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
+
+    // 记录战斗日志（供前端播放碰撞动画+模态框，判断 NPC 行动是否结束）
+    if ($obl_battle_log) {
+        $actor_id  = ($actor_data['type'] == 0) ? 'player' : 'enemy_' . $actor_data['pid'];
+        $target_id = ($target_data['type'] == 0) ? 'player' : 'enemy_' . $target_data['pid'];
+        $action_name = battle_action_name($act_id);
+        # enemy_pid 用于前端按战斗对象分组播放：actor 是玩家时 enemy 是 target，actor 是敌人时 enemy 是 actor
+        $enemy_pid = ($actor_data['type'] == 0) ? (int)$target_data['pid'] : (int)$actor_data['pid'];
+        $obl_battle_log->emit(
+            0,             // turn（暂用 0，前端不依赖此字段排序）
+            $actor_id,
+            $act_id,
+            $action_name,
+            $target_id,
+            $damage,
+            null,
+            null,
+            $enemy_pid,
+            $actor_data['name'],    // actor_name
+            (int)$actor_data['type'] // actor_type
+        );
+    }
 
     //defend_battle_prepare(); //反击策略准备函数
     //defend_battle_verify();  //反击策略校验函数
@@ -118,7 +160,7 @@ function battle_queue_check(&$actor_data, &$obl_battle_log, &$battle_cache)
 function battle_finish_check(&$actor_data, &$obl_battle_log, &$battle_cache)
 {
     # 检验$actor_data['bid']是否关联存在的先攻队列
-    if (empty($actor_data['bid'])) 
+    if (empty($actor_data['bid']))
     {
         # 没有关联战斗队列，且在之前的流程里也没有建立新的战斗队列。说明战斗已结束了
         battle_state_clear($actor_data, $obl_battle_log, $battle_cache);

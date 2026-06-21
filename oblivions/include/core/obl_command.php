@@ -44,7 +44,7 @@ if (!isset($command)) $command = '';
 $cmdcdtime = 0;
 
 // [C] battle 状态防呆校验（路由分发前，确保玩家操作不被脏状态卡住）
-obl_validate_battle_state($pdata);
+//obl_validate_battle_state($pdata);
 
 // [C2] 命令过滤：根据 action 状态拒绝非法命令
 // 防止前端在 battleMode 下提交 move/explore 等命令，或在 normalMode 下提交战斗命令
@@ -89,6 +89,9 @@ if ($escape_skip_tick) {
 }
 if (!$command_rejected && !$escape_skip_tick && function_exists('obl_command_advances_tick') && obl_command_advances_tick($command)) {
 	if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
+	$tickdebug_file = GAME_ROOT . './oblivions/tickdebug_from_oblcommand.php';
+	$tickdebug_content = "当前tick：".$gamevars['obl_tick'];
+	writeover($tickdebug_file, $tickdebug_content);
 	$gamevars['obl_tick']++;
 	save_gameinfo();  // 持久化 gamevars（common.inc.php 不会自动保存）
 }

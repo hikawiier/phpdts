@@ -53,6 +53,7 @@ function obl_fetch_playerdata_by_pid($pid) {
 	$result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE pid = " . (int)$pid . " LIMIT 1");
 	$pdata = $db->fetch_array($result);
 	if (!$pdata) return false;
+	obl_format_playerdata($pdata);
 	return $pdata;
 }
 
@@ -274,8 +275,8 @@ function obl_game_entrypoint($entry_type = 'game') {
  * @return void
  */
 function obl_validate_battle_state(&$pdata) {
-	// 只检查 action='battle' 的单位
-	if ($pdata['action'] !== 'battle') return;
+	
+	/*if ($pdata['action'] !== 'battle') return;
 
 	$pid = (int)$pdata['pid'];
 	$bid = (int)$pdata['bid'];
@@ -311,7 +312,7 @@ function obl_validate_battle_state(&$pdata) {
 	if ((int)$opponent['pgroup'] !== (int)$pdata['pgroup']) {
 		obl_clear_invalid_battle_state($pdata, $opponent, 'cross_region');
 		return;
-	}
+	}*/
 
 	// 所有校验通过，battle 状态合法，保留
 }
@@ -320,15 +321,15 @@ function obl_validate_battle_state(&$pdata) {
  * 清除脏的 battle 状态（obl_validate_battle_state 的辅助函数）
  *
  * @param array     &$pdata   玩家数据（引用传递）
- * @param array|null &$opponent 战斗对象数据（引用传递，null 表示不存在/无需清除）
+ * @param array|null $opponent 战斗对象数据（null 表示不存在/无需清除）
  * @param string    $reason   失效原因（用于日志排查）
  * @return void
  */
-function obl_clear_invalid_battle_state(&$pdata, &$opponent, $reason) {
+function obl_clear_invalid_battle_state(&$pdata, $opponent, $reason) {
 	global $obl_log;
 
 	// 清除玩家的 battle 状态
-	$pdata['action'] = '';
+	/*$pdata['action'] = '';
 	$pdata['bid']    = 0;
 	obl_save_player($pdata);
 
@@ -337,7 +338,7 @@ function obl_clear_invalid_battle_state(&$pdata, &$opponent, $reason) {
 		$opponent['action'] = '';
 		$opponent['bid']    = 0;
 		obl_save_player($opponent);
-	}
+	}*/
 
 	// emit 结构化日志（如果 $obl_log 已初始化）
 	if ($obl_log) {
@@ -646,25 +647,30 @@ function obl_command_advances_tick($command) {
  * @return void
  */
 function obl_resolve_tick_events($delta) {
-	global $gamevars, $obl_tick_advanced;
+	global $gamevars;
 
 	// 清除"游戏刻已推进"标记（同一请求内有效）
 	$obl_tick_advanced = false;
 
 	// 加载敌人 AI（含两阶段处理：战斗中 NPC 先攻轮 + 非战斗 NPC AI 行为）
 	if (!function_exists('obl_resolve_all_enemy_ai')) {
-		include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
+		include_once GAME_ROOT . './oblivions/include/game/npc/npc.main.php';
+		include_once GAME_ROOT . './oblivions/include/game/npc/npc.func.php';
+		include_once GAME_ROOT . './oblivions/include/game/npc/npc.calc.php';
 	}
 
 	// 两阶段处理（阶段 1：战斗中 NPC 先攻轮；阶段 2：非战斗 NPC AI 行为）
 	// obl_resolve_all_enemy_ai 内部检测 $obl_tick_advanced 标记，阶段 1 最多处理 1 个 NPC 先攻轮
-	obl_resolve_all_enemy_ai();
+	$obl_tick_advanced = obl_resolve_all_enemy_ai();
 
 	// 末尾：统一游戏刻推进
 	// 如果 NPC 先攻轮执行了（设置了标记），推进 1 游戏刻
 	// 这会产生新的未处理游戏刻（obl_pretick < obl_tick），下次请求继续循环
 	if ($obl_tick_advanced) {
-		if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
+		$tickdebug_file = GAME_ROOT . './oblivions/tickdebug_from_npcevents.php';
+		$tickdebug_content = "当前tick：".$gamevars['obl_tick'];
+		writeover($tickdebug_file, $tickdebug_content);
 		$gamevars['obl_tick']++;
+		save_gameinfo();
 	}
 }

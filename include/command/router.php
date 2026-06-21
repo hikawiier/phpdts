@@ -56,7 +56,8 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime, $post) {
             if ($command == 'obl_battle_action') {
                 include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
                 $action_id = isset($post['action_id']) ? $post['action_id'] : '';
-                cmd_handle_obl_battle_action($action_id, $pdata);
+                $target_pid = isset($post['target_pid']) ? $post['target_pid'] : 0;
+                cmd_handle_obl_battle_action($action_id, $target_pid, $pdata);
                 return 'command';
             }
         }

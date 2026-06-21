@@ -156,9 +156,9 @@ function obl_move($moveto, &$pdata) {
         obl_format_playerdata($occupier);
         // 碰撞战斗：双方留在原地，战斗瞬间结束（过渡实现）
         if (!function_exists('obl_resolve_collision_battle')) {
-            include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
+            include_once GAME_ROOT . './oblivions/include/game/npc/npc.main.php';
         }
-        obl_resolve_collision_battle($pdata, $occupier);
+        //obl_resolve_collision_battle($pdata, $occupier);
         return;
     }
 
@@ -208,11 +208,6 @@ function obl_move($moveto, &$pdata) {
     ]);
     // 地块描述作为独立条目，前端自行组合
     $obl_log->emit('move.tile_desc', 'move', obl_tile_log_params($target_tile));
-
-    // 8. 区域切换不再自动触发（需玩家在出入口格主动点击切换）
-
-    // 9. 游戏刻
-    // [预留] $gamevars['obl_tick']++
 
     // 10. 移动后钩子：自动探索（跳过体力检查）
     obl_post_move_hook($pdata);

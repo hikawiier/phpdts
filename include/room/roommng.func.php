@@ -114,7 +114,7 @@ function roommng_create_oblivions_room(&$udata)
 	roommng_join_room($new_room_id,$udata);
 
 	// 使房间列表缓存失效 / Invalidate room list cache
-	@unlink(GAME_ROOT.'./gamedata/cache/roomlist.php');
+	@unlink(GAME_ROOT.'./gamedata/bak/roomlist.php');
 
 	return;
 }
@@ -219,7 +219,7 @@ function roommng_create_new_room(&$udata, $ruleset_id = '')
 	roommng_join_room($new_room_id,$udata);
 
 	// 使房间列表缓存失效 / Invalidate room list cache
-	@unlink(GAME_ROOT.'./gamedata/cache/roomlist.php');
+	@unlink(GAME_ROOT.'./gamedata/bak/roomlist.php');
 
 	return;
 }
@@ -379,7 +379,7 @@ function roommng_close_room($rkey,$adminlog = 0,$check_in_game = 0)
 		$cmd_info .= "已关闭房间 {$rkey} 号<br>";
 		if($adminlog) adminlog('closeroom',$rkey);
 		// 使房间列表缓存失效 / Invalidate room list cache
-		@unlink(GAME_ROOT.'./gamedata/cache/roomlist.php');
+		@unlink(GAME_ROOT.'./gamedata/bak/roomlist.php');
 	}
 	else 
 	{

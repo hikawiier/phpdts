@@ -142,7 +142,7 @@ if ((!$cuser || !$cpass) && file_exists(GAME_ROOT.'debug_autologin.php')) {
 }
 
 // 房间列表缓存 / Room list cache (TTL=60s)
-$roomlist_cache_file = GAME_ROOT.'./gamedata/cache/roomlist.php';
+$roomlist_cache_file = GAME_ROOT.'./gamedata/bak/roomlist.php';
 $roomlist_cache_ttl = 60;
 if (file_exists($roomlist_cache_file) && (time() - filemtime($roomlist_cache_file)) < $roomlist_cache_ttl) {
 	$roomlist = include $roomlist_cache_file;

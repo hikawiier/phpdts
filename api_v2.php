@@ -118,6 +118,31 @@ function handle_player_info() {
 
     // Oblivions 模式：oblplayers 独立数据层，字段精简
     // 只返回 oblplayers 表中存在的字段 + obl 专属 JSON 字段
+
+    // 先攻队列数据（如果玩家在战斗中）
+    $battle_queue = null;
+    if ($pdata['action'] === 'battle' && $pdata['bid']) {
+        if (!function_exists('obl_fetch_queue_all_by_qid')) {
+            include_once GAME_ROOT . './oblivions/include/game/sql.func.php';
+        }
+        $qid = (int)$pdata['bid'];
+        $queue_rows = obl_fetch_queue_all_by_qid($qid);
+        if (!empty($queue_rows)) {
+            $battle_queue = array(
+                'qid' => $qid,
+                'queue' => array(),
+            );
+            foreach ($queue_rows as $qrow) {
+                $battle_queue['queue'][] = array(
+                    'pid' => (int)$qrow['pid'],
+                    'type' => (int)$qrow['type'],
+                    'myorder' => (int)$qrow['myorder'],
+                    'done' => (int)$qrow['done'],
+                );
+            }
+        }
+    }
+
     api_response('success', array(
         // 基本信息 / Basic info
         'pid'   => $pdata['pid'],
@@ -132,6 +157,9 @@ function handle_player_info() {
         // 战斗状态 / Combat state
         'action' => $pdata['action'],
         'bid'    => $pdata['bid'],
+
+        // 先攻队列数据（新框架：从 bra_oblqueue 表查询）
+        'battle_queue' => $battle_queue,
 
         // 战斗属性 / Combat stats
         'hp'  => $pdata['hp'],

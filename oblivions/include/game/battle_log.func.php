@@ -23,34 +23,58 @@ if (!defined('IN_GAME')) {
 /**
  * 战斗日志收集器（单次请求内累积，请求结束前持久化）
  *
- * 在 common.inc.php 入口初始化为全局 $obl_battle_log：
- *   $obl_battle_log = oblivions_is_active() ? new BattleLogCollector() : null;
- *
- * obl_battle_* 函数内通过 global $obl_battle_log 引用，调用 emit() 追加条目。
+ * 在 3 个战斗入口处局部初始化（玩家突袭/NPC突袭/NPC先攻轮），传入 battle_main()。
+ * 入口处通过 setEntryType() 标记日志分类，battle_main 各阶段通过 setPhase() 标记阶段。
  */
 class BattleLogCollector {
 
     /** @var array 本请求累积的战斗日志条目 */
     private $entries = [];
 
+    /** @var string 入口标识（player_ambush / npc_ambush / npc_turn） */
+    private $entry_type = '';
+
+    /** @var string 阶段标识（prepare / verify / excute / queue_check / finish_check） */
+    private $phase = '';
+
+    /**
+     * 设置入口标识（标记这条日志在哪个入口被初始化）
+     * @param string $entry_type player_ambush / npc_ambush / npc_turn
+     */
+    public function setEntryType($entry_type) {
+        $this->entry_type = (string)$entry_type;
+    }
+
+    /**
+     * 设置当前阶段标识（battle_main 各阶段开始时调用）
+     * @param string $phase prepare / verify / excute / queue_check / finish_check
+     */
+    public function setPhase($phase) {
+        $this->phase = (string)$phase;
+    }
+
     /**
      * 追加一条战斗日志
      *
      * @param int         $turn         先攻轮序号（从 1 开始）
-     * @param string      $actor        行动方标识（'player' 或 'enemy_{pid}'）
+     * @param string      $actor        行动方标识（'player' 或 'enemy_{pid}'，向后兼容）
      * @param string      $action_id    动作 ID（如 'unarmed_strike'）
      * @param string      $action_name  动作名称（如 '空手攻击'）
-     * @param string      $target       目标标识（'player' 或 'enemy_{pid}'）
+     * @param string      $target       目标标识（'player' 或 'enemy_{pid}'，向后兼容）
      * @param int|float   $effect_value 效果值（伤害值等）
      * @param array|null  $extra        额外信息（如 escape 成功/失败）
      * @param array|null  $position     位置信息（阶段一未使用）
      * @param int         $enemy_pid    战斗对象 PID（用于前端按战斗分组播放）
+     * @param string      $actor_name   动作者名字（前端人称渲染依据）
+     * @param int         $actor_type   动作者 type（0=玩家，>0=敌人，前端人称渲染依据）
      */
-    public function emit($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0) {
+    public function emit($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0, $actor_name = '', $actor_type = -1) {
         $this->entries[] = [
             'id'           => 'battle.action',
             'turn'         => (int)$turn,
             'actor'        => $actor,
+            'actor_name'   => (string)$actor_name,
+            'actor_type'   => (int)$actor_type,
             'action_id'    => $action_id,
             'action_name'  => $action_name,
             'target'       => $target,
@@ -59,6 +83,8 @@ class BattleLogCollector {
             'position'     => $position,
             'ts'           => time(),
             'enemy_pid'    => (int)$enemy_pid,
+            'entry_type'   => $this->entry_type,
+            'phase'        => $this->phase,
         ];
     }
 

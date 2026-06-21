@@ -51,7 +51,7 @@ export async function playBattleLog(entries, context, onComplete) {
 
     // 准备上下文
     const ctx = context || {};
-    const enemyName = ctx.enemyName || '敌人';
+    const enemyName = ctx.enemyName || 'playBattleLog里的敌人';
     const playerHp = ctx.playerHp || 0;
     const playerMaxHp = ctx.playerMaxHp || 1;
     const enemyHp = ctx.enemyHp || 0;
@@ -89,8 +89,10 @@ export async function playBattleLog(entries, context, onComplete) {
         }
 
         // 渲染条目 HTML
-        const html = renderBattleLogEntryHtml(entry, enemyName);
-        await appendEntry(body, html);
+        const html = renderBattleLogEntryHtml(entry, ctx);
+        if (html) {
+            await appendEntry(body, html);
+        }
 
         // 更新 HP 条（如果 extra 中有 hp_after）
         updateHpBars(entry, ctx);

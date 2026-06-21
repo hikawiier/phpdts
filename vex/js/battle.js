@@ -20,17 +20,20 @@ import { BASE_URL } from './data.js';
 
 // 战斗状态
 let currentMode = 'normal';   // 'normal' | 'battle'
-let currentBid = 0;           // 当前战斗对象 PID
+let currentEnemyPid = 0;      // 当前战斗对象 PID（敌人）
 let currentEnemyName = '';    // 当前战斗对象名称
 let currentGroomid = 0;       // 当前房间 ID（用于标记接口）
 let currentPid = 0;           // 当前玩家 PID（用于标记接口）
 let isPlayingBattleLog = false; // 是否正在播放 battlelog（防重入）
 let isProcessingBattle = false; // 命令处理中（覆盖提交+播放全流程，屏蔽快速重复点击）
+let npcTurnRefreshTimer = null; // NPC 回合自动刷新定时器（NPC 顺位时定时拉取等待执行）
+const NPC_TURN_REFRESH_INTERVAL = 2000; // NPC 回合自动刷新间隔（毫秒）
 
 /**
  * 刷新战斗状态：检测 action 变化，进入/退出战斗模式
  *
  * 在 app.js 的 refreshAll 和 game:action-completed 事件中调用。
+ * NPC 顺位时会由 startNpcTurnRefresh 定时循环调用本函数。
  */
 export async function refreshBattle() {
     try {
@@ -38,21 +41,36 @@ export async function refreshBattle() {
         if (result.status !== 'success' || !result.data) return;
 
         const action = result.data.action || '';
-        const bid = parseInt(result.data.bid) || 0;
-        const oblpara = result.data.oblpara || {};
-        const battleState = oblpara.battle || null;
+        const battleQueue = result.data.battle_queue || null;
 
         // 记录 groomid 和 pid（用于标记接口）
         currentGroomid = parseInt(result.data.groomid) || 0;
         currentPid = parseInt(result.data.pid) || 0;
 
         if (action === 'battle') {
+            // 从先攻队列中提取敌人 PID（第一个 type>0 的参战者）
+            const enemyPid = extractEnemyPid(battleQueue);
             // 检查先攻队列，判断玩家是否当前顺位
-            const isPlayerTurn = checkPlayerTurn(battleState, bid);
-            await enterBattleMode(bid, isPlayerTurn);
+            const isPlayerTurn = checkPlayerTurn(battleQueue);
+            await enterBattleMode(enemyPid, isPlayerTurn);
+
+            // 独立拉取播放 battlelog（每次 refreshBattle 都调用，防重入由 isPlayingBattleLog 保证）
+            // 这样 NPC 回合定时器触发的 refreshBattle 也能正常拉取新产生的 battlelog
+            await fetchAndPlayBattleLog();
+
+            // NPC 顺位时启动自动刷新循环，玩家顺位时停止
+            if (isPlayerTurn) {
+                stopNpcTurnRefresh();
+            } else {
+                startNpcTurnRefresh();
+            }
         } else {
             // action='' 战斗已结束
+            stopNpcTurnRefresh();
             if (currentMode !== 'normal') {
+                // 战斗结束时先播放积压的 battlelog（如秒杀场景的最后一击日志）
+                // 再退出 battle 模式，避免日志丢失或积压到下次战斗
+                await fetchAndPlayBattleLog();
                 exitBattleMode();
             }
         }
@@ -65,41 +83,59 @@ export async function refreshBattle() {
  * 检查玩家是否当前顺位
  *
  * 先攻队列中第一个 done=0 的是当前顺位者。
- * 由于队列里只有玩家和敌人两个 pid，敌人的 pid 就是 bid，
- * 所以第一个 done=0 的 pid 若等于 bid 则是敌人顺位，否则是玩家顺位。
+ * type=0 是玩家，type>0 是 NPC。
  *
- * @param {Object|null} battleState oblpara.battle
- * @param {number} enemyPid 敌人 PID（bid）
- * @returns {boolean} true=玩家当前顺位，false=敌人当前顺位
+ * @param {Object|null} battleQueue result.data.battle_queue
+ * @returns {boolean} true=玩家当前顺位，false=NPC 当前顺位
  */
-function checkPlayerTurn(battleState, enemyPid) {
-    if (!battleState || !Array.isArray(battleState.queue)) return true;
-    for (let i = 0; i < battleState.queue.length; i++) {
-        if (battleState.queue[i].done == 0) {
-            return parseInt(battleState.queue[i].pid) !== parseInt(enemyPid);
+function checkPlayerTurn(battleQueue) {
+    if (!battleQueue || !Array.isArray(battleQueue.queue)) return true;
+    for (let i = 0; i < battleQueue.queue.length; i++) {
+        if (battleQueue.queue[i].done == 0) {
+            return battleQueue.queue[i].type == 0;  // type=0 是玩家
         }
     }
     return true;  // 所有人都完成了，默认显示（后端会重新判定）
 }
 
 /**
+ * 从先攻队列中提取敌人 PID（第一个 type>0 的参战者）
+ *
+ * @param {Object|null} battleQueue result.data.battle_queue
+ * @returns {number} 敌人 PID，找不到返回 0
+ */
+function extractEnemyPid(battleQueue) {
+    if (!battleQueue || !Array.isArray(battleQueue.queue)) return 0;
+    for (let i = 0; i < battleQueue.queue.length; i++) {
+        if (parseInt(battleQueue.queue[i].type) > 0) {
+            return parseInt(battleQueue.queue[i].pid);
+        }
+    }
+    return 0;
+}
+
+/**
  * 进入 battle 模式
  *
- * @param {number} bid 敌人 PID
+ * 只负责 DOM 切换和首次进入的初始化（敌人名称、模式切换、动作面板）。
+ * battlelog 的拉取播放由 refreshBattle() 独立调用，避免 NPC 回合定时器
+ * 触发的 refreshBattle 因"敌人未变"分支跳过 battlelog 拉取。
+ *
+ * @param {number} enemyPid 敌人 PID
  * @param {boolean} isPlayerTurn 玩家是否当前顺位
  */
-async function enterBattleMode(bid, isPlayerTurn) {
-    // 已在 battle 模式且 bid 未变，只更新动作面板
-    if (currentMode === 'battle' && currentBid === bid) {
+async function enterBattleMode(enemyPid, isPlayerTurn) {
+    // 已在 battle 模式且敌人未变，只更新动作面板
+    if (currentMode === 'battle' && currentEnemyPid === enemyPid) {
         updateActionPanel(isPlayerTurn);
         return;
     }
 
     currentMode = 'battle';
-    currentBid = bid;
+    currentEnemyPid = enemyPid;
 
     // 获取敌人名称
-    await fetchEnemyName(bid);
+    await fetchEnemyName(enemyPid);
 
     // 切换 DOM
     showBattleMode();
@@ -107,9 +143,6 @@ async function enterBattleMode(bid, isPlayerTurn) {
 
     // 根据顺位渲染动作面板
     updateActionPanel(isPlayerTurn);
-
-    // 拉取并播放未播放的 battlelog
-    await fetchAndPlayBattleLog();
 }
 
 /**
@@ -119,7 +152,7 @@ function exitBattleMode() {
     if (currentMode === 'normal') return;
 
     currentMode = 'normal';
-    currentBid = 0;
+    currentEnemyPid = 0;
     currentEnemyName = '';
 
     // 切换 DOM
@@ -131,6 +164,37 @@ function exitBattleMode() {
     // 广播战斗结束事件，触发地图和动作条刷新
     dataManager.invalidateAll();
     dataManager.broadcast('battle:ended');
+}
+
+// ══════════════════════════════════════════════════
+// NPC 回合自动刷新循环
+// ══════════════════════════════════════════════════
+
+/**
+ * 启动 NPC 回合自动刷新循环
+ *
+ * NPC 顺位时，后端会在下次 common.inc 加载时执行 NPC 先攻轮。
+ * 前端通过定时拉取 player_info 触发 common.inc，从而推进 NPC 行动。
+ * 已有定时器时不重复启动。
+ */
+function startNpcTurnRefresh() {
+    if (npcTurnRefreshTimer !== null) return;
+    npcTurnRefreshTimer = setInterval(() => {
+        // 失效缓存确保拉取最新数据（触发后端 common.inc）
+        dataManager.invalidate('player_info');
+        dataManager.invalidate('battle_log');
+        refreshBattle();
+    }, NPC_TURN_REFRESH_INTERVAL);
+}
+
+/**
+ * 停止 NPC 回合自动刷新循环
+ */
+function stopNpcTurnRefresh() {
+    if (npcTurnRefreshTimer !== null) {
+        clearInterval(npcTurnRefreshTimer);
+        npcTurnRefreshTimer = null;
+    }
 }
 
 /**
@@ -200,6 +264,13 @@ async function confirmStartBattle(enemyPid) {
 
         // 刷新战斗状态（会进入 battle 模式并拉取播放 battlelog）
         await refreshBattle();
+
+        // 秒杀场景：refreshBattle 拉取到 action='' 直接退出 battle 模式，
+        // 但 currentMode 从未进入 'battle'，所以 refreshBattle 的 else 分支不会播放 battlelog。
+        // 这里补充：如果 refreshBattle 后仍在 normal 模式，主动播放积压的 battlelog。
+        if (currentMode === 'normal') {
+            await fetchAndPlayBattleLog();
+        }
     } finally {
         isProcessingBattle = false;
     }
@@ -216,14 +287,15 @@ async function confirmStartBattle(enemyPid) {
  */
 async function onBattleAction(actionId) {
     if (currentMode !== 'battle') return;
-    if (!currentBid) return;
+    if (!currentEnemyPid) return;
     if (isProcessingBattle) return;
     isProcessingBattle = true;
     try {
-        // 提交战斗动作
+        // 提交战斗动作（target_pid 为当前敌人 PID）
         const result = await commandQueue.execute({
             command: 'obl_battle_action',
             action_id: actionId,
+            target_pid: currentEnemyPid,
         });
 
         if (!result.success) {
@@ -268,10 +340,16 @@ async function fetchAndPlayBattleLog() {
 
         isPlayingBattleLog = true;
 
-        // 按 enemy_pid 分组
+        // 检测战斗结束日志（battle_end 标记战斗已结束）
+        const hasBattleEnd = entries.some(e =>
+            e.action_id === 'battle_end' ||
+            (e.phase === 'finish_check' && e.extra && e.extra.ended === true)
+        );
+
+        // 按 enemy_pid 分组（非 excute 阶段的日志会被过滤掉，不播放动画）
         const groups = groupByEnemyPid(entries);
 
-        // 收集所有要标记的 log_id
+        // 收集所有要标记的 log_id（包括非 excute 阶段的日志）
         const allLogIds = entries.map(e => e.log_id).filter(id => id);
 
         // 逐组播放
@@ -283,13 +361,18 @@ async function fetchAndPlayBattleLog() {
         // 标记为已播放
         await markBattleLogPlayed(allLogIds);
 
+        // 如果检测到战斗结束日志，停止 NPC 自动刷新
+        if (hasBattleEnd) {
+            stopNpcTurnRefresh();
+        }
+
         // 播放完后，如果当前是玩家回合，显示"你的回合"提示
         const playerInfo = await dataManager.fetch('player_info', true);
         if (playerInfo.status === 'success' && playerInfo.data) {
             const action = playerInfo.data.action || '';
             if (action === 'battle') {
-                const battleState = (playerInfo.data.oblpara || {}).battle || null;
-                const isPlayerTurn = checkPlayerTurn(battleState, parseInt(playerInfo.data.bid));
+                const battleQueue = playerInfo.data.battle_queue || null;
+                const isPlayerTurn = checkPlayerTurn(battleQueue);
                 if (isPlayerTurn) {
                     // 定位到屏幕正中央（模态框消失的位置）
                     const toastContainer = document.getElementById('toastContainer');
@@ -320,9 +403,11 @@ async function fetchAndPlayBattleLog() {
 function groupByEnemyPid(entries) {
     const groups = {};
     for (const entry of entries) {
-        const key = entry.enemy_pid || 0;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(entry);
+        // 过滤掉 enemy_pid === 0 的日志（非 excute 阶段的日志，不需要播放动画）
+        const enemyPid = parseInt(entry.enemy_pid) || 0;
+        if (enemyPid === 0) continue;
+        if (!groups[enemyPid]) groups[enemyPid] = [];
+        groups[enemyPid].push(entry);
     }
     return groups;
 }
@@ -334,11 +419,15 @@ function groupByEnemyPid(entries) {
  * @param {number} enemyPid 敌人 PID
  */
 async function playBattleLogGroup(entries, enemyPid) {
+    // 过滤出 excute 阶段的日志（核心伤害日志），其他阶段不播放动画
+    const excuteEntries = entries.filter(e => e.phase === 'excute');
+    if (excuteEntries.length === 0) return;
+
     // 获取敌人名称和 HP 信息
     const context = await buildPlayContext(enemyPid);
 
     // 1. 先播放碰撞动画（冲刺+抖动，不含伤害数字）
-    for (const entry of entries) {
+    for (const entry of excuteEntries) {
         if (entry.action_id === 'unarmed_strike') {
             await playCollisionAnimation(entry, enemyPid);
         }
@@ -348,10 +437,10 @@ async function playBattleLogGroup(entries, enemyPid) {
     removeTurnActiveGlow();
 
     // 3. 播放模态框（详细战斗日志）
-    await playBattleLog(entries, context, null);
+    await playBattleLog(excuteEntries, context, null);
 
     // 4. 模态框关闭后，伤害数字淡入显示在地图格上（残留反馈）
-    playDamageNumbersAfterModal(entries, enemyPid);
+    playDamageNumbersAfterModal(excuteEntries, enemyPid);
 
     // 5. 恢复按钮光效（如果仍是玩家回合）
     restoreTurnActiveGlow();
@@ -384,15 +473,17 @@ function restoreTurnActiveGlow() {
  * @returns {Promise<Object>} { enemyName, enemyHp, enemyMaxHp, playerHp, playerMaxHp }
  */
 async function buildPlayContext(enemyPid) {
-    let enemyName = '敌人';
+    let enemyName = 'buildPlayContext里的敌人';
     let enemyHp = 0, enemyMaxHp = 1;
     let playerHp = 0, playerMaxHp = 1;
+    let playerName = '';
 
     try {
         const playerInfo = await dataManager.fetch('player_info', true);
         if (playerInfo.status === 'success' && playerInfo.data) {
             playerHp = playerInfo.data.hp || 0;
             playerMaxHp = playerInfo.data.mhp || 1;
+            playerName = playerInfo.data.name || '';
         }
 
         const enemiesResult = await dataManager.fetch('enemies', true);
@@ -400,7 +491,7 @@ async function buildPlayContext(enemyPid) {
             const enemies = enemiesResult.data.enemies || [];
             for (let i = 0; i < enemies.length; i++) {
                 if (parseInt(enemies[i].pid) === parseInt(enemyPid)) {
-                    enemyName = enemies[i].name || '敌人';
+                    enemyName = enemies[i].name || '构建播放上下文的敌人';
                     enemyHp = enemies[i].hp || 0;
                     enemyMaxHp = enemies[i].mhp || 1;
                     break;
@@ -417,6 +508,7 @@ async function buildPlayContext(enemyPid) {
         enemyMaxHp: enemyMaxHp,
         playerHp: playerHp,
         playerMaxHp: playerMaxHp,
+        playerName: playerName,
     };
 }
 
@@ -453,10 +545,10 @@ async function markBattleLogPlayed(logIds) {
 /**
  * 从 enemies API 获取敌人名称（内部使用，设置 currentEnemyName）
  *
- * @param {number} bid 敌人 PID
+ * @param {number} enemyPid 敌人 PID
  */
-async function fetchEnemyName(bid) {
-    currentEnemyName = await fetchEnemyNameByPid(bid);
+async function fetchEnemyName(enemyPid) {
+    currentEnemyName = await fetchEnemyNameByPid(enemyPid);
 }
 
 /**
@@ -470,17 +562,17 @@ async function fetchEnemyNameByPid(pid) {
 
     try {
         const result = await dataManager.fetch('enemies', true);
-        if (result.status !== 'success' || !result.data) return '敌人';
+        if (result.status !== 'success' || !result.data) return 'API获取失败的敌人';
 
         const enemies = result.data.enemies || [];
         for (let i = 0; i < enemies.length; i++) {
             if (parseInt(enemies[i].pid) === pid) {
-                return enemies[i].name || '敌人';
+                return enemies[i].name || 'API数组中不存在的敌人';
             }
         }
-        return '敌人';
+        return 'API其他情况的敌人';
     } catch (e) {
-        return '敌人';
+        return 'APIcatch(e)的敌人';
     }
 }
 
@@ -534,7 +626,7 @@ function showBattleConfirm(enemyName, onConfirm) {
 
     if (!overlay) return;
 
-    if (nameEl) nameEl.textContent = enemyName || '敌人';
+    if (nameEl) nameEl.textContent = enemyName || '显示战斗确认界面的敌人';
 
     // 移除旧的事件监听器（通过克隆节点）
     if (yesBtn) {
