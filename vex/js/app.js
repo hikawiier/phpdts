@@ -7,8 +7,10 @@ import { loadInventory, setActiveTab } from './inventory.js';
 import { toggleDrawer, closeDrawer, isDrawerOpen, renderStatusBar } from './player.js';
 import { refreshLog, initLog } from './log.js';
 import { loadTileAction, closeModal } from './tile-action.js';
-import { initBattle, refreshBattle } from './battle.js';
+import { initBattle, refreshBattle, startBattle, exitBattleMode } from './battle.js';
+import { exitAimMode } from './battle-preload.js';
 import { DebugBus, BASE_URL } from './data.js';
+import { dataManager } from './data-manager.js';
 import { updateToastPosition } from './toast-position.js';
 
 // 统一刷新：地图优先（触发 map:loaded），其余并发
@@ -103,6 +105,55 @@ function bindGlobalEvents() {
     if (invBtn) invBtn.addEventListener('click', toggleInvDrawer);
     if (invOverlay) invOverlay.addEventListener('click', closeInvDrawer);
     if (invCloseBtn) invCloseBtn.addEventListener('click', closeInvDrawer);
+
+    // 战斗按钮：根据当前状态切换文字和行为
+    // normal → [战斗] → startBattle(0)
+    // battle → [取消] → exitBattleMode()
+    // aim    → [瞄准中 - ESC] → exitAimMode()
+    const battleBtn = document.getElementById('battleBtn');
+    let battleBtnState = 'normal';  // normal / battle / aim
+
+    function updateBattleBtn() {
+        if (!battleBtn) return;
+        if (battleBtnState === 'normal') {
+            battleBtn.textContent = '战斗';
+        } else if (battleBtnState === 'battle') {
+            battleBtn.textContent = '取消';
+        } else if (battleBtnState === 'aim') {
+            battleBtn.textContent = '瞄准中 - ESC';
+        }
+    }
+
+    if (battleBtn) {
+        battleBtn.addEventListener('click', function() {
+            if (battleBtnState === 'normal') {
+                startBattle(0);
+            } else if (battleBtnState === 'battle') {
+                exitBattleMode();
+            } else if (battleBtnState === 'aim') {
+                exitAimMode();
+            }
+        });
+        updateBattleBtn();
+    }
+
+    // 监听战斗/瞄准状态变化，更新按钮
+    dataManager.listen('battle:started', function() {
+        battleBtnState = 'battle';
+        updateBattleBtn();
+    });
+    dataManager.listen('battle:ended', function() {
+        battleBtnState = 'normal';
+        updateBattleBtn();
+    });
+    dataManager.listen('battle:aim-mode', function() {
+        battleBtnState = 'aim';
+        updateBattleBtn();
+    });
+    dataManager.listen('battle:aim-exit', function() {
+        battleBtnState = 'battle';
+        updateBattleBtn();
+    });
 
     // 右侧抽屉标签切换
     const invTabs = document.querySelectorAll('.inv-tab');

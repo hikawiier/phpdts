@@ -310,103 +310,117 @@
     }
 }
 
-/* ═══ 玩家回合：动作按钮提示（边框渐变 + 微弱内发光） ═══ */
-.action-btn.turn-active {
-    animation: turn-glow 2s ease-in-out infinite;
+/* ═══ 战斗按钮统一样式 ═══ */
+/* 所有战斗页面按钮共用 .obl-btn 基础样式，保证视觉一致 */
+
+.obl-btn {
+    border: 1px solid rgba(85, 85, 85, 0.5);  /* border-fg-dim/30 */
+    background: transparent;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+/* ═══ 玩家回合：动作按钮提示（灰色内发光呼吸） ═══ */
+/* 边框保持静态，仅 inset box-shadow 做柔光脉动 */
+.obl-btn.turn-active {
+    animation: turn-glow 2.5s ease-in-out infinite;
 }
 
 @keyframes turn-glow {
     0%, 100% {
-        border-color: rgba(255, 200, 0, 0.3);
-        box-shadow: inset 0 0 4px rgba(255, 200, 0, 0.1);
+        box-shadow: inset 0 0 3px rgba(180, 180, 180, 0.08);
     }
     50% {
-        border-color: rgba(255, 200, 0, 0.7);
-        box-shadow: inset 0 0 10px rgba(255, 200, 0, 0.2);
+        box-shadow: inset 0 0 10px rgba(220, 220, 220, 0.2);
     }
 }
 
 /* ═══ 战斗确认界面 ═══ */
 /* 纯前端确认界面（替代 prebattle） */
 
-.battle-confirm-overlay {
+/* ═══ AP 预测进度条 ═══ */
+/* 装填区 AP 栏：进度条式展示当前 AP + 预测扣除段 */
+
+.ap-bar-container {
+    position: relative;
+    width: 100%;
+    max-width: none;
+    height: 8px;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 2px;
+    overflow: hidden;
+    flex: none;
+}
+
+.ap-bar-container .bar-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    transition: width 0.2s ease;
+}
+
+/* 预测剩余段：与 HP 条同色（#888） */
+.ap-bar-container .ap-remaining {
+    background: #888;
+    z-index: 1;
+}
+
+/* 预测扣除段：红色警告，叠加在剩余段右侧 */
+.ap-bar-container .ap-cost {
+    background: #ff4444;
+    z-index: 2;
+    opacity: 0.7;
+}
+
+/* ═══ 瞄准模式：敌人格高亮 ═══ */
+/* 瞄准模式下，地图上敌人格可点击选目标时的视觉提示 */
+
+.map-cell.aim-targetable {
+    cursor: crosshair !important;
+    box-shadow: inset 0 0 6px rgba(255, 80, 80, 0.3);
+    animation: aim-pulse 1.5s ease-in-out infinite;
+}
+
+.map-cell.aim-hover {
+    box-shadow: inset 0 0 10px rgba(255, 80, 80, 0.6);
+    outline: 1px solid rgba(255, 80, 80, 0.5);
+}
+
+@keyframes aim-pulse {
+    0%, 100% {
+        box-shadow: inset 0 0 3px rgba(255, 80, 80, 0.15);
+    }
+    50% {
+        box-shadow: inset 0 0 8px rgba(255, 80, 80, 0.35);
+    }
+}
+
+/* ═══ 瞄准模式：路径线 SVG 覆盖层 ═══ */
+
+#aimLineOverlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 480;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    z-index: 400;
 }
 
-.battle-confirm-overlay.open {
-    opacity: 1;
-    visibility: visible;
+#aimLineOverlay path {
+    fill: none;
+    stroke: rgba(255, 80, 80, 0.5);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-dasharray: 6 4;
+    animation: aim-line-dash 0.8s linear infinite;
 }
 
-.battle-confirm {
-    width: 300px;
-    max-width: 90vw;
-    background: #0a0a0a;
-    border: 1px solid rgba(220, 40, 40, 0.4);
-    padding: 20px;
-    text-align: center;
-    transform: scale(0.95);
-    transition: transform 0.2s ease-out;
+#aimLineOverlay .aim-dot {
+    fill: rgba(255, 80, 80, 0.7);
+    stroke: none;
 }
 
-.battle-confirm-overlay.open .battle-confirm {
-    transform: scale(1);
-}
-
-.battle-confirm-title {
-    font-size: 13px;
-    color: #ddd;
-    margin-bottom: 16px;
-    letter-spacing: 0.1em;
-}
-
-.battle-confirm-enemy {
-    color: #ff6b6b;
-    font-weight: 700;
-}
-
-.battle-confirm-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-}
-
-.battle-confirm-btn {
-    padding: 6px 16px;
-    border: 1px solid rgba(68, 68, 68, 0.5);
-    background: transparent;
-    color: #bbb;
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    cursor: pointer;
-    transition: border-color 0.12s, background 0.12s, color 0.12s;
-}
-
-.battle-confirm-btn:hover {
-    border-color: #ddd;
-    background: rgba(255, 255, 255, 0.04);
-    color: #fff;
-}
-
-.battle-confirm-btn.primary {
-    border-color: rgba(220, 40, 40, 0.5);
-    color: #ff6b6b;
-}
-
-.battle-confirm-btn.primary:hover {
-    border-color: #ff6b6b;
-    background: rgba(220, 40, 40, 0.1);
-    color: #fff;
+@keyframes aim-line-dash {
+    to { stroke-dashoffset: -10; }
 }
 
 /* ═══ 地图战斗模式 ═══ */
@@ -415,16 +429,4 @@
 .map-container.battle-mode {
     /* 轻微红色色调 */
     filter: hue-rotate(-10deg) saturate(1.1) brightness(0.95);
-}
-
-/* 战斗中敌人高亮 */
-.map-grid .cell-enemy.battle-target {
-    color: #ff6b6b;
-    animation: battle-target-pulse 1s ease-in-out infinite;
-    text-shadow: 0 0 6px rgba(220, 40, 40, 0.6);
-}
-
-@keyframes battle-target-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
 }

@@ -12,8 +12,8 @@
 // ══════════════════════════════════════════════════
 
 import { dataManager } from './data-manager.js';
-import { commandQueue } from './command-queue.js';
-import { renderBattleActions, renderBattleWaiting, renderBattleHeader } from './battle-render.js';
+import { renderBattleWaiting, renderBattleHeader } from './battle-render.js';
+import { initPreloadArea } from './battle-preload.js';
 import { playBattleLog } from './battle-modal.js';
 import { playCollisionAnimation, playDamageNumbersAfterModal } from './battle-animation.js';
 import { BASE_URL } from './data.js';
@@ -24,7 +24,6 @@ let currentEnemyPid = 0;      // 当前战斗对象 PID（敌人）
 let currentGroomid = 0;       // 当前房间 ID（用于标记接口）
 let currentPid = 0;           // 当前玩家 PID（用于标记接口）
 let isPlayingBattleLog = false; // 是否正在播放 battlelog（防重入）
-let isProcessingBattle = false; // 命令处理中（覆盖提交+播放全流程，屏蔽快速重复点击）
 let npcTurnRefreshTimer = null; // NPC 回合自动刷新定时器（NPC 顺位时定时拉取等待执行）
 const NPC_TURN_REFRESH_INTERVAL = 2000; // NPC 回合自动刷新间隔（毫秒）
 
@@ -138,7 +137,7 @@ async function enterBattleMode(enemyPid, isPlayerTurn) {
 /**
  * 退出战斗模式
  */
-function exitBattleMode() {
+export function exitBattleMode() {
     if (currentMode === 'normal') return;
 
     currentMode = 'normal';
@@ -188,13 +187,14 @@ function stopNpcTurnRefresh() {
 }
 
 /**
- * 更新动作面板：玩家顺位时显示动作按钮，否则显示等待提示
+ * 更新动作面板：玩家顺位时显示装填区，否则显示等待提示
  *
  * @param {boolean} isPlayerTurn 玩家是否当前顺位
  */
 function updateActionPanel(isPlayerTurn) {
     if (isPlayerTurn) {
-        renderBattleActions(onBattleAction);
+        // 初始化装填区（in-battle 模式）
+        initPreloadArea('in-battle', currentEnemyPid, currentPid);
     } else {
         renderBattleWaiting();
     }
@@ -205,97 +205,53 @@ function updateActionPanel(isPlayerTurn) {
 // ══════════════════════════════════════════════════
 
 /**
- * 玩家主动攻击：显示确认界面
+ * 玩家主动攻击：切换到预装填界面
  *
  * 供外部调用（如地图点击敌人）。
- * 纯前端确认界面，玩家确认后提交 obl_battle_start 命令。
+ * 不再显示确认对话框，直接切换到战斗模式并初始化装填区。
+ * 玩家在装填区预装填动作后点击"执行"提交 obl_battle_start。
  *
  * @param {number} enemyPid 敌人 PID
  */
 export async function startBattle(enemyPid) {
     if (currentMode !== 'normal') return;
 
-    // 获取敌人名称
-    const enemyName = await fetchEnemyNameByPid(enemyPid);
+    // 切换到战斗模式（DOM 切换，后端尚未知道战斗开始）
+    currentMode = 'battle';
+    currentEnemyPid = enemyPid;
+    showBattleMode();
 
-    // 显示确认界面
-    showBattleConfirm(enemyName, async () => {
-        await confirmStartBattle(enemyPid);
-    });
-}
-
-/**
- * 确认发起攻击
- *
- * @param {number} enemyPid 敌人 PID
- */
-async function confirmStartBattle(enemyPid) {
-    if (isProcessingBattle) return;
-    isProcessingBattle = true;
-    try {
-        hideBattleConfirm();
-
-        // 提交 obl_battle_start 命令
-        const result = await commandQueue.execute({
-            command: 'obl_battle_start',
-            enemy_pid: enemyPid,
-        });
-
-        if (!result.success) {
-            console.error('[Battle] start failed:', result);
-            dataManager.broadcast('ui:toast', { type: 'error', msg: result.error || '无法发起攻击' });
-            return;
-        }
-
-        // 失效缓存，确保下次拉取最新数据
-        dataManager.invalidate('player_info');
-        dataManager.invalidate('enemies');
-        dataManager.invalidate('battle_log');
-
-        // 刷新战斗状态（会进入 battle 模式并拉取播放 battlelog）
-        await refreshBattle();
-    } finally {
-        isProcessingBattle = false;
+    // 无目标时显示瞄准提示
+    const headerEl = document.getElementById('battleEnemyName');
+    if (headerEl) {
+        headerEl.textContent = enemyPid > 0 ? '' : '瞄准模式';
     }
+
+    // 初始化装填区（pre-battle 模式）
+    await initPreloadArea('pre-battle', enemyPid, currentPid);
+
+    // 广播战斗开始事件
+    dataManager.broadcast('battle:started');
 }
 
 // ══════════════════════════════════════════════════
-// 战斗动作流程
+// 装填区事件处理
 // ══════════════════════════════════════════════════
 
 /**
- * 战斗动作回调
+ * 装填区执行完成后的刷新处理
  *
- * @param {string} actionId 动作 ID（如 'unarmed_strike'）
+ * battle-preload.js 提交命令后广播 preload:executed 事件，
+ * 本函数监听该事件并刷新战斗状态。
  */
-async function onBattleAction(actionId) {
-    if (currentMode !== 'battle') return;
-    if (!currentEnemyPid) return;
-    if (isProcessingBattle) return;
-    isProcessingBattle = true;
-    try {
-        // 提交战斗动作（target_pid 为当前敌人 PID）
-        const result = await commandQueue.execute({
-            command: 'obl_battle_action',
-            action_id: actionId,
-            target_pid: currentEnemyPid,
-        });
+async function onPreloadExecuted() {
+    // 失效缓存
+    dataManager.invalidate('player_info');
+    dataManager.invalidate('enemies');
+    dataManager.invalidate('battle_log');
 
-        if (!result.success) {
-            console.error('[Battle] action failed:', result);
-            return;
-        }
-
-        // 失效缓存
-        dataManager.invalidate('player_info');
-        dataManager.invalidate('enemies');
-        dataManager.invalidate('battle_log');
-
-        // 刷新战斗状态（refreshBattle 末尾会调用 fetchAndPlayBattleLog）
-        await refreshBattle();
-    } finally {
-        isProcessingBattle = false;
-    }
+    // 刷新战斗状态
+    await refreshBattle();
 }
 
 // ══════════════════════════════════════════════════
@@ -341,11 +297,11 @@ async function fetchAndPlayBattleLog() {
         // 标记为已播放
         await markBattleLogPlayed(allLogIds);
 
-        // 如果检测到战斗结束日志，停止 NPC 自动刷新并刷新地图（敌人可能已死亡）
+        // 如果检测到战斗结束日志，停止 NPC 自动刷新并退出战斗模式
         if (hasBattleEnd) {
             stopNpcTurnRefresh();
             dataManager.invalidate('enemies');
-            dataManager.broadcast('battle:ended');
+            exitBattleMode();
         }
 
         // 播放完后，如果当前是玩家回合，显示"你的回合"提示
@@ -436,17 +392,17 @@ async function playBattleLogGroup(entries, npcPid) {
  * 移除动作按钮的回合光效
  */
 function removeTurnActiveGlow() {
-    const buttons = document.querySelectorAll('#battleActionBar .action-btn.turn-active');
+    const buttons = document.querySelectorAll('#battleActionBar .obl-btn.turn-active');
     for (let i = 0; i < buttons.length; i++) {
         buttons[i].classList.remove('turn-active');
     }
 }
 
 /**
- * 恢复动作按钮的回合光效（仅当动作按钮可见时，即玩家回合）
+ * 恢复动作按钮的回合光效（仅当技能按钮可见时，即玩家回合）
  */
 function restoreTurnActiveGlow() {
-    const buttons = document.querySelectorAll('#battleActionBar .action-btn[data-action-id]');
+    const buttons = document.querySelectorAll('#battleActionBar .obl-btn[data-skill-id]');
     for (let i = 0; i < buttons.length; i++) {
         buttons[i].classList.add('turn-active');
     }
@@ -539,35 +495,6 @@ async function markBattleLogPlayed(logIds) {
 }
 
 // ══════════════════════════════════════════════════
-// 敌人信息获取
-// ══════════════════════════════════════════════════
-
-/**
- * 从 enemies API 获取敌人名称（仅用于 startBattle 确认界面）
- *
- * @param {number} pid 敌人 PID
- * @returns {Promise<string>} 敌人名称
- */
-async function fetchEnemyNameByPid(pid) {
-    if (!pid) return '';
-
-    try {
-        const result = await dataManager.fetch('enemies', true);
-        if (result.status !== 'success' || !result.data) return '敌人';
-
-        const enemies = result.data.enemies || [];
-        for (let i = 0; i < enemies.length; i++) {
-            if (parseInt(enemies[i].pid) === pid) {
-                return enemies[i].name || '敌人';
-            }
-        }
-        return '敌人';
-    } catch (e) {
-        return '敌人';
-    }
-}
-
-// ══════════════════════════════════════════════════
 // DOM 切换
 // ══════════════════════════════════════════════════
 
@@ -600,62 +527,22 @@ function showNormalMode() {
 }
 
 // ══════════════════════════════════════════════════
-// 战斗确认界面（纯前端）
-// ══════════════════════════════════════════════════
-
-/**
- * 显示战斗确认界面
- *
- * @param {string} enemyName 敌人名称
- * @param {Function} onConfirm 确认回调
- */
-function showBattleConfirm(enemyName, onConfirm) {
-    const overlay = document.getElementById('battleConfirmOverlay');
-    const nameEl = document.getElementById('battleConfirmEnemyName');
-    const yesBtn = document.getElementById('battleConfirmYes');
-    const noBtn = document.getElementById('battleConfirmNo');
-
-    if (!overlay) return;
-
-    if (nameEl) nameEl.textContent = enemyName || '显示战斗确认界面的敌人';
-
-    // 移除旧的事件监听器（通过克隆节点）
-    if (yesBtn) {
-        const newYes = yesBtn.cloneNode(true);
-        yesBtn.parentNode.replaceChild(newYes, yesBtn);
-        newYes.addEventListener('click', onConfirm);
-    }
-
-    if (noBtn) {
-        const newNo = noBtn.cloneNode(true);
-        noBtn.parentNode.replaceChild(newNo, noBtn);
-        newNo.addEventListener('click', () => hideBattleConfirm());
-    }
-
-    overlay.classList.add('open');
-}
-
-/**
- * 隐藏战斗确认界面
- */
-function hideBattleConfirm() {
-    const overlay = document.getElementById('battleConfirmOverlay');
-    if (overlay) overlay.classList.remove('open');
-}
-
-// ══════════════════════════════════════════════════
 // 初始化
 // ══════════════════════════════════════════════════
 
 /**
  * 初始化战斗模块
  *
- * 订阅 game:action-completed 事件：任何推进 tick 的命令（move/obl_explore/obl_search）
- * 都可能触发遭遇战（NPC 移动到玩家格），需要刷新战斗状态以及时进入战斗界面。
+ * 订阅事件：
+ * - game:action-completed：任何推进 tick 的命令都可能触发遭遇战
+ * - preload:executed：装填区执行完成后刷新战斗状态
  */
 export function initBattle() {
     dataManager.listen('game:action-completed', function() {
         refreshBattle();
+    });
+    dataManager.listen('preload:executed', function() {
+        onPreloadExecuted();
     });
 }
 

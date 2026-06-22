@@ -119,6 +119,12 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
 	$itemmaxslots = 6;
 	$empty_itempara = array_fill(0, $itemmaxslots + 1, null);  // index 0=特殊槽，1-6=普通槽
 
+	# 构造 skillpara 新格式：{"skill_id": {"lstact": 0}, ...}
+	$skillpara_init = array();
+	foreach ($config['skills'] as $skill_id) {
+		$skillpara_init[$skill_id] = array('lstact' => 0);
+	}
+
 	$enemy = array(
 		'type'   => $enemy_type,
 		'name'   => $config['name'],
@@ -133,7 +139,7 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
 		'msp'    => $config['msp'],
 		'att'    => $config['att'],
 		'def'    => $config['def'],
-		'ap'     => 0,
+		'ap'     => 10,
 		'max_ap' => 10,
 		'pgroup' => $pgroup,
 		'pls'    => $pls,
@@ -153,11 +159,12 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
 		'itemmaxslots' => $itemmaxslots,
 		// Oblivions 专属 JSON 字段
 		'tacpara'   => json_encode(array('slots' => $config['strategy_slots']), JSON_UNESCAPED_UNICODE),
-		'skillpara' => json_encode(array('skills' => $config['skills']), JSON_UNESCAPED_UNICODE),
+		'skillpara' => json_encode($skillpara_init, JSON_UNESCAPED_UNICODE),
 		'oblpara'   => json_encode(array(
 			'ai_type'       => $config['ai_type'],
 			'vision_range'  => $config['vision_range'],
 			'action_chance' => $config['action_chance'],
+			'combat_skills' => isset($config['combat_skills']) ? $config['combat_skills'] : array('unarmed_strike'),
 		), JSON_UNESCAPED_UNICODE),
 		'discovered' => 0,
 	);
@@ -265,10 +272,8 @@ function obl_resolve_all_enemy_ai(&$obl_tick_advanced)
 			$obl_battle_log = new BattleLogCollector();
 		}
 
-		# 构造 NPC 动作（MVP 固定 unarmed_strike，目标为玩家）
-		$atk_act = array(
-			array('act_id' => 'unarmed_strike', 'target' => $pdata['pid']),
-		);
+		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
+		$atk_act = obl_ai_select_combat_action($npc_data, $pdata['pid']);
 
 		# 调用 battle_main（内部会更新先攻队列）
 		battle_main($npc_data, $atk_act, $obl_battle_log);
@@ -370,6 +375,53 @@ function obl_enemy_tick(&$enemy, &$player)
 }
 
 /**
+ * AI 战斗技能选择
+ *
+ * 从 oblpara['combat_skills'] 中选择第一个可用技能（CD 未锁定、AP 足够）。
+ * 根据技能配置的 target 字段决定目标：self → NPC 自身 pid，其他 → 传入的 target_pid。
+ * 若无可用技能，回退到 unarmed_strike。
+ *
+ * @param array &$npc_data   NPC 数据
+ * @param int   $target_pid  默认目标 pid（玩家）
+ * @return array 动作数组 [['act_id' => skill_id, 'target' => pid], ...]
+ */
+function obl_ai_select_combat_action(&$npc_data, $target_pid) {
+	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+
+	# 读取战斗技能偏好列表
+	$combat_skills = isset($npc_data['oblpara']['combat_skills'])
+		? $npc_data['oblpara']['combat_skills']
+		: array('unarmed_strike');
+	if (!is_array($combat_skills) || empty($combat_skills)) {
+		$combat_skills = array('unarmed_strike');
+	}
+
+	# 遍历偏好列表，选择第一个可用技能
+	$selected_skill = null;
+	foreach ($combat_skills as $skill_id) {
+		if (skill_is_usable($npc_data, $skill_id)) {
+			$selected_skill = $skill_id;
+			break;
+		}
+	}
+
+	# 无可用技能时回退到 unarmed_strike
+	if ($selected_skill === null) {
+		$selected_skill = 'unarmed_strike';
+	}
+
+	# 根据技能配置决定目标
+	$config = skill_get_config($selected_skill);
+	$target = ($config && isset($config['target']) && $config['target'] === 'self')
+		? (int)$npc_data['pid']
+		: (int)$target_pid;
+
+	return array(
+		array('act_id' => $selected_skill, 'target' => $target),
+	);
+}
+
+/**
  * NPC 突袭玩家（战斗入口2）
  *
  * NPC 未被发现 + 有偷袭倾向 → 突袭玩家。
@@ -397,10 +449,8 @@ function obl_enemy_ambush_player(&$enemy, &$player)
 	# NPC 进入战斗状态
 	battle_state_init($enemy);
 
-	# 构造动作（unarmed_strike，目标为玩家 pid）
-	$atk_act = array(
-		array('act_id' => 'unarmed_strike', 'target' => $player['pid']),
-	);
+	# 构造动作（从 oblpara['combat_skills'] 中选择可用技能）
+	$atk_act = obl_ai_select_combat_action($enemy, $player['pid']);
 
 	# 调用 battle_main（内部会完成后补票创建先攻队列）
 	battle_main($enemy, $atk_act, $obl_battle_log);

@@ -129,15 +129,14 @@ function obl_format_playerdata(&$pdata) {
 	}
 	$pdata['tacpara'] = $tacpara;
 
-	// 技能数据：{"skills": []}
+	// 技能数据：由 skill_format_skillpara 统一处理（迁移旧格式 + 注入默认技能）
 	$skillpara = $pdata['skillpara'];
 	if (empty($skillpara) || !is_array($skillpara)) {
 		$skillpara = is_string($skillpara) ? json_decode($skillpara, true) : array();
 	}
 	if (!is_array($skillpara)) $skillpara = array();
-	if (!isset($skillpara['skills']) || !is_array($skillpara['skills'])) {
-		$skillpara['skills'] = array();
-	}
+	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+	skill_format_skillpara($skillpara);
 	$pdata['skillpara'] = $skillpara;
 
 	// 杂项数据：{}
@@ -178,6 +177,11 @@ function obl_save_player(&$pdata) {
 	// JSON 字段编码（临时替换，保存后恢复）
 	$json_keys = array('itempara', 'tacpara', 'skillpara', 'oblpara');
 	$json_backup = array();
+
+	// 剥离临时技能（equipment 类）后再编码
+	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+	skill_strip_temporary($pdata['skillpara']);
+
 	foreach ($json_keys as $key) {
 		$json_backup[$key] = isset($pdata[$key]) ? $pdata[$key] : null;
 		$pdata[$key] = is_array($pdata[$key]) ? json_encode($pdata[$key], JSON_UNESCAPED_UNICODE) : (string)$pdata[$key];
@@ -582,7 +586,10 @@ function obl_create_player_record($ndata) {
 		'itempara'     => json_encode($itempara, JSON_UNESCAPED_UNICODE),
 		'itemmaxslots' => 6,
 		'tacpara'      => json_encode(array('slots' => array(null, null, null, null)), JSON_UNESCAPED_UNICODE),
-		'skillpara'    => json_encode(array('skills' => array()), JSON_UNESCAPED_UNICODE),
+		'skillpara'    => json_encode(array(
+			'unarmed_strike' => array('lstact' => 0),
+			'escape'         => array('lstact' => 0),
+		), JSON_UNESCAPED_UNICODE),
 		'oblpara'      => json_encode(array(), JSON_UNESCAPED_UNICODE),
 		'discovered'   => 0,
 	);

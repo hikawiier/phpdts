@@ -23,6 +23,7 @@ $obl_enemies_config = array(
         'vision_range' => 3,           // 感知范围（BFS 跳数）
         'action_chance' => 0.4,        // 行动意愿（每 tick 行动概率，0-1）
         'skills' => ['unarmed_strike', 'escape'],
+        'combat_skills' => ['unarmed_strike'],  // 战斗中倾向于使用的技能（按优先级排列）
         'strategy_slots' => array(     // 初始策略槽（4 槽）
             array('type' => 'skill', 'id' => 'unarmed_strike'),
             null, null, null
@@ -40,6 +41,7 @@ $obl_enemies_config = array(
         'vision_range' => 5,
         'action_chance' => 0.7,
         'skills' => ['unarmed_strike', 'escape'],
+        'combat_skills' => ['unarmed_strike'],  // 战斗中倾向于使用的技能（按优先级排列）
         'strategy_slots' => array(
             array('type' => 'skill', 'id' => 'unarmed_strike'),
             array('type' => 'skill', 'id' => 'unarmed_strike'),

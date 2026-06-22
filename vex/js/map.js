@@ -13,25 +13,31 @@ import { DebugBus, mapData, updateMapData } from './data.js';
 import { escapeHtml, getPlaceName } from './utils.js';
 import { dataManager } from './data-manager.js';
 import { commandQueue } from './command-queue.js';
-import { startBattle } from './battle.js';
+import { startBattle, getBattleMode } from './battle.js';
 import { renderMapGrid, setRenderCallbacks, getZoomLevel } from './map-render.js';
 import { findPath } from './map-reachability.js';
 import { initMapInteraction as _initMapInteraction, setInteractionCallbacks, centerOnPlayer, showPathPreview, clearPathPreview } from './map-interaction.js';
+import { initBattleAim } from './battle-aim.js';
 
 // ══════════════════════════════════════════════════
 // 回调注册：将业务逻辑注入渲染层和交互层
 // ══════════════════════════════════════════════════
 
+// 战斗模式下屏蔽地图交互（移动/探索/攻击均由战斗系统接管）
+function isBattleActive() {
+    return getBattleMode() === 'battle';
+}
+
 setRenderCallbacks({
-    onCellClick: clickMove,
-    onEnemyClick: handleEnemyClick,
-    onCellHover: showPathPreview,
-    onCellLeave: clearPathPreview,
+    onCellClick: function(pls) { if (isBattleActive()) return; clickMove(pls); },
+    onEnemyClick: function(enemy) { if (isBattleActive()) return; handleEnemyClick(enemy); },
+    onCellHover: function(pls) { if (isBattleActive()) return; showPathPreview(pls); },
+    onCellLeave: function() { if (isBattleActive()) return; clearPathPreview(); },
     centerOnPlayer: centerOnPlayer
 });
 
 setInteractionCallbacks({
-    onKeyMove: clickMove
+    onKeyMove: function(pls) { if (isBattleActive()) return; clickMove(pls); }
 });
 
 // ══════════════════════════════════════════════════
@@ -187,6 +193,9 @@ function highlightCell(areaId) {
 dataManager.listen('battle:ended', function() {
     loadMap();
 });
+
+// 瞄准模式：初始化事件监听（battle:aim-mode / aim-exit / map:loaded）
+initBattleAim();
 
 DebugBus.registerState('map', function() {
     const tiles = (mapData.links && mapData.curRegion) ? mapData.links.tiles[mapData.curRegion] : null;

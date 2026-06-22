@@ -224,8 +224,9 @@ function battle_queue_exit(&$actor_data, &$obl_battle_log, &$battle_cache)
 function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
 {
     #AP恢复函数：每轮开始时，先攻者恢复AP，恢复量为当前AP+AP上限，不会超过AP上限
-    $old_ap = $actor_data['ap'];
-    $actor_data['ap'] = min($actor_data['ap'] + $actor_data['ap_max'], $actor_data['ap_max']);
+    $old_ap = (int)$actor_data['ap'];
+    $max_ap = (int)$actor_data['max_ap'];
+    $actor_data['ap'] = min($old_ap + $max_ap, $max_ap);
     $recovered = $actor_data['ap'] - $old_ap;
 
     # 记录日志（DEBUG：AP 恢复信息）
@@ -244,36 +245,9 @@ function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
 function battle_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache)
 {
     #单个动作校验函数：检验动作合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP；成功返回true，失败返回false；
-    #检查$actor_data['skillpara']的键名act_id是否存在，不存在说明这个动作不合法，直接返回false；存在的话继续检查AP是否满足需求，不满足的话也返回false；满足的话实际扣除AP并返回true
-    #ap_cost为0的动作可以无视AP限制直接执行
-
-    //暂时跳过合法性检查
-    $verified = true;
-
-    # 记录日志（DEBUG：动作校验结果）
-    if ($obl_battle_log) {
-        $obl_battle_log->emit([
-            'actor_pid'   => (int)$actor_data['pid'],
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => $act_id,
-            'extra'       => ['result' => $verified ? 'passed' : 'failed'],
-        ]);
-    }
-    return $verified;
-
-    if (!isset($actor_data['skillpara'][$act_id])) {
-        return false;
-    }
-    $act_ap_cost = $actor_data['skillpara'][$act_id]['ap_cost'];
-    if ($act_ap_cost > 0 && $actor_data['ap'] < $act_ap_cost) {
-        return false;
-    }
-    if ($act_ap_cost > 0) {
-        $actor_data['ap'] -= $act_ap_cost;
-    }
-    return true;
+    #委托给技能系统的 skill_act_verify 处理：查配置、检查拥有、检查CD、检查AP、自动引用 verify 文件
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+    return skill_act_verify($actor_data, $act_id, $obl_battle_log, $battle_cache);
 }
 
 function battle_target_alive_check(&$target_data, &$obl_battle_log, &$battle_cache)

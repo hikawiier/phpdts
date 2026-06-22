@@ -106,6 +106,9 @@ switch ($action) {
     case 'enemies':
         handle_obl_enemies();
         break;
+    case 'skill_list':
+        handle_skill_list();
+        break;
     case 'ai_dump_save':
         handle_ai_dump_save();
         break;
@@ -573,6 +576,31 @@ function obl_simplify_enemy_data(&$enemy) {
         'state'      => $enemy['state'],
         'discovered' => $enemy['discovered'],
     );
+}
+
+/**
+ * skill_list — 返回玩家可用技能列表
+ *
+ * 返回玩家 skillpara 中所有技能的配置与运行时状态（CD、AP、可用性）。
+ * 前端装填区据此渲染技能列表。
+ * 仅在 Oblivions 模式下可用。
+ */
+function handle_skill_list() {
+    global $pdata;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+
+    $skills = skill_get_available_list($pdata);
+
+    api_response('success', array(
+        'skills'       => $skills,
+        'player_ap'    => isset($pdata['ap']) ? (int)$pdata['ap'] : 0,
+        'player_max_ap' => isset($pdata['max_ap']) ? (int)$pdata['max_ap'] : 0,
+    ));
 }
 
 ?>

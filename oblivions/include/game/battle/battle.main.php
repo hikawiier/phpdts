@@ -112,6 +112,10 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
     $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
     battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
 
+    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑）
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+    skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
+
     // 记录战斗日志（此时 $actor_data['hp']/$target_data['hp'] 已是扣血后的值）
     if ($obl_battle_log) {
         $obl_battle_log->emit([

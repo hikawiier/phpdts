@@ -61,14 +61,15 @@ function cmd_handle_obl_discard($slot, &$pdata) {
 /**
  * 玩家突袭 NPC（战斗入口1）
  *
- * 玩家前端点击已发现的 NPC → 提交 obl_battle_start 命令。
+ * 玩家前端点击已发现的 NPC → 前端预装填动作 → 提交 obl_battle_start 命令。
  * 流程：校验目标 → 设置突袭标记 → battle_state_init → 构造预装填动作 → battle_main。
  * 突袭不创建先攻队列，直接动手打一次，由 battle_main 尾部的 battle_queue_check 后补票创建队列。
  *
- * @param int   $enemy_pid 目标敌人 PID
- * @param array &$pdata    玩家数据
+ * @param int       $enemy_pid 目标敌人 PID
+ * @param array     &$pdata    玩家数据
+ * @param array|null $actions   预装填动作数组，每项含 act_id + target。null 时为空（不执行动作）
  */
-function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
+function cmd_handle_obl_battle_start($enemy_pid, &$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
     include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
     include_once GAME_ROOT . './oblivions/include/game/move.func.php';
@@ -105,10 +106,16 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
     # 玩家进入战斗状态
     battle_state_init($pdata);
 
-    # 构造预装填动作（unarmed_strike，目标为 enemy_pid）
-    $atk_act = array(
-        array('act_id' => 'unarmed_strike', 'target' => $enemy_pid),
-    );
+    # 构造预装填动作数组（来自前端 $actions，无则空数组）
+    $atk_act = array();
+    if (is_array($actions)) {
+        foreach ($actions as $act) {
+            $atk_act[] = array(
+                'act_id' => isset($act['act_id']) ? $act['act_id'] : '',
+                'target' => isset($act['target']) ? $act['target'] : 0,
+            );
+        }
+    }
 
     # 调用 battle_main（内部会完成后补票创建先攻队列）
     battle_main($pdata, $atk_act, $obl_battle_log);
@@ -120,20 +127,16 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata) {
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
  * 流程：构造 $atk_act → battle_main。
  *
- * @param string $action_id 玩家选择的动作 ID（如 'unarmed_strike'）
- * @param int    $target_pid 目标敌人 PID
- * @param array  &$pdata    玩家数据
+ * @param string    $action_id 玩家选择的动作 ID（如 'unarmed_strike'），兼容单动作模式
+ * @param int       $target_pid 目标敌人 PID，兼容单动作模式
+ * @param array     &$pdata    玩家数据
+ * @param array|null $actions   预装填动作数组，每项含 act_id + target。提供时优先使用
  */
-function cmd_handle_obl_battle_action($action_id, $target_pid, &$pdata) {
+function cmd_handle_obl_battle_action($action_id, $target_pid, &$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
     include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
 
     global $obl_battle_log;
-
-    # 校验 action_id 和 target_pid
-    $action_id = (string)$action_id;
-    $target_pid = (int)$target_pid;
-    if (empty($action_id) || $target_pid <= 0) return;
 
     # 初始化 battle_log（入口处局部初始化）
     if (!$obl_battle_log) {
@@ -141,10 +144,24 @@ function cmd_handle_obl_battle_action($action_id, $target_pid, &$pdata) {
         $obl_battle_log = new BattleLogCollector();
     }
 
-    # 构造动作数组（数字索引，每项含 act_id + target）
-    $atk_act = array(
-        array('act_id' => $action_id, 'target' => $target_pid),
-    );
+    # 构造动作数组：优先使用 $actions，否则兼容单动作模式
+    if (is_array($actions) && !empty($actions)) {
+        $atk_act = array();
+        foreach ($actions as $act) {
+            $atk_act[] = array(
+                'act_id' => isset($act['act_id']) ? $act['act_id'] : '',
+                'target' => isset($act['target']) ? $act['target'] : 0,
+            );
+        }
+    } else {
+        # 兼容单动作模式
+        $action_id = (string)$action_id;
+        $target_pid = (int)$target_pid;
+        if (empty($action_id) || $target_pid <= 0) return;
+        $atk_act = array(
+            array('act_id' => $action_id, 'target' => $target_pid),
+        );
+    }
 
     # 调用 battle_main
     battle_main($pdata, $atk_act, $obl_battle_log);
