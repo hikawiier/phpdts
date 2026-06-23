@@ -347,7 +347,7 @@ function obl_enemy_tick(&$enemy, &$player)
 
 	# NPC 突袭逻辑：未被发现 + 有偷袭倾向 + 在突袭范围内（distance <= 1，近战范围）
 	//if ($should_chase && $distance <= 1 && empty($enemy['discovered'])) {
-	if ($should_chase && $distance <= 1) {
+	/*if ($should_chase && $distance <= 1) {
 		if (in_array($ai_type, array('aggressive', 'ambush'))) {
 			obl_enemy_ambush_player($enemy, $player);
 			return;
@@ -357,7 +357,7 @@ function obl_enemy_tick(&$enemy, &$player)
 	if ($should_chase) {
 		obl_enemy_chase_player($enemy, $player);
 		return;
-	}
+	}*/
 
 	// 玩家不在感知范围 → 根据 AI 类型行动
 	switch ($ai_type) {

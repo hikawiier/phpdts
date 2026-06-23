@@ -51,5 +51,9 @@ function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
     $damage_factor = isset($config['damage_factor']) ? (float)$config['damage_factor'] : 1.0;
     $damage = ($actor_data['att'] * $damage_factor) - $target_data['def'];
     $damage = max(1, $damage); //伤害不能为负数，最小为1
+
+    //调试用 伤害最大为25 
+    $damage = min(25, $damage);
+    
     return $damage;
 }

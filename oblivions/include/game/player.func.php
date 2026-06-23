@@ -532,7 +532,7 @@ function obl_create_player_record($ndata) {
 		'msp'          => isset($ndata['msp']) ? (int)$ndata['msp'] : 0,
 		'att'          => isset($ndata['att']) ? (int)$ndata['att'] : 0,
 		'def'          => isset($ndata['def']) ? (int)$ndata['def'] : 0,
-		'ap'           => 0,
+		'ap'           => 10,
 		'max_ap'       => 10,
 		'pgroup'       => isset($ndata['pgroup']) ? (int)$ndata['pgroup'] : 0,
 		'pls'          => isset($ndata['pls']) ? (int)$ndata['pls'] : 0,
