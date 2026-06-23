@@ -1,0 +1,952 @@
+# vex-vue 前端项目 — 代码库说明
+
+> 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
+> 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
+
+---
+
+## 一、项目概述
+
+vex-vue 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用 ASCII 终端风格（黑白灰阶 + CRT 特效），单页应用（SPA）。替代旧版 vex 前端（原生 JS，已废弃）。
+
+**技术栈**：
+- Vue 3.5（Composition API + `<script setup>`）
+- Vite 6（构建工具 + dev server）
+- Pinia 2（状态管理）
+- TypeScript 5（类型系统）
+- Tailwind CSS v4（`@tailwindcss/vite` 插件，构建时编译）
+- 自定义 CSS（`terminal.css` + `battle.css`，覆盖 Tailwind 无法处理的部分）
+- IBM Plex Mono 等宽字体
+- 原生 fetch API（无 axios 依赖）
+
+**部署方式**：
+- 开发：`npm run dev` 启动 Vite dev server（端口 5174），通过 proxy 转发 `/phpdts/*` 到后端
+- 生产：`npm run build` 构建到 `dist/`，由 `game.php` 重定向到 `vex-vue/dist/index.html`
+- 部署路径：`/phpdts/vex-vue/`（vite.config.js `base` 配置）
+
+**与旧 vex 前端的关键差异**：
+- 响应式驱动：Pinia store + Vue ref/computed 替代手动 DOM 操作
+- 类型安全：TypeScript 全量类型定义（API 响应、事件、组件 props）
+- 事件系统：dataManager.broadcast/listen 替代全局事件总线
+- 战斗演出：store 驱动 + BattleModal Promise 等待 + sleep reject 取消机制
+
+---
+
+## 二、目录结构
+
+```
+vex-vue/
+├── index.html              # SPA 入口 HTML
+├── package.json            # 依赖配置（vue/pinia/vite/tailwind/typescript）
+├── vite.config.js          # Vite 配置（proxy keepAlive + base 路径 + manualChunks）
+├── tsconfig.json           # TypeScript 配置
+├── .env.production         # 生产环境变量（VITE_API_BASE=/phpdts, VITE_DEBUG=false）
+├── .gitignore              # 忽略 node_modules/dist/*.local/.DS_Store
+└── src/
+    ├── main.ts             # 入口：createApp + createPinia + 挂载 #app
+    ├── App.vue             # 根布局：StatusBar + LeftPanel + RightPanel + 浮动组件
+    ├── api/
+    │   ├── client.ts       # API 客户端：gameApi/submitCommand/markBattleLogPlayed/aiDumpSave
+    │   └── endpoints.ts    # API action 常量（9 个只读端点）
+    ├── assets/
+    │   └── styles/
+    │       ├── input.css       # Tailwind 源文件（@theme 色板定义）
+    │       ├── terminal.css    # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
+    │       └── battle.css      # 战斗样式（战斗模态框/碰撞动画/伤害数字/回合光效/装填区）
+    ├── components/
+    │   ├── actions/
+    │   │   ├── ExploreButton.vue       # 探索按钮
+    │   │   └── TileActionBar.vue       # 地图格动作条（POI + 脚边道具 + 探索/搜索/拾取）
+    │   ├── battle/
+    │   │   ├── AimMode.vue             # 瞄准模式（选目标技能）
+    │   │   ├── BattleActionBar.vue     # 战斗动作条（装填区 + 等待提示）
+    │   │   ├── BattleHeader.vue        # 战斗头部（敌人名称 + 位置）
+    │   │   ├── BattleModal.vue         # 战斗演出模态框（播放 battlelog + HP 条）
+    │   │   ├── BattleMode.vue          # 战斗模式容器
+    │   │   ├── CollisionAnimation.vue  # 碰撞动画（冲刺 + 抖动）
+    │   │   ├── DamageNumber.vue        # 残留伤害数字
+    │   │   └── PreloadArea.vue         # 装填区（技能列表 + AP 条 + 队列 + 执行/清空）
+    │   ├── inventory/
+    │   │   ├── EquipmentList.vue       # 装备列表（7 槽）
+    │   │   └── InventoryList.vue       # 背包列表（slots + 丢弃）
+    │   ├── layout/
+    │   │   ├── InventoryDrawer.vue     # 右抽屉（背包 + 装备标签切换）
+    │   │   ├── LeftPanel.vue           # 左面板（地图容器）
+    │   │   ├── Modal.vue               # 通用模态框
+    │   │   ├── PlayerDrawer.vue        # 左抽屉（玩家属性详情）
+    │   │   ├── RightPanel.vue          # 右面板（日志 + 动作条 / 战斗动作条）
+    │   │   ├── StatusBar.vue           # 顶部状态栏（HP/SP/AP + 位置 + tick）
+    │   │   └── ToastContainer.vue      # Toast 容器
+    │   ├── log/
+    │   │   ├── LogEntry.vue            # 单条日志渲染
+    │   │   ├── LogPanel.vue            # 日志面板（v-for + 滚动 + 未读计数）
+    │   │   └── LogUnreadBtn.vue        # 未读日志提示按钮
+    │   └── map/
+    │       ├── MapContainer.vue        # 地图容器（缩放按钮 + 网格）
+    │       └── MapGrid.vue             # 地图网格（v-for 渲染 + 敌人 + 迷雾）
+    ├── composables/
+    │   ├── useDebugBus.ts          # DebugBus（?debug=ai 时收集事件流）
+    │   ├── useLogScroll.ts         # 日志滚动逻辑（自动滚动 + 未读计数）
+    │   ├── useMapBusiness.ts       # 地图业务逻辑（clickMove/handleEnemyClick）
+    │   ├── useMapInteraction.ts    # 地图交互（缩放/平移/键盘/触摸/路径预览/居中）
+    │   ├── useMapReachability.ts   # 地图可达性（BFS + findPath + 方向箭头）
+    │   ├── useMapRender.ts         # 地图渲染（renderMapGrid + applyZoom）
+    │   ├── useMapZoom.ts           # 地图缩放状态
+    │   └── useToastPosition.ts     # Toast 位置管理（isAnyOverlayOpen + 位置类）
+    ├── data/
+    │   ├── battle-templates.ts     # battle_log 渲染模板（按 action_id 索引）
+    │   ├── log-templates.ts        # 结构化日志模板（按 id 索引）+ renderLogEntry
+    │   ├── skill-templates.ts      # 技能模板（按 act_id 索引）+ getSkillTemplate
+    │   └── terrain-desc.ts         # 地形描述词库 + generateTerrainDesc
+    ├── stores/
+    │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
+    │   ├── command-queue.ts        # 命令队列（防抖 + 锁定 + 冷却）
+    │   ├── data-manager.ts         # 数据层（白名单缓存 + 去重 + 事件总线）
+    │   ├── inventory.ts            # 背包 + 装备（loadInventory + handleDiscard）
+    │   ├── log.ts                  # 日志（refreshLog + 增量检测 + Toast 触发）
+    │   ├── map.ts                  # 地图（loadMap + updateMapData + enemies）
+    │   ├── player.ts               # 玩家信息（loadPlayerInfo + computed 属性）
+    │   ├── tileAction.ts           # 地图格动作（探索/搜索/拾取/丢弃/区域切换 + 模态框）
+    │   ├── toast.ts                # Toast（showToast + 同类合并）
+    │   └── ui.ts                   # UI 全局状态（抽屉/模态框/战斗按钮三态/标签）
+    ├── types/
+    │   ├── api.ts                  # API 响应类型定义（PlayerInfo/Enemy/GameMap/BattleLogEntry 等）
+    │   └── events.ts               # 语义事件类型定义（AppEvent + 事件数据接口）
+    └── utils/
+        ├── format.ts               # 工具（escapeHtml / isFalsy 等）
+        └── perf.ts                 # 性能分析工具（perf.mark/span/spanAsync，默认关闭）
+```
+
+---
+
+## 三、核心概念词典
+
+> 后端概念定义见 [oblivions/CODEBASE.md 第二节](../oblivions/CODEBASE.md)。以下为前端特有概念。
+
+### 3.1 三层并发锁
+
+前端通过三层锁防止重复提交和状态竞争：
+
+| 层 | 实现位置 | 覆盖范围 | 说明 |
+|----|---------|---------|------|
+| **HTTP 请求锁** | `commandQueue._locked` | HTTP 请求期间 | 防止快速连点导致重复 POST |
+| **全生命周期锁** | `battleStore.isProcessingBattle` | 拉取-播放-标记-刷新全流程 | 防止 refreshBattle 重入 |
+| **播放器锁** | `battleStore.isPlayingBattleLog` | battlelog 播放期间 | 防止 fetchAndPlayBattleLog 重入 |
+| **后端文件锁** | `flock(LOCK_EX\|LOCK_NB)` | 命令执行期间 | 多请求并发时拒绝后续（返回 COMMAND_IN_PROGRESS） |
+
+### 3.2 事件总线（dataManager）
+
+`dataManager` 是单例数据层，承担两个职责：
+
+1. **数据层**：白名单缓存 + 请求去重（详见第五章）
+2. **事件总线**：`broadcast(event, data)` / `listen(event, cb)` / `unlisten(event, cb)`
+
+事件总线用于模块间解耦通信。例如：
+- `mapStore.loadMap()` 完成后 `broadcast('map:loaded')`
+- `tileActionStore` / `inventoryStore` / `logStore` 监听 `map:loaded` 后自行刷新
+- 战斗演出时 `battleStore` `broadcast('battle:play-collision')` 触发 `CollisionAnimation` 组件
+
+**对称注册模式**：每个 store 提供 `registerListeners()` 方法，在 `App.vue` 的 `onMounted` 中统一调用一次（内部用 `_listenersRegistered` 标志防重复）。
+
+### 3.3 战斗状态机
+
+简化为两态（取消 prebattle/ended 中间态）：
+
+```
+normal（探索）
+  ↓ 玩家点击敌人 → startBattle(enemyPid)
+  ↓ 切换到 battle 模式 + 初始化装填区（pre-battle）
+  ↓ 玩家装填动作 → 点击执行 → obl_battle_start
+battle（战斗）
+  ↓ 玩家回合：装填区（in-battle）→ 执行 → obl_battle_action
+  ↓ NPC 回合：定时刷新 player_info 触发后端推进
+  ↓ battlelog 播放完成 + action='' → exitBattleMode
+  ↓ 回到 normal
+```
+
+### 3.4 装填区（PreloadArea）两种模式
+
+| 模式 | 触发时机 | 执行命令 | 说明 |
+|------|---------|---------|------|
+| `pre-battle` | 玩家点击敌人后、战斗开始前 | `obl_battle_start` | 玩家预装填动作序列后提交，直接进入战斗 |
+| `in-battle` | 战斗中玩家回合 | `obl_battle_action` | 玩家每回合装填动作并执行 |
+
+装填区通过监听 `battle:preload-init` 事件初始化，事件数据含 `mode` / `enemyPid` / `playerPid`。
+
+### 3.5 瞄准模式（AimMode）
+
+部分技能 `target='enemy'` 且无明确目标时触发瞄准：
+- 进入瞄准 → `broadcast('battle:aim-mode')` → `AimMode` 组件接管地图选目标
+- 选定目标 → `AimMode` `broadcast('battle:aim-target-selected')` → `PreloadArea.onTargetSelect`
+- 退出瞄准 → `broadcast('battle:aim-exit')`
+
+`uiStore.battleBtnState` 三态（`normal`/`battle`/`aim`）通过监听这些事件同步。
+
+---
+
+## 四、数据流架构
+
+### 4.1 整体分层
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Components（.vue）                                          │
+│  ├─ 读取 store 状态（ref/computed）响应式渲染                │
+│  ├─ 调用 store action 触发业务逻辑                           │
+│  └─ 监听 dataManager 事件触发动画（如 CollisionAnimation）    │
+├─────────────────────────────────────────────────────────────┤
+│  Composables（use*.ts）                                      │
+│  ├─ 纯逻辑层（无响应式状态，或仅模块级缓存）                  │
+│  ├─ useMapBusiness：clickMove/handleEnemyClick 业务编排      │
+│  ├─ useMapInteraction：缩放/平移/键盘/触摸交互               │
+│  ├─ useMapReachability：BFS 可达性 + findPath 寻路           │
+│  ├─ useMapRender：renderMapGrid DOM 渲染                     │
+│  └─ useToastPosition：Toast 位置响应式计算                   │
+├─────────────────────────────────────────────────────────────┤
+│  Stores（Pinia）                                             │
+│  ├─ 状态管理（ref/computed）+ action（业务函数）             │
+│  ├─ 通过 dataManager.fetch 拉取数据                          │
+│  ├─ 通过 commandQueue.execute 提交命令                       │
+│  └─ 通过 dataManager.broadcast/listen 通信                   │
+├─────────────────────────────────────────────────────────────┤
+│  DataManager（单例）                                         │
+│  ├─ fetch(action)：白名单缓存 + 请求去重                     │
+│  ├─ invalidate/invalidateAll：清缓存                         │
+│  └─ broadcast/listen/unlisten：事件总线                      │
+├─────────────────────────────────────────────────────────────┤
+│  API Client（api/client.ts）                                 │
+│  ├─ gameApi(action)：GET api_v2.php?action=xxx               │
+│  ├─ submitCommand(params)：POST command.php                  │
+│  ├─ markBattleLogPlayed：POST oblivions/mark_battle_log_played.php │
+│  └─ aiDumpSave：POST api_v2.php?action=ai_dump_save          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 读取流（页面加载）
+
+```
+App.vue onMounted
+  ├─ 各 store.registerListeners()（注册 dataManager 事件监听）
+  └─ Promise.all([
+       playerStore.loadPlayerInfo(true),   // gameApi('player_info') → 状态栏
+       mapStore.loadMap(),                  // 并行 fetch game_map + enemies
+     ])
+       ↓ mapStore.loadMap 完成
+       ├─ updateMapData（curLoc/curRegion/links/enemies）
+       ├─ computeReachableMap（BFS 可达性缓存）
+       └─ broadcast('map:loaded')
+            ├─ tileActionStore.loadTileAction()   // 监听 map:loaded
+            ├─ inventoryStore.loadInventory()     // 监听 map:loaded
+            └─ logStore.refreshLog(false)         // 监听 map:loaded（被动刷新）
+```
+
+### 4.3 写入流（玩家操作）
+
+```
+用户操作（点击地图格/探索/搜索/拾取/丢弃/移动/战斗）
+  ↓
+tileActionStore / inventoryStore / useMapBusiness.clickMove
+  ↓
+commandQueue.execute(params)              // HTTP 请求锁
+  ↓
+submitCommand(params)                     // POST command.php
+  ↓ 成功后：
+  ├─ dataManager.invalidate(...)          // 精准失效受影响的缓存
+  ├─ mapStore.loadMap()（移动/探索时）    // 重新拉取地图
+  └─ dataManager.broadcast('game:action-completed')
+       ├─ tileActionStore.loadTileAction()   // 监听 game:action-completed
+       ├─ inventoryStore.loadInventory()     // 监听 game:action-completed
+       ├─ logStore.refreshLog(true)          // 监听 game:action-completed（强制滚动）
+       ├─ playerStore.loadPlayerInfo()       // 监听 game:action-completed（状态栏）
+       └─ battleStore.refreshBattle()        // 监听 game:action-completed（检测遭遇战）
+```
+
+### 4.4 事件清单
+
+| 事件名 | 触发者 | 订阅者 | 说明 |
+|--------|--------|--------|------|
+| `map:loaded` | mapStore | tileAction, inventory, log | 地图数据加载完成 |
+| `game:action-completed` | tileAction, inventory, useMapBusiness, battle | tileAction, inventory, log, player, battle | 任何游戏操作成功后 |
+| `map:click-current` | useMapBusiness | tileAction | 点击当前格触发探索 |
+| `ui:toast` | 各 store | toastStore | 显示 Toast 通知 |
+| `battle:started` | battleStore | uiStore | 战斗开始（同步按钮三态） |
+| `battle:ended` | battleStore | uiStore, mapStore | 战斗结束（同步按钮三态 + 刷新地图） |
+| `battle:aim-mode` | PreloadArea | uiStore | 进入瞄准模式 |
+| `battle:aim-exit` | PreloadArea/AimMode | uiStore | 退出瞄准模式 |
+| `battle:aim-target-selected` | AimMode | PreloadArea | 瞄准选定目标 |
+| `battle:preload-init` | battleStore | PreloadArea | 初始化装填区 |
+| `battle:play-collision` | battleStore | CollisionAnimation | 播放碰撞动画 |
+| `battle:play-damage-numbers` | battleStore | DamageNumber | 播放残留伤害数字 |
+| `preload:executed` | PreloadArea | battleStore | 装填区执行完成，刷新战斗状态 |
+| `log:force-scroll` | logStore | useLogScroll | 强制日志滚动到底部 |
+| `log:add-unread` | logStore | useLogScroll | 累加未读日志计数 |
+
+---
+
+## 五、API 对接约定
+
+### 5.1 重要：数值字段返回 string
+
+> **这是前后端对接最关键的约定。**
+
+后端 PHP 通过 `compatible_json_encode()` 返回的所有数值字段实际为 **string 类型**（PHP json_encode 对数据库取出的值的行为）。例如：
+
+```json
+{ "pid": "20", "hp": "398", "ap": "5", "log_id": "42", "played": "0" }
+```
+
+**前端处理规范**：
+- TypeScript 类型定义中这些字段声明为 `string`（见 `types/api.ts`）
+- 使用时通过 `Number()` / `parseInt(String(x))` 转换
+- store 的 computed 属性集中处理转换（如 `playerStore.hp = computed(() => Number(playerInfo.value?.hp ?? 0))`）
+
+**例外**：`obl_tick` / `obl_pretick` 是数字类型（后端显式 `intval`），`LogEntry.ts` 也是数字类型。
+
+### 5.2 只读 API（GET `api_v2.php?action=xxx`）
+
+通过 `gameApi(action)` 调用，返回完整响应对象 `{status, data, ...}`。
+
+| action | 返回数据 | 消费 store | 缓存策略 |
+|--------|---------|-----------|---------|
+| `game_map` | 地图网格 + 连通性 + 迷雾 + 区域信息 | mapStore | 白名单 5s |
+| `tile_actions` | 当前格 POI + 脚边道具 | tileActionStore | 白名单 3s |
+| `player_inventory` | 背包槽位 + 装备 | inventoryStore | 白名单 2s |
+| `player_info` | 玩家属性 + AP + 装备 + oblpara + groomid | playerStore, battleStore | 不缓存（实时拉取） |
+| `obl_log` | 结构化日志条目数组 | logStore | 不缓存 |
+| `battle_log` | 战斗日志条目数组（played=0） | battleStore | 不缓存 |
+| `enemies` | 当前区域敌人列表 | mapStore, battleStore | 不缓存 |
+| `skill_list` | 技能列表 + player_ap | PreloadArea | 不缓存 |
+| `ai_dump_save` | AI dump 保存结果 | debugBus | 不缓存（POST） |
+
+**响应格式**：
+```json
+{ "status": "success" | "error", "data": {...}, "msg": "..." }
+```
+
+### 5.3 写入 API（POST `command.php`）
+
+通过 `commandQueue.execute(params)` → `submitCommand(params)` 调用。
+
+**params 格式**：
+
+```typescript
+// 探索
+{ command: 'obl_explore' }
+
+// 搜索 POI
+{ command: 'obl_search', iaid: '123' }
+
+// 拾取道具
+{ command: 'obl_pickup', iid: '456' }
+
+// 丢弃背包道具
+{ command: 'obl_discard', slot: '3' }  // slot: 1~itemmaxslots
+
+// 移动
+{ command: 'move', moveto: '5' }  // moveto = 目标格 pls
+
+// 玩家主动攻击（直接进入 battle 状态）
+{ command: 'obl_battle_start', enemy_pid: '101' }
+
+// 战斗动作（玩家回合）
+{ command: 'obl_battle_action', action_id: 'unarmed_strike' }
+```
+
+**响应格式**（Oblivions 模式）：
+```json
+{}
+```
+
+Oblivions 模式下 `command.php` 仅做模式判定后委托给 `oblivions/include/core/obl_command.php`，响应只返回空 JSON `{}`。前端不依赖命令响应获取业务数据，而是通过 `dataManager.invalidateAll()` + 重新拉取只读 API 获取最新状态。
+
+**并发冲突响应**：
+```json
+{ "error": "COMMAND_IN_PROGRESS" }
+```
+
+`submitCommand` 检测 `gamedata.error` 存在时返回 `success: false`，前端视为失败（通常由 `commandQueue._locked` 在前端就拦截）。
+
+### 5.4 零依赖接口：`mark_battle_log_played.php`
+
+**独立文件**（不走 `api_v2.php`），位于 `vex/mark_battle_log_played.php`。
+
+- **请求**: `POST /phpdts/vex/mark_battle_log_played.php`
+- **Content-Type**: `application/x-www-form-urlencoded`
+- **参数**: `groomid` (int) + `pid` (int) + `log_ids` (逗号分隔字符串)
+- **响应**: `{ "success": true, "marked": N }`
+
+**零依赖设计**：不依赖任何游戏框架（无 auth/DB），只文件读写。安全性靠 `(int)` 强制转换防路径遍历。设计理由：mark 请求即使被伪造也无严重后果。
+
+**前端调用**（`api/client.ts: markBattleLogPlayed`）：
+```typescript
+export async function markBattleLogPlayed(
+  groomid: number, pid: number, logIds: number[]
+): Promise<{ success: boolean; marked?: number }>
+```
+
+### 5.5 `player_info` 字段说明
+
+Oblivions 模式独立数据层 `bra_oblplayers`，字段详见 [oblivions/CODEBASE.md 4.0](../oblivions/CODEBASE.md)。
+
+前端关键字段：
+- **`groomid`**：房间 ID（供调用零依赖接口 `mark_battle_log_played.php`）
+- **`action`**：`''`=正常 / `'battle'`=战斗中
+- **`battle_queue`**：先攻队列（`{qid, queue: [{pid, type, myorder, done}]}`），用于判断玩家是否当前顺位
+- **`ap`/`max_ap`**：AP 值（Oblivions 专属）
+- **`oblpara`**：杂项数据（含 `killnum`/`battle`/`escape_skip_tick` 等）
+- **`obl_tick`/`obl_pretick`**：当前/上次 tick（数字类型，非字符串）
+- **`equipment`**：7 槽装备（wep/wep2/arb/arh/ara/arf/art）
+
+> 传统模式字段（race/club/nick/money/rage 等）在 Oblivions 模式下不再返回。`killnum` 改为从 `oblpara.killnum` 读取。
+
+---
+
+## 六、DataManager 数据层
+
+`src/stores/data-manager.ts` 导出的 `dataManager` 单例，承担数据层 + 事件总线双重职责。
+
+### 6.1 白名单缓存策略
+
+仅以下 action 缓存（TTL 各不同），高频数据不缓存每次实时拉取：
+
+| action | TTL | 失效时机 |
+|--------|-----|---------|
+| `game_map` | 5s | 移动/探索后 `invalidate('game_map')` |
+| `tile_actions` | 3s | 移动/探索/搜索/拾取后 `invalidate('tile_actions')` |
+| `player_inventory` | 2s | 拾取/丢弃后 `invalidate('player_inventory')` |
+| `player_info` | 不缓存 | — |
+| `enemies` | 不缓存 | — |
+| `obl_log` | 不缓存 | — |
+| `battle_log` | 不缓存 | — |
+
+### 6.2 请求去重
+
+所有 action 共享 `_pending` Map，并发请求合并为一个 Promise：
+
+```typescript
+async fetch(action: ApiAction, forceRefresh = false): Promise<ApiResponse>
+```
+
+- 白名单 action：缓存命中直接返回；缓存过期走去重
+- 非白名单 action：跳过缓存，但仍走去重
+- `forceRefresh=true`：跳过缓存检查，但仍走去重
+
+### 6.3 事件总线 API
+
+```typescript
+broadcast(event: AppEvent, data?: unknown): void  // 触发事件
+listen(event: AppEvent, callback: EventCallback): void   // 订阅
+unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
+```
+
+事件类型见 `types/events.ts` 的 `AppEvent` 联合类型。
+
+---
+
+## 七、Store 层
+
+所有 store 使用 Pinia Composition API 风格（`defineStore('name', () => {...})`）。
+
+### 7.1 Store 职责矩阵
+
+| Store | 职责 | 关键状态 | 关键 action |
+|-------|------|---------|-------------|
+| `playerStore` | 玩家信息 | `playerInfo` | `loadPlayerInfo(forceRefresh)` |
+| `mapStore` | 地图数据 | `curLoc`/`curRegion`/`links`/`enemies` | `loadMap()`/`updateMapData(patch)` |
+| `tileActionStore` | 地图格动作 | `tileActions`/`modalOpen`/`modalType` | `handleExplore()`/`handleSearch(iaid)`/`handlePickup(iid)`/`handlePickupAll(items)`/`handleSwitchRegion()` |
+| `inventoryStore` | 背包 + 装备 | `inventoryData`/`equipment`(computed) | `loadInventory()`/`handleDiscard(slot)` |
+| `logStore` | 游戏日志 | `entries`/`lastTs` | `refreshLog(forceScroll)` |
+| `battleStore` | 战斗状态机 | `currentMode`/`isPlayingBattleLog`/`isProcessingBattle`/`battleModalOpen` | `startBattle(enemyPid)`/`refreshBattle()`/`fetchAndPlayBattleLog()`/`notifyModalClosed()` |
+| `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
+| `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
+| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` | `execute(params)` |
+
+### 7.2 Store 事件监听注册模式
+
+每个需要监听事件的 store 提供 `registerListeners()` 方法，在 `App.vue` 的 `onMounted` 中统一调用：
+
+```typescript
+// App.vue onMounted
+tileActionStore.registerListeners();
+inventoryStore.registerListeners();
+toastStore.registerListeners();
+logStore.registerListeners();
+battleStore.registerListeners();
+```
+
+内部用 `_listenersRegistered` 标志防止重复注册。
+
+### 7.3 commandQueue（非 Pinia 单例）
+
+`src/stores/command-queue.ts` 导出的 `commandQueue` 单例（非 Pinia store），提供 HTTP 请求级锁：
+
+```typescript
+class CommandQueue {
+  private _locked = false;
+  private _cooldown = 0;
+  
+  async execute(params: Record<string, string>): Promise<CommandResult>
+  get isLocked(): boolean
+  get remainingCooldown(): number
+}
+```
+
+- `_locked` 仅覆盖 HTTP 请求期间，**不覆盖**"播放 battlelog + 刷新状态"的全生命周期
+- 全生命周期锁由 `battleStore.isProcessingBattle` 负责（详见第八章）
+- 锁定时返回 `{ success: false, error: 'LOCKED', message: '操作进行中' }`
+- 冷却中返回 `{ success: false, error: 'COOLDOWN', message: '冷却中' }`
+
+---
+
+## 八、战斗演出系统
+
+> 这是前端最复杂的子系统，涉及 store + 组件 + 事件 + Promise 协调。
+
+### 8.1 整体流程
+
+```
+玩家点击敌人（handleEnemyClick）
+  ↓ 前端校验攻击距离（BFS distance === 1）
+  ↓
+battleStore.startBattle(enemyPid)
+  ├─ currentMode = 'battle'
+  ├─ isPlayerTurn = true
+  ├─ broadcast('battle:preload-init', { mode: 'pre-battle', enemyPid, playerPid })
+  │    ↓ PreloadArea 组件初始化装填区
+  └─ broadcast('battle:started', { enemyPid })
+       ↓ uiStore.battleBtnState = 'battle'
+
+玩家在装填区选择动作 → 点击执行
+  ↓
+PreloadArea 提交 obl_battle_start（pre-battle）/ obl_battle_action（in-battle）
+  ↓ broadcast('preload:executed')
+  ↓
+battleStore.onPreloadExecuted()
+  ├─ invalidate('player_info'/'enemies'/'battle_log')
+  └─ refreshBattle()
+       ↓
+       ┌─ 拉取 player_info → 判断 action
+       │   ├─ action='battle' → enterBattleMode + 启停 NPC 刷新
+       │   └─ action='' → 战斗已结束（不立即退出，等 battlelog 播完）
+       │
+       └─ fetchAndPlayBattleLog()  ← 纯播放器，不涉及状态判断
+            ├─ 拉取 battle_log（played=0）
+            ├─ groupByEncounter（按 NPC pid 分组）
+            ├─ 逐组 playBattleLogGroup：
+            │    1. broadcast('battle:play-collision') → CollisionAnimation 碰撞动画
+            │    2. battleModalOpen=true → BattleModal 播放模态框（await Promise）
+            │    3. broadcast('battle:play-damage-numbers') → DamageNumber 残留伤害
+            └─ markBattleLogPlayed() 标记 played=1
+       ↓
+       播放完成后根据 action 决定后续：
+       ├─ action='battle' + 玩家回合 → showToast('你的回合')
+       └─ action='' → exitBattleMode() → broadcast('battle:ended')
+```
+
+### 8.2 fetchAndPlayBattleLog 纯播放器模式
+
+`fetchAndPlayBattleLog()` 重构后只负责"拉取-播放-标记"，**不涉及**：
+- action 判断（由 `refreshBattle` 负责）
+- `exitBattleMode` 调用（由 `refreshBattle` 负责）
+- toast 显示（由 `refreshBattle` 负责）
+
+```typescript
+async function fetchAndPlayBattleLog(): Promise<void> {
+  if (isPlayingBattleLog.value) return;  // 防重入
+  // ... 拉取 battle_log
+  isPlayingBattleLog.value = true;
+  try {
+    const groups = groupByEncounter(entries);
+    for (const group of groups) {
+      await playBattleLogGroup(group.entries, group.npcPid);
+    }
+    await markBattleLogPlayed(currentGroomid, currentPid, allLogIds);
+  } finally {
+    isPlayingBattleLog.value = false;
+  }
+}
+```
+
+### 8.3 BattleModal sleep reject 取消机制
+
+`BattleModal.vue` 播放 battlelog 时使用 `await sleep(ms)` 控制节奏。组件卸载时需主动 reject sleep，避免 `playBattleLog` 永久挂起。
+
+**实现**（`BattleModal.vue`）：
+
+```typescript
+let rejectSleep: ((e?: unknown) => void) | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    rejectSleep = reject;  // 保存 reject 句柄
+    currentTimer = setTimeout(() => {
+      rejectSleep = null;
+      resolve();
+    }, ms);
+  });
+}
+
+async function playBattleLog(): Promise<void> {
+  try {
+    // ... 逐条播放，多处 await sleep
+    await sleep(ENTRY_INTERVAL);
+    // ...
+  } catch {
+    // 组件卸载时 sleep 被 reject，通知 store 播放中断
+    battleStore.notifyModalClosed();
+  } finally {
+    playing.value = false;
+  }
+}
+
+onUnmounted(() => {
+  cancelRequested = true;
+  if (currentTimer) clearTimeout(currentTimer);
+  if (rejectSleep) {
+    const r = rejectSleep;
+    rejectSleep = null;
+    r(new Error('BattleModal unmounted'));  // 主动 reject
+  }
+});
+```
+
+### 8.4 Store 侧 Promise 超时兜底
+
+`playBattleLogGroup` 中等待模态框播放完成的 Promise 加 30s 超时兜底，防止组件异常卸载未通知导致永久挂起：
+
+```typescript
+// battleStore.playBattleLogGroup
+battleModalOpen.value = true;
+await new Promise<void>((resolve) => {
+  const timeout = setTimeout(() => {
+    _modalResolve = null;
+    resolve();  // 30s 超时自动 resolve
+  }, MODAL_TIMEOUT);  // 30000ms
+  _modalResolve = () => {
+    clearTimeout(timeout);
+    resolve();
+  };
+});
+```
+
+`BattleModal` 播放完成后调用 `battleStore.notifyModalClosed()` → 触发 `_modalResolve()` → resolve Promise → 继续后续流程。
+
+### 8.5 NPC 回合自动刷新
+
+NPC 顺位时，后端会在下次 `common.inc` 加载时执行 NPC 先攻轮。前端通过定时拉取 `player_info` 触发后端推进：
+
+```typescript
+const NPC_TURN_REFRESH_INTERVAL = 2000;  // 2秒
+
+function startNpcTurnRefresh(): void {
+  npcTurnRefreshTimer = setInterval(() => {
+    dataManager.invalidate('player_info');
+    dataManager.invalidate('battle_log');
+    refreshBattle();
+  }, NPC_TURN_REFRESH_INTERVAL);
+}
+```
+
+玩家顺位时停止定时器，等待玩家操作。
+
+### 8.6 BattleModal 并发守卫
+
+`BattleModal.vue` 的 `playing` ref 防止 store 在上一次播放未结束时再触发：
+
+```typescript
+async function playBattleLog(): Promise<void> {
+  if (playing.value) {
+    battleStore.notifyModalClosed();  // 直接通知 store 跳过
+    return;
+  }
+  playing.value = true;
+  try { /* ... */ } finally { playing.value = false; }
+}
+```
+
+### 8.7 BattleLogEntry 字段类型
+
+> **重要**：后端 PHP 返回的所有数值字段实际为 **string 类型**。
+
+`types/api.ts` 中 `BattleLogEntry` 的字段定义：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 固定 `'battle.action'` |
+| `log_id` | string | 文件内自增 ID（用于标记 played） |
+| `turn` | string | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
+| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
+| `actor_type` | string | `'0'`=玩家，`>'0'`=敌人类型 |
+| `actor_pid` | string | 行动方 PID |
+| `target` | string | 目标标识 |
+| `target_type` | string | 目标类型 |
+| `target_pid` | string | 目标 PID |
+| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`battle_end` 等） |
+| `action_name` | string | 动作显示名 |
+| `effect_value` | string | 效果值（伤害值等） |
+| `extra` | object\|null | 额外信息（含 `target_newhp` 供 HP 条更新） |
+| `phase` | string | `'excute'`/`'finish_check'` 等（控制动画播放） |
+| `played` | string | `'0'`=未播放，`'1'`=已播放 |
+| `ts` | string | Unix 时间戳 |
+
+**使用规范**：所有数值字段需 `Number()` 转换，如 `Number(entry.actor_type) === 0` 判断玩家。
+
+### 8.8 战斗日志分组播放
+
+`groupByEncounter(entries)` 按 NPC pid 分组（单 NPC 战斗约束下，所有条目归入同一组）：
+
+```typescript
+function groupByEncounter(entries: BattleLogEntry[]): { npcPid: number; entries: BattleLogEntry[] }[] {
+  let npcPid = 0;
+  for (const e of entries) {
+    if (Number(e.actor_type) > 0) { npcPid = Number(e.actor_pid); break; }
+    if (Number(e.target_type) > 0) { npcPid = Number(e.target_pid); break; }
+  }
+  if (npcPid === 0) return [];
+  return [{ npcPid, entries }];
+}
+```
+
+每组三阶段播放：
+1. **碰撞动画**（地图上）：`broadcast('battle:play-collision')` → `CollisionAnimation` 冲刺+抖动，无伤害数字
+2. **模态框**（中央遮罩）：`battleModalOpen=true` → `BattleModal` 逐条播放 battlelog，含 HP 条更新
+3. **残留伤害数字**（地图格上）：`broadcast('battle:play-damage-numbers')` → `DamageNumber` 模态框关闭后淡入
+
+---
+
+## 九、Composable 层
+
+### 9.1 地图相关 composables
+
+| Composable | 职责 | 关键导出 |
+|-----------|------|---------|
+| `useMapBusiness` | 地图业务编排 | `clickMove(areaId)`/`handleEnemyClick(enemy)`/`highlightCell(areaId)`/`setupMapCallbacks()` |
+| `useMapInteraction` | 地图交互（缩放/平移/键盘/触摸） | `initMapInteraction(container, grid)`/`centerOnPlayer()`/`showPathPreview()`/`setInteractionCallbacks()` |
+| `useMapReachability` | BFS 可达性 + 寻路 | `computeReachableMap()`/`isReachable(pls)`/`findPath(from, to)`/`getDirectionArrow()` |
+| `useMapRender` | 地图 DOM 渲染 | `renderMapGrid(grid, container)`/`applyZoom(level, grid, container)`/`setRenderCallbacks()` |
+| `useMapZoom` | 缩放状态 | `getZoomLevel()`/`setZoomLevel()` |
+
+**回调注入模式**（避免循环依赖）：
+- `useMapBusiness.setupMapCallbacks()` 调用 `setRenderCallbacks()` 和 `setInteractionCallbacks()` 注入业务回调
+- `useMapInteraction` 通过 `_onKeyMove` 回调触发 `useMapBusiness.clickMove`
+
+### 9.2 其他 composables
+
+| Composable | 职责 |
+|-----------|------|
+| `useLogScroll` | 日志自动滚动 + 未读计数（监听 `log:force-scroll`/`log:add-unread` 事件） |
+| `useToastPosition` | Toast 位置响应式计算（`isAnyOverlayOpen()`/`toastPositionClass`） |
+| `useDebugBus` | DebugBus 单例（`?debug=ai` 时收集事件流供调试） |
+
+### 9.3 useToastPosition 位置规则
+
+Toast 位置根据 2 级页面开关状态响应式计算：
+
+| 状态 | 位置类 | 说明 |
+|------|--------|------|
+| 无 2 级页面 / 左抽屉开 | `''`（默认右上角） | — |
+| 右抽屉开 | `'pos-left'`（左上角） | 避免被右抽屉遮挡 |
+| 任何模态框开（通用/POI/ground） | `'pos-center'`（中上） | 避免被模态框遮挡 |
+
+优先级：模态框 > 右抽屉 > 左抽屉/默认。
+
+`isAnyOverlayOpen()` 检查范围：`uiStore.modalOpen` + `uiStore.inventoryDrawerOpen` + `uiStore.playerDrawerOpen` + `tileActionStore.modalOpen`。
+
+---
+
+## 十、组件层
+
+### 10.1 组件树
+
+```
+App.vue
+├── StatusBar.vue                    # 顶部状态栏（HP/SP/AP + 位置 + tick）
+├── main
+│   ├── LeftPanel.vue
+│   │   └── MapContainer.vue
+│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 敌人 + 迷雾
+│   │       └── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
+│   │       └── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
+│   └── RightPanel.vue
+│       ├── LogPanel.vue             # 日志面板
+│       │   ├── LogEntry.vue
+│       │   └── LogUnreadBtn.vue
+│       └── TileActionBar.vue        # 探索模式动作条
+│           └── ExploreButton.vue
+├── Modal.vue                        # 通用模态框（Teleport to body）
+├── PlayerDrawer.vue                 # 左抽屉（玩家属性详情）
+├── InventoryDrawer.vue              # 右抽屉（背包 + 装备标签）
+│   ├── InventoryList.vue
+│   └── EquipmentList.vue
+├── ToastContainer.vue               # Toast 容器
+└── BattleModal.vue                  # 战斗演出模态框（Teleport to body，监听 battleModalOpen）
+
+# 战斗模式下 RightPanel 切换为：
+RightPanel.vue (battle mode)
+├── BattleHeader.vue                 # 敌人名称 + 位置
+├── BattleActionBar.vue              # 战斗动作条
+│   └── PreloadArea.vue              # 装填区（技能列表 + AP 条 + 队列）
+│       └── AimMode.vue              # 瞄准模式（选目标技能）
+```
+
+### 10.2 组件通信模式
+
+1. **Store 驱动**：组件读取 store 的 ref/computed 响应式渲染，调用 store action 触发业务
+2. **事件触发动画**：store `broadcast` 事件 → 组件 `listen` 后执行 DOM 动画（如 `CollisionAnimation`）
+3. **Teleport to body**：模态框类组件（`Modal`/`BattleModal`）使用 `<Teleport to="body">` 避免 `position: fixed` 与父级 `transform` 冲突
+4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放
+
+---
+
+## 十一、构建与部署
+
+### 11.1 开发环境
+
+```bash
+cd vex-vue
+npm install
+npm run dev    # 启动 Vite dev server（端口 5174）
+```
+
+**Vite proxy 配置**（`vite.config.js`）：
+
+开发环境通过 Vite proxy 转发 `/phpdts/*` 到后端 `http://127.0.0.1`，实现同源请求（与生产环境一致）。**关键优化**：使用 `http.Agent({ keepAlive: true, maxSockets: 10 })` 复用 TCP 连接，避免每请求重建连接（~300ms → ~5ms）。
+
+```javascript
+import http from 'node:http';
+const proxyAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
+
+server: {
+  port: 5174,
+  proxy: {
+    '/phpdts/api_v2.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/command.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/vex/mark_battle_log_played.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/img/': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+  },
+}
+```
+
+### 11.2 生产构建
+
+```bash
+cd vex-vue
+npm run build    # 输出到 dist/
+```
+
+**构建配置**：
+- `base: '/phpdts/vex-vue/'`（生产部署路径）
+- `manualChunks: { 'vue-vendor': ['vue', 'pinia'] }`（分离 Vue 运行时）
+- `sourcemap: false`（不生成 sourcemap）
+- `assetsDir: 'assets'`
+
+**环境变量**（`.env.production`）：
+```
+VITE_API_BASE=/phpdts
+VITE_DEBUG=false
+```
+
+### 11.3 部署流程
+
+1. `npm run build` 生成 `dist/`
+2. `dist/` 目录提交到 git（与后端一起部署）
+3. 玩家访问 `game.php` → 重定向到 `vex-vue/dist/index.html`（由 [game.php:22-25](../game.php#L22-L25) 的 `header("Location: vex-vue/dist/index.html")` 实现）
+4. 前端通过 `VITE_API_BASE=/phpdts` 发起同源请求
+
+> **开发环境**：开发者手动启动 `npm run dev`（端口 5174）后直接访问 `http://localhost:5174`，不走 `game.php`。`game.php` 一刀切指向 `dist/`，仅服务生产环境。
+
+### 11.4 性能调试工具
+
+`src/utils/perf.ts` 提供性能分析工具（默认关闭）：
+
+```typescript
+import { perf } from '@/utils/perf';
+perf.enable();  // 开启
+perf.mark('label', 'category');
+perf.span('label', 'category', () => { /* 同步 */ });
+perf.spanAsync('label', 'category', async () => { /* 异步 */ });
+perf.report();  // 输出报告
+perf.clear();
+```
+
+在 `useMapBusiness.clickMove` 和 `mapStore.loadMap` 中已埋点，开启后可在控制台查看各阶段耗时。
+
+---
+
+## 十二、类型定义参考
+
+### 12.1 API 响应类型（`types/api.ts`）
+
+完整类型定义见 [src/types/api.ts](src/types/api.ts)。关键接口：
+
+- `PlayerInfo` — 玩家信息（数值字段均为 string）
+- `Enemy` — 敌人信息
+- `GameMap` / `GameMapLinks` / `TileInfo` — 地图数据
+- `TileActions` / `Poi` / `GroundItem` — 地图格交互
+- `PlayerInventory` / `InventoryItem` — 背包
+- `SkillList` / `Skill` — 技能列表
+- `LogEntry` — 结构化日志（`ts` 为 number）
+- `BattleLogEntry` — 战斗日志（所有数值字段为 string）
+- `OblLogResponse` / `BattleLogResponse` / `EnemiesResponse` — 响应包装
+
+### 12.2 事件类型（`types/events.ts`）
+
+- `AppEvent` — 语义事件名联合类型（16 个事件）
+- `ToastEventData` / `MapClickCurrentEventData` / `BattleStartedEventData` 等 — 事件数据接口
+- `PreloadInitEventData` — 装填区初始化事件（`mode: 'pre-battle' | 'in-battle'`）
+- `PlayCollisionEventData` / `PlayDamageNumbersEventData` — 战斗演出事件
+- `DebugBusEntry` / `DebugStateSnapshot` — DebugBus 调试类型
+
+### 12.3 战斗播放上下文（`data/battle-templates.ts`）
+
+```typescript
+export interface BattlePlayContext {
+  npcPid: number;
+  npcName: string;
+  npcHp: number;
+  npcMaxHp: number;
+  npcLocation: string | number | null;
+  playerHp: number;
+  playerMaxHp: number;
+  playerName: string;
+  // 兼容旧字段名
+  enemyName: string;
+  enemyHp: number;
+  enemyMaxHp: number;
+}
+```
+
+由 `battleStore.buildPlayContext(npcPid)` 构建，供 `BattleModal` + `battle-templates` 共用。
+
+---
+
+## 十三、与旧 vex 前端的迁移对应
+
+> 旧 vex 前端（`vex/`）已废弃，以下对应关系供理解迁移历史参考。
+
+| 旧 vex 文件 | vex-vue 对应 |
+|------------|-------------|
+| `vex/js/app.js` | `App.vue` + `stores/ui.ts` |
+| `vex/js/data.js` | `stores/map.ts`（mapData）+ `stores/player.ts` |
+| `vex/js/data-manager.js` | `stores/data-manager.ts` |
+| `vex/js/command-queue.js` | `stores/command-queue.ts` |
+| `vex/js/map.js` | `stores/map.ts` + `composables/useMapBusiness.ts` |
+| `vex/js/map-interaction.js` | `composables/useMapInteraction.ts` |
+| `vex/js/map-reachability.js` | `composables/useMapReachability.ts` |
+| `vex/js/tile-action.js` | `stores/tileAction.ts` + `components/actions/TileActionBar.vue` |
+| `vex/js/inventory.js` | `stores/inventory.ts` + `components/inventory/*` |
+| `vex/js/player.js` | `stores/player.ts` + `components/layout/StatusBar.vue` + `PlayerDrawer.vue` |
+| `vex/js/log.js` | `stores/log.ts` + `components/log/*` + `composables/useLogScroll.ts` |
+| `vex/js/toast-position.js` | `composables/useToastPosition.ts` |
+| `vex/js/battle.js` | `stores/battle.ts` |
+| `vex/js/battle-modal.js` | `components/battle/BattleModal.vue` |
+| `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` |
+| `vex/js/battle-render.js` | `data/battle-templates.ts` |
+| `vex/js/battle-preload.js` | `components/battle/PreloadArea.vue` |
+| `vex/js/utils.js` | `api/client.ts` + `utils/format.ts` |
+| `vex/js/debug.js` | `composables/useDebugBus.ts` |
+| `vex/data/log-templates.js` | `data/log-templates.ts` |
+| `vex/data/terrain-desc.js` | `data/terrain-desc.ts` |
+| `vex/css/terminal.css` | `assets/styles/terminal.css` |
+| `vex/css/battle.css` | `assets/styles/battle.css` |
+| `oblivions/mark_battle_log_played.php` | 零依赖接口，前端通过 `api/client.ts: markBattleLogPlayed` 调用（已从 vex/ 迁移至 oblivions/） |

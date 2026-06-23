@@ -18,9 +18,9 @@ if (isset($mode) && $mode == 'quit') {
 // [A] 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
 $pdata = game_entrypoint('game');
 
-// OBLIVIONS 模式：强制使用 VEX 模板
+// OBLIVIONS 模式：使用 vex-vue 前端
 if (oblivions_is_active()) {
-	header("Location: vex/index.html");
+	header("Location: vex-vue/dist/index.html");
 	exit();
 }
 

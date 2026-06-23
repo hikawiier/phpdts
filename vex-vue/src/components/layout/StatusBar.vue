@@ -17,6 +17,7 @@ import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
 import { useBattleStore } from '@/stores/battle';
 import { dataManager } from '@/stores/data-manager';
+import { commandQueue } from '@/stores/command-queue';
 import { getPlaceName } from '@/utils/format';
 
 const playerStore = usePlayerStore();
@@ -79,6 +80,10 @@ const tickText = computed(() => {
 
 const tickPending = computed(() => playerStore.oblTick > playerStore.oblPretick);
 
+// ── NPC 待结算提示（commandQueue.pendingNpc 响应式） ──
+// 非 debug 模式下显示"NPC 行动中…"轻量提示；debug 模式下由 tick 调试信息覆盖
+const npcPending = computed(() => commandQueue.pendingNpc);
+
 // ── 战斗按钮点击处理（与现有 vex/js/app.js 一致） ──
 // normal 态：startBattle(0)（无指定敌人，进入战斗模式）
 // battle 态：exitBattleMode()（退出战斗模式）
@@ -105,6 +110,11 @@ function onAvatarError(): void {
       <!-- 第一行：区域 + tick + HP -->
       <div class="status-bar-row">
         <span class="status-location">{{ regionName }}</span>
+        <span
+          v-if="npcPending"
+          class="status-npc-pending"
+          title="NPC 事件结算中，请等待"
+        >NPC 行动中…</span>
         <span
           class="status-tick-debug"
           :class="{ pending: tickPending }"

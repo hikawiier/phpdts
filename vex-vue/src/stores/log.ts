@@ -28,6 +28,7 @@ import { useToastStore } from '@/stores/toast';
 import { isAnyOverlayOpen } from '@/composables/useToastPosition';
 import { renderLogEntry } from '@/data/log-templates';
 import { debugBus } from '@/composables/useDebugBus';
+import { commandQueue } from '@/stores/command-queue';
 import type { LogEntry } from '@/types/api';
 import type { ApiResponse } from '@/api/client';
 
@@ -146,6 +147,7 @@ export const useLogStore = defineStore('log', () => {
       });
     } catch (e) {
       console.error('[Log] refreshLog error:', e);
+      useToastStore().showToast('游戏日志拉取失败', 'error', 4000, false, 'log-fetch');
     } finally {
       loading.value = false;
     }
@@ -161,7 +163,13 @@ export const useLogStore = defineStore('log', () => {
     _listenersRegistered = true;
 
     // 玩家主动操作完成：强制滚动，用户要看操作结果
+    // 但若 NPC 事件正在结算（pendingNpc=true），延迟刷新等 game:npc-settled
     dataManager.listen('game:action-completed', () => {
+      if (commandQueue.pendingNpc) return; // 等 NPC 结算完毕再刷新
+      refreshLog(true);
+    });
+    // NPC 结算完毕：刷新日志（补全 NPC 事件条目），强制滚动
+    dataManager.listen('game:npc-settled', () => {
       refreshLog(true);
     });
     // 地图加载（含首次加载 + 操作后 loadMap 触发）：

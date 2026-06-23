@@ -35,6 +35,8 @@ export const usePlayerStore = defineStore('player', () => {
   const isInBattle = computed(() => action.value === 'battle');
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
+  /** NPC 待结算标志：true 时玩家应等待 NPC 事件结算完毕 */
+  const oblTickPendingNpc = computed(() => playerInfo.value?.obl_tick_pending_npc ?? false);
 
   /**
    * 拉取玩家信息
@@ -85,6 +87,7 @@ export const usePlayerStore = defineStore('player', () => {
     isInBattle,
     oblTick,
     oblPretick,
+    oblTickPendingNpc,
     // actions
     loadPlayerInfo,
     reset,

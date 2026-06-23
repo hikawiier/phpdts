@@ -91,7 +91,7 @@ export async function submitCommand(
 
 /**
  * 零依赖接口：标记战斗日志已播放
- * POST vex/mark_battle_log_played.php（groomid/pid/log_ids）
+ * POST oblivions/mark_battle_log_played.php（groomid/pid/log_ids）
  */
 export async function markBattleLogPlayed(
   groomid: number,
@@ -103,7 +103,7 @@ export async function markBattleLogPlayed(
     pid: String(pid),
     log_ids: logIds.join(','),
   });
-  const res = await fetch(`${API_BASE}/vex/mark_battle_log_played.php`, {
+  const res = await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,

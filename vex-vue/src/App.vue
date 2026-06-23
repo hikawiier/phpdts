@@ -32,6 +32,8 @@ import { useTileActionStore } from '@/stores/tileAction';
 import { useInventoryStore } from '@/stores/inventory';
 import { useToastStore } from '@/stores/toast';
 import { useLogStore } from '@/stores/log';
+import { useErrorLogStore } from '@/stores/error-log';
+import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
 import LeftPanel from '@/components/layout/LeftPanel.vue';
 import RightPanel from '@/components/layout/RightPanel.vue';
@@ -48,6 +50,7 @@ const tileActionStore = useTileActionStore();
 const inventoryStore = useInventoryStore();
 const toastStore = useToastStore();
 const logStore = useLogStore();
+const errorLogStore = useErrorLogStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
 const isBattleActive = computed(() => battleStore.currentMode === 'battle');
@@ -94,6 +97,14 @@ onMounted(async () => {
   toastStore.registerListeners();
   logStore.registerListeners();
   battleStore.registerListeners();
+  errorLogStore.registerListeners();
+
+  // 错误日志独立轮询：默认关闭，URL 参数 ?poll_error=1 开启
+  // 事件驱动（game:action-completed）始终生效，轮询仅作兜底
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('poll_error') === '1') {
+    errorLogStore.startPolling();
+  }
 
   // 并行加载 player_info（状态栏）+ loadMap（地图）
   // loadMap 完成后会广播 map:loaded，触发 tileAction/inventory 自动加载
@@ -105,6 +116,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown);
+  errorLogStore.stopPolling();
+  commandQueue.destroy();
 });
 </script>
 

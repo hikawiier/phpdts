@@ -7,14 +7,22 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // 设计原则：
 // - NPC AI 独立实现，不调用旧模式 bot_acts，参考其逻辑但用 Oblivions 兼容的函数
 // - NPC 数据与玩家同构，统一存 bra_oblplayers 表，通过 type 字段区分
-// - NPC AI 不依赖"当前请求的玩家"，在 tick 结算入口从数据库查询玩家数据
+// - NPC AI 通过 tick 监听器机制接入，玩家数据从调度上下文 $ctx['player'] 获取
 // - NPC 可以在雾中自由移动（不受 fog 限制）
-// - MVP 只结算当前区域的敌人
+// - MVP 只结算当前玩家所在区域的敌人
+//
+// 模块结构：
+// - 模块 1：NPC 生成（obl_init_enemies 等）
+// - 模块 2：Tick 事件监听器（obl_tick_phase_battle_npc / obl_tick_phase_idle_npc）
+// - 模块 3：移动逻辑（obl_enemy_move / obl_enemy_patrol / obl_enemy_hunt）
+// - 模块 4：discovered 状态管理
+// - 模块 5：占用检查与辅助函数
 //
 // 依赖：
 // - move.func.php（obl_get_map_data / obl_get_distance）
 // - player.func.php（obl_fetch_enemies_by_region / obl_fetch_playerdata_by_pid /
 //                   obl_format_playerdata / obl_save_player）
+// - tick.func.php（obl_tick_request_advance，仅监听器需要）
 // - explore.func.php（obl_clear_fog，仅 obl_discover_enemies 需要）
 // ================================================================
 
@@ -106,7 +114,7 @@ function obl_init_enemies() {
  * @return int|false 返回新创建的 pid，失败返回 false
  */
 function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
-	global $db, $tablepre, $obl_enemies_config;
+	global $db, $tablepre, $obl_enemies_config, $obl_error_log;
 
 	// 载入敌人配置（按需）
 	if (!isset($obl_enemies_config)) {
@@ -114,7 +122,18 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
 	}
 
 	$config = isset($obl_enemies_config[$enemy_type]) ? $obl_enemies_config[$enemy_type] : null;
-	if (!$config) return false;
+	if (!$config) {
+		// 敌人配置缺失属于系统级异常（敌人 NPC 已生成但配置被删），
+		// 记录到错误日志，前端可通过 ?action=obl_error 感知
+		if (isset($obl_error_log) && $obl_error_log) {
+			$obl_error_log->emit('enemy_ai.config_missing', array(
+				'enemy_type' => $enemy_type,
+				'pgroup'     => $pgroup,
+				'pls'        => $pls,
+			), 'api');
+		}
+		return false;
+	}
 
 	$itemmaxslots = 6;
 	$empty_itempara = array_fill(0, $itemmaxslots + 1, null);  // index 0=特殊槽，1-6=普通槽
@@ -212,46 +231,42 @@ function obl_pick_available_tile($available_pls, &$occupied) {
 }
 
 // ================================================================
-// 模块 2：NPC AI 结算
+// 模块 2：Tick 事件监听器
 // ================================================================
+// 两个内置监听器，由 tick.func.php 末尾集中注册：
+//   - obl_tick_phase_battle_npc：battle_npc phase，战斗中 NPC 先攻轮
+//   - obl_tick_phase_idle_npc  ：idle_npc phase，非战斗 NPC AI 行为
+//
+// 监听器签名：function(int $delta, array &$ctx): void
+//   $ctx = ['player' => &$pdata, 'advanced' => bool]
 
 /**
- * 全局结算敌人 AI（在 obl_resolve_tick_events 中调用）
+ * 监听器：战斗中 NPC 先攻轮（battle_npc phase）
  *
- * 两阶段处理（详见 游戏刻机制设计案.md 第四节）：
- *   阶段 1：战斗中 NPC 先攻轮（串行，最多 1 个）
- *     - 查询所有战斗中的玩家，检查先攻队列当前顺位者
- *     - 如果当前顺位者是 NPC，调用 battle_main 执行 NPC 先攻轮
- *     - 设置 $obl_tick_advanced = true，由 obl_resolve_tick_events 末尾推进 tick
- *   阶段 2：非战斗 NPC AI 行为（并行）
- *     - 只在阶段 1 没有执行 NPC 先攻轮时执行
- *     - 查询所有玩家，结算其所在区域的非战斗敌人 AI
+ * 查询所有活跃先攻队列，若当前顺位者是 NPC，执行 NPC 先攻轮。
+ * 执行后调用 obl_tick_request_advance() 请求推进 tick。
+ * 最多处理 1 个 NPC 先攻轮（串行语义，由调度器 break 保证）。
  *
  * 循环模型：
- *   - NPC 先攻轮执行 → 末尾 obl_tick++ → 下次请求继续循环
- *   - 当前顺位者是玩家 → 不执行 NPC 先攻轮 → 不推进 obl_tick → 循环终止
+ *   - NPC 先攻轮执行 → 请求推进 → 调度器末尾 obl_tick++ → 下次请求继续循环
+ *   - 当前顺位者是玩家 → 不执行 → 不推进 → 循环终止
  *
+ * @param int   $delta 待处理的 tick 差值
+ * @param array &$ctx  调度上下文
  * @return void
  */
-function obl_resolve_all_enemy_ai(&$obl_tick_advanced) 
-{
-	global $db, $tablepre,$cuser;
+function obl_tick_phase_battle_npc($delta, &$ctx) {
+	global $db, $tablepre, $obl_battle_log;
 
-	# 包含战斗系统主文件（阶段 1 会调用 battle_main）
+	# 加载战斗系统主文件
 	if (!function_exists('battle_main')) {
 		include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
 	}
 
-	# NPC行为需要玩家数据
-	$pdata = obl_fetch_playerdata_by_name($cuser);
-
-	# 阶段 1：战斗中 NPC 先攻轮（串行，最多 1 个）
-
 	# 载入所有活跃的先攻队列 qid（DISTINCT 去重，避免同队列多记录重复处理）
 	$result = $db->query("SELECT DISTINCT qid FROM {$tablepre}oblqueue WHERE qid > 0");
 
-	while($qdata = $db->fetch_array($result))
-	{
+	while ($qdata = $db->fetch_array($result)) {
 		$qid = (int)$qdata['qid'];
 		if ($qid <= 0) continue;
 
@@ -273,52 +288,62 @@ function obl_resolve_all_enemy_ai(&$obl_tick_advanced)
 		}
 
 		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
-		$atk_act = obl_ai_select_combat_action($npc_data, $pdata['pid']);
+		$atk_act = obl_ai_select_combat_action($npc_data, $ctx['player']['pid']);
 
 		# 调用 battle_main（内部会更新先攻队列）
 		battle_main($npc_data, $atk_act, $obl_battle_log);
 
-		$obl_tick_advanced = true;
+		# 请求推进 tick（由调度器末尾统一推进，替代旧的 $obl_tick_advanced 引用传递）
+		obl_tick_request_advance();
 		break;  # 最多处理 1 个 NPC 先攻轮
 	}
+}
 
-	# 阶段 2：非战斗 NPC AI 行为（并行）
-	//$result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE type=0 AND state=0");
-	$group = (int)$pdata['pgroup'];
+/**
+ * 监听器：非战斗 NPC AI 行为（idle_npc phase）
+ *
+ * 结算当前玩家所在区域的非战斗敌人 AI（移动/巡逻）。
+ * 战斗中的敌人跳过（由战斗系统接管）。
+ *
+ * 注意：obl_enemy_tick 内部通过 obl_enemy_move 自行保存敌人数据，
+ * 此处不再重复调用 obl_save_player。
+ *
+ * @param int   $delta 待处理的 tick 差值
+ * @param array &$ctx  调度上下文
+ * @return void
+ */
+function obl_tick_phase_idle_npc($delta, &$ctx) {
+	$player = &$ctx['player'];
+	$group = (int)$player['pgroup'];
 	$enemies = obl_fetch_enemies_by_region($group);
-	if (!empty($enemies))
-	{
-		foreach ($enemies as &$enemy) 
-		{
-			# 不处理在先攻队列内的敌人
-    if($enemy['bid']) continue;
-			# 处理其他敌人事件
-			obl_enemy_tick($enemy, $pdata);
-			# 敌人事件是否会推进tick
-			if(isset($enemy['oblpara']['ambush_flag']))
-			{
-				//$obl_tick_advanced = true;
-				unset($enemy['oblpara']['ambush_flag']);
-				obl_save_player($enemy);
-			}
-			if(isset($enemy['oblpara']['collision_flag']))
-			{
-				$obl_tick_advanced = true;
-				unset($enemy['oblpara']['collision_flag']);
-				obl_save_player($enemy);
-			}
-		}
+	if (empty($enemies)) return;
+
+	foreach ($enemies as &$enemy) {
+		# 战斗中的敌人跳过（由战斗系统接管）
+		if ($enemy['bid']) continue;
+		# 结算非战斗敌人 AI
+		obl_enemy_tick($enemy, $player);
 	}
-	return $obl_tick_advanced;
 }
 /**
  * 单个敌人的 AI 决策和行动
  *
+ * 行动流程：
+ *   1. 死亡/战斗中 → 跳过
+ *   2. 行动意愿门控（action_chance 随机判定）
+ *   3. 根据 ai_type 执行行为（patrol/aggressive/idle）
+ *
+ * TODO（待重新实现）：
+ *   - 追击（chase）：玩家进入视野时主动靠近
+ *   - 突袭（ambush）：未被发现时偷袭玩家
+ *   - 碰撞战斗（collision）：移动到玩家格触发遭遇战
+ * 这些机制依赖 tick 框架重构后的新设计，当前仅保留巡逻/发呆。
+ *
  * @param array &$enemy  敌人数据（已格式化）
- * @param array &$player 当前玩家数据（引用传递，突袭时会修改）
+ * @param array &$player 当前玩家数据
  * @return void
  */
-function obl_enemy_tick(&$enemy, &$player) 
+function obl_enemy_tick(&$enemy, &$player)
 {
 	// 死亡敌人不行动
 	if ($enemy['state'] > 0) return;
@@ -331,35 +356,9 @@ function obl_enemy_tick(&$enemy, &$player)
 		? (float)$enemy['oblpara']['action_chance'] : 0.5;
 	if (mt_rand() / mt_getrandmax() > $action_chance) return;
 
+	// 根据 AI 类型行动
+	// TODO: 追击/突袭/碰撞战斗机制待 tick 框架重构后重新实现
 	$ai_type = isset($enemy['oblpara']['ai_type']) ? $enemy['oblpara']['ai_type'] : 'idle';
-	$vision_range = isset($enemy['oblpara']['vision_range'])
-		? (int)$enemy['oblpara']['vision_range'] : 3;
-
-	// 检查与玩家距离（同区域才有意义）
-	$should_chase = false;
-	$distance = -1;
-	if ($enemy['pgroup'] == $player['pgroup']) {
-		$distance = obl_get_distance($enemy['pgroup'], $enemy['pls'], $player['pls']);
-		if ($distance >= 0 && $distance <= $vision_range) {
-			$should_chase = true;
-		}
-	}
-
-	# NPC 突袭逻辑：未被发现 + 有偷袭倾向 + 在突袭范围内（distance <= 1，近战范围）
-	//if ($should_chase && $distance <= 1 && empty($enemy['discovered'])) {
-	/*if ($should_chase && $distance <= 1) {
-		if (in_array($ai_type, array('aggressive', 'ambush'))) {
-			obl_enemy_ambush_player($enemy, $player);
-			return;
-		}
-	}
-
-	if ($should_chase) {
-		obl_enemy_chase_player($enemy, $player);
-		return;
-	}*/
-
-	// 玩家不在感知范围 → 根据 AI 类型行动
 	switch ($ai_type) {
 		case 'patrol':
 			obl_enemy_patrol($enemy, $player);
@@ -421,41 +420,6 @@ function obl_ai_select_combat_action(&$npc_data, $target_pid) {
 	);
 }
 
-/**
- * NPC 突袭玩家（战斗入口2）
- *
- * NPC 未被发现 + 有偷袭倾向 → 突袭玩家。
- * 流程：设置突袭标记 → battle_state_init → 构造动作 → battle_main。
- * 突袭不创建先攻队列，直接动手打一次，由 battle_main 尾部的 battle_queue_check 后补票创建队列。
- * NPC 先攻轮不推进 tick（由 obl_resolve_tick_events 末尾推进）。
- *
- * @param array &$enemy  敌人数据
- * @param array &$player 玩家数据
- * @return void
- */
-function obl_enemy_ambush_player(&$enemy, &$player) 
-{
-	global $obl_battle_log;
-
-	# 初始化 battle_log（入口处局部初始化）
-	if (!$obl_battle_log) {
-		include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
-		$obl_battle_log = new BattleLogCollector();
-	}
-
-	# 设置突袭标记
-	$enemy['oblpara']['ambush_flag'] = true;
-
-	# NPC 进入战斗状态
-	battle_state_init($enemy);
-
-	# 构造动作（从 oblpara['combat_skills'] 中选择可用技能）
-	$atk_act = obl_ai_select_combat_action($enemy, $player['pid']);
-
-	# 调用 battle_main（内部会完成后补票创建先攻队列）
-	battle_main($enemy, $atk_act, $obl_battle_log);
-}
-
 // ================================================================
 // 模块 3：移动逻辑
 // ================================================================
@@ -464,12 +428,11 @@ function obl_enemy_ambush_player(&$enemy, &$player)
  * 敌人移动（参考 obl_move 但适配敌人）
  *
  * NPC 可以在雾中自由移动（不受 fog 限制）。
- * 移动到玩家所在格时触发突袭。
  *
  * @param array &$enemy     敌人数据
  * @param int   $target_pls 目标格 pls
- * @param array &$player    当前玩家数据（引用传递，突袭时会修改）
- * @return bool 移动是否成功（突袭不算成功移动）
+ * @param array &$player    当前玩家数据
+ * @return bool 移动是否成功
  */
 function obl_enemy_move(&$enemy, $target_pls, &$player) {
 	// 校验目标格 passable
@@ -479,12 +442,10 @@ function obl_enemy_move(&$enemy, $target_pls, &$player) {
 		return false;
 	}
 
-	// 校验目标格是否是玩家所在格 → 碰撞战斗
-	if ($player['pgroup'] == $enemy['pgroup'] && $player['pls'] == $target_pls) 
-	{
-		//$enemy['oblpara']['collision_flag'] = true;
-		//obl_resolve_collision_battle($enemy, $player);
-		return false;  // 碰撞：双方留在原地，敌人不移动
+	// 目标格是玩家所在格 → 不移动
+	// TODO: 碰撞战斗机制待 tick 框架重构后重新实现
+	if ($player['pgroup'] == $enemy['pgroup'] && $player['pls'] == $target_pls) {
+		return false;
 	}
 
 	// 校验目标格未被其他单位占用（一个格一个单位）
@@ -515,21 +476,6 @@ function obl_enemy_move(&$enemy, $target_pls, &$player) {
 }
 
 /**
- * 追击玩家：计算向玩家移动的下一步
- *
- * @param array &$enemy  敌人数据
- * @param array &$player 当前玩家数据
- * @return void
- */
-function obl_enemy_chase_player(&$enemy, &$player) {
-	$next_pls = obl_calc_next_step_towards($enemy['pgroup'], $enemy['pls'], $player['pls']);
-	if ($next_pls !== false) {
-		obl_enemy_move($enemy, $next_pls, $player);
-		// 如果移动失败且玩家在目标格，obl_enemy_move 内部已处理突袭
-	}
-}
-
-/**
  * 巡逻：随机选一个邻居格移动
  *
  * @param array &$enemy  敌人数据
@@ -556,80 +502,7 @@ function obl_enemy_hunt(&$enemy, &$player) {
 }
 
 // ================================================================
-// 模块 4：碰撞战斗（遭遇战 3C 入口）
-// ================================================================
-
-/**
- * 遭遇战 3C 入口（碰撞战斗）
- *
- * 两个单位因移动目标格冲突而碰撞，进入战斗状态。
- * 核心机制：1 格 1 单位 → 双方留在原地，不实际移动。
- *
- * 根据双方 bid 状态分支处理：
- *  - 双方都不在队列中（bid=0）：创建新先攻队列
- *  - 一方已在队列中（bid>0）：另一方加入该队列，排入末尾（done=0）
- *  - 双方在同一队列中（bid 相同）：无需操作（兜底）
- *  - 双方在不同队列中（bid 不同且都>0）：$a 退出原队列加入 $b 的队列（兜底，正常不应发生）
- *
- * 不调用 battle_main，不推进 tick。
- * 下次请求时，obl_resolve_all_enemy_ai 阶段 1 会检测先攻队列：
- *   - 当前顺位者是 NPC → 执行 NPC 先攻轮
- *   - 当前顺位者是玩家 → 等待玩家提交 obl_battle_action
- *
- * @param array &$a 单位 A（玩家或敌人，引用传递）
- * @param array &$b 单位 B（玩家或敌人，引用传递）
- * @return void
- */
-function obl_resolve_collision_battle(&$a, &$b) {
-	global $obl_battle_log;
-
-	# 包含战斗系统功能文件（需要 battle_state_init / battle_queue_create / battle_queue_join / battle_queue_exit）
-	if (!function_exists('battle_state_init')) {
-		include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
-	}
-
-	# 双方进入战斗状态
-	battle_state_init($a);
-	battle_state_init($b);
-
-	# 交火后互相可见
-	$a['discovered'] = 1;
-	$b['discovered'] = 1;
-
-	$a_bid = (int)$a['bid'];
-	$b_bid = (int)$b['bid'];
-
-	if ($a_bid > 0 && $b_bid > 0 && $a_bid === $b_bid) {
-		# 场景 1：双方已在同一队列中（兜底，正常不应触发碰撞），只保存状态
-		obl_save_player($a);
-		obl_save_player($b);
-	} elseif ($a_bid > 0 && $b_bid > 0) {
-		# 场景 2：双方在不同队列中（兜底，正常不应发生）
-		# $a 退出原队列，加入 $b 的队列
-		$battle_cache = [];
-		battle_queue_exit($a, $obl_battle_log, $battle_cache);
-		battle_queue_join($a, $b_bid, $obl_battle_log);
-		obl_save_player($b);
-	} elseif ($a_bid > 0) {
-		# 场景 3：$a 已在队列中，$b 加入 $a 的队列（排入末尾，done=0）
-		battle_queue_join($b, $a_bid, $obl_battle_log);
-		obl_save_player($a);
-	} elseif ($b_bid > 0) {
-		# 场景 4：$b 已在队列中，$a 加入 $b 的队列（排入末尾，done=0）
-		battle_queue_join($a, $b_bid, $obl_battle_log);
-		obl_save_player($b);
-	} else {
-		# 场景 5：双方都不在队列中，创建新先攻队列
-		$combatants = array($a['pid'], $b['pid']);
-		battle_queue_create($a, $combatants, $obl_battle_log);
-		# 同步 $b 的 bid（battle_queue_create 内部已更新数据库，但 $b 内存中的 bid 需要同步）
-		$b['bid'] = $a['bid'];
-		obl_save_player($b);
-	}
-}
-
-// ================================================================
-// 模块 5：discovered 状态管理
+// 模块 4：discovered 状态管理
 // ================================================================
 
 /**
@@ -707,7 +580,7 @@ function obl_update_enemy_discovered(&$enemy, &$player) {
 }
 
 // ================================================================
-// 模块 6：占用检查与辅助函数
+// 模块 5：占用检查与辅助函数
 // ================================================================
 
 /**

@@ -9,6 +9,7 @@
 export type AppEvent =
   | 'map:loaded'
   | 'game:action-completed'
+  | 'game:npc-settled'
   | 'map:click-current'
   | 'ui:toast'
   | 'battle:ended'

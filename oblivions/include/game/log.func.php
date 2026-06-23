@@ -97,7 +97,7 @@ function obl_log_get_max_debug_entries() {
 /**
  * 持久化日志到文件（追加模式，正式/debug 分计数裁剪）
  *
- * 文件路径：vex/cache/obl_log_{groomid}_{pid}.json
+ * 文件路径：oblivions/cache/logs/obl_log_{groomid}_{pid}.json
  * 格式：JSON 数组，按时间正序（旧→新）
  *
  * 轮转逻辑：
@@ -117,7 +117,9 @@ function obl_log_persist($logger, $groomid, $pid) {
     if (!$logger || !$logger->hasEntries()) return;
 
     $new_entries = $logger->getEntries();
-    $log_file = GAME_ROOT . './vex/cache/obl_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $log_file = GAME_ROOT . './oblivions/cache/logs/obl_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $obl_log_dir = dirname($log_file);
+    if (!is_dir($obl_log_dir)) @mkdir($obl_log_dir, 0755, true);
 
     // 读取已有日志（已按时间正序：旧→新）
     $existing = [];
@@ -172,7 +174,7 @@ function obl_log_persist($logger, $groomid, $pid) {
  * @return array 日志条目数组（按时间正序）
  */
 function obl_log_load($groomid, $pid) {
-    $log_file = GAME_ROOT . './vex/cache/obl_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $log_file = GAME_ROOT . './oblivions/cache/logs/obl_log_' . (int)$groomid . '_' . (int)$pid . '.json';
     if (!file_exists($log_file)) return [];
 
     $raw = file_get_contents($log_file);
@@ -187,10 +189,164 @@ function obl_log_load($groomid, $pid) {
  * 避免跨游戏残留。与 200 条上限自然轮转形成双重保障。
  */
 function obl_log_clear_all() {
-    $log_dir = GAME_ROOT . './vex/cache/';
+    $log_dir = GAME_ROOT . './oblivions/cache/logs/';
     if (!is_dir($log_dir)) return;
 
     $files = glob($log_dir . 'obl_log_*.json');
+    if (empty($files)) return;
+
+    foreach ($files as $file) {
+        @unlink($file);
+    }
+}
+
+// ================================================================
+// Oblivions 错误日志系统 / Oblivions error log system
+//
+// 与 obl_log（结构化事件日志）物理隔离，专门收集诊断性错误信息。
+// 设计原则：
+// - 错误日志独立存储，不被 obl_log 的 200 条上限挤掉
+// - 前端通过 api_v2.php ?action=obl_error 独立轮询
+// - POST 不返回信息，前端通过 GET 拉取错误日志感知后端异常
+// ================================================================
+
+/**
+ * 错误日志收集器（单次请求内累积，请求结束前持久化）
+ *
+ * 在 common.inc.php 中与 $obl_log 同步初始化为全局 $obl_error_log。
+ * 后端异常捕获时通过 emit() 追加条目，请求结束时统一持久化。
+ */
+class OblivionsErrorLogger {
+
+    /** @var array 本请求累积的错误条目 */
+    private $entries = [];
+
+    /**
+     * 追加一条错误日志
+     *
+     * @param string $id       错误 ID（如 'tick.dispatch.error'），命名规则 {模块}.{错误类型}
+     * @param array  $params   错误详情，值限 string/number/boolean
+     * @param string $request  请求来源（'command'/'api'/'unknown'），便于定位错误入口
+     */
+    public function emit($id, $params = [], $request = 'unknown') {
+        $this->entries[] = [
+            'id'      => $id,
+            'params'  => $params ?: [],
+            'ts'      => time(),
+            'request' => $request,
+        ];
+    }
+
+    /**
+     * 获取本请求累积的错误条目
+     * @return array
+     */
+    public function getEntries() {
+        return $this->entries;
+    }
+
+    /**
+     * 本请求是否有错误日志
+     * @return bool
+     */
+    public function hasEntries() {
+        return !empty($this->entries);
+    }
+}
+
+/**
+ * 读取错误日志最大条目数（带静态缓存）
+ * @return int 默认 50
+ */
+function obl_error_log_get_max_entries() {
+    static $max = null;
+    if ($max === null) {
+        $max = 50;  // 错误日志量小，50 条保留足够历史
+    }
+    return $max;
+}
+
+/**
+ * 持久化错误日志到文件（追加模式，倒序计数裁剪）
+ *
+ * 文件路径：oblivions/cache/logs/obl_error_{groomid}_{pid}.json
+ * 格式：JSON 数组，按时间正序（旧→新）
+ *
+ * 轮转逻辑：与 obl_log_persist 类似，但无 debug/正式区分，统一计数裁剪。
+ *
+ * @param OblivionsErrorLogger $logger
+ * @param int $groomid 房间 ID
+ * @param int $pid      玩家 ID
+ */
+function obl_error_log_persist($logger, $groomid, $pid) {
+    if (!$logger || !$logger->hasEntries()) return;
+
+    $new_entries = $logger->getEntries();
+    $log_file = GAME_ROOT . './oblivions/cache/logs/obl_error_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $obl_error_log_dir = dirname($log_file);
+    if (!is_dir($obl_error_log_dir)) @mkdir($obl_error_log_dir, 0755, true);
+
+    // 读取已有错误日志（已按时间正序：旧→新）
+    $existing = [];
+    if (file_exists($log_file)) {
+        $raw = file_get_contents($log_file);
+        $existing = json_decode($raw, true);
+        if (!is_array($existing)) $existing = [];
+    }
+
+    // 合并（保持时间顺序：existing 旧 → new 新）
+    $all = array_merge($existing, $new_entries);
+
+    // 从末尾（最新）开始计数，保留最近 N 条
+    $max_entries = obl_error_log_get_max_entries();
+    $count = 0;
+    $keep = array_fill(0, count($all), false);
+
+    for ($i = count($all) - 1; $i >= 0; $i--) {
+        if ($count < $max_entries) {
+            $keep[$i] = true;
+            $count++;
+        }
+    }
+
+    // 按原顺序输出保留的条目（时间正序：旧→新）
+    $result = [];
+    for ($i = 0; $i < count($all); $i++) {
+        if ($keep[$i]) {
+            $result[] = $all[$i];
+        }
+    }
+
+    // 写入文件（加锁防并发）
+    file_put_contents($log_file, json_encode($result, JSON_UNESCAPED_UNICODE), LOCK_EX);
+}
+
+/**
+ * 从文件读取错误日志
+ *
+ * @param int $groomid 房间 ID
+ * @param int $pid      玩家 ID
+ * @return array 错误条目数组（按时间正序）
+ */
+function obl_error_log_load($groomid, $pid) {
+    $log_file = GAME_ROOT . './oblivions/cache/logs/obl_error_' . (int)$groomid . '_' . (int)$pid . '.json';
+    if (!file_exists($log_file)) return [];
+
+    $raw = file_get_contents($log_file);
+    $entries = json_decode($raw, true);
+    return is_array($entries) ? $entries : [];
+}
+
+/**
+ * 清理所有 Oblivions 错误日志文件
+ *
+ * 在 rs_game() 游戏重置时调用，与 obl_log_clear_all() 同步清理。
+ */
+function obl_error_log_clear_all() {
+    $log_dir = GAME_ROOT . './oblivions/cache/logs/';
+    if (!is_dir($log_dir)) return;
+
+    $files = glob($log_dir . 'obl_error_*.json');
     if (empty($files)) return;
 
     foreach ($files as $file) {

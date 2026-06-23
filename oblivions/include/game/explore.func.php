@@ -302,7 +302,7 @@ function obl_post_explore_hook(&$pdata) {
  * @param array &$pdata 玩家数据
  */
 function obl_search_poi($iaid, &$pdata) {
-    global $db, $tablepre, $obl_log;
+    global $db, $tablepre, $obl_log, $obl_error_log;
 
     $iaid = (int)$iaid;
     $cur_pgroup = (int)$pdata['pgroup'];
@@ -326,7 +326,14 @@ function obl_search_poi($iaid, &$pdata) {
     $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
     $poi_id = $poi['poi_id'];
     if (!isset($poi_table[$poi_id])) {
-        $obl_log->emit('search.data_error', 'search');
+        // 数据配置错误：POI 实例存在但模板表无对应条目，迁移到 obl_error_log
+        // 避免被 obl_log 的 200 条上限挤掉，前端通过错误 Toast 感知
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('search.data_error', array(
+                'poi_id' => $poi_id,
+                'iaid'   => $iaid,
+            ), 'command');
+        }
         return;
     }
     $template = $poi_table[$poi_id];

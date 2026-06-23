@@ -114,7 +114,7 @@ export const useInventoryStore = defineStore('inventory', () => {
       debugBus.emit('error', 'discard:error', {
         error: e instanceof Error ? e.message : String(e),
       });
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '丢弃失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '丢弃失败：' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 

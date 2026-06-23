@@ -19,15 +19,18 @@ if (function_exists('oblivions_is_active') && oblivions_is_active()) {
 	require_once GAME_ROOT.'./oblivions/include/game/player.func.php';
 	$pdata = obl_game_entrypoint('api');
 
-	// battle 状态防呆校验（action 分发前，确保玩家操作不被脏状态卡住）
-	obl_validate_battle_state($pdata);
+	// TODO: battle 状态防呆校验待重新实现（旧 obl_validate_battle_state 已随 tick 模块重构删除）
 
 	// 日志持久化：$obl_log 在 common.inc.php 中初始化，请求结束时统一持久化
 	// 用 register_shutdown_function 确保所有 exit 路径都能持久化
 	register_shutdown_function(function() {
-		global $obl_log, $obl_battle_log, $groomid, $pdata;
+		global $obl_log, $obl_error_log, $obl_battle_log, $groomid, $pdata;
 		if ($obl_log && $obl_log->hasEntries() && isset($pdata['pid'])) {
 			obl_log_persist($obl_log, $groomid, $pdata['pid']);
+		}
+		// 错误日志持久化（与 obl_log 物理隔离，独立存储）
+		if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries() && isset($pdata['pid'])) {
+			obl_error_log_persist($obl_error_log, $groomid, $pdata['pid']);
 		}
 		// 战斗日志持久化（突袭在 tick 结算中产生，需在请求结束时持久化）
 		if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries() && isset($pdata['pid'])) {
@@ -99,6 +102,9 @@ switch ($action) {
         break;
     case 'obl_log':
         handle_obl_log();
+        break;
+    case 'obl_error':
+        handle_obl_error();
         break;
     case 'battle_log':
         handle_battle_log();
@@ -195,6 +201,8 @@ function handle_player_info() {
         // 调试用：游戏刻状态 / Debug: tick state
         'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
+        // NPC 待结算标志：true 表示 NPC 事件未结算完，前端应等待（可用于动画播放时机判定）
+        'obl_tick_pending_npc' => !empty($gamevars['obl_tick_pending_npc']),
 
         // 装备信息 / Equipment（7 槽 × 6 字段）
         'equipment' => array(
@@ -288,7 +296,7 @@ function handle_ai_dump_save() {
         api_error('空数据', 'EMPTY_DATA');
     }
 
-    $log_file = GAME_ROOT . './vex/cache/ai_dump_' . $groomid . '.jsonl';
+    $log_file = GAME_ROOT . './oblivions/cache/debug/ai_dump_' . $groomid . '.jsonl';
     $dir = dirname($log_file);
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);
@@ -462,6 +470,32 @@ function handle_obl_log() {
 
     $pid = (int)$pdata['pid'];
     $entries = obl_log_load($groomid, $pid);
+
+    api_response('success', array(
+        'entries' => $entries,
+        'total'   => count($entries),
+    ));
+}
+
+/**
+ * obl_error — 读取错误日志
+ *
+ * 返回当前玩家的错误日志条目（OblivionsErrorLogger 条目数组）。
+ * 前端独立轮询此接口，检测后端异常（如 tick 结算错误）。
+ * 与 obl_log 物理隔离，错误日志不会被普通日志挤掉。
+ * 仅在 Oblivions 模式下可用。
+ */
+function handle_obl_error() {
+    global $pdata, $groomid;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/log.func.php';
+
+    $pid = (int)$pdata['pid'];
+    $entries = obl_error_log_load($groomid, $pid);
 
     api_response('success', array(
         'entries' => $entries,

@@ -20,6 +20,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { useMapStore } from '@/stores/map';
+import { useToastStore } from '@/stores/toast';
 import { getSkillTemplate } from '@/data/skill-templates';
 import type { Skill } from '@/types/api';
 import type { PreloadInitEventData } from '@/types/events';
@@ -77,6 +78,7 @@ async function fetchSkillList(): Promise<void> {
     }
   } catch (e) {
     console.error('[Preload] fetchSkillList error:', e);
+    useToastStore().showToast('技能列表加载失败，请重进战斗', 'error', 4000, false, 'skill-fetch');
     skills.value = [];
     playerAp.value = 0;
     playerMaxAp.value = 0;

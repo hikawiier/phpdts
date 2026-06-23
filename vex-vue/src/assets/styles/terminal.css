@@ -594,6 +594,19 @@ body::after {
     50% { opacity: 0.5; }
 }
 
+/* NPC 待结算提示（非 debug 模式下显示） */
+.status-npc-pending {
+    margin-left: auto;
+    color: #ffaa00;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    animation: tick-pulse 1s ease-in-out infinite;
+}
+/* debug 模式下隐藏（由 tick 调试信息替代） */
+.debug-ai .status-npc-pending {
+    display: none;
+}
+
 .status-bar-row {
     display: flex;
     align-items: center;

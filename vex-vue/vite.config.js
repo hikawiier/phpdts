@@ -41,7 +41,7 @@ export default defineConfig(({ command }) => ({
         changeOrigin: true,
         agent: proxyAgent,
       },
-      '/phpdts/vex/mark_battle_log_played.php': {
+      '/phpdts/oblivions/mark_battle_log_played.php': {
         target: 'http://127.0.0.1',
         changeOrigin: true,
         agent: proxyAgent,

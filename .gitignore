@@ -39,7 +39,10 @@ bot/bot_enable.bat
 # DTS Cache Files
 gamedata/bak/
 gamedata/templates/
-vex/cache/
+oblivions/cache/locks/
+oblivions/cache/logs/
+oblivions/cache/battles/
+oblivions/cache/debug/
 templates/default/lastgb.htm
 templates/default/lastnews.htm
 bot/lock/
@@ -123,4 +126,3 @@ debug_autologin.php
 
 # Node
 node_modules/
-vex/css/output.css

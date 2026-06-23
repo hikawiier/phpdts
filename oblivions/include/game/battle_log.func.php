@@ -11,7 +11,7 @@ if (!defined('IN_GAME')) {
 // battle_log 存战斗细节（每步动作）。
 //
 // 存储模式：played 标记机制
-// - 文件：vex/cache/obl_battle_log_{groomid}_{pid}.json — 存所有 battle_log 条目
+// - 文件：oblivions/cache/battles/obl_battle_log_{groomid}_{pid}.json — 存所有 battle_log 条目
 // - 每条带 log_id（文件内自增）、played（0=未播放，1=已播放）
 // - 产生新 battle_log 时，追加到文件（分配 log_id，played=0）
 // - 前端拉取 played=0 的条目播放，播完调 mark_battle_log_played.php 标记 played=1
@@ -102,7 +102,7 @@ function obl_battle_log_get_old_max() {
  * 持久化战斗日志到文件（追加模式 + log_id 分配）
  *
  * 文件路径：
- * - vex/cache/obl_battle_log_{groomid}_{pid}.json
+ * - oblivions/cache/battles/obl_battle_log_{groomid}_{pid}.json
  *
  * 追加逻辑：
  * 1. 读取现有文件，找最大 log_id
@@ -118,7 +118,9 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
     if (!$logger || !$logger->hasEntries()) return;
 
     $new_entries = $logger->getEntries();
-    $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $log_file = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $obl_battle_log_dir = dirname($log_file);
+    if (!is_dir($obl_battle_log_dir)) @mkdir($obl_battle_log_dir, 0755, true);
 
     // 1. 读取现有文件
     $existing = [];
@@ -159,7 +161,7 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
  * @return array 未播放的战斗日志条目数组（played=0）
  */
 function obl_battle_log_load($groomid, $pid) {
-    $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $log_file = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
     if (!file_exists($log_file)) return [];
 
     $raw = file_get_contents($log_file);
@@ -188,7 +190,7 @@ function obl_battle_log_load($groomid, $pid) {
  * @return int 标记的条目数
  */
 function obl_battle_log_mark_played($groomid, $pid, $log_ids) {
-    $log_file = GAME_ROOT . './vex/cache/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
+    $log_file = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
     if (!file_exists($log_file)) return 0;
 
     $raw = file_get_contents($log_file);
@@ -224,7 +226,7 @@ function obl_battle_log_mark_played($groomid, $pid, $log_ids) {
  * 在 rs_game() 游戏重置时调用，删除所有 obl_battle_log*.json 文件。
  */
 function obl_battle_log_clear_all() {
-    $log_dir = GAME_ROOT . './vex/cache/';
+    $log_dir = GAME_ROOT . './oblivions/cache/battles/';
     if (!is_dir($log_dir)) return;
 
     $files = glob($log_dir . 'obl_battle_log*.json');

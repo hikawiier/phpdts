@@ -135,7 +135,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
       debugBus.emit('error', 'explore:error', {
         error: e instanceof Error ? e.message : String(e),
       });
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '探索失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '探索失败：' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 
@@ -170,7 +170,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
       debugBus.emit('error', 'search:error', {
         error: e instanceof Error ? e.message : String(e),
       });
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '搜索失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '搜索失败：' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 
@@ -203,7 +203,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
       debugBus.emit('error', 'pickup:error', {
         error: e instanceof Error ? e.message : String(e),
       });
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '拾取失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '拾取失败：' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 
@@ -245,7 +245,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
       }
     } catch (e) {
       console.error('[TileAction] handlePickupAll error:', e);
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '拾取失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '拾取失败：' + (e instanceof Error ? e.message : String(e)) });
     } finally {
       dataManager.invalidate('player_inventory');
       dataManager.invalidate('tile_actions');
@@ -306,7 +306,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
       debugBus.emit('error', 'switchRegion:error', {
         error: e instanceof Error ? e.message : String(e),
       });
-      dataManager.broadcast('ui:toast', { type: 'error', msg: '切换区域失败' });
+      dataManager.broadcast('ui:toast', { type: 'error', msg: '切换区域失败：' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 

@@ -50,7 +50,9 @@ if (empty($log_ids)) {
 }
 
 // ── 文件路径（(int) 转换后的值拼路径，安全） ──
-$log_file = __DIR__ . '/cache/obl_battle_log_' . $groomid . '_' . $pid . '.json';
+// 路径与 battle_log.func.php 中 obl_battle_log_persist 保持一致
+// 目录由 obl_battle_log_persist 首次写入时创建，此处不负责 mkdir
+$log_file = __DIR__ . '/cache/battles/obl_battle_log_' . $groomid . '_' . $pid . '.json';
 
 if (!file_exists($log_file)) {
     echo json_encode(array('success' => true, 'marked' => 0));

@@ -59,6 +59,9 @@ function rs_game($mode = 0) {
 	if (function_exists('obl_log_clear_all')) {
 		obl_log_clear_all();
 	}
+	if (function_exists('obl_error_log_clear_all')) {
+		obl_error_log_clear_all();
+	}
 
 	// 清理 Oblivions 战斗日志文件（避免跨游戏残留）
 	if (!function_exists('obl_battle_log_clear_all')) {
@@ -468,6 +471,7 @@ function rs_init_oblivions() {
 	if (!isset($gamevars)) $gamevars = array();
 	$gamevars['obl_tick'] = 0;
 	$gamevars['obl_pretick'] = 0;
+	$gamevars['obl_tick_pending_npc'] = false;  // NPC 待结算标志（玩家操作与 NPC 先攻轮互斥锁）
 
 	// 2. 按需加载生成函数库（避免非 Oblivions 模式污染全局 scope）
 	include_once GAME_ROOT.'./oblivions/include/game/generate.func.php';

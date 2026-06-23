@@ -299,42 +299,49 @@ if(CURSCRIPT !== 'chat')
 		}
 
 		// Oblivions 日志收集器初始化（核心机制，放全局入口）
-		// tick 解析、防呆、命令处理都会 emit 日志到 $obl_log，请求结束时统一持久化
-		if (function_exists('oblivions_is_active') && oblivions_is_active()) {
-			include_once GAME_ROOT.'./oblivions/include/game/log.func.php';
-			if (class_exists('OblivionsLogger') && !isset($obl_log)) {
-				$obl_log = new OblivionsLogger();
-			}
-			// 战斗日志收集器初始化（与 $obl_log 分离，存战斗细节动作）
-			// 遭遇战（tick 结算）和 obl_battle_action 都会 emit 到 $obl_battle_log
-			include_once GAME_ROOT.'./oblivions/include/game/battle_log.func.php';
-			if (class_exists('BattleLogCollector') && !isset($obl_battle_log)) {
-				$obl_battle_log = new BattleLogCollector();
-			}
+	// tick 解析、防呆、命令处理都会 emit 日志到 $obl_log，请求结束时统一持久化
+	if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+		include_once GAME_ROOT.'./oblivions/include/game/log.func.php';
+		if (class_exists('OblivionsLogger') && !isset($obl_log)) {
+			$obl_log = new OblivionsLogger();
 		}
+		// 错误日志收集器初始化（与 $obl_log 物理隔离，独立持久化）
+		// 后端异常捕获时 emit 到 $obl_error_log，前端通过 api_v2.php ?action=obl_error 拉取
+		if (class_exists('OblivionsErrorLogger') && !isset($obl_error_log)) {
+			$obl_error_log = new OblivionsErrorLogger();
+		}
+		// 战斗日志收集器初始化（与 $obl_log 分离，存战斗细节动作）
+		// 遭遇战（tick 结算）和 obl_battle_action 都会 emit 到 $obl_battle_log
+		include_once GAME_ROOT.'./oblivions/include/game/battle_log.func.php';
+		if (class_exists('BattleLogCollector') && !isset($obl_battle_log)) {
+			$obl_battle_log = new BattleLogCollector();
+		}
+	}
 
 		// Oblivions 游戏刻事件处理（在锁内，确保原子性）
-		// 模型：obl_pretick 同步到 obl_tick（处理已推进的游戏刻），再执行 tick 事件处理。
-		// tick 事件处理内部如果 NPC 先攻轮执行了，会推进 obl_tick++（产生新的未处理游戏刻），
-		// 下次请求 obl_pretick < obl_tick 仍成立，前端自动刷新循环。
-		// obl_tick 唯两处增加：NPC 先攻轮（obl_resolve_tick_events 末尾）/ 玩家先攻轮（obl_command [F] 段），互斥。
-		if (function_exists('oblivions_is_active') && oblivions_is_active()
-			&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
-			&& $gamevars['obl_pretick'] < $gamevars['obl_tick']) 
+	// 模型：obl_tick_synchronize() 同步 obl_pretick = obl_tick（标记已处理），
+	// 再执行 tick 事件处理。tick 事件处理内部如果 NPC 先攻轮执行了，
+	// 会通过 obl_tick_advance() 推进 obl_tick++（产生新的未处理游戏刻），
+	// 下次请求 obl_pretick < obl_tick 仍成立，前端自动刷新循环。
+	// obl_tick 唯两处增加：NPC 先攻轮（obl_tick_dispatch 末尾）/ 玩家先攻轮（obl_command [F] 段），互斥。
+	if (function_exists('oblivions_is_active') && oblivions_is_active()
+		&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
+		&& $gamevars['obl_pretick'] < $gamevars['obl_tick'])
+	{
+		$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
+		// 加载 tick 核心模块（含监听器注册）
+		if (!function_exists('obl_resolve_tick_events'))
 		{
-			$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
-			// 先同步 obl_pretick（标记已处理的游戏刻）
-			$gamevars['obl_pretick'] = $gamevars['obl_tick'];
-			// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
-			if (!function_exists('obl_resolve_tick_events'))
-			{
-				include_once GAME_ROOT . './oblivions/include/game/player.func.php';
-			}
-			if (function_exists('obl_resolve_tick_events')) {
-				obl_resolve_tick_events($delta);
-			}
-			$ginfochange = true;  // 触发 save_gameinfo() 持久化 obl_tick/obl_pretick
+			include_once GAME_ROOT . './oblivions/include/game/tick.func.php';
 		}
+		// 先同步 obl_pretick（标记已处理的游戏刻）
+		obl_tick_synchronize();
+		// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
+		if (function_exists('obl_resolve_tick_events')) {
+			obl_resolve_tick_events($delta);
+		}
+		$ginfochange = true;  // 触发 save_gameinfo() 持久化 obl_tick/obl_pretick
+	}
 
 		if($ginfochange || $lostfocus){
 			save_gameinfo();

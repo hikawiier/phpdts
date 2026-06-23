@@ -39,6 +39,8 @@ export interface PlayerInfo {
   oblpara: Oblpara;
   obl_tick: number; // 当前 tick（数字类型，非字符串）
   obl_pretick: number; // 上一次 tick（数字类型）
+  /** NPC 待结算标志：true 表示 NPC 事件未结算完，前端应等待（api_v2.php:205） */
+  obl_tick_pending_npc: boolean;
   equipment: Record<string, EquipmentSlot | null>;
 }
 
@@ -231,6 +233,24 @@ export interface LogEntry {
 /** 日志响应（api_v2.php?action=obl_log） */
 export interface OblLogResponse {
   entries: LogEntry[];
+  total: number;
+}
+
+/** 错误日志条目（api_v2.php?action=obl_error） */
+export interface ErrorLogEntry {
+  /** 错误 ID，命名规则 {模块}.{错误类型}，如 'tick.dispatch.error' */
+  id: string;
+  /** 错误详情，值限 string/number/boolean */
+  params: Record<string, string | number | boolean>;
+  /** 产生时间戳（秒） */
+  ts: number;
+  /** 请求来源：'command' / 'api' / 'unknown'，便于定位错误入口 */
+  request: string;
+}
+
+/** 错误日志响应（api_v2.php?action=obl_error） */
+export interface OblErrorLogResponse {
+  entries: ErrorLogEntry[];
   total: number;
 }
 

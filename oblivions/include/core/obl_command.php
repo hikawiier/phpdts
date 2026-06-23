@@ -22,7 +22,9 @@ $pdata = obl_game_entrypoint('command');
 
 // [A2] 并发锁：同一玩家同时只能处理一个命令（防止多标签页/脚本攻击并发）
 // 使用 flock 非阻塞模式，获取失败直接返回错误；进程结束 OS 自动释放锁
-$obl_lock_file = GAME_ROOT . './vex/cache/obl_lock_' . $groomid . '_' . $pdata['pid'] . '.php';
+$obl_lock_file = GAME_ROOT . './oblivions/cache/locks/obl_lock_' . $groomid . '_' . $pdata['pid'] . '.php';
+$obl_lock_dir = dirname($obl_lock_file);
+if (!is_dir($obl_lock_dir)) @mkdir($obl_lock_dir, 0755, true);
 $obl_lock_fp = fopen($obl_lock_file, 'w');
 if (!$obl_lock_fp || !flock($obl_lock_fp, LOCK_EX | LOCK_NB)) {
     // 另一个请求正在处理
@@ -43,18 +45,37 @@ if (!isset($mode)) $mode = '';
 if (!isset($command)) $command = '';
 $cmdcdtime = 0;
 
-// [C] battle 状态防呆校验（路由分发前，确保玩家操作不被脏状态卡住）
-//obl_validate_battle_state($pdata);
-
 // [C2] 命令过滤：根据 action 状态拒绝非法命令
 // 防止前端在 battleMode 下提交 move/explore 等命令，或在 normalMode 下提交战斗命令
 $command_rejected = !obl_command_allowed_by_state($command, $pdata['action']);
 if ($command_rejected) {
-	$obl_log->emit('command.rejected', 'system', array(
-		'command' => $command,
-		'action'  => $pdata['action'],
-		'reason'  => 'command_not_allowed_in_current_state',
-	));
+	// 迁移到 obl_error_log：设计文档第 197 行明确要求，前端通过错误 Toast 即时感知
+	if (isset($obl_error_log) && $obl_error_log) {
+		$obl_error_log->emit('command.rejected', array(
+			'command' => $command,
+			'action'  => $pdata['action'],
+			'reason'  => 'command_not_allowed_in_current_state',
+		), 'command');
+	}
+}
+
+// [C2b] NPC 待结算标志检测：NPC 事件未结算完时，拒绝推进 tick 的命令
+// 保证玩家操作与 NPC 先攻轮互斥：玩家行动后必须等 NPC 事件结算完毕才能再次行动
+// 非推进 tick 的命令（查看状态等）不受此限制
+if (!$command_rejected
+    && function_exists('obl_tick_is_pending_npc')
+    && obl_tick_is_pending_npc()
+    && function_exists('obl_command_advances_tick')
+    && obl_command_advances_tick($command)) {
+    $command_rejected = true;
+    // 迁移到 obl_error_log：NPC 待结算时拒绝命令，前端通过错误 Toast 即时感知
+    if (isset($obl_error_log) && $obl_error_log) {
+        $obl_error_log->emit('command.rejected', array(
+            'command' => $command,
+            'action'  => $pdata['action'],
+            'reason'  => 'npc_action_pending',
+        ), 'command');
+    }
 }
 
 // [D] 路由分发（跳过传统预检查：眩晕/冷却/对话框/追击/物品索引）
@@ -71,6 +92,11 @@ if ($obl_log && $obl_log->hasEntries()) {
 	obl_log_persist($obl_log, $groomid, $pdata['pid']);
 }
 
+// [E1b] 错误日志持久化（与 obl_log 物理隔离，独立存储）
+if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) {
+	obl_error_log_persist($obl_error_log, $groomid, $pdata['pid']);
+}
+
 // [E2] 战斗日志持久化
 // 所有 battlelog（含玩家命令 obl_battle_start/obl_battle_action 和遭遇战）都持久化到文件，
 // 前端通过 api_v2.php handle_battle_log 拉取 played=0 的条目播放，
@@ -79,22 +105,32 @@ if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) 
 	obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
 }
 
-// [F] 游戏刻推进（白名单机制：只有白名单内的命令才推进 tick）
-// 例外 1：逃跑成功时设置 escape_skip_tick 标志，跳过本次 tick 推进
-// 例外 2：被 [C2] 拒绝的命令不推进 tick
-$escape_skip_tick = isset($pdata['oblpara']['escape_skip_tick']) && $pdata['oblpara']['escape_skip_tick'];
+// [F-pre] 游戏刻推进准备：处理 escape_skip_tick 标志
+// 逃跑成功时设置此标志，跳过本次命令的 tick 推进（一次性）
+$escape_skip_tick = !empty($pdata['oblpara']['escape_skip_tick']);
 if ($escape_skip_tick) {
     // 清除标志（一次性，仅跳过本次命令的 tick 推进）
     unset($pdata['oblpara']['escape_skip_tick']);
 }
-if (!$command_rejected && !$escape_skip_tick && function_exists('obl_command_advances_tick') && obl_command_advances_tick($command)) {
-	if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
-	$gamevars['obl_tick']++;
-	save_gameinfo();  // 持久化 gamevars（common.inc.php 不会自动保存）
-}
 
-// [G] 保存到 oblplayers（替代 player_save）
+// [G] 保存玩家数据（先保存，再推进 tick，保证状态一致）
 obl_save_player($pdata);
+
+// [F] 游戏刻推进（白名单机制 + escape_skip_tick 例外 + 命令拒绝例外）
+// 顺序说明：先保存玩家数据（含 escape_skip_tick 清除），再推进 tick，
+// 避免 tick 已推进但玩家动作未持久化的不一致。
+// obl_tick 唯两处增加：玩家先攻轮（此处）/ NPC 先攻轮（obl_tick_dispatch 末尾），互斥。
+// 推进后设置 obl_tick_pending_npc 标志，锁定玩家后续操作直到 NPC 事件结算完毕。
+if (!$command_rejected && !$escape_skip_tick
+    && function_exists('obl_command_advances_tick')
+    && obl_command_advances_tick($command)) {
+    if (!function_exists('obl_tick_advance')) {
+        include_once GAME_ROOT . './oblivions/include/game/tick.func.php';
+    }
+    obl_tick_advance();             // obl_tick++ + 标记 $ginfochange（只改内存）
+    obl_tick_set_pending_npc();     // 设置 NPC 待结算标志，锁定玩家操作
+    save_gameinfo();                // 命令路径需显式持久化（无 common 末尾兜底）
+}
 
 // [H] 响应（前端通过 api_v2.php 获取数据，本文件返回最小确认）
 // battlelog 不再随响应返回：所有 battlelog 持久化到文件，前端统一通过 api_v2.php 拉取 played=0 的条目。

@@ -1,0 +1,3 @@
+# 禁止直接访问 oblivions/cache/ 下所有文件
+# 锁文件本身有 die() 保护，但 json/jsonl 文件可被直接读取
+Deny from all

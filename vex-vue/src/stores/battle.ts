@@ -32,8 +32,8 @@ import { useToastStore } from '@/stores/toast';
 import type { BattleLogEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
 import type { BattlePlayContext } from '@/data/battle-templates';
 
-/** NPC 回合自动刷新间隔（毫秒） */
-export const NPC_TURN_REFRESH_INTERVAL = 2000;
+/** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
+export const NPC_TURN_REFRESH_INTERVAL = 1000;
 
 /** 碰撞动画总时长（毫秒）— 300ms 动画 + 120ms 延迟 + 30ms 缓冲 */
 const COLLISION_ANIM_DURATION = 450;
@@ -330,7 +330,10 @@ export const useBattleStore = defineStore('battle', () => {
         enterBattleMode(enemyPid, playerTurn);
 
         // NPC 顺位时启动自动刷新循环，玩家顺位时停止
-        if (playerTurn) {
+        // 但若 pending_npc=true（NPC 事件结算中），即使先攻队列显示玩家回合也不停止
+        // （先攻队列可能还未更新，NPC 后续行动需要继续轮询触发 common.inc）
+        const pendingNpc = !!playerInfo.obl_tick_pending_npc;
+        if (playerTurn && !pendingNpc) {
           stopNpcTurnRefresh();
         } else {
           startNpcTurnRefresh();
@@ -369,6 +372,7 @@ export const useBattleStore = defineStore('battle', () => {
       }
     } catch (e) {
       console.error('[Battle] refreshBattle error:', e);
+      useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
     } finally {
       isProcessingBattle.value = false;
     }
@@ -425,6 +429,7 @@ export const useBattleStore = defineStore('battle', () => {
       }
     } catch (e) {
       console.error('[Battle] fetchAndPlayBattleLog error:', e);
+      useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
     } finally {
       isPlayingBattleLog.value = false;
     }
@@ -534,6 +539,7 @@ export const useBattleStore = defineStore('battle', () => {
       }
     } catch (e) {
       console.error('[Battle] refreshContextFromApi error:', e);
+      useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
     }
   }
 
