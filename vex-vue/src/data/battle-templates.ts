@@ -102,6 +102,12 @@ export const BATTLE_TEMPLATES: Record<string, BattleLogTemplate> = {
       return '';
     },
   },
+  'initiative.roll': {
+    // 先攻掷骰：不渲染为模态框条目（投掷结果保留在 entry.extra.rolls 供 debug 或未来扩展使用）
+    render() {
+      return '';
+    },
+  },
   queue_create: {
     render() {
       return '';

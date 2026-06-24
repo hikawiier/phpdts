@@ -62,62 +62,120 @@ function cmd_handle_obl_discard($slot, &$pdata) {
  * 玩家突袭 NPC（战斗入口1）
  *
  * 玩家前端点击已发现的 NPC → 前端预装填动作 → 提交 obl_battle_start 命令。
- * 流程：校验目标 → 设置突袭标记 → battle_state_init → 构造预装填动作 → battle_main。
+ * 流程：解析 actions → 提取突袭目标 → 校验目标 → 设置突袭标记 → battle_state_init → battle_main。
  * 突袭不创建先攻队列，直接动手打一次，由 battle_main 尾部的 battle_queue_check 后补票创建队列。
  *
- * @param int       $enemy_pid 目标敌人 PID
+ * 指令格式统一：只传 actions JSON 数组，突袭目标从 actions[0]['target'] 推导。
+ *
  * @param array     &$pdata    玩家数据
  * @param array|null $actions   预装填动作数组，每项含 act_id + target。null 时为空（不执行动作）
  */
-function cmd_handle_obl_battle_start($enemy_pid, &$pdata, $actions = null) {
+function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
     include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
     include_once GAME_ROOT . './oblivions/include/game/move.func.php';
 
-    global $obl_log, $obl_battle_log;
+    global $obl_log, $obl_battle_log, $obl_error_log;
 
-    # 校验目标
-    $enemy_pid = (int)$enemy_pid;
-    if ($enemy_pid <= 0) return;
+    # 1. 解析 actions，提取突袭目标（第一个有效动作的 target）
+    $atk_act = array();
+    $ambush_target_pid = 0;
+    if (is_array($actions)) {
+        foreach ($actions as $act) {
+            $act_id = isset($act['act_id']) ? $act['act_id'] : '';
+            $target = isset($act['target']) ? (int)$act['target'] : 0;
+            if (empty($act_id) || $target <= 0) continue;
 
-    $enemy = obl_fetch_playerdata_by_pid($enemy_pid);
-    if (!$enemy) return;
+            $atk_act[] = array('act_id' => $act_id, 'target' => $target);
+
+            # 第一个有效动作的 target 作为突袭目标
+            if ($ambush_target_pid === 0) {
+                $ambush_target_pid = $target;
+            }
+        }
+    }
+
+    if (empty($atk_act) || $ambush_target_pid <= 0) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.invalid_actions', array(
+                'pid' => (int)$pdata['pid'],
+                'actions_count' => is_array($actions) ? count($actions) : 0,
+                'reason' => 'no_valid_action_or_target',
+            ), 'command');
+        }
+        return;
+    }
+
+    # 2. 校验突袭目标合法性
+    $enemy = obl_fetch_playerdata_by_pid($ambush_target_pid);
+    if (!$enemy) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.target_not_found', array(
+                'pid' => (int)$pdata['pid'],
+                'target_pid' => $ambush_target_pid,
+            ), 'command');
+        }
+        return;
+    }
     obl_format_playerdata($enemy);
 
-    # 校验：敌人未死亡
-    if ((int)$enemy['state'] !== 0) return;
-    # 校验：敌人已发现
-    if (empty($enemy['discovered'])) return;
-    # 校验：同一区域
-    if ((int)$enemy['pgroup'] !== (int)$pdata['pgroup']) return;
-    # 校验：BFS 距离 ≤ 射程
+    if ((int)$enemy['state'] !== 0) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.target_dead', array(
+                'pid' => (int)$pdata['pid'],
+                'target_pid' => $ambush_target_pid,
+                'target_state' => (int)$enemy['state'],
+            ), 'command');
+        }
+        return;
+    }
+    if (empty($enemy['discovered'])) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.target_undiscovered', array(
+                'pid' => (int)$pdata['pid'],
+                'target_pid' => $ambush_target_pid,
+            ), 'command');
+        }
+        return;
+    }
+    if ((int)$enemy['pgroup'] !== (int)$pdata['pgroup']) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.target_wrong_region', array(
+                'pid' => (int)$pdata['pid'],
+                'target_pid' => $ambush_target_pid,
+                'player_pgroup' => (int)$pdata['pgroup'],
+                'target_pgroup' => (int)$enemy['pgroup'],
+            ), 'command');
+        }
+        return;
+    }
     $distance = obl_get_distance($pdata['pgroup'], $pdata['pls'], $enemy['pls']);
-    if ($distance < 0 || $distance > obl_get_range($pdata)) return;
+    $range = obl_get_range($pdata);
+    if ($distance < 0 || $distance > $range) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_start.target_out_of_range', array(
+                'pid' => (int)$pdata['pid'],
+                'target_pid' => $ambush_target_pid,
+                'distance' => $distance,
+                'range' => $range,
+            ), 'command');
+        }
+        return;
+    }
 
-    # 初始化 battle_log（入口处局部初始化）
+    # 3. 初始化 battle_log（入口处局部初始化）
     if (!$obl_battle_log) {
         include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
         $obl_battle_log = new BattleLogCollector();
     }
 
-    # 设置突袭标记（battle_queue_create 据此给玩家先攻优势）
+    # 4. 设置 ambush_flag（一次性，battle_queue_create 中清除）
     $pdata['oblpara']['ambush_flag'] = true;
 
-    # 玩家进入战斗状态
+    # 5. 玩家进入战斗状态
     battle_state_init($pdata);
 
-    # 构造预装填动作数组（来自前端 $actions，无则空数组）
-    $atk_act = array();
-    if (is_array($actions)) {
-        foreach ($actions as $act) {
-            $atk_act[] = array(
-                'act_id' => isset($act['act_id']) ? $act['act_id'] : '',
-                'target' => isset($act['target']) ? $act['target'] : 0,
-            );
-        }
-    }
-
-    # 调用 battle_main（内部会完成后补票创建先攻队列）
+    # 6. 调用 battle_main（内部会完成后补票创建先攻队列 + 先攻判定）
     battle_main($pdata, $atk_act, $obl_battle_log);
 }
 
@@ -125,44 +183,47 @@ function cmd_handle_obl_battle_start($enemy_pid, &$pdata, $actions = null) {
  * 玩家先攻轮（已有先攻队列的情况下）
  *
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
- * 流程：构造 $atk_act → battle_main。
+ * 流程：解析 actions → battle_main。
  *
- * @param string    $action_id 玩家选择的动作 ID（如 'unarmed_strike'），兼容单动作模式
- * @param int       $target_pid 目标敌人 PID，兼容单动作模式
+ * 指令格式统一：只传 actions JSON 数组，移除冗余的 action_id + target_pid 参数。
+ *
  * @param array     &$pdata    玩家数据
  * @param array|null $actions   预装填动作数组，每项含 act_id + target。提供时优先使用
  */
-function cmd_handle_obl_battle_action($action_id, $target_pid, &$pdata, $actions = null) {
+function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
     include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
 
-    global $obl_battle_log;
+    global $obl_battle_log, $obl_error_log;
 
-    # 初始化 battle_log（入口处局部初始化）
+    # 1. 解析 actions
+    $atk_act = array();
+    if (is_array($actions)) {
+        foreach ($actions as $act) {
+            $act_id = isset($act['act_id']) ? $act['act_id'] : '';
+            $target = isset($act['target']) ? (int)$act['target'] : 0;
+            if (empty($act_id) || $target <= 0) continue;
+            $atk_act[] = array('act_id' => $act_id, 'target' => $target);
+        }
+    }
+
+    if (empty($atk_act)) {
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('battle_action.invalid_actions', array(
+                'pid' => (int)$pdata['pid'],
+                'actions_count' => is_array($actions) ? count($actions) : 0,
+                'reason' => 'no_valid_action',
+            ), 'command');
+        }
+        return;
+    }
+
+    # 2. 初始化 battle_log（入口处局部初始化）
     if (!$obl_battle_log) {
         include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
         $obl_battle_log = new BattleLogCollector();
     }
 
-    # 构造动作数组：优先使用 $actions，否则兼容单动作模式
-    if (is_array($actions) && !empty($actions)) {
-        $atk_act = array();
-        foreach ($actions as $act) {
-            $atk_act[] = array(
-                'act_id' => isset($act['act_id']) ? $act['act_id'] : '',
-                'target' => isset($act['target']) ? $act['target'] : 0,
-            );
-        }
-    } else {
-        # 兼容单动作模式
-        $action_id = (string)$action_id;
-        $target_pid = (int)$target_pid;
-        if (empty($action_id) || $target_pid <= 0) return;
-        $atk_act = array(
-            array('act_id' => $action_id, 'target' => $target_pid),
-        );
-    }
-
-    # 调用 battle_main
+    # 3. 调用 battle_main
     battle_main($pdata, $atk_act, $obl_battle_log);
 }

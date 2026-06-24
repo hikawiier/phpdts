@@ -56,20 +56,18 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime, $post) {
                     $decoded = json_decode(html_entity_decode($actions, ENT_QUOTES), true);
                     $actions = is_array($decoded) ? $decoded : null;
                 }
-                cmd_handle_obl_battle_start(isset($post['enemy_pid']) ? $post['enemy_pid'] : 0, $pdata, $actions);
+                cmd_handle_obl_battle_start($pdata, $actions);
                 return 'command';
             }
             if ($command == 'obl_battle_action') {
                 include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                $action_id = isset($post['action_id']) ? $post['action_id'] : '';
-                $target_pid = isset($post['target_pid']) ? $post['target_pid'] : 0;
                 # actions 以 JSON 字符串传递，gstrfilter 会将双引号转为 &quot;，需先 html_entity_decode 还原
                 $actions = isset($post['actions']) ? $post['actions'] : null;
                 if (is_string($actions)) {
                     $decoded = json_decode(html_entity_decode($actions, ENT_QUOTES), true);
                     $actions = is_array($decoded) ? $decoded : null;
                 }
-                cmd_handle_obl_battle_action($action_id, $target_pid, $pdata, $actions);
+                cmd_handle_obl_battle_action($pdata, $actions);
                 return 'command';
             }
         }

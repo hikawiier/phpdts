@@ -181,7 +181,7 @@ function onTargetSelect(data: unknown): void {
   if (!aimMode.value || !pendingActId.value) return;
   const pid = typeof data === 'number' ? data : (data as { pid?: number })?.pid;
   if (typeof pid !== 'number') return;
-  // 更新 enemyPid，确保 onExecute 提交 obl_battle_start 时 enemy_pid 正确
+  // 更新 enemyPid，供 UI 显示当前瞄准的敌人
   enemyPid.value = pid;
   addToQueue(pendingActId.value, pid);
   exitAimMode();
@@ -232,14 +232,11 @@ async function onExecute(): Promise<void> {
   if (mode.value === 'pre-battle') {
     result = await commandQueue.execute({
       command: 'obl_battle_start',
-      enemy_pid: String(enemyPid.value),
       actions: JSON.stringify(actions),
     });
   } else {
     result = await commandQueue.execute({
       command: 'obl_battle_action',
-      action_id: actions[0].act_id,
-      target_pid: String(actions[0].target),
       actions: JSON.stringify(actions),
     });
   }

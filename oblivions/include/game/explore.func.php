@@ -11,30 +11,13 @@ if (!defined('IN_GAME')) {
 //   - fog (oblmapstates.fog)：地图格可见性（玩家是否知道该格存在/地形/可通行）
 //   - discovered (oblmapitem.discovered)：道具可操作性（道具是否出现在交互界面）
 // ================================================================
-
-// 依赖 move.func.php 的 obl_get_map_data()
-if (!function_exists('obl_get_map_data')) {
-    include_once GAME_ROOT . './oblivions/include/game/move.func.php';
-}
-
-// ----------------------------------------------------------------
-// 配置读取辅助
-// ----------------------------------------------------------------
-
-/**
- * 读取 Oblivions 配置（带静态缓存）
- * @return array
- */
-function obl_get_config() {
-    static $cfg = null;
-    if ($cfg === null) {
-        $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
-    }
-    return $cfg;
-}
+// 依赖：obl_global.func.php（obl_get_config）
+//       vision.func.php（obl_calc_vision_range, obl_clear_fog）
+//       enemy_ai.func.php（obl_discover_enemies）
+//       以上由 obl_bootstrap.php 统一加载
 
 // ----------------------------------------------------------------
-// 4.1 视野更新入口
+// 4.1 视野更新入口（编排者：调用 vision 的 calc/clear + 本文件的 discover_items）
 // ----------------------------------------------------------------
 
 /**
@@ -54,83 +37,6 @@ function obl_update_vision($pgroup, $pls, &$pdata) {
 
     // 子功能 2：发现道具（道具可操作性）
     obl_discover_items($pgroup, $visible_tiles);
-}
-
-// ----------------------------------------------------------------
-// 4.1a 视野范围计算
-// ----------------------------------------------------------------
-
-/**
- * 计算玩家视野范围内的所有格及其距离
- *
- * @param int   $pgroup 当前区域
- * @param int   $pls    当前格
- * @param array &$pdata 玩家数据（预留：技能/装备加成覆盖 vision_range）
- * @return array [pls => ['distance' => int]]，空数组表示当前格无效
- */
-function obl_calc_vision_range($pgroup, $pls, &$pdata) {
-    $cfg = obl_get_config();
-    $vision_lv = (int)($cfg['vision_range'] ?? 1);
-
-    $map = obl_get_map_data($pgroup);
-    $tiles = $map['tiles'][$pgroup] ?? [];
-    if (!isset($tiles[$pls])) return [];
-
-    $visible_tiles = [$pls => ['distance' => 0]];
-
-    // BFS 扩展视野
-    $visited = [$pls => true];
-    $queue = [[$pls, 0]];
-    while (!empty($queue)) {
-        $frame = array_shift($queue);
-        $cur = $frame[0];
-        $dist = $frame[1];
-        if ($dist >= $vision_lv) continue;
-
-        $neighbors = $tiles[$cur]['neighbors'] ?? [];
-        foreach ($neighbors as $n_pls) {
-            if (isset($visited[$n_pls])) continue;
-            $visited[$n_pls] = true;
-            $visible_tiles[$n_pls] = ['distance' => $dist + 1];
-            // 不可通行格可见但不再继续扩展（不能站在山上看到更远的地方）
-            if (empty($tiles[$n_pls]['passable'])) continue;
-            $queue[] = [$n_pls, $dist + 1];
-        }
-    }
-
-    return $visible_tiles;
-}
-
-// ----------------------------------------------------------------
-// 4.1b 迷雾点亮
-// ----------------------------------------------------------------
-
-/**
- * 点亮视野范围内所有格的迷雾
- * 迷雾清除后，该格上的 POI 自动可见（POI 无 discovered 字段）
- *
- * @param int   $pgroup       当前区域
- * @param array $visible_tiles [pls => ['distance' => int]]
- */
-function obl_clear_fog($pgroup, $visible_tiles) {
-    global $db, $tablepre;
-
-    if (empty($visible_tiles)) return;
-
-    $pgroup_i = (int)$pgroup;
-    $fog_values = [];
-    foreach ($visible_tiles as $t_pls => $info) {
-        $t_pls = (int)$t_pls;
-        $fog_values[] = "($pgroup_i, $t_pls, 1, 0, '')";
-    }
-
-    // INSERT ... ON DUPLICATE KEY UPDATE fog=1（幂等）
-    foreach (array_chunk($fog_values, 500) as $batch) {
-        $qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags)
-                VALUES " . implode(',', $batch) . "
-                ON DUPLICATE KEY UPDATE fog=1";
-        $db->query($qry);
-    }
 }
 
 // ----------------------------------------------------------------
@@ -264,9 +170,7 @@ function obl_explore(&$pdata, $skip_sp_check = false) {
     obl_update_vision($pgroup, $pls, $pdata);
 
     // 3. 发现视野内的敌人（同时清除敌人所在格的迷雾）
-    if (!function_exists('obl_discover_enemies')) {
-        include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
-    }
+    // obl_discover_enemies 已由 obl_bootstrap.php 加载
     $vision_range = obl_get_player_vision_range($pdata);
     obl_discover_enemies($pgroup, $pls, $vision_range);
 

@@ -11,8 +11,8 @@
  * - 前端通过 api_v2.php 获取业务数据，本文件只返回最小确认
  */
 
-// 载入 Oblivions 玩家函数库（认证 + 数据抓取 + 保存 + 道具栏辅助）
-require GAME_ROOT.'./oblivions/include/game/player.func.php';
+// obl_bootstrap.php 已由 command.php 在 require 本文件之前加载
+// player.func.php / tick.func.php 等所有函数库均已可用
 
 // $obl_log 已在 common.inc.php 中初始化（核心机制，放全局入口）
 // 此处无需重复初始化
@@ -121,12 +121,9 @@ obl_save_player($pdata);
 // 避免 tick 已推进但玩家动作未持久化的不一致。
 // obl_tick 唯两处增加：玩家先攻轮（此处）/ NPC 先攻轮（obl_tick_dispatch 末尾），互斥。
 // 推进后设置 obl_tick_pending_npc 标志，锁定玩家后续操作直到 NPC 事件结算完毕。
+// tick.func.php 已由 obl_bootstrap.php 加载，无需条件 include
 if (!$command_rejected && !$escape_skip_tick
-    && function_exists('obl_command_advances_tick')
     && obl_command_advances_tick($command)) {
-    if (!function_exists('obl_tick_advance')) {
-        include_once GAME_ROOT . './oblivions/include/game/tick.func.php';
-    }
     obl_tick_advance();             // obl_tick++ + 标记 $ginfochange（只改内存）
     obl_tick_set_pending_npc();     // 设置 NPC 待结算标志，锁定玩家操作
     save_gameinfo();                // 命令路径需显式持久化（无 common 末尾兜底）

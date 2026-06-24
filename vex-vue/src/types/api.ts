@@ -265,7 +265,7 @@ export interface BattleLogEntry {
   target: string;
   target_type: string;
   target_pid: string;
-  action_id: string; // unarmed_strike / escape / battle.start / battle_end / ...
+  action_id: string; // unarmed_strike / escape / battle.start / battle.end / initiative.roll / queue_create / queue_update / ap_recover / ...
   action_name: string;
   effect_value: string;
   extra: Record<string, unknown> | null;

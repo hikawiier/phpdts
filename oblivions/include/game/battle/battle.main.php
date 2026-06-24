@@ -8,11 +8,10 @@ if (!defined('IN_GAME')) {
 // 战斗系统的关键入口文件，包含了战斗系统的流程处理函数。功能函数在battle.func.php中实现，主函数在battle.main.php中实现。主函数负责调用功能函数完成战斗流程的处理，功能函数负责实现战斗系统的具体功能。
 // ================================================================
 
-if(!function_exists('obl_fetch_playerdata_by_pid')) {
-    include_once GAME_ROOT . './oblivions/include/game/player.func.php'; //包含玩家数据相关函数文件
-}
-include_once GAME_ROOT . './oblivions/include/game/sql.func.php'; //包含数据库抓取相关函数文件
-include_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php'; //包含战斗系统功能函数文件
+// 依赖声明（由 obl_bootstrap.php 统一加载，此处 require_once 仅作自文档化）
+require_once GAME_ROOT . './oblivions/include/game/player.func.php';
+require_once GAME_ROOT . './oblivions/include/game/sql.func.php';
+require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
 //先攻轮完整流程主函数 $actor_data=先攻者data $atk_act=动作数组（数字索引，每项含 act_id + target）
 function battle_main(&$actor_data, &$atk_act, &$obl_battle_log)

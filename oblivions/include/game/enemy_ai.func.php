@@ -24,211 +24,13 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 //                   obl_format_playerdata / obl_save_player）
 // - tick.func.php（obl_tick_request_advance，仅监听器需要）
 // - explore.func.php（obl_clear_fog，仅 obl_discover_enemies 需要）
-// ================================================================
-
-if (!function_exists('obl_get_map_data')) {
-	include_once GAME_ROOT . './oblivions/include/game/move.func.php';
-}
-if (!function_exists('obl_fetch_enemies_by_region')) {
-	include_once GAME_ROOT . './oblivions/include/game/player.func.php';
-}
+// 依赖：move.func.php + player.func.php + battle.main.php + explore.func.php（由 obl_bootstrap.php 统一加载）
 
 // ================================================================
 // 模块 1：NPC 生成
+// 已迁移至 init.func.php（obl_init_enemies + obl_create_enemy_record +
+// obl_get_occupied_positions + obl_pick_available_tile），属于"游戏初始化"而非"AI 行为"
 // ================================================================
-
-/**
- * 生成所有区域的 NPC 敌人（在 rs_init_oblivions 中调用）
- *
- * 按 enemy_pool.php 配置，在每个区域的对应潮汐区格上生成敌人。
- * 生成规则：
- * - 只选 passable=1 的格
- * - 排除区域出入口（entrance_pls / exit_pls）
- * - 排除已被其他单位占用的格（一个格一个单位）
- * - 敌人只生成在对应潮汐区的格上
- *
- * @return void
- */
-function obl_init_enemies() {
-	global $db, $tablepre;
-
-	// 载入敌人配置和生成池
-	$enemy_pool = require GAME_ROOT . './oblivions/gamedata/enemy_pool.php';
-
-	// 获取所有区域
-	$map = obl_get_map_data();
-	$regions = $map['regions'];
-
-	foreach ($regions as $pgroup => $region) {
-		$pgroup = (int)$pgroup;
-
-		// 加载该区域的 tiles（含 tide 字段）
-		$map_data = obl_get_map_data($pgroup);
-		$tiles = $map_data['tiles'][$pgroup];
-
-		// 统计该区域各潮汐区的格数，按潮汐区分组
-		$tide_tiles = array('shallow' => array(), 'deep' => array(), 'abyss' => array());
-		foreach ($tiles as $pls => $tile) {
-			$tide = isset($tile['tide']) ? $tile['tide'] : 'shallow';
-			if (!empty($tile['passable']) && isset($tide_tiles[$tide])) {
-				$tide_tiles[$tide][] = (int)$pls;
-			}
-		}
-
-		// 查询该区域已占用的位置（玩家初始位置 + 已生成的 NPC）
-		$occupied = obl_get_occupied_positions($pgroup);
-
-		// 排除出入口
-		$occupied[(int)$region['entrance_pls']] = true;
-		$occupied[(int)$region['exit_pls']] = true;
-
-		// 按潮汐区生成敌人
-		foreach ($tide_tiles as $tide => $available_pls) {
-			if (!isset($enemy_pool[$tide]) || empty($available_pls)) continue;
-
-			foreach ($enemy_pool[$tide] as $entry) {
-				$enemy_type = (int)$entry['enemy_type'];
-				$count = is_array($entry['count'])
-					? rand($entry['count'][0], $entry['count'][1])
-					: (int)$entry['count'];
-
-				for ($i = 0; $i < $count; $i++) {
-					// 从可用格中随机选一个未被占用的
-					$pls = obl_pick_available_tile($available_pls, $occupied);
-					if ($pls === false) break;  // 该潮汐区格不够
-
-					obl_create_enemy_record($enemy_type, $pgroup, $pls);
-					$occupied[$pls] = true;  // 标记占用
-				}
-			}
-		}
-	}
-}
-
-/**
- * 创建敌人记录（参考 obl_create_player_record 的实现模式）
- *
- * @param int $enemy_type 敌人类型 ID（对应 enemies_config.php 的 key）
- * @param int $pgroup     区域 ID
- * @param int $pls        格子 ID
- * @return int|false 返回新创建的 pid，失败返回 false
- */
-function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
-	global $db, $tablepre, $obl_enemies_config, $obl_error_log;
-
-	// 载入敌人配置（按需）
-	if (!isset($obl_enemies_config)) {
-		include GAME_ROOT . './oblivions/gamedata/enemies_config.php';
-	}
-
-	$config = isset($obl_enemies_config[$enemy_type]) ? $obl_enemies_config[$enemy_type] : null;
-	if (!$config) {
-		// 敌人配置缺失属于系统级异常（敌人 NPC 已生成但配置被删），
-		// 记录到错误日志，前端可通过 ?action=obl_error 感知
-		if (isset($obl_error_log) && $obl_error_log) {
-			$obl_error_log->emit('enemy_ai.config_missing', array(
-				'enemy_type' => $enemy_type,
-				'pgroup'     => $pgroup,
-				'pls'        => $pls,
-			), 'api');
-		}
-		return false;
-	}
-
-	$itemmaxslots = 6;
-	$empty_itempara = array_fill(0, $itemmaxslots + 1, null);  // index 0=特殊槽，1-6=普通槽
-
-	# 构造 skillpara 新格式：{"skill_id": {"lstact": 0}, ...}
-	$skillpara_init = array();
-	foreach ($config['skills'] as $skill_id) {
-		$skillpara_init[$skill_id] = array('lstact' => 0);
-	}
-
-	$enemy = array(
-		'type'   => $enemy_type,
-		'name'   => $config['name'],
-		'pass'   => '',
-		'gd'     => $config['gd'],
-		'icon'   => $config['icon'],
-		'action' => '',
-		'bid'    => 0,
-		'hp'     => $config['hp'],
-		'mhp'    => $config['mhp'],
-		'sp'     => $config['sp'],
-		'msp'    => $config['msp'],
-		'att'    => $config['att'],
-		'def'    => $config['def'],
-		'ap'     => 10,
-		'max_ap' => 10,
-		'pgroup' => $pgroup,
-		'pls'    => $pls,
-		'lvl'    => $config['lvl'],
-		'exp'    => 0,
-		'state'  => 0,
-		// 装备字段（7 槽 × 6 字段，初始全空）
-		'wep' => '', 'wepk' => '', 'wepe' => 0, 'weps' => '0', 'wepsk' => '', 'weppara' => '',
-		'wep2' => '', 'wep2k' => '', 'wep2e' => 0, 'wep2s' => '0', 'wep2sk' => '', 'wep2para' => '',
-		'arb' => '', 'arbk' => '', 'arbe' => 0, 'arbs' => '0', 'arbsk' => '', 'arbpara' => '',
-		'arh' => '', 'arhk' => '', 'arhe' => 0, 'arhs' => '0', 'arhsk' => '', 'arhpara' => '',
-		'ara' => '', 'arak' => '', 'arae' => 0, 'aras' => '0', 'arask' => '', 'arapara' => '',
-		'arf' => '', 'arfk' => '', 'arfe' => 0, 'arfs' => '0', 'arfsk' => '', 'arfpara' => '',
-		'art' => '', 'artk' => '', 'arte' => 0, 'arts' => '0', 'artsk' => '', 'artpara' => '',
-		// 道具栏
-		'itempara'     => json_encode($empty_itempara, JSON_UNESCAPED_UNICODE),
-		'itemmaxslots' => $itemmaxslots,
-		// Oblivions 专属 JSON 字段
-		'tacpara'   => json_encode(array('slots' => $config['strategy_slots']), JSON_UNESCAPED_UNICODE),
-		'skillpara' => json_encode($skillpara_init, JSON_UNESCAPED_UNICODE),
-		'oblpara'   => json_encode(array(
-			'ai_type'       => $config['ai_type'],
-			'vision_range'  => $config['vision_range'],
-			'action_chance' => $config['action_chance'],
-			'combat_skills' => isset($config['combat_skills']) ? $config['combat_skills'] : array('unarmed_strike'),
-		), JSON_UNESCAPED_UNICODE),
-		'discovered' => 0,
-	);
-
-	$db->array_insert("{$tablepre}oblplayers", $enemy);
-
-	// 获取插入的 pid
-	$result = $db->query("SELECT pid FROM {$tablepre}oblplayers WHERE type='{$enemy_type}' AND pgroup='{$pgroup}' AND pls='{$pls}' ORDER BY pid DESC LIMIT 1");
-	$row = $db->fetch_array($result);
-	return $row ? (int)$row['pid'] : false;
-}
-
-/**
- * 获取指定区域所有已占用的 pls（玩家 + NPC）
- *
- * @param int $pgroup 区域 ID
- * @return array {pls => true} 已占用的格集合
- */
-function obl_get_occupied_positions($pgroup) {
-	global $db, $tablepre;
-	$occupied = array();
-	$result = $db->query("SELECT pls FROM {$tablepre}oblplayers WHERE pgroup='{$pgroup}' AND state=0");
-	while ($row = $db->fetch_array($result)) {
-		$occupied[(int)$row['pls']] = true;
-	}
-	return $occupied;
-}
-
-/**
- * 从可用格列表中随机选一个未被占用的
- *
- * @param array $available_pls 可用格 pls 列表
- * @param array &$occupied     已占用格集合（引用传递，选中后会被标记）
- * @return int|false 选中的 pls，无可用格返回 false
- */
-function obl_pick_available_tile($available_pls, &$occupied) {
-	$candidates = array();
-	foreach ($available_pls as $pls) {
-		if (!isset($occupied[$pls])) {
-			$candidates[] = $pls;
-		}
-	}
-	if (empty($candidates)) return false;
-	return $candidates[array_rand($candidates)];
-}
 
 // ================================================================
 // 模块 2：Tick 事件监听器
@@ -259,9 +61,7 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 	global $db, $tablepre, $obl_battle_log;
 
 	# 加载战斗系统主文件
-	if (!function_exists('battle_main')) {
-		include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
-	}
+	# battle_main 已由 obl_bootstrap.php 加载
 
 	# 载入所有活跃的先攻队列 qid（DISTINCT 去重，避免同队列多记录重复处理）
 	$result = $db->query("SELECT DISTINCT qid FROM {$tablepre}oblqueue WHERE qid > 0");
@@ -275,11 +75,15 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		if (!$current) continue;
 
 		# 当前顺位者是玩家 → 不执行 NPC 先攻轮（等待玩家提交 obl_battle_action）
-		if ($current['type'] == 0) continue;
+		if ($current['type'] == 0) {
+			continue;
+		}
 
 		# 当前顺位者是 NPC → 执行 NPC 先攻轮
 		$npc_data = obl_fetch_playerdata_by_pid($current['pid']);
-		if (!$npc_data) continue;
+		if (!$npc_data) {
+			continue;
+		}
 
 		# 初始化 battle_log（入口处局部初始化）
 		if (!$obl_battle_log) {
@@ -503,81 +307,9 @@ function obl_enemy_hunt(&$enemy, &$player) {
 
 // ================================================================
 // 模块 4：discovered 状态管理
+// 已迁移至 vision.func.php（obl_discover_enemies, obl_update_enemy_discovered,
+// obl_get_player_vision_range），打破 explore ↔ enemy_ai 循环依赖
 // ================================================================
-
-/**
- * 玩家探索时发现敌人（在 obl_explore 中调用）
- *
- * 检查玩家视野内的敌人，设 discovered=1，并清除敌人所在格的迷雾。
- * 发现新敌人时 emit 结构化日志。
- *
- * @param int $player_pgroup 玩家所在区域
- * @param int $player_pls    玩家所在格
- * @param int $vision_range  玩家视野范围
- * @return void
- */
-function obl_discover_enemies($player_pgroup, $player_pls, $vision_range) {
-	global $obl_log;
-
-	$enemies = obl_fetch_enemies_by_region($player_pgroup);
-	foreach ($enemies as &$enemy) {
-		// 死亡敌人不更新 discovered（保留原状态供搜刮）
-		if ($enemy['state'] > 0) continue;
-
-		$distance = obl_get_distance($player_pgroup, $player_pls, $enemy['pls']);
-		if ($distance >= 0 && $distance <= $vision_range && $enemy['discovered'] == 0) {
-			$enemy['discovered'] = 1;
-			obl_save_player($enemy);
-
-			// 发现敌人时清除该格迷雾（玩家"感知"到敌人位置）
-			if (function_exists('obl_clear_fog')) {
-				obl_clear_fog($player_pgroup, array($enemy['pls'] => array('distance' => $distance)));
-			}
-
-			// emit 结构化日志：发现敌人
-			$obl_log->emit('enemy.discovered', 'enemy', array(
-				'enemy_name' => $enemy['name'],
-				'enemy_pid'  => $enemy['pid'],
-			));
-		}
-	}
-}
-
-/**
- * 敌人移动后更新 discovered 状态
- *
- * 超出玩家视野 → discovered=0（静默移除，不 emit 日志）
- * 仍在玩家视野内 → 清除该格迷雾（确保前端可见）
- *
- * @param array &$enemy  敌人数据
- * @param array &$player 当前玩家数据
- * @return void
- */
-function obl_update_enemy_discovered(&$enemy, &$player) {
-	// 死亡敌人不更新 discovered
-	if ($enemy['state'] > 0) return;
-
-	// 不同区域 → 未发现
-	if ($enemy['pgroup'] != $player['pgroup']) {
-		$enemy['discovered'] = 0;
-		return;
-	}
-
-	// 超出玩家视野 → 未发现（静默移除）
-	$distance = obl_get_distance($enemy['pgroup'], $enemy['pls'], $player['pls']);
-	$player_vision = obl_get_player_vision_range($player);
-	if ($distance < 0 || $distance > $player_vision) {
-		$enemy['discovered'] = 0;
-	} else {
-		// 敌人在玩家视野内，清除该格迷雾（确保前端可见）
-		if (!function_exists('obl_clear_fog')) {
-			include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
-		}
-		if (function_exists('obl_clear_fog')) {
-			obl_clear_fog($enemy['pgroup'], array($enemy['pls'] => array('distance' => $distance)));
-		}
-	}
-}
 
 // ================================================================
 // 模块 5：占用检查与辅助函数
@@ -637,17 +369,3 @@ function obl_get_tile_neighbors($pgroup, $pls) {
 	return isset($tiles[$pls]['neighbors']) ? $tiles[$pls]['neighbors'] : array();
 }
 
-/**
- * 获取玩家视野范围（MVP 固定值，未来可基于属性计算）
- *
- * 用于敌人 discovered 状态管理（敌人移动后判断是否仍在玩家视野内）。
- * 注意：此值大于 obl_config.php 的 vision_range（迷雾清除范围），
- * 代表玩家能"感知"到更远处的敌人气息。
- *
- * @param array &$player 玩家数据
- * @return int 视野范围（BFS 跳数）
- */
-function obl_get_player_vision_range(&$player) {
-	// MVP 阶段固定值，未来可基于属性/装备/技能计算
-	return 3;
-}

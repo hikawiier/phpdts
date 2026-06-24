@@ -27,7 +27,7 @@ function gamestate_try_prepare() {
             $hdamage = 0;
             $hplayer = '';
             $noisemode = '';
-            rs_game(63 + (oblivions_is_active() ? 64 : 0));
+            rs_game(63);
             return true;
         }
     }
@@ -66,11 +66,6 @@ function gamestate_try_add_area() {
     global $gamestate, $now, $areatime, $areahour;
     global $areawarn, $areawarntime;
 
-    // OBLIVIONS 模式：无禁区系统，直接跳过
-    if (oblivions_is_active()) {
-        return false;
-    }
-
     // 防御：areatime=0 表示房间尚未初始化，跳过禁区增加
     if (($gamestate > 10) && ($areatime > 0) && ($now > $areatime)) {
         while ($now > $areatime) {
@@ -91,11 +86,6 @@ function gamestate_try_add_area() {
 function gamestate_try_stop_valid() {
     global $gamestate, $arealimit, $validnum, $areanum, $areaadd, $validlimit, $areatime;
 
-    // OBLIVIONS 模式：跳过停止激活，单人模式不需要此逻辑
-    if (oblivions_is_active()) {
-        return false;
-    }
-
     if ($gamestate == 20) {
         $arealimit = $arealimit > 0 ? $arealimit : 1;
         if (($validnum <= 0) && ($areanum >= $arealimit * $areaadd)) {
@@ -115,11 +105,6 @@ function gamestate_try_stop_valid() {
 function gamestate_try_combo() {
     global $gamestate, $now, $alivenum, $combolimit;
     global $combonum, $deathnum, $deathlimit, $validnum, $deathdeno, $deathnume;
-
-    // OBLIVIONS 模式：单人模式不需要连斗机制
-    if (oblivions_is_active()) {
-        return false;
-    }
 
     // 条件1：停止激活时玩家数少于特定值 / Condition 1: players below threshold during stop
     if ($gamestate < 40 && $gamestate > 20 && $alivenum <= $combolimit) {
@@ -160,12 +145,6 @@ function gamestate_try_anti_afk() {
 // 判定游戏结束 / Check game over
 function gamestate_try_gameover() {
     global $gamestate, $db, $tablepre, $alivenum;
-
-    // OBLIVIONS 模式：游戏不自动结束，死亡/人数不足均不触发 gameover
-    // 仅 GM 中止或玩家退出房间可终止游戏
-    if (oblivions_is_active()) {
-        return false;
-    }
 
     if ($gamestate >= 40) {
         $result = $db->query("SELECT pid FROM {$tablepre}players WHERE hp>0 AND type=0");

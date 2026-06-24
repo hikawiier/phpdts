@@ -36,6 +36,21 @@ function obl_get_range_fix(&$actor_data, $basic_range)
     return $basic_range;
 }
 
+/**
+ * 获取对象的先攻属性
+ *
+ * 阶段一：返回 50。
+ * 未来可扩展：技能补正。
+ *
+ * @param array &$actor_data 对象数据
+ * @return int 先攻属性
+ */
+function obl_get_initiative(&$actor_data)
+{
+    $basic_initiative = 50;
+    return $basic_initiative;
+}
+
 function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
 {
     //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值

@@ -17,11 +17,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // - 持久化统一由调用方负责（common.inc.php 末尾 / obl_command.php 显式调用）
 //   tick 模块只修改内存中的 $gamevars，通过 $ginfochange 标记通知调用方
 // ================================================================
-
-// 依赖：玩家数据抓取（obl_resolve_tick_events 入口需要）
-if (!function_exists('obl_fetch_playerdata_by_name')) {
-    include_once GAME_ROOT . './oblivions/include/game/player.func.php';
-}
+// 依赖：player.func.php + enemy_ai.func.php（由 obl_bootstrap.php 统一加载）
 
 #=============================================================================
 # 模块 1：标记管理
@@ -267,7 +263,8 @@ function obl_tick_dispatch($delta, &$ctx) {
 
     try {
         // 阶段 1：战斗 NPC 先攻轮（串行，最多 1 个监听器请求推进）
-        foreach (obl_tick_get_listeners('battle_npc') as $cb) {
+        $battle_npc_listeners = obl_tick_get_listeners('battle_npc');
+        foreach ($battle_npc_listeners as $cb) {
             call_user_func_array($cb, array(&$delta, &$ctx));
             if (obl_tick_consume_advance()) {
                 $ctx['advanced'] = true;
@@ -364,10 +361,7 @@ $GLOBALS['obl_tick_listeners'] = array(
     'post'       => array(),
 );
 
-// 加载监听器实现（enemy_ai.func.php 定义两个内置监听器）
-if (!function_exists('obl_tick_phase_battle_npc')) {
-    include_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
-}
+// 加载监听器实现（enemy_ai.func.php 定义两个内置监听器，由 obl_bootstrap.php 统一加载）
 
 // 注册内置监听器
 obl_tick_register_listener('battle_npc', 'obl_tick_phase_battle_npc');

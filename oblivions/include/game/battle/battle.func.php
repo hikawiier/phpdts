@@ -8,7 +8,8 @@ if (!defined('IN_GAME')) {
 // 功能函数负责实现战斗系统的具体功能
 // ================================================================
 
-include_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php'; //包含战斗系统数值计算函数文件
+// 依赖声明（由 obl_bootstrap.php 统一加载，此处 require_once 仅作自文档化）
+require_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php';
 
 function battle_state_init(&$actor_data)
 {
@@ -48,39 +49,60 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log)
     #根据$combatants和先攻率排序创建先攻队列
     #创建后的先攻队列保存到数据库，数据结构参考oblqueue.sql
     #将先攻队列中包含的每个参战者的bid修改为先攻队列的唯一索引qid
-    global $db, $tablepre;
+    global $db, $tablepre, $obl_error_log;
 
     # 生成新的 qid（MAX+1，保证唯一）
     $result = $db->query("SELECT MAX(qid) AS max_qid FROM {$tablepre}oblqueue");
     $row = $db->fetch_array($result);
     $qid = $row && $row['max_qid'] ? (int)$row['max_qid'] + 1 : 1;
 
-    # 判断突袭标记：突袭者强制 myorder=1，其他人随机顺位
-    $ambush_flag = !empty($actor_data['oblpara']['ambush_flag']);
+    # 计算先攻顺位（基于先攻属性投掷 + ambush_flag 强制顺位 1）
+    $initiative_result = battle_calc_initiative($actor_data, $combatants);
 
-    # 为每个参战者计算先攻顺位并插入队列
-    foreach ($combatants as $pid) {
+    # 记录先攻计算 debug 日志（含 is_ambush 标记，体现强制顺位信息）
+    $ambush_pid = !empty($actor_data['oblpara']['ambush_flag']) ? (int)$actor_data['pid'] : 0;
+    if ($obl_battle_log) {
+        $obl_battle_log->emit([
+            'actor_pid'   => (int)$actor_data['pid'],
+            'actor_type'  => (int)$actor_data['type'],
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => 'initiative.roll',
+            'extra'       => [
+                'qid' => $qid,
+                'rolls' => $initiative_result,
+                'ambush_pid' => $ambush_pid,
+            ],
+        ]);
+    }
+
+    # 为每个参战者插入队列记录
+    foreach ($initiative_result as $r) {
+        $pid = $r['pid'];
+
         # 获取参战者 type
         if ($pid == $actor_data['pid']) {
             $type = $actor_data['type'];
         } else {
             $combatant_data = obl_fetch_playerdata_by_pid($pid);
-            if (!$combatant_data) continue;
+            if (!$combatant_data) {
+                if (isset($obl_error_log) && $obl_error_log) {
+                    $obl_error_log->emit('queue_create.combatant_not_found', array(
+                        'actor_pid' => (int)$actor_data['pid'],
+                        'missing_pid' => (int)$pid,
+                        'qid' => $qid,
+                    ), 'command');
+                }
+                continue;
+            }
             $type = $combatant_data['type'];
         }
 
         # 清理该 pid 的旧队列记录（避免 PRIMARY KEY 冲突，保证一个 pid 同时只在一个队列中）
         $db->query("DELETE FROM {$tablepre}oblqueue WHERE pid = " . (int)$pid);
 
-        # 计算先攻顺位：突袭者强制为 1，其他人随机 2~100
-        if ($ambush_flag && $pid == $actor_data['pid']) {
-            $myorder = 1;
-        } else {
-            $myorder = mt_rand(2, 100);
-        }
-
         # 插入队列记录（qorder=0 表示还没人执行过，done=0 表示未行动）
-        $db->query("INSERT INTO {$tablepre}oblqueue (pid, qid, type, qorder, myorder, done) VALUES (" . (int)$pid . ", " . (int)$qid . ", " . (int)$type . ", 0, " . (int)$myorder . ", 0)");
+        $db->query("INSERT INTO {$tablepre}oblqueue (pid, qid, type, qorder, myorder, done) VALUES (" . (int)$pid . ", " . (int)$qid . ", " . (int)$type . ", 0, " . (int)$r['myorder'] . ", 0)");
 
         # 更新参战者的 bid 为 qid
         if ($pid == $actor_data['pid']) {
@@ -91,7 +113,12 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log)
         }
     }
 
-    # 保存动作发起者（bid 已修改）
+    # 清除 ambush_flag（一次性，先攻判定使用完毕）
+    if (isset($actor_data['oblpara']['ambush_flag'])) {
+        unset($actor_data['oblpara']['ambush_flag']);
+    }
+
+    # 保存动作发起者（bid 已修改，ambush_flag 已清除）
     obl_save_player($actor_data);
 
     # 记录日志（DEBUG：先攻队列创建）
@@ -102,9 +129,98 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log)
             'target_pid'  => 0,
             'target_type' => -1,
             'action_id'   => 'queue_create',
-            'extra'       => ['qid' => $qid, 'combatants' => $combatants, 'ambush' => $ambush_flag],
+            'extra'       => ['qid' => $qid, 'combatants' => $combatants],
         ]);
     }
+}
+
+/**
+ * 计算先攻顺位
+ *
+ * 先攻率计算规则：
+ * - 参战者投掷随机数 1~自己的先攻属性（obl_get_initiative，默认 50）
+ * - 根据投掷结果决定先攻顺位（平局时取先攻属性更高者，再平局直接取玩家）
+ * - ambush_flag=true 的参战者强制顺位 1，不参与投掷
+ *
+ * @param array &$actor_data 突袭者数据（含 ambush_flag）
+ * @param array $combatants  参战者 PID 数组
+ * @return array 排序后的先攻顺位数组 [['pid' => int, 'myorder' => int, 'roll' => int, 'initiative' => int, 'type' => int, 'is_ambush' => bool], ...]
+ */
+function battle_calc_initiative(&$actor_data, $combatants) {
+    global $obl_error_log;
+    $rolls = array();
+    $ambush_pid = !empty($actor_data['oblpara']['ambush_flag']) ? (int)$actor_data['pid'] : 0;
+
+    foreach ($combatants as $pid) {
+        if ($pid == $ambush_pid) {
+            # 突袭者强制顺位 1，不参与投掷
+            $rolls[] = array(
+                'pid' => (int)$pid,
+                'roll' => 0,
+                'initiative' => 0,
+                'type' => (int)$actor_data['type'],
+                'is_ambush' => true,
+            );
+            continue;
+        }
+
+        # 获取参战者数据
+        if ($pid == $actor_data['pid']) {
+            $combatant_data = &$actor_data;
+        } else {
+            $combatant_data = obl_fetch_playerdata_by_pid($pid);
+            if (!$combatant_data) {
+                if (isset($obl_error_log) && $obl_error_log) {
+                    $obl_error_log->emit('initiative_calc.combatant_not_found', array(
+                        'actor_pid' => (int)$actor_data['pid'],
+                        'missing_pid' => (int)$pid,
+                    ), 'command');
+                }
+                continue;
+            }
+        }
+
+        $initiative = obl_get_initiative($combatant_data);
+        $roll = mt_rand(1, $initiative);
+        $type = (int)$combatant_data['type'];
+
+        $rolls[] = array(
+            'pid' => (int)$pid,
+            'roll' => $roll,
+            'initiative' => $initiative,
+            'type' => $type,
+            'is_ambush' => false,
+        );
+    }
+
+    # 排序：突袭者优先 → 投掷值降序 → 先攻属性降序 → 玩家优先
+    usort($rolls, function($a, $b) {
+        # 突袭者强制第一
+        if ($a['is_ambush'] && !$b['is_ambush']) return -1;
+        if (!$a['is_ambush'] && $b['is_ambush']) return 1;
+
+        # 投掷值降序
+        if ($a['roll'] !== $b['roll']) return $b['roll'] - $a['roll'];
+
+        # 先攻属性降序
+        if ($a['initiative'] !== $b['initiative']) return $b['initiative'] - $a['initiative'];
+
+        # 玩家优先（type=0）
+        if ($a['type'] == 0 && $b['type'] != 0) return -1;
+        if ($a['type'] != 0 && $b['type'] == 0) return 1;
+
+        return 0;
+    });
+
+    # 分配 myorder（从 1 开始递增）
+    $result = array();
+    $myorder = 1;
+    foreach ($rolls as $r) {
+        $r['myorder'] = $myorder++;
+        $result[] = $r;
+    }
+
+    return $result;
 }
 
 function battle_queue_join(&$actor_data, $qid, &$obl_battle_log)

@@ -10,6 +10,7 @@ require GAME_ROOT.'./include/core/entrypoint.php';
 
 // Oblivions 模式：独立入口，处理全部 Oblivions 命令流程
 if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+	require_once GAME_ROOT.'./oblivions/include/core/obl_bootstrap.php';
 	require GAME_ROOT.'./oblivions/include/core/obl_command.php';
 	exit;
 }

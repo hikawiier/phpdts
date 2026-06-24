@@ -278,6 +278,62 @@ normal（探索）←→ battle（战斗）
 
 **设计理由**：防止前端在错误状态下提交命令，后端强制兜底。
 
+### 2.11 属性获取接口为技能系统拓展预留
+
+战斗系统的属性获取函数（`obl_get_range` / `obl_get_initiative` 等）采用"基础值 + 补正"模式，阶段一返回固定默认值，未来通过技能系统扩展：
+
+- `obl_get_range($actor_data)`：基础射程 1（近战），未来由武器类型 + 技能补正决定
+- `obl_get_initiative($actor_data)`：基础先攻属性 50，未来由技能提供 buff/补正决定
+
+**关键设计原则**：NPC 的属性差异不通过配置文件硬编码，而是通过技能系统实现。例如想让 NPC 有更多射程、更多先攻，就给该 NPC 配置一个增加射程/先攻的技能，而不是在 `enemies_config.php` 中写死属性值。
+
+**设计理由**：
+- 技能系统是统一的属性扩展入口，避免属性配置分散在多处
+- NPC 与玩家共用同一套属性获取接口，技能效果对双方一致
+- 新增 NPC 类型时只需配置技能组合，无需修改属性获取逻辑
+
+### 2.12 新文件必须注册到 obl_bootstrap
+
+Oblivions 子系统采用统一入口 `oblivions/include/core/obl_bootstrap.php` 集中加载所有函数库，按拓扑排序分 8 层 require_once：
+
+- 第 0 层  obl_global.func.php（公共函数，最先加载）
+- 第 1 层  log / battle_log / sql / player / move / generate / battle.calc / skill
+- 第 2 层  vision（依赖 obl_global + player + move + log）
+- 第 3 层  battle.func（依赖第 1-2 层）
+- 第 4 层  battle.main（依赖第 1-3 层）
+- 第 5 层  explore / enemy_ai（依赖 vision + battle）
+- 第 6 层  tick（依赖最广，末尾注册监听器）
+- 第 7 层  gamectl/init.func.php（游戏初始化）
+- 第 8 层  gamectl/state.func.php（游戏状态机）
+
+**强制约定**：
+- 新增任何 `.func.php` / `.main.php` 文件，必须在 `obl_bootstrap.php` 中对应层级注册
+- 注册时需找到正确的层级：被依赖的文件在前，依赖方在后
+- `function_exists + include_once` 双保险模式已废弃，统一走 bootstrap
+
+**设计理由**：
+- PHP 是动态语言，函数未定义只在运行时报错，编译期无提示
+- 集中注册使依赖关系可见，避免散落的条件 include 导致漏加载
+
+### 2.13 后端日志 ID 必须有前端模板对应
+
+Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前端有对应的渲染模板，否则前端会静默失败（渲染为空或 undefined），不会报错，非常难排查：
+
+| 日志系统 | 后端 emit 位置 | 前端模板文件 | 模板格式 |
+|---------|---------------|------------|---------|
+| `obl_log`（结构化日志） | `$obl_log->emit($id, ...)` | `vex-vue/src/data/log-templates.ts` | `{ id: { render(params) { return '...' } } }` |
+| `obl_battle_log`（战斗日志） | `$obl_battle_log->emit($action_id, ...)` | `vex-vue/src/data/battle-templates.ts` | `{ action_id: { render(entry) { return '...' } } }` |
+| `obl_error_log`（错误日志） | `$obl_error_log->emit($id, ...)` | 前端错误渲染逻辑 | 按 ID 分发渲染 |
+
+**强制约定**：
+- 后端新增任何日志 ID 时，必须同步在对应前端模板文件中添加渲染函数
+- ID 命名使用点号分隔（如 `initiative.roll`），前后端必须完全一致
+- 如果该日志不需要前端渲染（如纯 debug），仍需在模板中注册返回空字符串的 render 函数
+
+**设计理由**：
+- 曾因 `initiative.roll`（后端）vs `initiative_roll`（前端）命名不一致导致静默失败
+- 跨层一致性是前后端分离架构的常见坑，强制约定可避免遗漏
+
 ---
 
 ## 三、缓存目录结构
@@ -298,30 +354,6 @@ oblivions/cache/
 - 每个 `*_persist` 函数和锁文件路径都有 `is_dir + @mkdir` 保护，避免目录缺失导致 bug
 - 游戏重置时（`rs_game()` 钩子）自动清理，日常依赖条目上限自然轮转
 - `.htaccess` 防止直接访问（锁文件有 `die` 保护，但 json/jsonl 文件可被直接读取）
-
----
-
-## 四、相关设计文档
-
-### 已完成任务设计案
-
-| 文档 | 核心内容 |
-|------|---------|
-| [结构化日志系统设计案.md](./docs/已完成任务/结构化日志系统设计案.md) | OblivionsLogger + emit/持久化/前端模板渲染 |
-| [Oblivions_日志系统debug分类设计案.md](./docs/已完成任务/Oblivions_日志系统debug分类设计案.md) | debug 日志 ID 清单 + 前端 [DBG] 前缀 |
-| [战斗系统设计案.md](./docs/已完成任务/战斗系统设计案.md) | 先攻轮机制 + 战斗状态管理 |
-| [战斗演出系统设计案.md](./docs/已完成任务/战斗演出系统设计案.md) | 三阶段播放 + BattleModal + 超时兜底 |
-| [battle_log重构设计案.md](./docs/已完成任务/battle_log重构设计案.md) | played 标记机制 + 零依赖 mark 接口 |
-| [Oblivions玩家系统与游戏刻机制设计案.md](./docs/已完成任务/Oblivions玩家系统与游戏刻机制设计案.md) | 独立数据层 + tick 推进 + 监听器 |
-| [游戏刻机制设计案.md](./docs/已完成任务/游戏刻机制设计案.md) | tick 模块拆分 + 三阶段调度 |
-| [Tick模块拆分 + 监听器机制设计方案.md](./docs/Tick模块拆分 + 监听器机制设计方案.md) | 监听器注册 + battle_npc/idle_npc/post 三阶段 |
-| [Oblivions_NPC敌人系统设计案.md](./docs/已完成任务/Oblivions_NPC敌人系统设计案.md) | NPC 生成 + AI 决策 + 碰撞战斗 |
-| [探索与交互系统设计.md](./docs/已完成任务/探索与交互系统设计.md) | 探索/搜索/拾取/丢弃核心逻辑 |
-| [建筑物与道具系统设计.md](./docs/已完成任务/建筑物与道具系统设计.md) | POI 模板 + 掉落表 + 机制分发 |
-| [Toast即时反馈系统设计案.md](./docs/已完成任务/Toast即时反馈系统设计案.md) | 前端 Toast 白名单触发 |
-| [obl_tick_pending_npc 前端优化设计案.md](./docs/obl_tick_pending_npc 前端优化设计案.md) | pendingNpc 锁 + 轮询 + game:npc-settled 事件 |
-| [错误日志迁移执行方案.md](./docs/错误日志迁移执行方案.md) | OblivionsErrorLogger + command.rejected 渲染 |
-| [缓存路径迁移设计案.md](./docs/缓存路径迁移设计案.md) | vex/cache → oblivions/cache 子目录分类 |
 
 ---
 

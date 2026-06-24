@@ -16,7 +16,7 @@ require_once './include/core/entrypoint.php';
 // 玩家认证（统一入口骨架）/ Player authentication (unified entrypoint)
 // Oblivions 模式：使用 oblplayers 独立数据层
 if (function_exists('oblivions_is_active') && oblivions_is_active()) {
-	require_once GAME_ROOT.'./oblivions/include/game/player.func.php';
+	require_once GAME_ROOT.'./oblivions/include/core/obl_bootstrap.php';
 	$pdata = obl_game_entrypoint('api');
 
 	// TODO: battle 状态防呆校验待重新实现（旧 obl_validate_battle_state 已随 tick 模块重构删除）
