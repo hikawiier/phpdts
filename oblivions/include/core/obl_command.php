@@ -78,6 +78,20 @@ if (!$command_rejected
     }
 }
 
+// [C2c] 战斗状态机：玩家在 WAITING_PLAYER 状态提交战斗命令时，触发 player_command 事件
+// 状态转换：WAITING_PLAYER → PLAYER_ACTING
+// 仅对推进 tick 的战斗命令生效（obl_battle_action 等），非推进命令不改变状态
+if (!$command_rejected
+    && function_exists('obl_command_advances_tick')
+    && obl_command_advances_tick($command)) {
+    $player_qid = (int)$pdata['bid'];
+    if ($player_qid > 0
+        && function_exists('obl_battle_state_get')
+        && obl_battle_state_get($player_qid) === OBL_BS_WAITING_PLAYER) {
+        obl_battle_state_transition($player_qid, 'player_command');
+    }
+}
+
 // [D] 路由分发（跳过传统预检查：眩晕/冷却/对话框/追击/物品索引）
 if (!$command_rejected && $pdata['hp'] > 0) {
 	require GAME_ROOT.'./include/command/router_helpers.php';
@@ -107,6 +121,9 @@ if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) 
 
 // [F-pre] 游戏刻推进准备：处理 escape_skip_tick 标志
 // 逃跑成功时设置此标志，跳过本次命令的 tick 推进（一次性）
+// 注意：状态机重构后，逃跑成功会触发 battle_end 事件销毁状态记录，
+//       tick 推进时 obl_tick_phase_battle_npc 不会找到已销毁的战场，故此标志不再必需。
+//       保留读取逻辑以兼容未来可能的设置点。
 $escape_skip_tick = !empty($pdata['oblpara']['escape_skip_tick']);
 if ($escape_skip_tick) {
     // 清除标志（一次性，仅跳过本次命令的 tick 推进）
@@ -126,6 +143,17 @@ if (!$command_rejected && !$escape_skip_tick
     && obl_command_advances_tick($command)) {
     obl_tick_advance();             // obl_tick++ + 标记 $ginfochange（只改内存）
     obl_tick_set_pending_npc();     // 设置 NPC 待结算标志，锁定玩家操作
+
+    // [F-bs] 战斗状态机：感知 tick 推进
+    // 状态转换：PLAYER_ACTING → NPC_ACTING
+    // 仅当玩家在战场中且当前状态为 PLAYER_ACTING 时触发
+    $player_qid = (int)$pdata['bid'];
+    if ($player_qid > 0
+        && function_exists('obl_battle_state_get')
+        && obl_battle_state_get($player_qid) === OBL_BS_PLAYER_ACTING) {
+        obl_battle_state_transition($player_qid, 'tick_advanced');
+    }
+
     save_gameinfo();                // 命令路径需显式持久化（无 common 末尾兜底）
 }
 

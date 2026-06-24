@@ -32,6 +32,19 @@ function obl_fetch_queue_all_by_qid($qid)
     return $rows;
 }
 
+function obl_fetch_queue_pids_by_qid($qid)
+{
+    # 通过 qid 查找数据库中对应先攻队列，返回由所有参战者 pid 构成的数组
+    # 输入先攻队列唯一索引 qid，输出 pid 数组；如果 qid 不存在，返回空数组
+    global $db, $tablepre;
+    $result = $db->query("SELECT pid FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid);
+    $pids = array();
+    while ($row = $db->fetch_array($result)) {
+        $pids[] = $row['pid'];
+    }
+    return $pids;
+}
+
 function obl_fetch_queue_by_pid($pid)
 {
     # 获取某 pid 的队列记录（单行），如果该 pid 不在任何先攻队列中，返回 false
@@ -73,4 +86,11 @@ function obl_fetch_queue_count_by_qid($qid)
     $result = $db->query("SELECT COUNT(*) AS cnt FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid);
     $row = $db->fetch_array($result);
     return $row ? (int)$row['cnt'] : 0;
+}
+
+function obl_update_queue_done($pid, $qid, $done)
+{
+    # 更新某 pid 在某 qid 的 done 标记，输入先攻队列唯一索引 qid，输出整数
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblqueue SET done = " . (int)$done . " WHERE pid = " . (int)$pid . " AND qid = " . (int)$qid);
 }

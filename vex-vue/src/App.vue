@@ -112,6 +112,12 @@ onMounted(async () => {
     playerStore.loadPlayerInfo(true),
     mapStore.loadMap(),
   ]);
+
+  // 刷新页面后若处于战斗中，调用 refreshBattle 进入战斗模式
+  // （刷新时无事件触发 refreshBattle，需主动调用一次）
+  if (playerStore.isInBattle) {
+    await battleStore.refreshBattle();
+  }
 });
 
 onUnmounted(() => {

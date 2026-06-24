@@ -76,6 +76,13 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 
 		# 当前顺位者是玩家 → 不执行 NPC 先攻轮（等待玩家提交 obl_battle_action）
 		if ($current['type'] == 0) {
+			# 战斗状态机：顺位回到玩家，触发 npc_done_player_turn 事件
+			# 状态转换：NPC_ACTING → WAITING_PLAYER
+			# 仅当当前状态为 NPC_ACTING 时触发（避免非法转换）
+			if (function_exists('obl_battle_state_get')
+			    && obl_battle_state_get($qid) === OBL_BS_NPC_ACTING) {
+				obl_battle_state_transition($qid, 'npc_done_player_turn');
+			}
 			continue;
 		}
 
@@ -96,6 +103,24 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 
 		# 调用 battle_main（内部会更新先攻队列）
 		battle_main($npc_data, $atk_act, $obl_battle_log);
+
+		# 战斗状态机：NPC 行动完成后，根据战斗是否结束 + 顺位判断状态转换
+		# battle_main 内部可能触发队列解散（bid=0）或重建（保持原状态）
+		if (empty($npc_data['bid'])) {
+			# 战斗已结束（NPC 被击杀或玩家逃跑）
+			# battle_finish_check / battle_queue_update 会触发 battle_end 事件并销毁状态记录
+			# 此处不重复触发
+		} else {
+			# 战斗继续，检查下一个顺位
+			$next = obl_fetch_queue_current_initiator($qid);
+			if ($next && $next['type'] == 0) {
+				# 顺位回到玩家 → WAITING_PLAYER
+				obl_battle_state_transition($qid, 'npc_done_player_turn');
+			} else {
+				# 顺位仍是 NPC → NPC_ACTING（循环，刷新 updated_at）
+				obl_battle_state_transition($qid, 'npc_done_npc_turn');
+			}
+		}
 
 		# 请求推进 tick（由调度器末尾统一推进，替代旧的 $obl_tick_advanced 引用传递）
 		obl_tick_request_advance();

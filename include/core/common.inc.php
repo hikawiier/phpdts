@@ -343,6 +343,19 @@ if(CURSCRIPT !== 'chat')
 		obl_tick_synchronize();
 		// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
 		obl_resolve_tick_events($delta);
+
+		// 战斗状态机超时恢复：检测卡在 NPC_ACTING 状态超过 30 秒的战场
+		// 场景：NPC 行动已完成但状态未更新（如异常退出、逻辑遗漏）
+		// 恢复策略：降级到 WAITING_PLAYER（假设 NPC 行动已完成）
+		if (function_exists('obl_battle_state_find_stale')) {
+			$stale_qids = obl_battle_state_find_stale(30, OBL_BS_NPC_ACTING);
+			foreach ($stale_qids as $stale_qid) {
+				if (function_exists('obl_battle_state_reset')) {
+					obl_battle_state_reset($stale_qid, OBL_BS_WAITING_PLAYER);
+				}
+			}
+		}
+
 		$ginfochange = true;  // 触发 save_gameinfo() 持久化 obl_tick/obl_pretick
 	}
 

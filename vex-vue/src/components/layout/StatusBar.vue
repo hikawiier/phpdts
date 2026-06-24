@@ -19,6 +19,7 @@ import { useBattleStore } from '@/stores/battle';
 import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { getPlaceName } from '@/utils/format';
+import type { BattleState } from '@/types/api';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
@@ -80,7 +81,20 @@ const tickText = computed(() => {
 
 const tickPending = computed(() => playerStore.oblTick > playerStore.oblPretick);
 
-// ── NPC 待结算提示（commandQueue.pendingNpc 响应式） ──
+// ── 战斗状态机调试显示 ──
+const battleStateText = computed(() => {
+  const state = playerStore.oblBattleState;
+  const stateMap: Record<BattleState, string> = {
+    IDLE: '空闲',
+    PLAYER_ACTING: '玩家行动',
+    NPC_ACTING: 'NPC行动',
+    WAITING_PLAYER: '等待玩家',
+    ENDED: '战斗结束',
+  };
+  return stateMap[state] || state;
+});
+
+// ── NPC 待结算提示（由状态机派生，NPC_ACTING 状态时显示） ──
 // 非 debug 模式下显示"NPC 行动中…"轻量提示；debug 模式下由 tick 调试信息覆盖
 const npcPending = computed(() => commandQueue.pendingNpc);
 
@@ -118,8 +132,8 @@ function onAvatarError(): void {
         <span
           class="status-tick-debug"
           :class="{ pending: tickPending }"
-          title="obl_tick / obl_pretick — 两者相等时NPC AI不触发"
-        >{{ tickText }}</span>
+          title="obl_tick / obl_pretick — 两者相等时NPC AI不触发 | obl_battle_state"
+        >{{ tickText }} | {{ battleStateText }}</span>
         <div class="bar-container">
           <div
             class="bar-fill hp"

@@ -181,10 +181,18 @@ function onTargetSelect(data: unknown): void {
   if (!aimMode.value || !pendingActId.value) return;
   const pid = typeof data === 'number' ? data : (data as { pid?: number })?.pid;
   if (typeof pid !== 'number') return;
-  // 更新 enemyPid，供 UI 显示当前瞄准的敌人
-  enemyPid.value = pid;
+  // 不再写入 enemyPid：避免污染后续技能的目标选择
+  // enemyPid 只应由 initPreloadArea 设置（来自 battleStore.currentEnemyPid）
+  // 瞄准选中的 pid 直接传入 addToQueue，用完即弃
   addToQueue(pendingActId.value, pid);
   exitAimMode();
+}
+
+/** 瞄准模式退出（监听 battle:aim-exit 事件，如 ESC 退出） */
+function onAimExit(): void {
+  // 同步重置瞄准状态（AimMode 组件已广播 battle:aim-exit，本组件需同步状态）
+  aimMode.value = false;
+  pendingActId.value = null;
 }
 
 // ══════════════════════════════════════════════════
@@ -265,17 +273,21 @@ function onBattleEnded(): void {
   queue.value = [];
   aimMode.value = false;
   pendingActId.value = null;
+  enemyPid.value = 0;
+  playerPid.value = 0;
 }
 
 onMounted(() => {
   dataManager.listen('battle:preload-init', onPreloadInit);
   dataManager.listen('battle:aim-target-selected', onTargetSelect);
+  dataManager.listen('battle:aim-exit', onAimExit);
   dataManager.listen('battle:ended', onBattleEnded);
 });
 
 onUnmounted(() => {
   dataManager.unlisten('battle:preload-init', onPreloadInit);
   dataManager.unlisten('battle:aim-target-selected', onTargetSelect);
+  dataManager.unlisten('battle:aim-exit', onAimExit);
   dataManager.unlisten('battle:ended', onBattleEnded);
 });
 

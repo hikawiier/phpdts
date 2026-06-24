@@ -5,12 +5,14 @@ if (!defined('IN_GAME')) {
 
 # 技能配置文件
 # 基础结构：ID => [
-#     'apcost'        => AP消耗（默认0）
+#     'maxlvl'        => 最大等级（默认1）
+#     'effect'        => 每等级对应效果（array，对应每级的效果）
+##    'apcost'        => AP消耗（默认0）
 #     'cd'            => 冷却回合数（默认0，0=无CD）
 #     'target'        => 目标类型：self/enemy/all/tiles（默认self）
 #     'range_bonus'   => 射程补正（默认0）
 #     'lifetime'      => 生命周期：permanent/equipment/effect（默认permanent）
-#     'category'      => 分类：attack/escape/utility（默认utility）
+#     'category'      => 分类：attack/escape/utility/passive（默认utility）
 #     'damage_type'   => 伤害类型：physical/magical/none（默认none）
 #     'damage_factor' => 伤害系数（att × factor，默认0）
 # ]
@@ -37,5 +39,19 @@ return [
         'category'      => 'escape',
         'damage_type'   => 'none',
         'damage_factor' => 0,
+    ],
+    # ── 工具类 ──────────────────────────────
+    'heal' => [
+        'maxlvl'        => 7,
+        'effect'        => [1,2,3,4,5,6,7],
+        'lifetime'      => 'permanent',
+        'category'      => 'utility',
+    ],
+    # ── 被动类 ──────────────────────────────  
+    'wep_range' => [
+        'maxlvl'        => 7,
+        'effect'        => [1,2,3,4,5,6,7],
+        'lifetime'      => 'equipment',
+        'category'      => 'passive',
     ],
 ];

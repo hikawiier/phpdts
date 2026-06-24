@@ -41,8 +41,29 @@ export interface PlayerInfo {
   obl_pretick: number; // 上一次 tick（数字类型）
   /** NPC 待结算标志：true 表示 NPC 事件未结算完，前端应等待（api_v2.php:205） */
   obl_tick_pending_npc: boolean;
+  /**
+   * 战斗状态机：当前玩家所在战场的状态（单一数据源）
+   * 替代 pending_npc + playerTurn 组合判断
+   */
+  obl_battle_state: BattleState;
   equipment: Record<string, EquipmentSlot | null>;
 }
+
+/**
+ * 战斗状态机枚举
+ *
+ * - IDLE：无活跃战斗
+ * - PLAYER_ACTING：玩家行动中（命令处理中，tick 即将推进）
+ * - NPC_ACTING：NPC 行动中（tick 事件处理中，前端应轮询）
+ * - WAITING_PLAYER：等待玩家操作（前端停止轮询，启用操作）
+ * - ENDED：战斗结束（待清理）
+ */
+export type BattleState =
+  | 'IDLE'
+  | 'PLAYER_ACTING'
+  | 'NPC_ACTING'
+  | 'WAITING_PLAYER'
+  | 'ENDED';
 
 /** 先攻队列（player_info.battle_queue） */
 export interface BattleQueue {

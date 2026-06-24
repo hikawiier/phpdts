@@ -203,6 +203,11 @@ function handle_player_info() {
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
         // NPC 待结算标志：true 表示 NPC 事件未结算完，前端应等待（可用于动画播放时机判定）
         'obl_tick_pending_npc' => !empty($gamevars['obl_tick_pending_npc']),
+        // 战斗状态机：当前玩家所在战场的状态（单一数据源，替代 pending_npc + playerTurn 组合判断）
+        // IDLE/PLAYER_ACTING/NPC_ACTING/WAITING_PLAYER/ENDED
+        'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
+            ? obl_battle_state_get((int)$pdata['bid'])
+            : 'IDLE',
 
         // 装备信息 / Equipment（7 槽 × 6 字段）
         'equipment' => array(

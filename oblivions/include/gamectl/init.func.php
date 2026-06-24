@@ -72,7 +72,7 @@ function obl_init_tables() {
     global $db, $tablepre;
     $sqldir = GAME_ROOT . './oblivions/sql/';
 
-    $tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql', 'oblplayers.sql', 'oblqueue.sql'];
+    $tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql', 'oblplayers.sql', 'oblqueue.sql', 'oblbattle_state.sql'];
     foreach ($tables as $file) {
         $sql = file_get_contents($sqldir . $file);
         // 与 rs_reset_social() 一致：CR→LF，再替换表前缀

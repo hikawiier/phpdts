@@ -1,31 +1,25 @@
 // ══════════════════════════════════════════════════
-// 命令队列 + 防抖 + NPC 待结算锁
+// 命令队列 + 防抖 + 战斗状态机锁
 //
 // 替代现有 vex/js/command-queue.js 的 CommandQueue 单例。
 // 防止快速连续点击导致重复提交，支持冷却时间。
 //
-// 扩展（obl_tick_pending_npc 优化）：
-//   - 推进 tick 的命令成功后，自动拉取 player_info 检查 pending_npc
-//   - pending_npc=true 时锁定队列（仅阻止推进 tick 的命令），启动 1s 轮询
-//   - pending_npc=false 或超时（10s）时解锁，广播 game:npc-settled 事件
-//   - 避免玩家在 NPC 结算期间重复提交导致 npc_action_pending 错误
-//
-// 现有实现（command-queue.js）：
-//   - _locked: boolean（HTTP 请求锁）
-//   - _cooldown: number（冷却到期时间戳）
-//   - execute(params): 检查锁+冷却 → submitCommand → 处理 timer
-//   - isLocked / remainingCooldown getter
+// 状态机重构（阶段2）：
+//   - 用 obl_battle_state === 'NPC_ACTING' 替代 pendingNpc 锁
+//   - 移除独立轮询定时器（由 battle.ts 统一管理轮询）
+//   - 推进 tick 成功后拉取 player_info 更新状态机，广播 game:tick-advanced
+//     由 battle.ts 响应事件并决定是否启动/停止轮询
+//   - isLocked / pendingNpc getter 直接从 playerStore.oblBattleState 派生
 // ══════════════════════════════════════════════════
 
-import { ref, type Ref } from 'vue';
 import { submitCommand, type CommandResult } from '@/api/client';
 import { dataManager } from '@/stores/data-manager';
 import { useToastStore } from '@/stores/toast';
-import type { PlayerInfo } from '@/types/api';
+import { usePlayerStore } from '@/stores/player';
 
 /**
  * 推进 tick 的命令白名单（与后端 obl_command_advances_tick() 保持一致）
- * 这些命令执行后 NPC 先攻轮会被触发，前端需等待 pending_npc 清除
+ * 这些命令执行后 NPC 先攻轮会被触发，前端需等待 NPC_ACTING 状态清除
  */
 const TICK_ADVANCING_COMMANDS = new Set([
   'move',
@@ -35,30 +29,18 @@ const TICK_ADVANCING_COMMANDS = new Set([
   'obl_battle_action',
 ]);
 
-/** pendingNpc 轮询间隔（毫秒） */
-const PENDING_NPC_POLL_INTERVAL = 1000;
-
-/** pendingNpc 轮询超时（毫秒）— 防止后端异常导致永久锁定 */
-const PENDING_NPC_TIMEOUT = 10000;
-
 class CommandQueue {
   private _locked = false;
   private _cooldown = 0;
-  /** NPC 待结算锁：true 时阻止推进 tick 的命令（响应式 ref，供 UI 绑定） */
-  private _pendingNpc: Ref<boolean> = ref(false);
-  /** pendingNpc 轮询定时器 */
-  private _pendingNpcTimer: ReturnType<typeof setInterval> | null = null;
-  /** pendingNpc 轮询开始时间戳（用于超时兜底） */
-  private _pendingNpcStartTime = 0;
 
   /**
-   * 执行命令（带锁 + 冷却 + pendingNpc 检查）
+   * 执行命令（带锁 + 冷却 + 状态机锁检查）
    *
    * @param params 提交给 command.php 的参数
    * @returns CommandResult（与 submitCommand 返回结构一致）
    *   - HTTP 锁定时返回 { success: false, error: 'LOCKED', message: '操作进行中' }
    *   - 冷却中返回 { success: false, error: 'COOLDOWN', message: '冷却中' }
-   *   - pendingNpc 锁定 + 推进 tick 命令返回 { success: false, error: 'PENDING_NPC', message: 'NPC 行动中，请稍候' }
+   *   - NPC_ACTING 状态 + 推进 tick 命令返回 { success: false, error: 'PENDING_NPC', message: 'NPC 行动中，请稍候' }
    */
   async execute(params: Record<string, string>): Promise<CommandResult> {
     // ── HTTP 请求锁（覆盖单次请求周期） ──
@@ -69,10 +51,10 @@ class CommandQueue {
       return { success: false, error: 'COOLDOWN', message: '冷却中' };
     }
 
-    // ── pendingNpc 锁：仅阻止推进 tick 的命令 ──
+    // ── 状态机锁：NPC_ACTING 状态时阻止推进 tick 的命令 ──
     const command = params.command || '';
     const advancesTick = TICK_ADVANCING_COMMANDS.has(command);
-    if (this._pendingNpc.value && advancesTick) {
+    if (advancesTick && usePlayerStore().oblBattleState === 'NPC_ACTING') {
       useToastStore().showToast(
         'NPC 行动中，请稍候',
         'warning',
@@ -90,9 +72,9 @@ class CommandQueue {
       if (result.timer) {
         this._cooldown = Date.now() + result.timer * 1000;
       }
-      // 成功推进 tick 后检查 pendingNpc（拉取 player_info 触发后端 NPC 先攻轮）
+      // 成功推进 tick 后拉取最新状态并广播事件（由 battle.ts 决定轮询行为）
       if (result.success && advancesTick) {
-        await this._checkPendingNpc();
+        await this._checkBattleState();
       }
       return result;
     } finally {
@@ -101,76 +83,30 @@ class CommandQueue {
   }
 
   /**
-   * 检查 NPC 待结算状态
+   * 推进 tick 后检查战斗状态
    *
    * 拉取 player_info（同时触发后端 common.inc 的 NPC 先攻轮），
-   * 若 pending_npc=true 则启动轮询等待结算。
+   * 更新 playerStore.oblBattleState，然后广播 game:tick-advanced 事件，
+   * 由 battle.ts 响应并决定是否启动/停止轮询。
    */
-  private async _checkPendingNpc(): Promise<void> {
+  private async _checkBattleState(): Promise<void> {
     try {
-      const result = await dataManager.fetch('player_info', true);
-      if (result.status !== 'success' || !result.data) return;
-      const playerInfo = result.data as PlayerInfo;
-      if (playerInfo.obl_tick_pending_npc) {
-        this._startPendingNpcPolling();
-      }
-      // pending_npc=false 时不广播 game:npc-settled（无 true→false 转换）
+      await dataManager.fetch('player_info', true);
+      // 广播事件，由 battle.ts 监听并调用 refreshBattle 决定轮询行为
+      dataManager.broadcast('game:tick-advanced');
     } catch (e) {
-      console.error('[CommandQueue] checkPendingNpc error:', e);
+      console.error('[CommandQueue] checkBattleState error:', e);
     }
   }
 
-  /** 启动 pendingNpc 轮询 */
-  private _startPendingNpcPolling(): void {
-    this._pendingNpc.value = true;
-    this._pendingNpcStartTime = Date.now();
-    if (this._pendingNpcTimer !== null) return; // 已在轮询
-    this._pendingNpcTimer = setInterval(() => {
-      void this._pollPendingNpc();
-    }, PENDING_NPC_POLL_INTERVAL);
-  }
-
-  /** 轮询回调：检测 pending_npc 是否清除 */
-  private async _pollPendingNpc(): Promise<void> {
-    // 超时兜底：强制解锁并广播（防止后端异常导致永久锁定）
-    if (Date.now() - this._pendingNpcStartTime > PENDING_NPC_TIMEOUT) {
-      console.warn('[CommandQueue] pendingNpc 轮询超时，强制解锁');
-      this._stopPendingNpcPolling();
-      dataManager.broadcast('game:npc-settled');
-      return;
-    }
-
-    try {
-      const result = await dataManager.fetch('player_info', true);
-      if (result.status !== 'success' || !result.data) return;
-      const playerInfo = result.data as PlayerInfo;
-      if (!playerInfo.obl_tick_pending_npc) {
-        // NPC 已结算：停止轮询，广播事件通知各 store 刷新
-        this._stopPendingNpcPolling();
-        dataManager.broadcast('game:npc-settled');
-      }
-    } catch (e) {
-      console.error('[CommandQueue] pendingNpc poll error:', e);
-    }
-  }
-
-  /** 停止 pendingNpc 轮询并解锁 */
-  private _stopPendingNpcPolling(): void {
-    this._pendingNpc.value = false;
-    if (this._pendingNpcTimer !== null) {
-      clearInterval(this._pendingNpcTimer);
-      this._pendingNpcTimer = null;
-    }
-  }
-
-  /** 是否锁定中（HTTP 锁或 pendingNpc 锁） */
+  /** 是否锁定中（HTTP 锁或 NPC_ACTING 状态锁） */
   get isLocked(): boolean {
-    return this._locked || this._pendingNpc.value;
+    return this._locked || usePlayerStore().oblBattleState === 'NPC_ACTING';
   }
 
-  /** NPC 是否待结算中（仅 pendingNpc 锁，不含 HTTP 锁） */
+  /** NPC 是否待结算中（NPC_ACTING 状态，由状态机派生，供 UI 绑定） */
   get pendingNpc(): boolean {
-    return this._pendingNpc.value;
+    return usePlayerStore().oblBattleState === 'NPC_ACTING';
   }
 
   /** 剩余冷却时间（毫秒） */
@@ -179,9 +115,9 @@ class CommandQueue {
     return remaining > 0 ? remaining : 0;
   }
 
-  /** 销毁：清理定时器（App.vue onUnmounted 调用） */
+  /** 销毁（轮询由 battle.ts 统一管理，无需清理定时器） */
   destroy(): void {
-    this._stopPendingNpcPolling();
+    // no-op
   }
 }
 

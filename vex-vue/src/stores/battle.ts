@@ -83,24 +83,6 @@ export const useBattleStore = defineStore('battle', () => {
   // ══════════════════════════════════════════════════
 
   /**
-   * 检查玩家是否当前顺位
-   *
-   * 先攻队列中第一个 done=0 的是当前顺位者。
-   * type=0 是玩家，type>0 是 NPC。
-   *
-   * 迁移自现有 vex/js/battle.js checkPlayerTurn()。
-   */
-  function checkPlayerTurn(battleQueue: BattleQueue | null): boolean {
-    if (!battleQueue || !Array.isArray(battleQueue.queue)) return true;
-    for (const item of battleQueue.queue) {
-      if (String(item.done) === '0') {
-        return String(item.type) === '0';
-      }
-    }
-    return true; // 所有人都完成了，默认显示（后端会重新判定）
-  }
-
-  /**
    * 从先攻队列中提取敌人 PID（第一个 type>0 的参战者）
    *
    * 迁移自现有 vex/js/battle.js extractEnemyPid()。
@@ -301,6 +283,12 @@ export const useBattleStore = defineStore('battle', () => {
    * - 本函数负责状态管理（进入/退出战斗模式、启停 NPC 刷新、玩家回合 toast）
    * - fetchAndPlayBattleLog 只负责拉取-播放-标记，不涉及状态判断
    *
+   * 状态机驱动（阶段2重构）：
+   * - 用 obl_battle_state 作为单一数据源决定轮询行为
+   * - PLAYER_ACTING / NPC_ACTING → 继续轮询（NPC 即将/正在行动）
+   * - WAITING_PLAYER → 停止轮询，启用玩家操作
+   * - IDLE / ENDED → 停止轮询
+   *
    * 在 game:action-completed / preload:executed 事件中调用。
    * NPC 顺位时会由 startNpcTurnRefresh 定时循环调用本函数。
    *
@@ -317,6 +305,8 @@ export const useBattleStore = defineStore('battle', () => {
       const playerInfo = result.data as PlayerInfo;
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
+      // 战斗状态机：单一数据源
+      const battleState = playerInfo.obl_battle_state;
 
       // 记录 groomid 和 pid（用于标记接口）
       currentGroomid.value = parseInt(String(playerInfo.groomid)) || 0;
@@ -325,18 +315,17 @@ export const useBattleStore = defineStore('battle', () => {
       if (action === 'battle') {
         // 从先攻队列中提取敌人 PID
         const enemyPid = extractEnemyPid(battleQueue);
-        // 检查先攻队列，判断玩家是否当前顺位
-        const playerTurn = checkPlayerTurn(battleQueue);
+        // 用状态机判断玩家回合（WAITING_PLAYER = 玩家可操作）
+        const playerTurn = battleState === 'WAITING_PLAYER';
         enterBattleMode(enemyPid, playerTurn);
 
-        // NPC 顺位时启动自动刷新循环，玩家顺位时停止
-        // 但若 pending_npc=true（NPC 事件结算中），即使先攻队列显示玩家回合也不停止
-        // （先攻队列可能还未更新，NPC 后续行动需要继续轮询触发 common.inc）
-        const pendingNpc = !!playerInfo.obl_tick_pending_npc;
-        if (playerTurn && !pendingNpc) {
-          stopNpcTurnRefresh();
-        } else {
+        // 用状态机决定轮询行为
+        // PLAYER_ACTING / NPC_ACTING → 继续轮询（tick 即将/正在推进）
+        // WAITING_PLAYER / IDLE / ENDED → 停止轮询
+        if (battleState === 'NPC_ACTING' || battleState === 'PLAYER_ACTING') {
           startNpcTurnRefresh();
+        } else {
+          stopNpcTurnRefresh();
         }
       } else {
         // action='' 战斗已结束
@@ -355,9 +344,8 @@ export const useBattleStore = defineStore('battle', () => {
           const afterInfo = afterResult.data as PlayerInfo;
           const afterAction = afterInfo.action || '';
           if (afterAction === 'battle') {
-            const afterQueue = afterInfo.battle_queue || null;
-            const afterPlayerTurn = checkPlayerTurn(afterQueue);
-            if (afterPlayerTurn) {
+            // 用状态机判断是否轮到玩家
+            if (afterInfo.obl_battle_state === 'WAITING_PLAYER') {
               const toastStore = useToastStore();
               toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
             }
@@ -455,6 +443,10 @@ export const useBattleStore = defineStore('battle', () => {
     // 获取播放上下文（敌人名称+HP 从 API 获取）
     const context = await buildPlayContext(npcPid);
     playContext.value = context;
+
+    // 从 battlelog 重建初始 HP（覆盖战后 API 数据）
+    // battlelog 的 extra 携带 actor_oldhp/target_oldhp，第一条针对该目标的 entry 的 oldhp 即为战前 HP
+    rebuildInitialHpFromEntries(context, excuteEntries);
 
     // 更新战斗 header（敌人名称+位置）
     enemyName.value = context.enemyName;
@@ -567,6 +559,47 @@ export const useBattleStore = defineStore('battle', () => {
     return ctx;
   }
 
+  /**
+   * 从 battlelog 条目重建初始 HP（覆盖战后 API 数据）
+   *
+   * 问题背景：buildPlayContext 通过 refreshContextFromApi 拉取的是战后 HP，
+   * 作为模态框初始 HP 会导致 HP 条时序倒置（先显示战后血量再跳回战中血量）。
+   *
+   * 修复方案：battlelog 的 extra 携带 actor_oldhp/target_oldhp，
+   * 第一条针对该目标的 entry 的 oldhp 即为该目标的战前 HP。
+   *
+   * @param ctx 播放上下文（会被原地修改）
+   * @param entries excute 阶段的 battlelog 条目（按 log_id 升序）
+   */
+  function rebuildInitialHpFromEntries(ctx: BattlePlayContext, entries: BattleLogEntry[]): void {
+    let playerHpSet = false;
+    let npcHpSet = false;
+
+    for (const entry of entries) {
+      if (!entry.extra) continue;
+      const extra = entry.extra as {
+        actor_oldhp?: number;
+        target_oldhp?: number;
+      };
+
+      // 玩家初始 HP：第一条 actor_type=0 的 actor_oldhp
+      if (!playerHpSet && Number(entry.actor_type) === 0 && extra.actor_oldhp !== undefined) {
+        ctx.playerHp = Number(extra.actor_oldhp);
+        playerHpSet = true;
+      }
+
+      // 敌人初始 HP：第一条 target_type>0 的 target_oldhp
+      if (!npcHpSet && Number(entry.target_type) > 0 && extra.target_oldhp !== undefined) {
+        ctx.npcHp = Number(extra.target_oldhp);
+        ctx.enemyHp = ctx.npcHp; // 兼容旧字段
+        npcHpSet = true;
+      }
+
+      // 两方都重建完毕则退出
+      if (playerHpSet && npcHpSet) break;
+    }
+  }
+
   // ══════════════════════════════════════════════════
   // 装填区执行完成后的刷新处理
   // ══════════════════════════════════════════════════
@@ -611,6 +644,11 @@ export const useBattleStore = defineStore('battle', () => {
     });
     dataManager.listen('preload:executed', () => {
       onPreloadExecuted();
+    });
+    // command-queue.ts 推进 tick 成功后广播此事件
+    // 拉取最新状态并决定是否启动/停止 NPC 轮询
+    dataManager.listen('game:tick-advanced', () => {
+      refreshBattle();
     });
   }
 

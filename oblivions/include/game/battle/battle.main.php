@@ -13,16 +13,16 @@ require_once GAME_ROOT . './oblivions/include/game/player.func.php';
 require_once GAME_ROOT . './oblivions/include/game/sql.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
+//突袭入口：前端传入指令 → 玩家ambush → battle_main() → battle_finish_check() → battle_new_turn()
+//缠斗入口：battle_finish_check() → battle_new_turn() → 前端传入指令 → battle_main()
+
 //先攻轮完整流程主函数 $actor_data=先攻者data $atk_act=动作数组（数字索引，每项含 act_id + target）
 function battle_main(&$actor_data, &$atk_act, &$obl_battle_log)
 {
     $battle_cache = []; //先攻轮中会产生的临时变量
-    $battle_cache['combatants'] = array($actor_data['pid']); //收集本次先攻轮中出现的所有参战者，第一个是动作发起者本人
-
-    // 各阶段设置 phase 标识，供前端判断渲染内容
-    // 先攻轮准备函数：恢复AP
-    $obl_battle_log->setPhase('prepare');
-    battle_prepare($actor_data, $battle_cache, $obl_battle_log);
+    // combatants 为关联数组 [pid => status]，status=1存活/0死亡
+    // 动作发起者本人也是参战者，初始状态为 1（存活）
+    $battle_cache['combatants'] = array($actor_data['pid'] => 1); //收集本次先攻轮中出现的所有参战者，第一个是动作发起者本人
 
     //先攻轮校验函数：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
     //现在暂时没生效
@@ -44,12 +44,6 @@ function battle_main(&$actor_data, &$atk_act, &$obl_battle_log)
     $obl_battle_log->setPhase('finish_check');
     battle_finish_check($actor_data, $obl_battle_log, $battle_cache); 
 
-}
-
-function battle_prepare(&$actor_data, &$battle_cache, &$obl_battle_log)
-{
-    //先攻轮准备函数：恢复AP
-    battle_ap_recover($actor_data,$battle_cache,$obl_battle_log); //AP恢复函数
 }
 
 function battle_verify(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
@@ -103,6 +97,10 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
     # 受击目标进入战斗状态（突袭入口的受击目标在此初始化）
     battle_state_init($target_data);
 
+    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑）
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+    skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
+
     // 扣血前保存 HP 快照
     $actor_oldhp  = (int)$actor_data['hp'];
     $target_oldhp = (int)$target_data['hp'];
@@ -111,11 +109,8 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
     $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
     battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
 
-    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑）
-    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-    skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
-
-    // 记录战斗日志（此时 $actor_data['hp']/$target_data['hp'] 已是扣血后的值）
+    // 记录攻击日志（必须在 battle_target_alive_check 之前 emit，确保攻击日志的 log_id 小于击杀日志）
+    // 否则前端按 log_id 升序播放时会先播"战斗结束"再播"攻击伤害"，造成时序错乱
     if ($obl_battle_log) {
         $obl_battle_log->emit([
             'actor_pid'    => (int)$actor_data['pid'],
@@ -133,14 +128,24 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
         ]);
     }
 
+    $survival_flag = battle_target_alive_check($target_data, $obl_battle_log, $battle_cache); //目标存活状态检测，判定死亡，或者复活。如果目标没死，返回true，否则返回false；
+    
+    if ($survival_flag)
+    {
+        //建立参战者队列 ，key为pid，value为1（活着）
+        $battle_cache['combatants'][$target_data['pid']] = 1; //目标还活着的情况下，把目标的pid加入到参战者数组里；
+    }
+    else
+    {
+        //参战者队列里的目标死了，value为0（死亡）
+        if(isset($battle_cache['combatants'][$target_data['pid']])) $battle_cache['combatants'][$target_data['pid']] = 0; 
+    }
+
     //defend_battle_prepare(); //反击策略准备函数
     //defend_battle_verify();  //反击策略校验函数
     //defend_battle_queue_check(); //建立反击策略队列
     //defend_battle_once_excute(); //反击策略单次执行函数
     //反击策略系统暂不实现
-
-    $survival_flag = battle_target_alive_check($target_data,$obl_battle_log,$battle_cache); //目标存活状态检测，判定死亡，或者复活。如果目标没死，返回true，否则返回false；
-    if ($survival_flag) $battle_cache['combatants'][] = $target_data['pid']; //目标还活着的情况下，把目标的pid加入到参战者数组里；
 
     obl_save_player($actor_data); //保存攻击者数据到数据库
     obl_save_player($target_data); //保存目标数据到数据库
@@ -148,15 +153,27 @@ function battle_once_excute(&$actor_data, $act_id, &$target_data, &$obl_battle_l
 
 function battle_queue_check(&$actor_data, &$obl_battle_log, &$battle_cache)
 {
+    # 根据存活状态，把$battle_cache['combatants']格式化为旧版格式，即$battle_cache['combatants'][]=pid
+    if(!empty($battle_cache['combatants']))
+    {
+        $new_combbatants = [];
+        foreach($battle_cache['combatants'] as $pid => $status)
+        {
+            if($status == 1 && !in_array($pid, $new_combbatants)) $new_combbatants[] = $pid;
+        }
+        $battle_cache['combatants'] = $new_combbatants;
+    }
     # 检验$actor_data['bid']是否关联存在的先攻队列
     if(empty($actor_data['bid']))
     {
-        # 至少2个参战者才能组成先攻队列
-        if (count($battle_cache['combatants']) < 2) return;
+        # 无条件创建队列 如果只有1个人 则通过下面的battle_queue_update自然解散
+        //if (count($battle_cache['combatants']) < 2) return;
         # 没有则创建一个新的先攻队列 所有参战者的pid保存在 $battle_cache['combatants'] 内，可据此判断哪些人需要加入当前先攻队列
         battle_queue_create($actor_data,$battle_cache['combatants'], $obl_battle_log);
     }
-    #存在先攻队列，更新先攻者在队列中的done，并检查是否需要重建或清空先攻队列
+    #存在先攻队列，更新先攻者在队列中的done
+    battle_queue_done($actor_data, $actor_data['bid'], $obl_battle_log);
+    #再检查是否需要重建或清空先攻队列
     battle_queue_update($actor_data, $obl_battle_log, $battle_cache);
 }
 
@@ -166,9 +183,44 @@ function battle_finish_check(&$actor_data, &$obl_battle_log, &$battle_cache)
     if (empty($actor_data['bid']))
     {
         # 没有关联战斗队列，且在之前的流程里也没有建立新的战斗队列。说明战斗已结束了
+
+        # 战斗状态机：触发 battle_end 事件并销毁状态记录
+        # qid 从 battle_cache['last_qid'] 获取（由 battle_queue_update 解散逻辑保存）
+        $last_qid = isset($battle_cache['last_qid']) ? (int)$battle_cache['last_qid'] : 0;
+        if ($last_qid > 0 && function_exists('obl_battle_state_get')) {
+            $current_state = obl_battle_state_get($last_qid);
+            # 仅当状态记录还存在且非 IDLE 时触发 battle_end 事件
+            if ($current_state !== OBL_BS_IDLE) {
+                obl_battle_state_transition($last_qid, 'battle_end');
+            }
+            # 战斗清理完成后，销毁状态记录
+            obl_battle_state_destroy($last_qid);
+        }
+
         battle_state_clear($actor_data, $obl_battle_log, $battle_cache);
         return;
     }
-    # 战斗没结束，没有变化
+    # 战斗没结束，进入新一轮战斗流程
+    battle_new_turn($actor_data, $obl_battle_log,$battle_cache);
     return;
+}
+
+//新先攻轮初始化函数 检查先攻队列 重置先攻者AP
+function battle_new_turn(&$actor_data, &$obl_battle_log)
+{
+    // 初始化battle_cache
+    $battle_cache = [];
+    // 先攻轮准备函数：恢复AP
+    $obl_battle_log->setPhase('prepare');
+    battle_prepare($actor_data, $battle_cache, $obl_battle_log);
+    // 更新先攻队列
+    battle_queue_update($actor_data, $obl_battle_log, $battle_cache);
+    // 保存先攻者数据到数据库
+    obl_save_player($actor_data); 
+}
+
+function battle_prepare(&$actor_data, &$battle_cache, &$obl_battle_log)
+{
+    //先攻轮准备函数：恢复AP
+    battle_ap_recover($actor_data, $battle_cache, $obl_battle_log); //AP恢复函数
 }

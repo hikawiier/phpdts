@@ -27,6 +27,9 @@ require_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
 
+// 第 2.5 层：战斗状态机（独立模块，被 battle.func.php / enemy_ai.func.php / common.inc.php 依赖）
+require_once GAME_ROOT . './oblivions/include/game/battle_state_machine.func.php';
+
 // 第 3 层：依赖第 1-2 层
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 

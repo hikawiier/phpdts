@@ -5,6 +5,12 @@ define('CURSCRIPT', 'valid');
 require './include/core/common.inc.php';
 //require './include/auth/user.func.php';
 
+// Oblivions 模式走自己的入场流程，完全与旧模式解耦
+if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+    require GAME_ROOT . './oblivions/valid.php';
+    exit;
+}
+
 if(!$cuser||!$cpass) { gexit($_ERROR['no_login'],__file__,__line__); }
 if($gamestate < 20) { gexit($_ERROR['no_start'],__file__,__line__); }
 //if($gamestate >= 30) { gexit($_ERROR['valid_stop'],__file__,__line__); }
@@ -26,10 +32,10 @@ $t1_list = valid_getclublist_t1($udata);
 $t2_list = valid_getclublist_t2($udata);
 
 if($mode == 'enter') {
-	if($iplimit && !oblivions_is_active()) {
+	if($iplimit) {
 		$result = $db->query("SELECT * FROM {$gtablepre}users AS u, {$tablepre}players AS p WHERE u.ip='{$udata['ip']}' AND ( u.username=p.name AND p.type=0)");
 		if($db->num_rows($result) > $iplimit) { gexit($_ERROR['ip_limit'],__file__,__line__); }
-	}	
+	}
 
 	// 加入游戏时，检查是否需要转化新版成就数据结构
 	if(!empty($udata['achievement']) && empty($udata['achrev']))
@@ -256,17 +262,8 @@ if($mode == 'enter') {
 		}
 	}
 
-	# 显示开场剧情模态框（Oblivions 模式跳过）
-	if (!oblivions_is_active()) {
-		$clbpara['noskip_dialogue'] = 'opening';
-	}
-
-	// Oblivions 模式：pls=0 保留，初始化 pgroup=1, pls=1
-	if (oblivions_is_active()) {
-		$pgroup = 1;
-		$pls = 1;
-		$exp = 0;
-	}
+	# 显示开场剧情模态框
+	$clbpara['noskip_dialogue'] = 'opening';
 
 	//$nick=$udata['nick'];
 	/*$nicks=$udata['nicks'];
@@ -343,25 +340,7 @@ if($mode == 'enter') {
 	$ndata = player_format_with_db_structure($ndata);
 	if(!empty($ndata)) $db->array_insert("{$tablepre}players", $ndata);
 
-	// Oblivions 模式：同时在 oblplayers 创建记录（独立数据层）
-	// bra_players 仍由上方原逻辑插入（开发阶段防御性保留），但 Oblivions 模式不依赖它：
-	// obl_save_player() 不同步任何数据到 bra_players，save_gameinfo() 在 obl 模式下跳过 bra_players 查询。
-	if (oblivions_is_active() && !empty($ndata)) {
-		include_once GAME_ROOT . './oblivions/include/game/player.func.php';
-		// 测试：加入 2 个初始道具（itm1=面包, itm2=矿泉水）
-		$ndata['itm1'] = '面包';  $ndata['itmk1'] = 'HH'; $ndata['itme1'] = 120; $ndata['itms1'] = '15'; $ndata['itmsk1'] = ''; $ndata['itmpara1'] = '';
-		$ndata['itm2'] = '矿泉水'; $ndata['itmk2'] = 'HS'; $ndata['itme2'] = 140; $ndata['itms2'] = '15'; $ndata['itmsk2'] = ''; $ndata['itmpara2'] = '';
-		obl_create_player_record($ndata);
-	}
-
-	// Oblivions 模式：出生时点亮出生格迷雾 + 视野范围道具发现
-	// 玩家已入库，pgroup/pls 已确定（第 264-269 行设置）
-	if (oblivions_is_active() && !empty($ndata['pgroup']) && isset($ndata['pls'])) {
-		include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
-		obl_update_vision((int)$ndata['pgroup'], (int)$ndata['pls'], $ndata);
-	}
-	
-	//$db->query("INSERT INTO {$tablepre}players (name,pass,type,endtime,validtime,gd,sNo,icon,club,hp,mhp,sp,msp,att,def,pls,lvl,`exp`,money,bid,inf,rage,pose,tactic,killnum,state,wp,wk,wg,wc,wd,wf,teamID,teamPass,wep,wepk,wepe,weps,arb,arbk,arbe,arbs,arh,arhk,arhe,arhs,ara,arak,arae,aras,arf,arfk,arfe,arfs,art,artk,arte,arts,itm0,itmk0,itme0,itms0,itm1,itmk1,itme1,itms1,itm2,itmk2,itme2,itms2,itm3,itmk3,itme3,itms3,itm4,itmk4,itme4,itms4,itm5,itmk5,itme5,itms5,itm6,itmk6,itme6,itms6,wepsk,arbsk,arhsk,arask,arfsk,artsk,itmsk0,itmsk1,itmsk2,itmsk3,itmsk4,itmsk5,itmsk6,nick,nicks) VALUES ('$name','$pass','$type','$endtime','$validtime','$gd','$sNo','$icon','$club','$hp','$mhp','$sp','$msp','$att','$def','$pls','$lvl','$exp','$money','$bid','$inf','$rage','$pose','$tactic','$state','$killnum','$wp','$wk','$wg','$wc','$wd','$wf','$teamID','$teamPass','$wep','$wepk','$wepe','$weps','$arb','$arbk','$arbe','$arbs','$arh','$arhk','$arhe','$arhs','$ara','$arak','$arae','$aras','$arf','$arfk','$arfe','$arfs','$art','$artk','$arte','$arts','$itm[0]','$itmk[0]','$itme[0]','$itms[0]','$itm[1]','$itmk[1]','$itme[1]','$itms[1]','$itm[2]','$itmk[2]','$itme[2]','$itms[2]','$itm[3]','$itmk[3]','$itme[3]','$itms[3]','$itm[4]','$itmk[4]','$itme[4]','$itms[4]','$itm[5]','$itmk[5]','$itme[5]','$itms[5]','$itm[6]','$itmk[6]','$itme[6]','$itms[6]','$wepsk','$arbsk','$arhsk','$arask','$arfsk','$artsk','$itmsk[0]','$itmsk[1]','$itmsk[2]','$itmsk[3]','$itmsk[4]','$itmsk[5]','$itmsk[6]','$nick','$nicks')");
+	//$db->query("INSERT INTO {$tablepre}players (...) VALUES (...)");
 	$db->query("UPDATE {$gtablepre}users SET lastgame='$gamenum' WHERE username='$name'");
 
 	if($udata['groupid'] >= 6 || $cuser === $gamefounder){
@@ -370,7 +349,7 @@ if($mode == 'enter') {
 		addnews($now,'newpc',$name,"{$sexinfo[$gd]}{$sNo}号",$ip,$nick);
 	}
 	
-	if($validnum >= $validlimit && $gamestate == 20 && !oblivions_is_active()){
+	if($validnum >= $validlimit && $gamestate == 20){
 		$gamestate = 30;
 	}
 	//$gamestate = $validnum < $validlimit ? 20 : 30;

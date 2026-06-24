@@ -113,7 +113,7 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。
 | | `type` | 0=玩家, >0=敌人类型 |
 | | `name`/`pass`/`gd`/`icon` | 基础信息（pass 与 user 表双重校验） |
 | **战斗状态** | `action` | 空=正常 / `'battle'`=战斗中 |
-| | `bid` | 战斗目标 pid |
+| | `bid` | 先攻队列编号 qid（= 战场编号，0=不在战斗） |
 | **属性** | `hp`/`mhp`/`sp`/`msp`/`att`/`def` | 战斗属性 |
 | | `ap`/`max_ap` | AP 值（独立字段，便于频繁读写） |
 | **位置** | `pgroup`/`pls` | 区域ID + 格子ID |
@@ -1099,6 +1099,8 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **战斗日志播放**: 前端按 `enemy_pid` 分组，每组按 `log_id` 排序，三阶段播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 mark 接口
 - **战斗状态过滤**: `action='battle'` 时前端只允许提交 `obl_battle_action`；非战斗状态不允许提交 `obl_battle_action`（后端 `obl_command_allowed_by_state` 强制）
 - **NPC 待结算锁**: 前端检测 `obl_tick_pending_npc=true` 时拒绝推进 tick 的命令，轮询等待 NPC 结算完毕后广播 `game:npc-settled` 事件刷新数据
+- **技能渲染**: 前端按 `skill_id` 查 `vex-vue/src/data/skill-templates.ts` 渲染名称/描述/动作描述，未注册的 skill_id 回退到以 skillId 作为 name 的默认模板
+- **可用技能列表**: `player_info` API 返回 `skills` 字段（由 `skill_get_available_list()` 生成，含运行时状态 on_cd/available）
 
 ---
 

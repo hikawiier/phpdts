@@ -14,7 +14,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import type { PlayerInfo } from '@/types/api';
+import type { PlayerInfo, BattleState } from '@/types/api';
 
 export const usePlayerStore = defineStore('player', () => {
   // ── 状态 ──
@@ -37,6 +37,26 @@ export const usePlayerStore = defineStore('player', () => {
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
   /** NPC 待结算标志：true 时玩家应等待 NPC 事件结算完毕 */
   const oblTickPendingNpc = computed(() => playerInfo.value?.obl_tick_pending_npc ?? false);
+
+  // ── 战斗状态机（单一数据源，替代 pending_npc + playerTurn 组合判断） ──
+  /** 当前玩家所在战场的状态 */
+  const oblBattleState = computed<BattleState>(
+    () => playerInfo.value?.obl_battle_state ?? 'IDLE',
+  );
+  /** 战斗是否活跃（PLAYER_ACTING / NPC_ACTING / WAITING_PLAYER） */
+  const isBattleActive = computed(
+    () => oblBattleState.value === 'PLAYER_ACTING'
+      || oblBattleState.value === 'NPC_ACTING'
+      || oblBattleState.value === 'WAITING_PLAYER',
+  );
+  /** 是否轮到玩家行动（WAITING_PLAYER 状态） */
+  const isPlayerTurn = computed(
+    () => oblBattleState.value === 'WAITING_PLAYER',
+  );
+  /** NPC 是否行动中（NPC_ACTING 状态，前端应继续轮询） */
+  const isNpcActing = computed(
+    () => oblBattleState.value === 'NPC_ACTING',
+  );
 
   /**
    * 拉取玩家信息
@@ -88,6 +108,11 @@ export const usePlayerStore = defineStore('player', () => {
     oblTick,
     oblPretick,
     oblTickPendingNpc,
+    // 战斗状态机
+    oblBattleState,
+    isBattleActive,
+    isPlayerTurn,
+    isNpcActing,
     // actions
     loadPlayerInfo,
     reset,

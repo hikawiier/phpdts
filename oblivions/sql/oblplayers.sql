@@ -16,7 +16,7 @@ CREATE TABLE bra_oblplayers (
 
   -- 战斗状态
   action       char(12) NOT NULL default '',       -- null/prebattle/battle
-  bid          smallint unsigned NOT NULL default '0',  -- 战斗目标 pid
+  bid          smallint unsigned NOT NULL default '0',  -- 先攻队列编号 qid（= 战场编号，0=不在战斗）
 
   -- 属性
   hp           int(10) unsigned NOT NULL DEFAULT '0',

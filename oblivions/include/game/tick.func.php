@@ -154,9 +154,17 @@ function obl_tick_clear_pending_npc() {
 /**
  * 检测 NPC 待结算标志是否存在
  *
+ * 状态机重构后优先使用 obl_battle_state_has_npc_acting()（按 qid 分离，支持多战场），
+ * 全局 $gamevars['obl_tick_pending_npc'] 作为回退兼容（后续可移除）。
+ *
  * @return bool true=NPC 事件未结算完，应拒绝推进 tick 的玩家命令
  */
 function obl_tick_is_pending_npc() {
+    // 状态机优先：查询是否有任何战场在 NPC_ACTING 状态
+    if (function_exists('obl_battle_state_has_npc_acting')) {
+        return obl_battle_state_has_npc_acting();
+    }
+    // 回退：全局标志（向后兼容）
     global $gamevars;
     return !empty($gamevars['obl_tick_pending_npc']);
 }
