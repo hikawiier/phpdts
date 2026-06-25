@@ -551,18 +551,25 @@ function handle_obl_enemies() {
 
     // 如果玩家处于战斗状态，确保返回战斗对象（即使 discovered=0）
     if ($pdata['action'] == 'battle' && $pdata['bid']) {
-        $battle_enemy = obl_fetch_playerdata_by_pid($pdata['bid']);
-        if ($battle_enemy) {
-            obl_format_playerdata($battle_enemy);
-            $already_in_list = false;
-            foreach ($enemies as $e) {
-                if ($e['pid'] == $battle_enemy['pid']) {
-                    $already_in_list = true;
-                    break;
+        // $pdata['bid'] 是先攻队列 qid，不是 pid
+        // 查询队列中所有参战者，找到非玩家的 NPC
+        $queue_members = obl_fetch_queue_all_by_qid($pdata['bid']);
+        foreach ($queue_members as $qrow) {
+            $qpid = (int)$qrow['pid'];
+            if ($qpid == $pdata['pid']) continue;  // 跳过玩家自己
+            $battle_enemy = obl_fetch_playerdata_by_pid($qpid);
+            if ($battle_enemy) {
+                obl_format_playerdata($battle_enemy);
+                $already_in_list = false;
+                foreach ($enemies as $e) {
+                    if ($e['pid'] == $battle_enemy['pid']) {
+                        $already_in_list = true;
+                        break;
+                    }
                 }
-            }
-            if (!$already_in_list) {
-                $enemies[] = $battle_enemy;
+                if (!$already_in_list) {
+                    $enemies[] = $battle_enemy;
+                }
             }
         }
     }
