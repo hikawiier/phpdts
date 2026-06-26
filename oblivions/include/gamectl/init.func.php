@@ -84,7 +84,7 @@ function obl_init_tables() {
 /**
  * 初始化游戏刻双变量
  *
- * obl_tick / obl_pretick / obl_tick_pending_npc
+ * obl_tick / obl_pretick
  * 由 common.inc.php 检测并驱动后续 tick 事件处理。
  *
  * @return void
@@ -94,7 +94,6 @@ function obl_init_tick_vars() {
     if (!isset($gamevars)) $gamevars = array();
     $gamevars['obl_tick'] = 0;
     $gamevars['obl_pretick'] = 0;
-    $gamevars['obl_tick_pending_npc'] = false;  // NPC 待结算标志（玩家操作与 NPC 先攻轮互斥锁）
 }
 
 /**

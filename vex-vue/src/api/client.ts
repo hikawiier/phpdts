@@ -65,7 +65,8 @@ export async function submitCommand(
       }
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
-        return { success: true };
+        console.error('[submitCommand] non-JSON response — PHP crash or access denied:', await res.text().catch(() => '(empty)'));
+        return { success: false, error: 'SERVER_ERROR', message: '服务器内部错误' };
       }
       const gamedata = await res.json();
       // P2 修复：gamedata.error 存在时（如 COMMAND_IN_PROGRESS）不应误判为成功

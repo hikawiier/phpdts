@@ -278,7 +278,7 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
 }
 
 /**
- * 技能执行（由 battle_once_excute 调用）
+ * 技能执行（由 battle_once_execute 调用）
  *
  * 职责：
  * 1. 自动引用 calc/{skill_id}.calc.php

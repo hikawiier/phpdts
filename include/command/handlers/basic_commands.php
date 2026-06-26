@@ -8,32 +8,21 @@ if (!defined('IN_GAME')) {
 // Basic command handlers: move/search/item use/rest/fishing/song
 // ================================================================
 
-// 移动指令 / Move command
+// 移动指令 / Move command（传统模式专用，Oblivions 模式由 oblivions_router.php 直接调用 obl_move）
 function cmd_handle_move($moveto, &$cmdcdtime, &$pdata) {
     global $coldtimeon, $movecoldtime;
-    if (oblivions_is_active()) {
-        include_once GAME_ROOT . './oblivions/include/game/move.func.php';
-        obl_move($moveto,$pdata);
-    } else {
-        include_once GAME_ROOT . './include/game/search.func.php';
-        move($moveto);
-    }
+    include_once GAME_ROOT . './include/game/search.func.php';
+    move($moveto);
     if ($coldtimeon) {
         $cmdcdtime = $movecoldtime;
     }
 }
 
-// 探索指令 / Search command
+// 探索指令 / Search command（传统模式专用，Oblivions 模式使用 obl_explore / obl_search）
 function cmd_handle_search(&$cmdcdtime, &$pdata) {
     global $coldtimeon, $searchcoldtime;
-    if (oblivions_is_active()) {
-        // Oblivions 模式：搜索当前格（等同原地探索，前端通常逐个搜索 POI，此处为兼容旧入口）
-        include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
-        obl_explore($pdata);
-    } else {
-        include_once GAME_ROOT . './include/game/search.func.php';
-        search();
-    }
+    include_once GAME_ROOT . './include/game/search.func.php';
+    search();
     if ($coldtimeon) {
         $cmdcdtime = $searchcoldtime;
     }

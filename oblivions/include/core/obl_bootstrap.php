@@ -35,6 +35,10 @@ require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
 // 第 4 层：依赖第 1-3 层
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
+require_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
+
+// 第 4.5 层：先攻队列模块（依赖 battle.func.php 和 sql.func.php）
+require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.func.php';
 
 // 第 5 层：探索交互 + 敌人 AI（依赖 vision，无循环依赖）
 require_once GAME_ROOT . './oblivions/include/game/explore.func.php';

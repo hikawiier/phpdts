@@ -25,53 +25,6 @@ function cmd_router_dispatch($command, $mode, &$pdata, &$cmdcdtime, $post) {
 
     // ---- mode == 'command' 分支 / command mode branch ----
     if ($mode == 'command') {
-        // Oblivions 探索/搜索/拾取/丢弃（优先处理，独立于 itm0 阻塞检查）
-        if (oblivions_is_active()) {
-            if ($command == 'obl_explore') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                cmd_handle_obl_explore($pdata);
-                return 'command';
-            }
-            if ($command == 'obl_search') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                cmd_handle_obl_search(isset($post['iaid']) ? $post['iaid'] : 0, $pdata);
-                return 'command';
-            }
-            if ($command == 'obl_pickup') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                cmd_handle_obl_pickup(isset($post['iid']) ? $post['iid'] : 0, $pdata);
-                return 'command';
-            }
-            if ($command == 'obl_discard') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                cmd_handle_obl_discard(isset($post['slot']) ? $post['slot'] : 0, $pdata);
-                return 'command';
-            }
-            // 战斗命令 / Battle commands
-            if ($command == 'obl_battle_start') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                # actions 以 JSON 字符串传递，gstrfilter 会将双引号转为 &quot;，需先 html_entity_decode 还原
-                $actions = isset($post['actions']) ? $post['actions'] : null;
-                if (is_string($actions)) {
-                    $decoded = json_decode(html_entity_decode($actions, ENT_QUOTES), true);
-                    $actions = is_array($decoded) ? $decoded : null;
-                }
-                cmd_handle_obl_battle_start($pdata, $actions);
-                return 'command';
-            }
-            if ($command == 'obl_battle_action') {
-                include_once GAME_ROOT . './include/command/handlers/oblivions_commands.php';
-                # actions 以 JSON 字符串传递，gstrfilter 会将双引号转为 &quot;，需先 html_entity_decode 还原
-                $actions = isset($post['actions']) ? $post['actions'] : null;
-                if (is_string($actions)) {
-                    $decoded = json_decode(html_entity_decode($actions, ENT_QUOTES), true);
-                    $actions = is_array($decoded) ? $decoded : null;
-                }
-                cmd_handle_obl_battle_action($pdata, $actions);
-                return 'command';
-            }
-        }
-
         // 手持道具阻塞检查 / Handheld item blocking check
         global $itms0;
         if (!empty($itms0) && !in_array($command, array('itemget', 'itm0', 'dropitm0', 'split_itm'))) {

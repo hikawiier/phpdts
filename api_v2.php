@@ -118,6 +118,9 @@ switch ($action) {
     case 'ai_dump_save':
         handle_ai_dump_save();
         break;
+    case 'heartbeat':
+        api_response('success');
+        break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
 }
@@ -201,10 +204,8 @@ function handle_player_info() {
         // 调试用：游戏刻状态 / Debug: tick state
         'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
-        // NPC 待结算标志：true 表示 NPC 事件未结算完，前端应等待（可用于动画播放时机判定）
-        'obl_tick_pending_npc' => !empty($gamevars['obl_tick_pending_npc']),
-        // 战斗状态机：当前玩家所在战场的状态（单一数据源，替代 pending_npc + playerTurn 组合判断）
-        // IDLE/PLAYER_ACTING/NPC_ACTING/WAITING_PLAYER/ENDED
+        // 战斗状态机：当前玩家所在战场的状态（单一数据源）
+        // IDLE/PLAYER_DONE/NPC_ACTING/WAITING_PLAYER/ENDED
         'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
             ? obl_battle_state_get((int)$pdata['bid'])
             : 'IDLE',

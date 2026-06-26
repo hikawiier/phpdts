@@ -4,11 +4,11 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 指令处理：探索/搜索/拾取/丢弃
-// Command handlers for Oblivions explore/search/pickup/discard
+// Oblivions 指令处理：探索/搜索/拾取/丢弃/战斗
+// Command handlers for Oblivions explore/search/pickup/discard/battle
 //
-// 由 router.php 在 Oblivions 模式下分发调用。
-// 每个 handler 内部按需 include explore.func.php，避免非 Oblivions 模式加载。
+// 由 oblivions_router.php 在 Oblivions 模式下分发调用。
+// 每个 handler 内部按需 include 所需函数库，避免非 Oblivions 模式加载。
 // ================================================================
 
 /**
@@ -78,22 +78,9 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
     global $obl_log, $obl_battle_log, $obl_error_log;
 
     # 1. 解析 actions，提取突袭目标（第一个有效动作的 target）
-    $atk_act = array();
-    $ambush_target_pid = 0;
-    if (is_array($actions)) {
-        foreach ($actions as $act) {
-            $act_id = isset($act['act_id']) ? $act['act_id'] : '';
-            $target = isset($act['target']) ? (int)$act['target'] : 0;
-            if (empty($act_id) || $target <= 0) continue;
-
-            $atk_act[] = array('act_id' => $act_id, 'target' => $target);
-
-            # 第一个有效动作的 target 作为突袭目标
-            if ($ambush_target_pid === 0) {
-                $ambush_target_pid = $target;
-            }
-        }
-    }
+    include_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
+    $atk_act = battle_entry_parse_actions($actions, $pdata['pid'], 'battle_start');
+    $ambush_target_pid = !empty($atk_act) ? (int)$atk_act[0]['target'] : 0;
 
     if (empty($atk_act) || $ambush_target_pid <= 0) {
         if (isset($obl_error_log) && $obl_error_log) {
@@ -163,20 +150,9 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
         return;
     }
 
-    # 3. 初始化 battle_log（入口处局部初始化）
-    if (!$obl_battle_log) {
-        include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
-        $obl_battle_log = new BattleLogCollector();
-    }
-
-    # 4. 设置 ambush_flag（一次性，battle_queue_create 中清除）
-    $pdata['oblpara']['ambush_flag'] = true;
-
-    # 5. 玩家进入战斗状态
-    battle_state_init($pdata);
-
-    # 6. 调用 battle_main（内部会完成后补票创建先攻队列 + 先攻判定）
-    battle_main($pdata, $atk_act, $obl_battle_log);
+    # 3. 委托战斗入口函数（设置 ambush_flag + state_init + 调用 battle_main）
+    include_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
+    battle_entry_player_ambush($pdata, $actions);
 }
 
 /**
@@ -192,20 +168,10 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
  */
 function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
-    include_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
-
     global $obl_battle_log, $obl_error_log;
 
     # 1. 解析 actions
-    $atk_act = array();
-    if (is_array($actions)) {
-        foreach ($actions as $act) {
-            $act_id = isset($act['act_id']) ? $act['act_id'] : '';
-            $target = isset($act['target']) ? (int)$act['target'] : 0;
-            if (empty($act_id) || $target <= 0) continue;
-            $atk_act[] = array('act_id' => $act_id, 'target' => $target);
-        }
-    }
+    $atk_act = battle_entry_parse_actions($actions, $pdata['pid'], 'battle_action');
 
     if (empty($atk_act)) {
         if (isset($obl_error_log) && $obl_error_log) {
@@ -224,6 +190,10 @@ function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
         $obl_battle_log = new BattleLogCollector();
     }
 
-    # 3. 调用 battle_main
-    battle_main($pdata, $atk_act, $obl_battle_log);
+    # 3. 战斗上下文
+    $battle_cache = battle_cache_create($pdata['pid'], false);
+
+    # 4. 执行动作 + 队列管理分离调用
+    battle_main($pdata, $atk_act, $obl_battle_log, $battle_cache);
+    battle_manage_queue($pdata, $obl_battle_log, $battle_cache);
 }

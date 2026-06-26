@@ -35,6 +35,9 @@ import type { BattlePlayContext } from '@/data/battle-templates';
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
 
+/** 守护进程心跳间隔（毫秒）— 纯后端 tick 激活，不与前端业务耦合 */
+const DAEMON_BEAT_INTERVAL = 200;
+
 /** 碰撞动画总时长（毫秒）— 300ms 动画 + 120ms 延迟 + 30ms 缓冲 */
 const COLLISION_ANIM_DURATION = 450;
 
@@ -74,6 +77,9 @@ export const useBattleStore = defineStore('battle', () => {
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
   let npcTurnRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  // ── 守护进程定时器（不响应式，仅内部使用） ──
+  let daemonTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── 模态框播放完成回调（内部使用） ──
   let _modalResolve: (() => void) | null = null;
@@ -152,6 +158,34 @@ export const useBattleStore = defineStore('battle', () => {
   /** 是否有 NPC 自动刷新定时器在运行 */
   function hasNpcTurnRefreshTimer(): boolean {
     return npcTurnRefreshTimer !== null;
+  }
+
+  // ══════════════════════════════════════════════════
+  // 守护进程（纯后端 tick 激活器）
+  // ══════════════════════════════════════════════════
+
+  /** 心跳拍：fire-and-forget，成功/失败都不影响前端业务 */
+  async function _daemonBeat(): Promise<void> {
+    const apiBase = import.meta.env.VITE_API_BASE || '/phpdts';
+    try {
+      await fetch(`${apiBase}/api_v2.php?action=heartbeat`, { credentials: 'include' });
+    } catch {
+      // 静默失败，下次心跳重试
+    }
+  }
+
+  /** 启动守护进程（页面挂载时调用） */
+  function startDaemonPoll(): void {
+    if (daemonTimer !== null) return;
+    daemonTimer = setInterval(_daemonBeat, DAEMON_BEAT_INTERVAL);
+  }
+
+  /** 停止守护进程（页面卸载时调用） */
+  function stopDaemonPoll(): void {
+    if (daemonTimer !== null) {
+      clearInterval(daemonTimer);
+      daemonTimer = null;
+    }
   }
 
   // ══════════════════════════════════════════════════
@@ -283,11 +317,11 @@ export const useBattleStore = defineStore('battle', () => {
    * - 本函数负责状态管理（进入/退出战斗模式、启停 NPC 刷新、玩家回合 toast）
    * - fetchAndPlayBattleLog 只负责拉取-播放-标记，不涉及状态判断
    *
-   * 状态机驱动（阶段2重构）：
-   * - 用 obl_battle_state 作为单一数据源决定轮询行为
-   * - PLAYER_ACTING / NPC_ACTING → 继续轮询（NPC 即将/正在行动）
-   * - WAITING_PLAYER → 停止轮询，启用玩家操作
-   * - IDLE / ENDED → 停止轮询
+ * 状态机驱动（阶段2重构）：
+ * - 用 obl_battle_state 作为单一数据源决定轮询行为
+ * - PLAYER_DONE / NPC_ACTING → 继续轮询（NPC 即将/正在行动）
+ * - WAITING_PLAYER → 停止轮询，启用玩家操作
+ * - IDLE / ENDED → 停止轮询
    *
    * 在 game:action-completed / preload:executed 事件中调用。
    * NPC 顺位时会由 startNpcTurnRefresh 定时循环调用本函数。
@@ -320,9 +354,9 @@ export const useBattleStore = defineStore('battle', () => {
         enterBattleMode(enemyPid, playerTurn);
 
         // 用状态机决定轮询行为
-        // PLAYER_ACTING / NPC_ACTING → 继续轮询（tick 即将/正在推进）
+        // PLAYER_DONE / NPC_ACTING → 继续轮询（tick 即将/正在推进）
         // WAITING_PLAYER / IDLE / ENDED → 停止轮询
-        if (battleState === 'NPC_ACTING' || battleState === 'PLAYER_ACTING') {
+        if (battleState === 'NPC_ACTING' || battleState === 'PLAYER_DONE') {
           startNpcTurnRefresh();
         } else {
           stopNpcTurnRefresh();
@@ -691,6 +725,9 @@ export const useBattleStore = defineStore('battle', () => {
     startNpcTurnRefresh,
     stopNpcTurnRefresh,
     hasNpcTurnRefreshTimer,
+    // 守护进程
+    startDaemonPoll,
+    stopDaemonPoll,
     // 模式切换
     enterBattleMode,
     exitBattleMode,

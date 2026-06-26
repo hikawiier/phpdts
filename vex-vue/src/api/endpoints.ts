@@ -10,6 +10,7 @@ export const API_ACTIONS = {
   ENEMIES: 'enemies',
   SKILL_LIST: 'skill_list',
   AI_DUMP_SAVE: 'ai_dump_save',
+  HEARTBEAT: 'heartbeat',
 } as const;
 
 export type ApiAction = (typeof API_ACTIONS)[keyof typeof API_ACTIONS];

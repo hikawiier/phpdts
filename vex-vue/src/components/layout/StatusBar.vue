@@ -86,7 +86,7 @@ const battleStateText = computed(() => {
   const state = playerStore.oblBattleState;
   const stateMap: Record<BattleState, string> = {
     IDLE: '空闲',
-    PLAYER_ACTING: '玩家行动',
+    PLAYER_DONE: '玩家行动',
     NPC_ACTING: 'NPC行动',
     WAITING_PLAYER: '等待玩家',
     ENDED: '战斗结束',

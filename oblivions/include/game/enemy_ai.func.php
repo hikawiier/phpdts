@@ -101,8 +101,9 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
 		$atk_act = obl_ai_select_combat_action($npc_data, $ctx['player']['pid']);
 
-		# 调用 battle_main（内部会更新先攻队列）
-		battle_main($npc_data, $atk_act, $obl_battle_log);
+		# 通过入口 4 调用 battle_main（统一战斗入口路径）
+		include_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
+		battle_entry_npc_prepare_actions($npc_data, $atk_act);
 
 		# 战斗状态机：NPC 行动完成后，根据战斗是否结束 + 顺位判断状态转换
 		# battle_main 内部可能触发队列解散（bid=0）或重建（保持原状态）

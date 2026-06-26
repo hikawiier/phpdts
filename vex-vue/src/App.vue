@@ -99,6 +99,9 @@ onMounted(async () => {
   battleStore.registerListeners();
   errorLogStore.registerListeners();
 
+  // 启动前端守护进程心跳（纯后端 tick 激活，200ms 间隔）
+  battleStore.startDaemonPoll();
+
   // 错误日志独立轮询：默认关闭，URL 参数 ?poll_error=1 开启
   // 事件驱动（game:action-completed）始终生效，轮询仅作兜底
   const urlParams = new URLSearchParams(window.location.search);
@@ -121,6 +124,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  battleStore.stopDaemonPoll();
   document.removeEventListener('keydown', onKeydown);
   errorLogStore.stopPolling();
   commandQueue.destroy();

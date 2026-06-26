@@ -22,7 +22,7 @@ if (!defined('IN_GAME')) {
 
 // 状态枚举
 define('OBL_BS_IDLE',           'IDLE');
-define('OBL_BS_PLAYER_ACTING',  'PLAYER_ACTING');
+define('OBL_BS_PLAYER_DONE',    'PLAYER_DONE');
 define('OBL_BS_NPC_ACTING',     'NPC_ACTING');
 define('OBL_BS_WAITING_PLAYER', 'WAITING_PLAYER');
 define('OBL_BS_ENDED',          'ENDED');
@@ -34,11 +34,7 @@ define('OBL_BS_ENDED',          'ENDED');
  * @return string 战斗状态，qid 不存在时返回 IDLE
  */
 function obl_battle_state_get($qid) {
-    global $db, $tablepre;
-    if ($qid <= 0) return OBL_BS_IDLE;
-    $result = $db->query("SELECT state FROM {$tablepre}oblbattle_state WHERE qid = " . (int)$qid);
-    $row = $db->fetch_array($result);
-    return $row ? $row['state'] : OBL_BS_IDLE;
+    return obl_state_get($qid);
 }
 
 /**
@@ -49,9 +45,7 @@ function obl_battle_state_get($qid) {
  * @return void
  */
 function obl_battle_state_set($qid, $state) {
-    global $db, $tablepre, $now;
-    if (!isset($now)) $now = time();
-    $db->query("UPDATE {$tablepre}oblbattle_state SET state = '" . addslashes($state) . "', updated_at = " . (int)$now . " WHERE qid = " . (int)$qid);
+    obl_state_set($qid, $state);
 }
 
 /**
@@ -59,21 +53,16 @@ function obl_battle_state_set($qid, $state) {
  * 在 battle_queue_create 创建先攻队列后调用
  *
  * 实现说明：使用 INSERT IGNORE，记录已存在时不覆盖。
- * - 新建队列：插入新记录，状态为 $initial_state（通常为 PLAYER_ACTING）
+ * - 新建队列：插入新记录，状态为 $initial_state（通常为 PLAYER_DONE）
  * - 重建队列：状态记录已存在，INSERT IGNORE 不覆盖，保持原状态
  *   （由后续的 tick_advanced / npc_done 事件驱动状态转换）
  *
  * @param int    $qid          先攻队列编号
- * @param string $initial_state 初始状态（默认 PLAYER_ACTING）
+ * @param string $initial_state 初始状态（默认 PLAYER_DONE）
  * @return void
  */
-function obl_battle_state_create($qid, $initial_state = OBL_BS_PLAYER_ACTING) {
-    global $db, $tablepre, $now;
-    if ($qid <= 0) return;
-    if (!isset($now)) $now = time();
-    // INSERT IGNORE：记录已存在时不覆盖（重建场景保持原状态）
-    $db->query("INSERT IGNORE INTO {$tablepre}oblbattle_state (qid, state, turn, updated_at) VALUES ("
-        . (int)$qid . ", '" . addslashes($initial_state) . "', 0, " . (int)$now . ")");
+function obl_battle_state_create($qid, $initial_state = OBL_BS_PLAYER_DONE) {
+    obl_state_create($qid, $initial_state);
 }
 
 /**
@@ -84,9 +73,7 @@ function obl_battle_state_create($qid, $initial_state = OBL_BS_PLAYER_ACTING) {
  * @return void
  */
 function obl_battle_state_destroy($qid) {
-    global $db, $tablepre;
-    if ($qid <= 0) return;
-    $db->query("DELETE FROM {$tablepre}oblbattle_state WHERE qid = " . (int)$qid);
+    obl_state_destroy($qid);
 }
 
 /**
@@ -109,9 +96,9 @@ function obl_battle_state_transition($qid, $event) {
     // 状态转换表（集中管理）
     static $transitions = array(
         OBL_BS_IDLE => array(
-            'battle_start' => OBL_BS_PLAYER_ACTING,
+            'battle_start' => OBL_BS_PLAYER_DONE,
         ),
-        OBL_BS_PLAYER_ACTING => array(
+        OBL_BS_PLAYER_DONE => array(
             'tick_advanced' => OBL_BS_NPC_ACTING,
             'battle_end'    => OBL_BS_ENDED,
         ),
@@ -121,8 +108,8 @@ function obl_battle_state_transition($qid, $event) {
             'battle_end'           => OBL_BS_ENDED,
         ),
         OBL_BS_WAITING_PLAYER => array(
-            'player_command' => OBL_BS_PLAYER_ACTING,
-            'battle_end'     => OBL_BS_ENDED,
+            'player_action_complete' => OBL_BS_PLAYER_DONE,
+            'battle_end'             => OBL_BS_ENDED,
         ),
         OBL_BS_ENDED => array(
             'cleanup' => OBL_BS_IDLE,
@@ -186,13 +173,7 @@ function obl_battle_state_reset($qid, $to_state = OBL_BS_IDLE) {
  * @return array [qid => state, ...]
  */
 function obl_battle_state_get_all_active() {
-    global $db, $tablepre;
-    $result = $db->query("SELECT qid, state FROM {$tablepre}oblbattle_state WHERE state != 'IDLE'");
-    $states = array();
-    while ($row = $db->fetch_array($result)) {
-        $states[(int)$row['qid']] = $row['state'];
-    }
-    return $states;
+    return obl_state_get_all_active();
 }
 
 /**
@@ -202,9 +183,7 @@ function obl_battle_state_get_all_active() {
  * @return bool
  */
 function obl_battle_state_has_npc_acting() {
-    global $db, $tablepre;
-    $result = $db->query("SELECT 1 FROM {$tablepre}oblbattle_state WHERE state = 'NPC_ACTING' LIMIT 1");
-    return (bool)$db->fetch_array($result);
+    return obl_state_has_npc_acting();
 }
 
 /**
@@ -215,13 +194,7 @@ function obl_battle_state_has_npc_acting() {
  * @return array [qid, ...] 卡死的战场编号列表
  */
 function obl_battle_state_find_stale($timeout_seconds = 30, $state = OBL_BS_NPC_ACTING) {
-    global $db, $tablepre, $now;
+    global $now;
     if (!isset($now)) $now = time();
-    $cutoff = $now - $timeout_seconds;
-    $result = $db->query("SELECT qid FROM {$tablepre}oblbattle_state WHERE state = '" . addslashes($state) . "' AND updated_at < " . $cutoff);
-    $stale = array();
-    while ($row = $db->fetch_array($result)) {
-        $stale[] = (int)$row['qid'];
-    }
-    return $stale;
+    return obl_state_find_stale($now - $timeout_seconds, $state);
 }

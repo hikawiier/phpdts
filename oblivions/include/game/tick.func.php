@@ -118,55 +118,21 @@ function obl_tick_get_pretick() {
 }
 
 #=============================================================================
-# 模块 2b：NPC 待结算标志管理
+# 模块 2b：NPC 待结算检测
 #=============================================================================
-# 玩家行动推进 tick 后设置标志，NPC 事件结算完毕后消除标志。
-# 标志存在时，拒绝推进 tick 的玩家命令，保证玩家操作与 NPC 先攻轮互斥。
-#
-# 生命周期：
-# - 设置：obl_command.php [F] 段，玩家操作推进 tick 后
-# - 保持：obl_tick_dispatch() 末尾，若 NPC 推进了 tick（ctx['advanced']=true）
-# - 消除：obl_tick_dispatch() 末尾，若 NPC 未推进 tick（ctx['advanced']=false）
-# - 异常消除：obl_tick_dispatch() 捕获异常时强制消除 + 记录 obl_log
+# 由状态机管辖，查询是否任何战场在 NPC_ACTING 状态。
+# 状态机内部保证 STATE → WAITING_PLAYER 的过渡正确及时。
 
 /**
- * 设置 NPC 待结算标志（玩家行动推进 tick 后调用）
+ * 检测是否有战场正在 NPC_ACTING 状态
  *
- * @return void
- */
-function obl_tick_set_pending_npc() {
-    global $gamevars, $ginfochange;
-    $gamevars['obl_tick_pending_npc'] = true;
-    $ginfochange = true;
-}
-
-/**
- * 消除 NPC 待结算标志（NPC 事件结算完毕后调用）
- *
- * @return void
- */
-function obl_tick_clear_pending_npc() {
-    global $gamevars, $ginfochange;
-    $gamevars['obl_tick_pending_npc'] = false;
-    $ginfochange = true;
-}
-
-/**
- * 检测 NPC 待结算标志是否存在
- *
- * 状态机重构后优先使用 obl_battle_state_has_npc_acting()（按 qid 分离，支持多战场），
- * 全局 $gamevars['obl_tick_pending_npc'] 作为回退兼容（后续可移除）。
- *
- * @return bool true=NPC 事件未结算完，应拒绝推进 tick 的玩家命令
+ * @return bool true=存在 NPC 待结算的战场，应拒绝推进 tick 的玩家命令
  */
 function obl_tick_is_pending_npc() {
-    // 状态机优先：查询是否有任何战场在 NPC_ACTING 状态
     if (function_exists('obl_battle_state_has_npc_acting')) {
         return obl_battle_state_has_npc_acting();
     }
-    // 回退：全局标志（向后兼容）
-    global $gamevars;
-    return !empty($gamevars['obl_tick_pending_npc']);
+    return false;
 }
 
 #=============================================================================
@@ -290,10 +256,8 @@ function obl_tick_dispatch($delta, &$ctx) {
             call_user_func_array($cb, array(&$delta, &$ctx));
         }
     } catch (Throwable $e) {
-        // 异常兜底：消除标志，记录错误日志，前端可通过下次请求了解到错误
-        if (obl_tick_is_pending_npc()) {
-            obl_tick_clear_pending_npc();
-        }
+        // 异常兜底：记录错误日志，前端可通过下次请求了解到错误
+        // 战斗状态机保持 NPC_ACTING 状态，下一次 tick dispatch 会重试处理
         if (isset($obl_error_log) && $obl_error_log) {
             $obl_error_log->emit('tick.dispatch.error', array(
                 'error' => $e->getMessage(),
@@ -308,12 +272,6 @@ function obl_tick_dispatch($delta, &$ctx) {
     // 末尾：统一推进 tick（如果 battle_npc phase 请求推进）
     if (!empty($ctx['advanced'])) {
         obl_tick_advance();
-        // NPC 推进了 tick，保持 obl_tick_pending_npc = true（还有 NPC 事件待处理）
-    } else {
-        // NPC 事件已结算完毕，消除标志（仅当标志存在时才清除，避免不必要的 $ginfochange）
-        if (obl_tick_is_pending_npc()) {
-            obl_tick_clear_pending_npc();
-        }
     }
 }
 

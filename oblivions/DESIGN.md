@@ -73,32 +73,13 @@
 - JSON 数组，长度 = `itemmaxslots + 1`（index 0=特殊槽，1~itemmaxslots=普通槽）
 - 每个元素是一个道具对象或 `null`（空槽）
 
-**道具对象七字段规范**（itempara 数组元素 + 地图道具实例均遵循）：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `itm` | string | 道具名 |
-| `itmk` | string | 道具种类 |
-| `itme` | int | 效果值 |
-| `itms` | string | 耐久 |
-| `itmsk` | string | 耐久种类 |
-| `itmpara` | object | 参数（JSON 对象，含 `obl_item_id` 等） |
-| `itmid` | string | 地图道具实例ID（拾取时注入，丢弃时用于还原） |
-
-```json
-[
-  null,
-  {"itm":"面包","itmk":"HH","itme":120,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
-  {"itm":"矿泉水","itmk":"HS","itme":140,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
-  null, null, null, null
-]
-```
+> 道具对象七字段规范与 JSON 示例见 [CODEBASE.md §3.1](./CODEBASE.md#31-bra_oblplayers-玩家敌人统一数据表)。
 
 ### 1.7 游戏刻 (tick)
 
 - 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
 - 每次 tick 增长触发 `obl_resolve_tick_events($delta)`，通过监听器机制调度 NPC 敌人行动
-- **玩家操作与 NPC 先攻轮互斥**：玩家行动后设置 `obl_tick_pending_npc` 标志，锁定玩家后续操作直到 NPC 事件结算完毕
+- **玩家操作与 NPC 先攻轮互斥**：由战斗状态机管辖，`NPC_ACTING` 状态时拒绝推进 tick 的玩家命令
 
 ### 1.8 结构化日志 (Structured Log)
 
@@ -136,24 +117,19 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
   → POST mark_battle_log_played.php 标记 played=1
 ```
 
-**BattleLogEntry 字段**：
+> BattleLogEntry 字段结构见 [CODEBASE.md §4.5](./CODEBASE.md#45-battle_log-战斗日志未播放条目)。
 
-> **重要**：后端 PHP 返回的所有数值字段实际为 **string 类型**（PHP json_encode 行为），前端 TypeScript 类型定义中 `log_id`/`turn`/`actor_type`/`actor_pid`/`target_type`/`target_pid`/`effect_value`/`played`/`ts` 均为 `string`，使用时需 `Number()` 转换。
+### 1.10 错误日志 (Error Log)
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | string | 固定 `'battle.action'` |
-| `log_id` | string | 文件内自增 ID（持久化时分配），用于标记 played |
-| `turn` | string | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
-| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
-| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`initiative.roll`/`battle.end`） |
-| `action_name` | string | 动作显示名（如 `'空手攻击'`） |
-| `target` | string | 目标标识（`'player'`/`'enemy_{pid}'`/结果标识） |
-| `effect_value` | string | 效果值（伤害值等） |
-| `extra` | object\|null | 额外信息（如 `{'success': true}`、`{'player_roll': 50, 'enemy_roll': 30}`） |
-| `enemy_pid` | int | 战斗对象 PID（前端按战斗分组播放） |
-| `played` | string | 0=未播放，1=已播放（前端播放后通过 mark 接口标记） |
-| `ts` | string | Unix 时间戳 |
+与 `obl_log` / `obl_battle_log` 物理隔离的第三套日志系统，专门记录后端异常和命令拒绝事件：
+
+- **全局变量**：`$obl_error_log`（`OblivionsErrorLogger` 实例）
+- **持久化**：`oblivions/cache/logs/obl_error_{groomid}_{pid}.json`
+- **emit 签名**：无 `logcategory` 参数（区别于 `$obl_log->emit($id, $logcategory, $params)`）
+- **前端使用**：前端按 ID 分发渲染，常用于 Toast 错误提示
+- **兜底保护**：`obl_command.php [A0]` 注册 `register_shutdown_function`，PHP fatal error 时输出 JSON 错误而非 HTML 500；前端 `submitCommand()` 检测非 JSON 响应时返回 `SERVER_ERROR`
+
+**设计理由**：与结构化日志分离存储，避免错误日志污染正常日志流；独立裁剪策略，错误日志不参与正式日志的 200 条上限计数。
 
 ---
 
@@ -189,13 +165,15 @@ $obl_log->emit('move.success', 'move', [
 
 ### 2.3 玩家操作与 NPC 先攻轮互斥
 
-通过 `obl_tick_pending_npc` 标志实现玩家行动与 NPC 事件结算的互斥：
+由战斗状态机直接管辖（替代旧的 `obl_tick_pending_npc` 全局标志，该标志已移除）：
 
-- 玩家执行推进 tick 的命令后，设置 `obl_tick_pending_npc = true`
-- 前端检测到 `pending_npc = true` 时，拒绝推进 tick 的命令并提示"NPC 行动中"
-- NPC 事件结算完毕后，`obl_tick_pending_npc = false`，前端广播 `game:npc-settled` 事件刷新数据
+- 玩家动作执行完毕 → `WAITING_PLAYER → PLAYER_DONE`（[C2d] 过渡）
+- tick 推进 → `PLAYER_DONE → NPC_ACTING`（[F-bs] 过渡）
+- 后端 [C2b] 检测 `NPC_ACTING` 状态 → 拒绝推进 tick 的命令
+- 前端 `isLocked` / `pendingNpc` getter 从 `oblBattleState === 'NPC_ACTING'` 派生
+- NPC 事件结算完毕 → `NPC_ACTING → WAITING_PLAYER`（NPC 处理代码自动过渡）
 
-**设计理由**：防止玩家在 NPC 先攻轮未结算时再次行动，导致状态不一致。
+**设计理由**：全局标志是单布尔值，无法区分多战场。状态机按 qid 分离，支持多战场并发，且 qid 销毁后自动清理状态。
 
 ### 2.4 played 标记机制替代响应内嵌
 
@@ -226,7 +204,7 @@ $obl_log->emit('move.success', 'move', [
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
 | 前端命令队列锁 | `command-queue.ts: isLocked` | 布尔标志，覆盖 HTTP 请求期间 | `try/finally` 末尾 |
-| 前端 NPC 待结算锁 | `command-queue.ts: pendingNpc` | 响应式 ref，NPC 行动期间锁定 | `game:npc-settled` 事件 |
+| 前端 NPC 待结算锁 | `command-queue.ts: pendingNpc` | 从 `oblBattleState === 'NPC_ACTING'` 派生（响应式） | 状态机过渡到 `WAITING_PLAYER` 时自动释放 |
 | 后端文件锁 | `obl_command.php: flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
 
 **为什么选 flock 而非 DB 锁**：
@@ -294,26 +272,18 @@ normal（探索）←→ battle（战斗）
 
 ### 2.12 新文件必须注册到 obl_bootstrap
 
-Oblivions 子系统采用统一入口 `oblivions/include/core/obl_bootstrap.php` 集中加载所有函数库，按拓扑排序分 8 层 require_once：
-
-- 第 0 层  obl_global.func.php（公共函数，最先加载）
-- 第 1 层  log / battle_log / sql / player / move / generate / battle.calc / skill
-- 第 2 层  vision（依赖 obl_global + player + move + log）
-- 第 3 层  battle.func（依赖第 1-2 层）
-- 第 4 层  battle.main（依赖第 1-3 层）
-- 第 5 层  explore / enemy_ai（依赖 vision + battle）
-- 第 6 层  tick（依赖最广，末尾注册监听器）
-- 第 7 层  gamectl/init.func.php（游戏初始化）
-- 第 8 层  gamectl/state.func.php（游戏状态机）
+Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php` 集中加载所有函数库。
 
 **强制约定**：
-- 新增任何 `.func.php` / `.main.php` 文件，必须在 `obl_bootstrap.php` 中对应层级注册
+- 新增任何 `.func.php` / `.main.php` 文件，必须在 `obl_bootstrap.php` 中注册，按拓扑排序
 - 注册时需找到正确的层级：被依赖的文件在前，依赖方在后
 - `function_exists + include_once` 双保险模式已废弃，统一走 bootstrap
 
 **设计理由**：
 - PHP 是动态语言，函数未定义只在运行时报错，编译期无提示
 - 集中注册使依赖关系可见，避免散落的条件 include 导致漏加载
+
+> 当前 8 层加载清单见 [CODEBASE.md](./CODEBASE.md#引导加载bootstrap)。
 
 ### 2.13 后端日志 ID 必须有前端模板对应
 
@@ -336,18 +306,33 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 
 ---
 
+### 2.14 前端守护进程模型（心跳）
+
+前端是后端游戏刻推进的唯一驱动力。
+
+**两个独立定时器，职责分离**：
+
+| 定时器 | 职责 | 间隔 | 与前端业务耦合 |
+|--------|------|------|--------------|
+| 心跳守护进程 | 纯 tick 激活，fire-and-forget | 200ms | **零耦合** — 不读响应 body，不触发任何 store |
+| NPC 状态轮询 | 前端状态同步（`refreshBattle`） | 1000ms | 无改动，沿用原有逻辑 |
+
+**设计原则**：
+- 心跳与前端业务数据同步彻底解耦，心跳不做任何"帮后端判断是否推进"的逻辑
+- 原有 NPC 轮询定时器的隐含双重职责（tick 激活 + 状态同步）被心跳剥离后，变为纯粹的"状态发现"
+- 动画播放期间心跳持续不受影响，`refreshBattle` 由 `isProcessingBattle` 锁保护
+
+**入口**：`api_v2.php?action=heartbeat`，响应仅 `{"status":"success"}`，不进业务字段组装。
+
+**实施**：`battle.ts` 新增 `startDaemonPoll/stopDaemonPoll`，`App.vue` `onMounted` 启动。
+
+详细设计案见：[docs/前端守护进程心跳模型设计案.md](docs/前端守护进程心跳模型设计案.md)
+
+---
+
 ## 三、缓存目录结构
 
-Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` 下，按用途分子目录：
-
-```
-oblivions/cache/
-├── .htaccess              # Apache 访问保护（Deny from all）
-├── locks/                 # obl_lock_{groomid}_{pid}.php — 命令并发锁
-├── logs/                  # obl_log_{groomid}_{pid}.json + obl_error_{groomid}_{pid}.json
-├── battles/               # obl_battle_log_{groomid}_{pid}.json — 战斗日志
-└── debug/                 # ai_dump_{groomid}.jsonl — AI 调试 dump
-```
+Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` 下，按用途分子目录。具体目录结构和文件命名规范见 [CODEBASE.md §2](./CODEBASE.md#二目录结构)。
 
 **设计原则**：
 - 缓存文件由后端 PHP 运行时生成，与前端代码彻底解耦

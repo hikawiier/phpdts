@@ -35,17 +35,15 @@ export const usePlayerStore = defineStore('player', () => {
   const isInBattle = computed(() => action.value === 'battle');
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
-  /** NPC 待结算标志：true 时玩家应等待 NPC 事件结算完毕 */
-  const oblTickPendingNpc = computed(() => playerInfo.value?.obl_tick_pending_npc ?? false);
 
-  // ── 战斗状态机（单一数据源，替代 pending_npc + playerTurn 组合判断） ──
+  // ── 战斗状态机 ──
   /** 当前玩家所在战场的状态 */
   const oblBattleState = computed<BattleState>(
     () => playerInfo.value?.obl_battle_state ?? 'IDLE',
   );
-  /** 战斗是否活跃（PLAYER_ACTING / NPC_ACTING / WAITING_PLAYER） */
+  /** 战斗是否活跃（PLAYER_DONE / NPC_ACTING / WAITING_PLAYER） */
   const isBattleActive = computed(
-    () => oblBattleState.value === 'PLAYER_ACTING'
+    () => oblBattleState.value === 'PLAYER_DONE'
       || oblBattleState.value === 'NPC_ACTING'
       || oblBattleState.value === 'WAITING_PLAYER',
   );
@@ -107,8 +105,6 @@ export const usePlayerStore = defineStore('player', () => {
     isInBattle,
     oblTick,
     oblPretick,
-    oblTickPendingNpc,
-    // 战斗状态机
     oblBattleState,
     isBattleActive,
     isPlayerTurn,
