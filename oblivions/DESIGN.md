@@ -79,9 +79,25 @@
 
 - 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
 - 每次 tick 增长触发 `obl_resolve_tick_events($delta)`，通过监听器机制调度 NPC 敌人行动
-- **玩家操作与 NPC 先攻轮互斥**：由战斗状态机管辖，`NPC_ACTING` 状态时拒绝推进 tick 的玩家命令
+- **玩家操作与 NPC 回合互斥**：由战斗状态机管辖，`PROCESSING` 状态时拒绝提交战斗命令（推进 tick 仍允许）
 
-### 1.8 结构化日志 (Structured Log)
+### 1.8 回合 (Turn) vs 轮 (Round)
+
+战斗系统中两个核心时间单位，概念分层：
+
+| | 回合 (Turn) | 轮 (Round) |
+|---|---|---|
+| **定义** | 单人次一次完整行动（1 tick） | 全队列一轮循环（仅队列操作） |
+| **范围** | 1 回合 ⊂ 1 轮 | 1 轮包含多回合 |
+| **示例** | 玩家执行技能 / NPC 出手 | 全员 done=1 → 重建队列 |
+
+**命名约定**：
+- 代码注释用"回合"指 Turn，"轮"指 Round
+- 旧术语"先攻轮"已废弃——原义即为"回合"（Turn，单人次行动），**从未涉及"轮"（Round）的概念**。表述时按实际层级区分：单人次行动用"回合"，全队列循环用"轮"
+- API `battle_log` 的 `turn` 字段（前端长期依赖）保留原名不更改
+- 历史设计文档（`docs/已完成任务/`、`docs/原始方案/`）保留旧术语不追溯修改
+
+### 1.9 结构化日志 (Structured Log)
 
 Oblivions 模式的日志传递机制。后端只输出事件结构（发生了什么 + 参数），前端完全控制视觉呈现（文案、样式、随机化）。
 
@@ -92,7 +108,7 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 - **持久化**：`oblivions/cache/logs/obl_log_{groomid}_{pid}.json`
 - **API 端点**：`obl_log`
 
-### 1.9 战斗日志 (Battle Log) 与 played 标记机制
+### 1.10 战斗日志 (Battle Log) 与 played 标记机制
 
 **与 obl_log 分离的第二套日志系统**，专门记录战斗细节（每一步动作），obl_log 只存战斗摘要（`battle.start`/`battle.end`）。
 
@@ -119,7 +135,7 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 > BattleLogEntry 字段结构见 [CODEBASE.md §4.5](./CODEBASE.md#45-battle_log-战斗日志未播放条目)。
 
-### 1.10 错误日志 (Error Log)
+### 1.11 错误日志 (Error Log)
 
 与 `obl_log` / `obl_battle_log` 物理隔离的第三套日志系统，专门记录后端异常和命令拒绝事件：
 
@@ -163,15 +179,15 @@ $obl_log->emit('move.success', 'move', [
 - 同一事件可在不同前端上下文呈现不同样式（日志区 vs Toast）
 - 前端可独立迭代文案，无需后端发版
 
-### 2.3 玩家操作与 NPC 先攻轮互斥
+### 2.3 玩家操作与战斗处理互斥
 
 由战斗状态机直接管辖（替代旧的 `obl_tick_pending_npc` 全局标志，该标志已移除）：
 
-- 玩家动作执行完毕 → `WAITING_PLAYER → PLAYER_DONE`（[C2d] 过渡）
-- tick 推进 → `PLAYER_DONE → NPC_ACTING`（[F-bs] 过渡）
-- 后端 [C2b] 检测 `NPC_ACTING` 状态 → 拒绝推进 tick 的命令
-- 前端 `isLocked` / `pendingNpc` getter 从 `oblBattleState === 'NPC_ACTING'` 派生
-- NPC 事件结算完毕 → `NPC_ACTING → WAITING_PLAYER`（NPC 处理代码自动过渡）
+- 玩家提交战斗指令并结束 → `PLAYER_TURN → PROCESSING`（[C2d] 过渡，`player_acted` 事件）
+- tick 推进 / NPC 回合处理 → 在 `PROCESSING` 状态下允许（[F-bs] 刷新时间戳）
+- 后端 [C2b] 检测 `PROCESSING` 状态 → 拒绝提交战斗命令的命令
+- 前端 `isLocked` / `pendingNpc` getter 从 `oblBattleState === 'PROCESSING'` 派生
+- 下一顺位判定 → `battle_manage_queue()` 集中确定 next 并写入 `bra_oblbattle_state.next_pid`：下一位是玩家则 `player_turn` 事件 → `PLAYER_TURN`，仍是 NPC 则 `self_loop` 事件刷新时间戳
 
 **设计理由**：全局标志是单布尔值，无法区分多战场。状态机按 qid 分离，支持多战场并发，且 qid 销毁后自动清理状态。
 
@@ -204,7 +220,7 @@ $obl_log->emit('move.success', 'move', [
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
 | 前端命令队列锁 | `command-queue.ts: isLocked` | 布尔标志，覆盖 HTTP 请求期间 | `try/finally` 末尾 |
-| 前端 NPC 待结算锁 | `command-queue.ts: pendingNpc` | 从 `oblBattleState === 'NPC_ACTING'` 派生（响应式） | 状态机过渡到 `WAITING_PLAYER` 时自动释放 |
+| 前端战斗处理中锁 | `command-queue.ts: pendingNpc` | 从 `oblBattleState === 'PROCESSING'` 派生（响应式） | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
 | 后端文件锁 | `obl_command.php: flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
 
 **为什么选 flock 而非 DB 锁**：

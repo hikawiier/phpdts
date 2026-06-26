@@ -156,7 +156,7 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
 }
 
 /**
- * 玩家先攻轮（已有先攻队列的情况下）
+ * 玩家回合（已有先攻队列的情况下）
  *
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
  * 流程：解析 actions → battle_main。
@@ -195,5 +195,6 @@ function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
 
     # 4. 执行动作 + 队列管理分离调用
     battle_main($pdata, $atk_act, $obl_battle_log, $battle_cache);
+    # 状态转换和 next_pid 已在 battle_manage_queue 内部完成
     battle_manage_queue($pdata, $obl_battle_log, $battle_cache);
 }

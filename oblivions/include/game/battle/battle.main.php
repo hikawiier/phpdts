@@ -15,7 +15,7 @@ require_once GAME_ROOT . './oblivions/include/game/player.func.php';
 require_once GAME_ROOT . './oblivions/include/game/sql.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
-//先攻轮完整流程主函数（不含队列管理）
+//回合主函数（不含队列管理，1 次出手 = 1 Turn = 1 tick）
 // $actor_data=先攻者data $atk_act=动作数组（数字索引，每项含 act_id + target）
 // $battle_cache 由调用方传入并在 battle_main 返回后传给 battle_manage_queue
 // 队列管理（创建/更新/解散/结束检测）由调用方在 battle_main 返回后调用 battle_manage_queue()
@@ -32,7 +32,7 @@ function battle_main(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
 
 function battle_verify(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
 {
-    //先攻轮校验函数：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
+    //回合校验函数（Turn）：检验输入的技能合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP
     //校验失败的act会从$atk_act中删除，校验成功的act会实际扣除AP
     //$atk_act 是数字索引数组，每项含 act_id + target
     foreach ($atk_act as $key => $act)

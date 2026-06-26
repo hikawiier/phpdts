@@ -205,7 +205,7 @@ function handle_player_info() {
         'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
         // 战斗状态机：当前玩家所在战场的状态（单一数据源）
-        // IDLE/PLAYER_DONE/NPC_ACTING/WAITING_PLAYER/ENDED
+        // IDLE / PLAYER_TURN / PROCESSING
         'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
             ? obl_battle_state_get((int)$pdata['bid'])
             : 'IDLE',

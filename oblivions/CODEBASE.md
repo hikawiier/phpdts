@@ -51,7 +51,7 @@ oblivions/
 │       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
 │       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
 │       ├── log.func.php        # 结构化日志收集器 + 持久化/读取
-│       ├── battle.func.php     # 战斗系统：先攻轮/动作执行/战斗结束（详见 §8.8）
+│       ├── battle.func.php     # 战斗系统：回合/动作执行/战斗结束（详见 §8.8）
 │       ├── battle_log.func.php # 战斗日志收集器 + played 标记机制（详见 §8.9）
 │       └── enemy_ai.func.php   # NPC 敌人 AI 核心（17 函数：初始化/tick 结算/感知/决策/碰撞）
 ├── gamedata/
@@ -155,7 +155,6 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。
 
 ```php
 $oblpara['battle'] = [
-    'turn'  => int,    // 先攻轮序号（递增，用于日志排序）
     'queue' => [        // 先攻队列（双方同步保存）
         ['pid' => 101, 'done' => 0],
         ['pid' => 5,   'done' => 0],
@@ -232,6 +231,28 @@ $oblpara['battle'] = [
 | `is_trap` | tinyint(1) unsigned | 是否为陷阱 |
 
 索引: `idx_pgroup_pls(pgroup, pls)`, `idx_iaid(iaid)`
+
+### 5.5 `bra_oblqueue` — 先攻队列
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `qid` | int | 队列编号（关联 oblbattle_state.qid） |
+| `pid` | int | 参战者 PID |
+| `myorder` | int | 先攻顺序（小=优先） |
+| `done` | tinyint(1) | 0=未行动 1=已行动 |
+| `last_acted` | int | 上一个行动者的 myorder 值（原名 `qorder`，用于日志/调试） |
+
+主键: `(qid, pid)`
+
+### 5.6 `bra_oblbattle_state` — 战斗状态机
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `qid` | int | 主键（= 战场编号） |
+| `state` | varchar(32) | 状态值（`PLAYER_TURN`/`PROCESSING`/...） |
+| `next_pid` | int | 当前顺位者 PID（0=无，`battle_manage_queue` 统一维护） |
+| `round_num` | int | 回合计数（Round） |
+| `updated_at` | int | 时间戳 |
 
 ---
 
@@ -407,7 +428,7 @@ $oblpara['battle'] = [
 |------|------|------|
 | `id` | string | 固定 `'battle.action'` |
 | `log_id` | string | 文件内自增 ID（持久化时分配），用于标记 played |
-| `turn` | string | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
+| `turn` | string | 回合序号（0=战斗开始/结束，1+=回合 N） |
 | `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
 | `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`initiative.roll`/`battle.end`） |
 | `action_name` | string | 动作显示名（如 `'空手攻击'`） |
@@ -511,7 +532,7 @@ api_response('success', array(
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
 | `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
 | `obl_battle_start` | `enemy_pid` (int) | `obl_battle_initiate($enemy_pid, $pdata)` | 玩家主动攻击：直接进入 battle 状态 |
-| `obl_battle_action` | `action_id` (string) | `obl_battle_resolve_round($action_id, $pdata)` | 战斗动作（玩家先攻轮执行 + NPC 自动执行） |
+| `obl_battle_action` | `action_id` (string) | `obl_battle_resolve_round($action_id, $pdata)` | 战斗动作（玩家回合执行 + NPC 自动执行） |
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -540,15 +561,15 @@ obl_command.php 内部流程：
        → action='battle' 时只允许 obl_battle_action
        → 非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许）
        → 被拒绝的命令 emit 'command.rejected' 日志，不推进 tick
-  [C2b] obl_tick_is_pending_npc() → 委托 obl_battle_state_has_npc_acting()
-       → 状态机 NPC_ACTING 时拒绝推进 tick 的命令，emit 'command.rejected' (reason=npc_action_pending)
+   [C2b] obl_tick_has_busy_battle() → 委托 obl_battle_state_has_busy_battle()
+        → 战场 PROCESSING 时拒绝推进 tick 的命令，emit 'command.rejected' (reason=battle_busy)
   [D]  if (!$command_rejected && $pdata['hp'] > 0):
         require oblivions_router.php
         oblivions_cmd_dispatch($command, $pdata, $post)
           → obl_command_allowed_by_state → cmd_handle_obl_xxx($params, $pdata)
             → explore.func.php / battle.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
       所有函数库由 obl_bootstrap.php 统一加载，handler 不再 include
-  [C2d] 命令执行完后：WAITING_PLAYER → PLAYER_DONE（状态机过渡）
+   [C2d] 命令执行完后：PLAYER_TURN → PROCESSING（状态机过渡 'player_acted'）
   [E]   obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化结构化日志
   [E1b] obl_error_log_persist($obl_error_log, $groomid, $pdata['pid'])  // 持久化错误日志
   [E2]  obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid'])  // 持久化战斗日志（played=0）
@@ -556,7 +577,7 @@ obl_command.php 内部流程：
   [G]   obl_save_player($pdata)                             // 写回 oblplayers
   [F]   if obl_command_advances_tick($command) && !escape_skip_tick:
         obl_tick_advance()             // obl_tick++ + 标记 $ginfochange
-        [F-bs] PLAYER_DONE → NPC_ACTING（状态机过渡）
+        [F-bs] PROCESSING 下刷新时间戳（obl_battle_state_refresh）
         save_gameinfo()                // 命令路径需显式持久化
   [H]   echo compatible_json_encode(array())                // 返回空 JSON {}
        （flock 在进程结束/脚本结束时由 OS 自动释放）
@@ -807,7 +828,7 @@ return [
 | `obl_tick_get_listeners` | `($phase): array` | 获取指定阶段的所有监听器 |
 | `obl_tick_dispatch` | `($delta, &$ctx): void` | 调度 tick 事件（三阶段：battle_npc 串行/idle_npc 并行/post 后处理） |
 | `obl_resolve_tick_events` | `($delta): void` | tick 事件处理入口（由 common.inc.php 调用，抓取玩家+构造上下文+调度） |
-| `obl_tick_is_pending_npc` | `(): bool` | 检查是否有战场在 NPC_ACTING 状态（委托 obl_battle_state_has_npc_acting） |
+| `obl_tick_has_busy_battle` | `(): bool` | 检查是否有战场在 PROCESSING 状态（委托 obl_battle_state_has_busy_battle） |
 
 ### 8.3 explore.func.php
 
@@ -915,7 +936,7 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 
 ### 8.8 battle.func.php — 战斗系统
 
-战斗系统核心，先攻轮机制。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
+战斗系统核心，回合机制。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
 
 **模块 1：接口预留函数**（4 函数，阶段一返回固定值，未来由技能/装备系统覆盖）
 
@@ -933,14 +954,12 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_battle_actor_id` | `(&$pdata): string` | 战斗单位标识符（`'player'` 或 `'enemy_{pid}'`） |
 | `obl_battle_action_name` | `($action_id): string` | 动作显示名（`unarmed_strike`→`空手攻击`，`escape`→`逃跑`） |
 
-**模块 3：战斗状态管理**（4 函数）
+**模块 3：战斗状态管理**（2 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_init_state` | `(&$pdata): void` | 初始化 `oblpara['battle']`（含 turn 计数器和先攻队列占位） |
+| `obl_battle_init_state` | `(&$pdata): void` | 初始化 `oblpara['battle']`（含先攻队列占位） |
 | `obl_battle_clear_state` | `(&$pdata): void` | 清除 `oblpara['battle']`（战斗结束时调用） |
-| `obl_battle_get_turn` | `(&$pdata): int` | 获取当前先攻轮序号（用于日志排序） |
-| `obl_battle_inc_turn` | `(&$pdata): void` | 递增先攻轮序号 |
 
 **模块 4：先攻队列管理**（4 函数）
 
@@ -948,8 +967,8 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 |------|------|------|
 | `obl_battle_roll_initiative` | `(&$player, &$enemy, $player_roll_override = null): array` | 先攻判定：摇随机数 + 排序 + 生成队列。玩家主动攻击时传 101 强制先攻。含先攻补正（玩家非第一顺位时随机数 += 第一顺位者 × 25%，1v1 中无实际效果，为 1vN 预留） |
 | `obl_battle_get_current_initiator` | `(&$pdata): array\|null` | 获取当前顺位（第一个 done=0 的队列项） |
-| `obl_battle_mark_done` | `(&$pdata, $pid): void` | 标记某个 pid 的先攻轮已完成（done=1） |
-| `obl_battle_all_done` | `(&$pdata): bool` | 检查是否所有人都已完成先攻轮 |
+| `obl_battle_mark_done` | `(&$pdata, $pid): void` | 标记某个 pid 的回合已完成（done=1） |
+| `obl_battle_all_done` | `(&$pdata): bool` | 检查是否所有人都已完成回合 |
 
 **模块 5：战斗发起与载入**（4 函数）
 
@@ -958,23 +977,23 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_battle_validate_target` | `($enemy_pid, &$pdata, &$enemy): string` | 校验攻击目标合法性（敌人存在/已发现/同区域/BFS 距离 ≤ 射程），不修改状态，返回错误信息（空=成功） |
 | `obl_battle_initiate` | `($enemy_pid, &$pdata): string` | 玩家主动攻击入口：校验 + 状态检测 + emit `battle.start` + 先攻判定（强制先攻）+ NPC 自动执行 |
 | `obl_battle_enter_battle` | `(&$player, &$enemy): void` | 状态检测：双方 `action='battle'` + `bid` 互指 + 初始化战斗状态 |
-| `obl_battle_resolve_round` | `($action_id, &$pdata): string` | 战斗载入流程入口（玩家提交 obl_battle_action 时调用）：执行玩家先攻轮 + NPC 自动执行直到玩家顺位或战斗结束 |
+| `obl_battle_resolve_round` | `($action_id, &$pdata): string` | 战斗载入流程入口（玩家提交 obl_battle_action 时调用）：执行玩家回合 + NPC 自动执行直到玩家顺位或战斗结束 |
 
 **模块 6：NPC 自动执行**（2 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_auto_npc` | `(&$player, &$enemy): string` | NPC 自动执行循环：NPC 是当前顺位时自动执行先攻轮，直到轮到玩家或战斗结束。所有人都完成时重新先攻判定 |
+| `obl_battle_auto_npc` | `(&$player, &$enemy): string` | NPC 自动执行循环：NPC 是当前顺位时自动执行回合，直到轮到玩家或战斗结束。所有人都完成时重新先攻判定 |
 | `obl_battle_encounter` | `(&$player, &$enemy): void` | 遭遇战入口（tick 结算中 NPC 移动到玩家格时调用）：状态检测 + 互相 discovered=1 + emit `battle.start` + 先攻判定 + NPC 自动执行 + 立即持久化 battlelog（避免写到错误 pid 文件） |
 
-**模块 7：先攻轮执行**（5 函数）
+**模块 7：回合执行**（5 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `obl_battle_load_attack_queue` | `(&$actor, $action_id): array` | 加载先攻者攻击动作队列（玩家用提交的 action_id，敌人 AI 行为树固定 unarmed_strike） |
 | `obl_battle_check_counter` | `(&$defender): array\|null` | 检查被攻击者是否有反击策略（留接口，阶段一返回 null） |
 | `obl_battle_execute_counter` | `(&$defender, &$attacker): void` | 执行被攻击者的反击动作（留接口，阶段一空实现） |
-| `obl_battle_execute` | `(&$actor, &$target, $action_id): string` | 先攻轮执行：加载攻击队列 → foreach 执行动作 → 检查反击 → 死亡判定。返回 `'continue'`/`'escape'`/`'victory'` |
+| `obl_battle_execute` | `(&$actor, &$target, $action_id): string` | 回合执行：加载攻击队列 → foreach 执行动作 → 检查反击 → 死亡判定。返回 `'continue'`/`'escape'`/`'victory'` |
 | `obl_battle_do_action` | `(&$actor, &$target, $action_id, $turn): bool` | 执行单个攻击动作（unarmed_strike 计算伤害扣 HP / escape 50% 概率成功）。emit battlelog 时附带 `enemy_pid` 用于前端分组。返回 true=继续，false=战斗结束 |
 
 **模块 8：战斗结束**（2 函数）
@@ -986,7 +1005,7 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 
 ### 8.9 battle_log.func.php — 战斗日志系统
 
-战斗日志收集与持久化，与 obl_log 分离（详见 [DESIGN.md §1.9](./DESIGN.md#19-战斗日志-battle-log-与-played-标记机制)）。
+战斗日志收集与持久化，与 obl_log 分离（详见 [DESIGN.md §1.10](./DESIGN.md#110-战斗日志-battle-log-与-played-标记机制)）。
 
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
@@ -999,6 +1018,15 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_battle_log_load` | `($groomid, $pid): array` | 从文件读取**未播放**的战斗日志（played=0），不清空文件 |
 | `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
 | `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `oblivions/cache/battles/obl_battle_log*.json`） |
+
+### 8.10 battle.queue.func.php — 战斗队列管理
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `battle_manage_queue` | `(&$actor_data, &$obl_battle_log, &$battle_cache): array` | 队列管理入口（done/rebuild/disband），返回 `['disbanded'=>bool, 'rebuilt'=>bool, 'next'=>array\|null]`；内部同步 `next_pid` 到 state 表并做状态转换，调用方无需再查队列 |
+| `battle_queue_ensure` | `(...): void` | 确保 actor_data 关联先攻队列 |
+| `battle_queue_advance` | `(...): void` | 标记 done + 解散/重建检查 + 更新 `last_acted` |
+| `battle_queue_try_end` | `(...): void` | 战斗结束检测 |
 
 ---
 
@@ -1073,7 +1101,7 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 8. 战斗流程:
    8.1 玩家主动攻击：obl_battle_start 命令 → obl_battle_initiate（校验+状态检测+先攻判定+NPC自动执行）
    8.2 遭遇战：tick 结算中 NPC 移动到玩家格 → obl_battle_encounter（状态检测+先攻判定+NPC自动执行）
-   8.3 战斗动作：obl_battle_action 命令 → obl_battle_resolve_round（玩家先攻轮+NPC自动执行）
+   8.3 战斗动作：obl_battle_action 命令 → obl_battle_resolve_round（玩家回合+NPC自动执行）
    8.4 战斗结束：obl_battle_end（清空状态+设置死亡+emit 日志+保存）
 ```
 
@@ -1124,7 +1152,7 @@ commandQueue.execute({ command: 'move', moveto: String(targetPls) });
 // 玩家主动攻击（直接进入 battle 状态）
 commandQueue.execute({ command: 'obl_battle_start', enemy_pid: String(enemyPid) });
 
-// 战斗动作（玩家先攻轮）
+// 战斗动作（玩家回合）
 commandQueue.execute({ command: 'obl_battle_action', action_id: 'unarmed_strike' });
 ```
 
@@ -1158,7 +1186,7 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
 - **战斗日志播放**: 前端按 `enemy_pid` 分组，每组按 `log_id` 排序，三阶段播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 mark 接口
 - **战斗状态过滤**: `action='battle'` 时前端只允许提交 `obl_battle_action`；非战斗状态不允许提交 `obl_battle_action`（后端 `obl_command_allowed_by_state` 强制）
-- **NPC 待结算锁**: 前端 `commandQueue.isLocked` / `pendingNpc` 从 `oblBattleState === 'NPC_ACTING'` 派生，拒绝推进 tick 的命令
+- **战斗处理中锁**: 前端 `commandQueue.isLocked` / `pendingNpc` 从 `oblBattleState === 'PROCESSING'` 派生，拒绝推进 tick 的命令
 - **技能渲染**: 前端按 `skill_id` 查 `vex-vue/src/data/skill-templates.ts` 渲染名称/描述/动作描述，未注册的 skill_id 回退到以 skillId 作为 name 的默认模板
 - **可用技能列表**: `player_info` API 返回 `skills` 字段（由 `skill_get_available_list()` 生成，含运行时状态 on_cd/available）
 

@@ -47,20 +47,16 @@ export interface PlayerInfo {
 }
 
 /**
- * 战斗状态机枚举
+ * 战斗状态机枚举（3 态）
  *
  * - IDLE：无活跃战斗
- * - PLAYER_DONE：玩家动作已结算，tick 即将推进转入 NPC_ACTING
- * - NPC_ACTING：NPC 行动中（tick 事件处理中，前端应轮询）
- * - WAITING_PLAYER：等待玩家操作（前端停止轮询，启用操作）
- * - ENDED：战斗结束（待清理）
+ * - PLAYER_TURN：轮到玩家操作（可提交指令，停止轮询）
+ * - PROCESSING：后端处理中（按钮灰掉，启动轮询直到变回 PLAYER_TURN 或 IDLE）
  */
 export type BattleState =
   | 'IDLE'
-  | 'PLAYER_DONE'
-  | 'NPC_ACTING'
-  | 'WAITING_PLAYER'
-  | 'ENDED';
+  | 'PLAYER_TURN'
+  | 'PROCESSING';
 
 /** 先攻队列（player_info.battle_queue） */
 export interface BattleQueue {

@@ -74,16 +74,19 @@ export const BATTLE_TEMPLATES: Record<string, BattleLogTemplate> = {
     render(entry, ctx) {
       const actor = displayActor(entry, ctx);
       const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
-      const success = !!(entry.extra && (entry.extra as { success?: unknown }).success);
-      if (success) {
-        return (
-          `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-          `尝试逃跑，<span class="yellow">成功了！</span>`
-        );
-      }
       return (
         `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-        `尝试逃跑，但<span class="red">失败了</span>。`
+        `尝试逃跑。`
+      );
+    },
+  },
+  flee: {
+    render(entry, ctx) {
+      const actor = displayActor(entry, ctx);
+      const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
+      return (
+        `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
+        `成功逃离了战斗！`
       );
     },
   },

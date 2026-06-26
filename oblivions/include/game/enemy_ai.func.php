@@ -36,21 +36,21 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // 模块 2：Tick 事件监听器
 // ================================================================
 // 两个内置监听器，由 tick.func.php 末尾集中注册：
-//   - obl_tick_phase_battle_npc：battle_npc phase，战斗中 NPC 先攻轮
+//   - obl_tick_phase_battle_npc：battle_npc phase，战斗中 NPC 回合
 //   - obl_tick_phase_idle_npc  ：idle_npc phase，非战斗 NPC AI 行为
 //
 // 监听器签名：function(int $delta, array &$ctx): void
 //   $ctx = ['player' => &$pdata, 'advanced' => bool]
 
 /**
- * 监听器：战斗中 NPC 先攻轮（battle_npc phase）
+ * 监听器：战斗中 NPC 回合（battle_npc phase）
  *
- * 查询所有活跃先攻队列，若当前顺位者是 NPC，执行 NPC 先攻轮。
+ * 查询所有活跃先攻队列，若当前顺位者是 NPC，执行 NPC 回合。
  * 执行后调用 obl_tick_request_advance() 请求推进 tick。
- * 最多处理 1 个 NPC 先攻轮（串行语义，由调度器 break 保证）。
+ * 最多处理 1 个 NPC 回合（串行语义，由调度器 break 保证）。
  *
  * 循环模型：
- *   - NPC 先攻轮执行 → 请求推进 → 调度器末尾 obl_tick++ → 下次请求继续循环
+ *   - NPC 回合执行 → 请求推进 → 调度器末尾 obl_tick++ → 下次请求继续循环
  *   - 当前顺位者是玩家 → 不执行 → 不推进 → 循环终止
  *
  * @param int   $delta 待处理的 tick 差值
@@ -74,19 +74,16 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$current = obl_fetch_queue_current_initiator($qid);
 		if (!$current) continue;
 
-		# 当前顺位者是玩家 → 不执行 NPC 先攻轮（等待玩家提交 obl_battle_action）
+		# 当前顺位者是玩家 → 不执行 NPC 回合（等待玩家提交 obl_battle_action）
 		if ($current['type'] == 0) {
-			# 战斗状态机：顺位回到玩家，触发 npc_done_player_turn 事件
-			# 状态转换：NPC_ACTING → WAITING_PLAYER
-			# 仅当当前状态为 NPC_ACTING 时触发（避免非法转换）
-			if (function_exists('obl_battle_state_get')
-			    && obl_battle_state_get($qid) === OBL_BS_NPC_ACTING) {
-				obl_battle_state_transition($qid, 'npc_done_player_turn');
+			# 战斗状态机：仅当状态为 PROCESSING 时触发 player_turn
+			if (obl_battle_state_get($qid) === OBL_BS_PROCESSING) {
+				obl_battle_state_transition($qid, 'player_turn');
 			}
 			continue;
 		}
 
-		# 当前顺位者是 NPC → 执行 NPC 先攻轮
+		# 当前顺位者是 NPC → 执行 NPC 回合
 		$npc_data = obl_fetch_playerdata_by_pid($current['pid']);
 		if (!$npc_data) {
 			continue;
@@ -103,29 +100,13 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 
 		# 通过入口 4 调用 battle_main（统一战斗入口路径）
 		include_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
-		battle_entry_npc_prepare_actions($npc_data, $atk_act);
-
-		# 战斗状态机：NPC 行动完成后，根据战斗是否结束 + 顺位判断状态转换
-		# battle_main 内部可能触发队列解散（bid=0）或重建（保持原状态）
-		if (empty($npc_data['bid'])) {
-			# 战斗已结束（NPC 被击杀或玩家逃跑）
-			# battle_finish_check / battle_queue_update 会触发 battle_end 事件并销毁状态记录
-			# 此处不重复触发
-		} else {
-			# 战斗继续，检查下一个顺位
-			$next = obl_fetch_queue_current_initiator($qid);
-			if ($next && $next['type'] == 0) {
-				# 顺位回到玩家 → WAITING_PLAYER
-				obl_battle_state_transition($qid, 'npc_done_player_turn');
-			} else {
-				# 顺位仍是 NPC → NPC_ACTING（循环，刷新 updated_at）
-				obl_battle_state_transition($qid, 'npc_done_npc_turn');
-			}
-		}
+		# battle_entry_npc_prepare_actions 内部调用 battle_manage_queue，
+		# 已包含：done → update → 确定 next + 状态转换 + try_end
+		$result = battle_entry_npc_prepare_actions($npc_data, $atk_act);
 
 		# 请求推进 tick（由调度器末尾统一推进，替代旧的 $obl_tick_advanced 引用传递）
 		obl_tick_request_advance();
-		break;  # 最多处理 1 个 NPC 先攻轮
+		break;  # 最多处理 1 个 NPC 回合
 	}
 }
 

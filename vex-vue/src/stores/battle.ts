@@ -317,11 +317,11 @@ export const useBattleStore = defineStore('battle', () => {
    * - 本函数负责状态管理（进入/退出战斗模式、启停 NPC 刷新、玩家回合 toast）
    * - fetchAndPlayBattleLog 只负责拉取-播放-标记，不涉及状态判断
    *
- * 状态机驱动（阶段2重构）：
- * - 用 obl_battle_state 作为单一数据源决定轮询行为
- * - PLAYER_DONE / NPC_ACTING → 继续轮询（NPC 即将/正在行动）
- * - WAITING_PLAYER → 停止轮询，启用玩家操作
- * - IDLE / ENDED → 停止轮询
+ * 状态机驱动（3 态）：
+ *  - 用 obl_battle_state 作为单一数据源决定轮询行为
+ *  - PROCESSING → 继续轮询（后端正在处理）
+ *  - PLAYER_TURN → 停止轮询，启用玩家操作
+ *  - IDLE → 停止轮询
    *
    * 在 game:action-completed / preload:executed 事件中调用。
    * NPC 顺位时会由 startNpcTurnRefresh 定时循环调用本函数。
@@ -349,14 +349,14 @@ export const useBattleStore = defineStore('battle', () => {
       if (action === 'battle') {
         // 从先攻队列中提取敌人 PID
         const enemyPid = extractEnemyPid(battleQueue);
-        // 用状态机判断玩家回合（WAITING_PLAYER = 玩家可操作）
-        const playerTurn = battleState === 'WAITING_PLAYER';
+        // 用状态机判断玩家回合（PLAYER_TURN = 玩家可操作）
+        const playerTurn = battleState === 'PLAYER_TURN';
         enterBattleMode(enemyPid, playerTurn);
 
         // 用状态机决定轮询行为
-        // PLAYER_DONE / NPC_ACTING → 继续轮询（tick 即将/正在推进）
-        // WAITING_PLAYER / IDLE / ENDED → 停止轮询
-        if (battleState === 'NPC_ACTING' || battleState === 'PLAYER_DONE') {
+        // PROCESSING → 继续轮询（后端处理中）
+        // PLAYER_TURN / IDLE → 停止轮询
+        if (battleState === 'PROCESSING') {
           startNpcTurnRefresh();
         } else {
           stopNpcTurnRefresh();
@@ -379,7 +379,7 @@ export const useBattleStore = defineStore('battle', () => {
           const afterAction = afterInfo.action || '';
           if (afterAction === 'battle') {
             // 用状态机判断是否轮到玩家
-            if (afterInfo.obl_battle_state === 'WAITING_PLAYER') {
+            if (afterInfo.obl_battle_state === 'PLAYER_TURN') {
               const toastStore = useToastStore();
               toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
             }

@@ -36,24 +36,23 @@ export const usePlayerStore = defineStore('player', () => {
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
 
-  // ── 战斗状态机 ──
+  // ── 战斗状态机（3 态） ──
   /** 当前玩家所在战场的状态 */
   const oblBattleState = computed<BattleState>(
     () => playerInfo.value?.obl_battle_state ?? 'IDLE',
   );
-  /** 战斗是否活跃（PLAYER_DONE / NPC_ACTING / WAITING_PLAYER） */
+  /** 战斗是否活跃（PLAYER_TURN / PROCESSING） */
   const isBattleActive = computed(
-    () => oblBattleState.value === 'PLAYER_DONE'
-      || oblBattleState.value === 'NPC_ACTING'
-      || oblBattleState.value === 'WAITING_PLAYER',
+    () => oblBattleState.value === 'PLAYER_TURN'
+      || oblBattleState.value === 'PROCESSING',
   );
-  /** 是否轮到玩家行动（WAITING_PLAYER 状态） */
+  /** 是否轮到玩家行动（PLAYER_TURN 状态） */
   const isPlayerTurn = computed(
-    () => oblBattleState.value === 'WAITING_PLAYER',
+    () => oblBattleState.value === 'PLAYER_TURN',
   );
-  /** NPC 是否行动中（NPC_ACTING 状态，前端应继续轮询） */
+  /** 后端是否正在处理中（PROCESSING 状态，前端应继续轮询） */
   const isNpcActing = computed(
-    () => oblBattleState.value === 'NPC_ACTING',
+    () => oblBattleState.value === 'PROCESSING',
   );
 
   /**

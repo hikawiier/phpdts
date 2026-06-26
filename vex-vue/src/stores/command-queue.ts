@@ -4,11 +4,9 @@
 // 替代现有 vex/js/command-queue.js 的 CommandQueue 单例。
 // 防止快速连续点击导致重复提交，支持冷却时间。
 //
-// 状态机重构（阶段2）：
-//   - 用 obl_battle_state === 'NPC_ACTING' 替代 pendingNpc 锁
+// 状态机简化（3 态）：
+//   - 用 obl_battle_state === 'PROCESSING' 替代 pendingNpc 锁
 //   - 移除独立轮询定时器（由 battle.ts 统一管理轮询）
-//   - 推进 tick 成功后拉取 player_info 更新状态机，广播 game:tick-advanced
-//     由 battle.ts 响应事件并决定是否启动/停止轮询
 //   - isLocked / pendingNpc getter 直接从 playerStore.oblBattleState 派生
 // ══════════════════════════════════════════════════
 
@@ -19,7 +17,7 @@ import { usePlayerStore } from '@/stores/player';
 
 /**
  * 推进 tick 的命令白名单（与后端 obl_command_advances_tick() 保持一致）
- * 这些命令执行后 NPC 先攻轮会被触发，前端需等待 NPC_ACTING 状态清除
+ * 这些命令执行后后端会进入 PROCESSING 状态
  */
 const TICK_ADVANCING_COMMANDS = new Set([
   'move',
@@ -40,7 +38,7 @@ class CommandQueue {
    * @returns CommandResult（与 submitCommand 返回结构一致）
    *   - HTTP 锁定时返回 { success: false, error: 'LOCKED', message: '操作进行中' }
    *   - 冷却中返回 { success: false, error: 'COOLDOWN', message: '冷却中' }
-   *   - NPC_ACTING 状态 + 推进 tick 命令返回 { success: false, error: 'PENDING_NPC', message: 'NPC 行动中，请稍候' }
+   *   - PROCESSING 状态 + 推进 tick 命令返回 { success: false, error: 'PENDING_NPC', message: '后端处理中，请稍候' }
    */
   async execute(params: Record<string, string>): Promise<CommandResult> {
     // ── HTTP 请求锁（覆盖单次请求周期） ──
@@ -51,18 +49,18 @@ class CommandQueue {
       return { success: false, error: 'COOLDOWN', message: '冷却中' };
     }
 
-    // ── 状态机锁：NPC_ACTING 状态时阻止推进 tick 的命令 ──
+    // ── 状态机锁：PROCESSING 状态时阻止推进 tick 的命令 ──
     const command = params.command || '';
     const advancesTick = TICK_ADVANCING_COMMANDS.has(command);
-    if (advancesTick && usePlayerStore().oblBattleState === 'NPC_ACTING') {
+    if (advancesTick && usePlayerStore().oblBattleState === 'PROCESSING') {
       useToastStore().showToast(
-        'NPC 行动中，请稍候',
+        '后端处理中，请稍候',
         'warning',
         2000,
         false,
         'pending-npc',
       );
-      return { success: false, error: 'PENDING_NPC', message: 'NPC 行动中，请稍候' };
+      return { success: false, error: 'PENDING_NPC', message: '后端处理中，请稍候' };
     }
 
     this._locked = true;
@@ -99,14 +97,14 @@ class CommandQueue {
     }
   }
 
-  /** 是否锁定中（HTTP 锁或 NPC_ACTING 状态锁） */
+  /** 是否锁定中（HTTP 锁或 PROCESSING 状态锁） */
   get isLocked(): boolean {
-    return this._locked || usePlayerStore().oblBattleState === 'NPC_ACTING';
+    return this._locked || usePlayerStore().oblBattleState === 'PROCESSING';
   }
 
-  /** NPC 是否待结算中（NPC_ACTING 状态，由状态机派生，供 UI 绑定） */
+  /** 后端是否处理中（PROCESSING 状态，由状态机派生，供 UI 绑定） */
   get pendingNpc(): boolean {
-    return usePlayerStore().oblBattleState === 'NPC_ACTING';
+    return usePlayerStore().oblBattleState === 'PROCESSING';
   }
 
   /** 剩余冷却时间（毫秒） */

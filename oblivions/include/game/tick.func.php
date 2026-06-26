@@ -28,7 +28,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 /**
  * 请求推进 tick（监听器调用）
  *
- * battle_npc phase 的监听器执行了 NPC 先攻轮后调用此函数，
+ * battle_npc phase 的监听器执行了 NPC 回合后调用此函数，
  * 调度器末尾检测标记并推进 1 游戏刻。
  *
  * @return void
@@ -71,7 +71,7 @@ function obl_tick_reset_advance() {
  * 不直接调用 save_gameinfo()，持久化由调用方统一负责。
  *
  * 调用场景：
- * - obl_tick_dispatch() 末尾：NPC 先攻轮执行后推进
+ * - obl_tick_dispatch() 末尾：NPC 回合执行后推进
  * - obl_command.php [F] 段：玩家行为推进
  *
  * @return void
@@ -118,21 +118,26 @@ function obl_tick_get_pretick() {
 }
 
 #=============================================================================
-# 模块 2b：NPC 待结算检测
+# 模块 2b：战场忙检测（替代 NPC 待结算检测）
 #=============================================================================
-# 由状态机管辖，查询是否任何战场在 NPC_ACTING 状态。
-# 状态机内部保证 STATE → WAITING_PLAYER 的过渡正确及时。
+# 由状态机管辖，查询是否任何战场在 PROCESSING 状态。
+# 状态机内部保证 PROCESSING → PLAYER_TURN 的过渡正确及时。
 
 /**
- * 检测是否有战场正在 NPC_ACTING 状态
+ * 检测是否有战场正在处理中
  *
- * @return bool true=存在 NPC 待结算的战场，应拒绝推进 tick 的玩家命令
+ * @return bool true=存在处理中战场，应拒绝推进 tick 的玩家命令
  */
-function obl_tick_is_pending_npc() {
-    if (function_exists('obl_battle_state_has_npc_acting')) {
-        return obl_battle_state_has_npc_acting();
+function obl_tick_has_busy_battle() {
+    if (function_exists('obl_battle_state_has_busy_battle')) {
+        return obl_battle_state_has_busy_battle();
     }
     return false;
+}
+
+/** @deprecated 使用 obl_tick_has_busy_battle */
+function obl_tick_is_pending_npc() {
+    return obl_tick_has_busy_battle();
 }
 
 #=============================================================================
@@ -149,11 +154,11 @@ function obl_tick_is_pending_npc() {
  * - move              玩家移动
  * - obl_explore       玩家原地探索（点亮迷雾+发现道具）
  * - obl_search        玩家搜索建筑物 POI
- * - obl_battle_start  玩家发起战斗（含玩家先攻轮）
- * - obl_battle_action 玩家先攻轮完成
+ * - obl_battle_start  玩家发起战斗（含玩家回合）
+ * - obl_battle_action 玩家回合完成
  *
  * 设计原则：只有"玩家主动行动结束"才推进 tick。
- * NPC 先攻轮由 obl_tick_dispatch() 末尾推进 tick（与玩家命令互斥）。
+ * NPC 回合由 obl_tick_dispatch() 末尾推进 tick（与玩家命令互斥）。
  *
  * @param string $command 命令名
  * @return bool true=推进 tick，false=不推进
@@ -163,8 +168,8 @@ function obl_command_advances_tick($command) {
         'move',             // 玩家移动
         'obl_explore',      // 玩家探索
         'obl_search',       // 玩家搜索建筑物
-        'obl_battle_start',  // 玩家发起战斗（含玩家先攻轮）
-        'obl_battle_action', // 玩家先攻轮完成
+        'obl_battle_start',  // 玩家发起战斗（含玩家回合）
+        'obl_battle_action', // 玩家回合完成
     );
     return in_array($command, $tick_commands, true);
 }
@@ -175,7 +180,7 @@ function obl_command_advances_tick($command) {
 # 监听器注册表按 phase 分组，调度时按 phase 顺序执行。
 #
 # Phase 语义：
-# - battle_npc：战斗中 NPC 先攻轮（串行，最多 1 个监听器请求推进）
+# - battle_npc：战斗中 NPC 回合（串行，最多 1 个监听器请求推进）
 # - idle_npc  ：非战斗 NPC AI 行为（并行，所有监听器都执行）
 # - post      ：tick 后处理（技能 CD、buff 等，预留扩展）
 
@@ -213,7 +218,7 @@ function obl_tick_get_listeners($phase) {
  * 调度 tick 事件（三阶段处理）
  *
  * 阶段顺序：
- *   1. battle_npc（串行）：战斗中 NPC 先攻轮，最多 1 个监听器请求推进
+ *   1. battle_npc（串行）：战斗中 NPC 回合，最多 1 个监听器请求推进
  *   2. idle_npc（并行）  ：非战斗 NPC AI 行为，所有监听器都执行
  *   3. post（串行）      ：tick 后处理（技能 CD 等），所有监听器都执行
  *
@@ -236,13 +241,13 @@ function obl_tick_dispatch($delta, &$ctx) {
     obl_tick_reset_advance();
 
     try {
-        // 阶段 1：战斗 NPC 先攻轮（串行，最多 1 个监听器请求推进）
+        // 阶段 1：战斗 NPC 回合（串行，最多 1 个监听器请求推进）
         $battle_npc_listeners = obl_tick_get_listeners('battle_npc');
         foreach ($battle_npc_listeners as $cb) {
             call_user_func_array($cb, array(&$delta, &$ctx));
             if (obl_tick_consume_advance()) {
                 $ctx['advanced'] = true;
-                break;  // 最多处理 1 个 NPC 先攻轮
+                break;  // 最多处理 1 个 NPC 回合
             }
         }
 
@@ -257,7 +262,7 @@ function obl_tick_dispatch($delta, &$ctx) {
         }
     } catch (Throwable $e) {
         // 异常兜底：记录错误日志，前端可通过下次请求了解到错误
-        // 战斗状态机保持 NPC_ACTING 状态，下一次 tick dispatch 会重试处理
+        // 战斗状态机保持当前状态，下一次 tick dispatch 会重试处理
         if (isset($obl_error_log) && $obl_error_log) {
             $obl_error_log->emit('tick.dispatch.error', array(
                 'error' => $e->getMessage(),

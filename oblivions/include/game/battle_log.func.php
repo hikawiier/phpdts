@@ -23,7 +23,7 @@ if (!defined('IN_GAME')) {
 /**
  * 战斗日志收集器（单次请求内累积，请求结束前持久化）
  *
- * 在 3 个战斗入口处局部初始化（玩家突袭/NPC突袭/NPC先攻轮），传入 battle_main()。
+ * 在 3 个战斗入口处局部初始化（玩家突袭/NPC突袭/NPC回合），传入 battle_main()。
  * battle_main 各阶段通过 setPhase() 标记阶段。
  */
 class BattleLogCollector {

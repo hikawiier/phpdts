@@ -32,13 +32,11 @@ return [
     # ── 逃跑类 ──────────────────────────────
     'escape' => [
         'apcost'        => 0,
-        'cd'            => 0,
+        'cd'            => 1,
         'target'        => 'self',
         'range_bonus'   => 0,
         'lifetime'      => 'permanent',
         'category'      => 'escape',
-        'damage_type'   => 'none',
-        'damage_factor' => 0,
     ],
     # ── 工具类 ──────────────────────────────
     'heal' => [

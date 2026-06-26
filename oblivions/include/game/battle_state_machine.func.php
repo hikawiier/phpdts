@@ -4,13 +4,17 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 战斗状态机模块
+// Oblivions 战斗状态机模块（3 态简化版）
 //
 // 职责：
 // - 管理战斗流程的状态转换（按 qid 分离，支持多战场）
-// - 监听 tick 推进事件，触发状态转换
 // - 提供单一数据源 obl_battle_state 供前后端查询
-// - 提供全局统筹查询（替代 pending_npc）
+// - 提供全局统筹查询（"是否有战场在忙"替代 "pending_npc"）
+//
+// 交互模型（前端只感知两层）：
+//   PLAYER_TURN → 可提交指令
+//   PROCESSING  → 后端全权处理中，前端轮询
+//   IDLE        → 无战斗
 //
 // 存储方案：bra_oblbattle_state 表（qid 主键）
 //
@@ -21,11 +25,9 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 // 状态枚举
-define('OBL_BS_IDLE',           'IDLE');
-define('OBL_BS_PLAYER_DONE',    'PLAYER_DONE');
-define('OBL_BS_NPC_ACTING',     'NPC_ACTING');
-define('OBL_BS_WAITING_PLAYER', 'WAITING_PLAYER');
-define('OBL_BS_ENDED',          'ENDED');
+define('OBL_BS_IDLE',        'IDLE');
+define('OBL_BS_PLAYER_TURN', 'PLAYER_TURN');
+define('OBL_BS_PROCESSING',  'PROCESSING');
 
 /**
  * 获取指定战场的战斗状态
@@ -53,15 +55,14 @@ function obl_battle_state_set($qid, $state) {
  * 在 battle_queue_create 创建先攻队列后调用
  *
  * 实现说明：使用 INSERT IGNORE，记录已存在时不覆盖。
- * - 新建队列：插入新记录，状态为 $initial_state（通常为 PLAYER_DONE）
+ * - 新建队列：插入新记录，状态为 $initial_state
  * - 重建队列：状态记录已存在，INSERT IGNORE 不覆盖，保持原状态
- *   （由后续的 tick_advanced / npc_done 事件驱动状态转换）
  *
  * @param int    $qid          先攻队列编号
- * @param string $initial_state 初始状态（默认 PLAYER_DONE）
+ * @param string $initial_state 初始状态（默认 PROCESSING）
  * @return void
  */
-function obl_battle_state_create($qid, $initial_state = OBL_BS_PLAYER_DONE) {
+function obl_battle_state_create($qid, $initial_state = OBL_BS_PROCESSING) {
     obl_state_create($qid, $initial_state);
 }
 
@@ -93,26 +94,25 @@ function obl_battle_state_transition($qid, $event) {
 
     $current = obl_battle_state_get($qid);
 
-    // 状态转换表（集中管理）
+    // 状态转换表（3 态集中管理）
+    // IDLE       — battle_start → PROCESSING
+    // PLAYER_TURN — player_acted → PROCESSING
+    // PLAYER_TURN — battle_end   → IDLE
+    // PROCESSING  — player_turn  → PLAYER_TURN
+    // PROCESSING  — battle_end   → IDLE
+    // PROCESSING  — self_loop    → PROCESSING（刷新时间戳）
     static $transitions = array(
         OBL_BS_IDLE => array(
-            'battle_start' => OBL_BS_PLAYER_DONE,
+            'battle_start' => OBL_BS_PROCESSING,
         ),
-        OBL_BS_PLAYER_DONE => array(
-            'tick_advanced' => OBL_BS_NPC_ACTING,
-            'battle_end'    => OBL_BS_ENDED,
+        OBL_BS_PLAYER_TURN => array(
+            'player_acted' => OBL_BS_PROCESSING,
+            'battle_end'   => OBL_BS_IDLE,
         ),
-        OBL_BS_NPC_ACTING => array(
-            'npc_done_player_turn' => OBL_BS_WAITING_PLAYER,
-            'npc_done_npc_turn'    => OBL_BS_NPC_ACTING,
-            'battle_end'           => OBL_BS_ENDED,
-        ),
-        OBL_BS_WAITING_PLAYER => array(
-            'player_action_complete' => OBL_BS_PLAYER_DONE,
-            'battle_end'             => OBL_BS_ENDED,
-        ),
-        OBL_BS_ENDED => array(
-            'cleanup' => OBL_BS_IDLE,
+        OBL_BS_PROCESSING => array(
+            'player_turn' => OBL_BS_PLAYER_TURN,
+            'battle_end'  => OBL_BS_IDLE,
+            'self_loop'   => OBL_BS_PROCESSING,
         ),
     );
 
@@ -127,12 +127,6 @@ function obl_battle_state_transition($qid, $event) {
                 'event'   => $event,
             ), 'battle');
         }
-        return $current;
-    }
-
-    // 特殊处理：NPC_ACTING → NPC_ACTING（循环，不实际改变状态，仅刷新 updated_at）
-    if ($current === $new_state) {
-        obl_battle_state_set($qid, $new_state);
         return $current;
     }
 
@@ -165,6 +159,22 @@ function obl_battle_state_reset($qid, $to_state = OBL_BS_IDLE) {
     }
 }
 
+/**
+ * 刷新战场状态时间戳
+ *
+ * 只更新 updated_at，不触发状态转换。
+ * PROCESSING → self_loop → PROCESSING 转换的轻量替代（有 event 记录时走 transition，纯刷新走本函数）。
+ *
+ * @param int $qid 先攻队列编号
+ * @return void
+ */
+function obl_battle_state_refresh($qid) {
+    global $db, $tablepre, $now;
+    if (!isset($now)) $now = time();
+    if ($qid <= 0) return;
+    $db->query("UPDATE {$tablepre}oblbattle_state SET updated_at = " . (int)$now . " WHERE qid = " . (int)$qid);
+}
+
 // ── 全局统筹查询（替代 pending_npc） ──
 
 /**
@@ -177,23 +187,40 @@ function obl_battle_state_get_all_active() {
 }
 
 /**
- * 检测是否有任何战场在 NPC_ACTING 状态
- * 替代 obl_tick_is_pending_npc() 的全局判断
+ * 检测是否有任何战场正在处理中（全局忙判断）
+ * 替代 obl_tick_has_busy_battle() 的全局判断
  *
  * @return bool
  */
+function obl_battle_state_has_busy_battle() {
+    return obl_state_has_busy_battle();
+}
+
+/**
+ * 设置指定战场的当前顺位者 PID
+ * 写入 next_pid，供调试和前端查询使用
+ *
+ * @param int $qid 先攻队列编号（战场编号）
+ * @param int $pid 顺位者 PID（0=无）
+ * @return void
+ */
+function obl_battle_state_set_next_pid($qid, $pid) {
+    obl_state_set_next_pid($qid, $pid);
+}
+
+/** @deprecated 使用 obl_battle_state_has_busy_battle */
 function obl_battle_state_has_npc_acting() {
-    return obl_state_has_npc_acting();
+    return obl_battle_state_has_busy_battle();
 }
 
 /**
  * 找出卡死的战场（指定状态超时）
  *
  * @param int    $timeout_seconds 超时秒数（默认 30 秒）
- * @param string $state           目标状态（默认 NPC_ACTING）
+ * @param string $state           目标状态（默认 PROCESSING）
  * @return array [qid, ...] 卡死的战场编号列表
  */
-function obl_battle_state_find_stale($timeout_seconds = 30, $state = OBL_BS_NPC_ACTING) {
+function obl_battle_state_find_stale($timeout_seconds = 30, $state = OBL_BS_PROCESSING) {
     global $now;
     if (!isset($now)) $now = time();
     return obl_state_find_stale($now - $timeout_seconds, $state);

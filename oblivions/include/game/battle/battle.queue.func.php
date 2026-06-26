@@ -6,7 +6,7 @@ if (!defined('IN_GAME')) {
 // ================================================================
 // Oblivions 先攻队列模块
 //
-// 职责：管理战斗的先攻队列（创建、加入、退出、更新、解散）和回合推进。
+// 职责：管理战斗的先攻队列（创建、加入、退出、更新、解散）和轮推进（Round = 全队列一轮循环）。
 // 从 battle.main.php + battle.func.php 拆出，与执行层和状态层解耦。
 // ================================================================
 
@@ -118,29 +118,17 @@ function battle_calc_initiative(&$actor_data, $combatants) {
     return $result;
 }
 
-function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log,$preserve_qid=0)
+function battle_queue_create(&$actor_data, &$combatants, &$obl_battle_log)
 {
-    #先攻队列创建函数
-    #根据$combatants和先攻率排序创建先攻队列
-    #创建后的先攻队列保存到数据库，数据结构参考oblqueue.sql
-    #将先攻队列中包含的每个参战者的bid修改为先攻队列的唯一索引qid
-    #$preserve_qid>0 表示在指定 qid 上重建队列（保持 qid 不变，用于战斗轮切换时的先攻重投）
+    # 新建先攻队列：设 bid、建状态机
     global $obl_error_log;
 
-    # 确定 qid：重建时复用原 qid，新建时取 MAX(qid)+1 保证唯一
-    $is_rebuild = $preserve_qid > 0;
-    if ($is_rebuild) {
-        $qid = (int)$preserve_qid;
-        # 重建时先清空该 qid 的所有旧队列记录，便于重新插入
-        obl_queue_delete_by_qid($qid);
-    } else {
-        $qid = obl_queue_next_qid();
-    }
+    $qid = obl_queue_next_qid();
 
     # 计算先攻顺位（基于先攻属性投掷 + ambush_flag 强制顺位 1）
     $initiative_result = battle_calc_initiative($actor_data, $combatants);
 
-    # 记录先攻计算 debug 日志（含 is_ambush 标记，体现强制顺位信息）
+    # 记录先攻计算 debug 日志
     $ambush_pid = !empty($actor_data['oblpara']['ambush_flag']) ? (int)$actor_data['pid'] : 0;
     if ($obl_battle_log) {
         $obl_battle_log->emit([
@@ -161,7 +149,6 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log,$preserv
     foreach ($initiative_result as $r) {
         $pid = $r['pid'];
 
-        # 获取参战者 type
         if ($pid == $actor_data['pid']) {
             $type = $actor_data['type'];
         } else {
@@ -179,17 +166,12 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log,$preserv
             $type = $combatant_data['type'];
         }
 
-        # 清理该 pid 的旧队列记录（避免 PRIMARY KEY 冲突，保证一个 pid 同时只在一个队列中）
         obl_queue_delete_by_pid($pid);
-
-        # 插入队列记录（qorder=0 表示还没人执行过，done=0 表示未行动）
         obl_queue_insert_entry($pid, $qid, $type, $r['myorder']);
 
-        # 更新参战者的 bid 为 qid
         if ($pid == $actor_data['pid']) {
             $actor_data['bid'] = $qid;
         } else {
-            # 其他参战者直接通过函数更新 bid 字段
             obl_player_set_bid($pid, $qid);
         }
     }
@@ -199,24 +181,79 @@ function battle_queue_create(&$actor_data,&$combatants,&$obl_battle_log,$preserv
         unset($actor_data['oblpara']['ambush_flag']);
     }
 
-    # 保存动作发起者（bid 已修改，ambush_flag 已清除）
     obl_save_player($actor_data);
 
-    # 战斗状态机：创建战场状态记录
-    # - 新建队列：状态 = PLAYER_DONE（玩家动作已结算，等待 tick 推进转入 NPC_ACTING）
-    # - 重建队列：INSERT IGNORE 不覆盖现有记录，保持原状态
-    #   （由后续的 tick_advanced / npc_done 事件驱动状态转换）
-    # battle_state_machine.func.php 已由 obl_bootstrap.php 加载
-    obl_battle_state_create($qid, OBL_BS_PLAYER_DONE);
+    # 战斗状态机：创建战场状态记录（初始 PROCESSING，后续由队列顺位校正）
+    obl_battle_state_create($qid, OBL_BS_PROCESSING);
 
-    # 记录日志（DEBUG：先攻队列创建）
     if ($obl_battle_log) {
         $obl_battle_log->emit([
             'actor_pid'   => (int)$actor_data['pid'],
             'actor_type'  => (int)$actor_data['type'],
             'target_pid'  => 0,
             'target_type' => -1,
-            'action_id'   => $is_rebuild ? 'queue_rebuild' : 'queue_create',
+            'action_id'   => 'queue_create',
+            'extra'       => ['qid' => $qid, 'combatants' => $combatants],
+        ]);
+    }
+}
+
+function battle_queue_rebuild($qid, $combatants, &$obl_battle_log)
+{
+    # 重建先攻队列：复用 qid，不设 bid，不建状态机
+    global $obl_error_log;
+
+    $qid = (int)$qid;
+    if ($qid <= 0) return;
+
+    # 清空该 qid 的所有旧队列记录
+    obl_queue_delete_by_qid($qid);
+
+    # 计算先攻顺位（重建时无突袭，所有参战者正常投掷）
+    $rolls = array();
+    foreach ($combatants as $pid) {
+        $combatant_data = obl_fetch_playerdata_by_pid($pid);
+        if (!$combatant_data) {
+            if (isset($obl_error_log) && $obl_error_log) {
+                $obl_error_log->emit('queue_rebuild.combatant_not_found', array(
+                    'missing_pid' => (int)$pid,
+                    'qid' => $qid,
+                ), 'command');
+            }
+            continue;
+        }
+        $initiative = obl_get_initiative($combatant_data);
+        $rolls[] = array(
+            'pid' => (int)$pid,
+            'roll' => mt_rand(1, $initiative),
+            'initiative' => $initiative,
+            'type' => (int)$combatant_data['type'],
+        );
+    }
+
+    # 排序：先攻投掷降序 → 先攻属性降序 → 玩家优先
+    usort($rolls, function($a, $b) {
+        if ($a['roll'] !== $b['roll']) return $b['roll'] - $a['roll'];
+        if ($a['initiative'] !== $b['initiative']) return $b['initiative'] - $a['initiative'];
+        if ($a['type'] == 0 && $b['type'] != 0) return -1;
+        if ($a['type'] != 0 && $b['type'] == 0) return 1;
+        return 0;
+    });
+
+    # 插入新队列记录（bid 已存在，不重复设置）
+    $myorder = 1;
+    foreach ($rolls as $r) {
+        obl_queue_delete_by_pid($r['pid']);
+        obl_queue_insert_entry($r['pid'], $qid, $r['type'], $myorder++);
+    }
+
+    if ($obl_battle_log) {
+        $obl_battle_log->emit([
+            'actor_pid'   => 0,
+            'actor_type'  => -1,
+            'target_pid'  => 0,
+            'target_type' => -1,
+            'action_id'   => 'queue_rebuild',
             'extra'       => ['qid' => $qid, 'combatants' => $combatants],
         ]);
     }
@@ -233,7 +270,7 @@ function battle_queue_join(&$actor_data, $qid, &$obl_battle_log)
     # 清理该 pid 的旧队列记录（避免 PRIMARY KEY 冲突，保证一个 pid 同时只在一个队列中）
     obl_queue_delete_by_pid($actor_data['pid']);
 
-    # 插入队列记录（排入末尾，done=0 表示未行动，本游戏刻不会执行先攻轮）
+    # 插入队列记录（排入末尾，done=0 表示未行动，本游戏刻不会执行其回合）
     obl_queue_insert_entry($actor_data['pid'], $qid, $actor_data['type'], $myorder);
 
     # 更新参战者的 bid 为 qid
@@ -252,41 +289,40 @@ function battle_queue_update(&$actor_data, &$obl_battle_log, &$battle_cache)
     #B. 死亡参战者从队列中移除 （battle_target_alive_check 检测到死亡时，从 bra_oblqueue 删除该行，清空其 bid）
     #C. 检查队列是否需要解散 （移除死亡者后，队列中除玩家外都死了 → 解散队列，清空玩家 bid）
     #D. 检查队列是否需要重建 （队列中所有 done 都=1 → 重新先攻判定，所有人 done=0，更新 myorder）
-    #E. 更新 qorder （记录当前执行顺位，方便前端显示和断点续传）
+    #E. 更新 last_acted（记录上一个行动者的 myorder，用于日志和调试）
 
     $qid = (int)$actor_data['bid'];
     if ($qid <= 0) return;
 
-    # C. 检查队列是否需要解散（队列中只剩 1 人或没人 → 解散）
+    # C. 检查队列是否需要解散（只剩 1 人或没人或无人玩家 → 解散）
     $count = obl_fetch_queue_count_by_qid($qid);
-    if ($count <= 1) {
-        # 队列中只剩玩家（或没人），解散队列
-        # 战斗状态机：保存 qid 到 battle_cache，供 battle_queue_try_end 触发 battle_end 事件
-        $battle_cache['last_qid'] = $qid;
+    if ($count <= 1 || !obl_fetch_queue_has_player($qid)) {
+        # 解散队列，直接销毁状态机
         obl_queue_delete_by_qid($qid);
+        obl_battle_state_transition($qid, 'battle_end');
+        obl_battle_state_destroy($qid);  // battle_end → IDLE，然后删行
         $actor_data['bid'] = 0;
         obl_save_player($actor_data);
         return;
     }
 
-    # D. 检查队列是否需要重建（所有 done=1 → 通过 battle_queue_create 在原 qid 上重投先攻）
+    # D. 检查队列是否需要重建（所有 done=1 → 重投先攻）
     $undone = obl_fetch_queue_undone_by_qid($qid);
     if (empty($undone)) {
-        # 所有人都行动过，保持 qid 不变，重投先攻顺位、重置 done=0、更新 myorder
+        # 所有人都行动过，保持 qid 不变，重投先攻顺位
         # 注意：重建时不应保留一次性标记（如 ambush_flag），调用前清理
         if (isset($actor_data['oblpara']['ambush_flag'])) {
             unset($actor_data['oblpara']['ambush_flag']);
         }
         $combatants = obl_fetch_queue_pids_by_qid($qid);
-        battle_queue_create($actor_data, $combatants, $obl_battle_log, $qid);
-        # 重建保持 qid 不变，actor_data['bid'] 仍为原 qid
+        battle_queue_rebuild($qid, $combatants, $obl_battle_log);
     }
 
-    # E. 更新 qorder（记录当前执行者的顺位，方便前端显示和断点续传）
+    # E. 更新 last_acted（记录上一个行动者的 myorder，用于日志和调试）
     if ($qid > 0) {
         $my_queue = obl_fetch_queue_by_pid($actor_data['pid']);
         if ($my_queue) {
-            obl_queue_update_qorder($actor_data['pid'], $qid, (int)$my_queue['myorder']);
+            obl_queue_update_last_acted($actor_data['pid'], $qid, (int)$my_queue['myorder']);
         }
     }
 
@@ -328,8 +364,10 @@ function battle_queue_ensure(&$actor_data, &$obl_battle_log, &$battle_cache)
     # 检验$actor_data['bid']是否关联存在的先攻队列
     if (empty($actor_data['bid']))
     {
-        # 没有则创建一个新的先攻队列
         $alive_pids = battle_get_alive_pids($battle_cache);
+        # 逃跑后 bid=0 但 combatants 中可能只剩自己，无人可打则不建队列
+        $others = array_filter($alive_pids, fn($p) => $p !== (int)$actor_data['pid']);
+        if (empty($others)) return;
         battle_queue_create($actor_data, $alive_pids, $obl_battle_log);
     }
 }
@@ -337,7 +375,7 @@ function battle_queue_ensure(&$actor_data, &$obl_battle_log, &$battle_cache)
 /**
  * 先攻队列推进函数
  *
- * 标记当前先攻者为已行动 + 解散检查 + 重建检查 + 更新 qorder。
+ * 标记当前先攻者为已行动 + 解散检查 + 重建检查 + 更新 last_acted。
  * 三步不拆：mark_done + disband + rebuild。
  * 由 battle_manage_queue 在 battle_queue_ensure 后调用。
  */
@@ -346,7 +384,7 @@ function battle_queue_advance(&$actor_data, &$obl_battle_log, &$battle_cache)
     # 标记当前先攻者在队列中为已行动
     battle_queue_done($actor_data, $actor_data['bid'], $obl_battle_log);
 
-    # 执行解散/重建/qorder 更新
+    # 执行解散/重建/last_acted 更新
     battle_queue_update($actor_data, $obl_battle_log, $battle_cache);
 }
 
@@ -361,21 +399,8 @@ function battle_queue_try_end(&$actor_data, &$obl_battle_log, &$battle_cache)
     # 检验$actor_data['bid']是否关联存在的先攻队列
     if (empty($actor_data['bid']))
     {
-        # 没有关联战斗队列，且在之前的流程里也没有建立新的战斗队列。说明战斗已结束了
-
-        # 战斗状态机：触发 battle_end 事件并销毁状态记录
-        # qid 从 battle_cache['last_qid'] 获取（由 battle_queue_update 解散逻辑保存）
-        $last_qid = isset($battle_cache['last_qid']) ? (int)$battle_cache['last_qid'] : 0;
-        if ($last_qid > 0 && function_exists('obl_battle_state_get')) {
-            $current_state = obl_battle_state_get($last_qid);
-            # 仅当状态记录还存在且非 IDLE 时触发 battle_end 事件
-            if ($current_state !== OBL_BS_IDLE) {
-                obl_battle_state_transition($last_qid, 'battle_end');
-            }
-            # 战斗清理完成后，销毁状态记录
-            obl_battle_state_destroy($last_qid);
-        }
-
+        # 没有关联战斗队列，说明战斗已结束。
+        # C 段解散时已直接销毁状态机，此处仅清理 actor 状态。
         battle_state_clear($actor_data, $obl_battle_log, $battle_cache);
         return;
     }
@@ -385,14 +410,14 @@ function battle_queue_try_end(&$actor_data, &$obl_battle_log, &$battle_cache)
 }
 
 /**
- * 下一轮准备函数
+ * 下一轮准备函数（Round）
  *
  * 重置先攻者AP，保存数据。
  * 由 battle_queue_try_end 在检测到战斗继续时调用。
  */
 function battle_queue_prepare_next_round(&$actor_data, &$obl_battle_log, &$battle_cache)
 {
-    # 先攻轮准备函数：恢复AP
+    # 轮准备函数：恢复AP（下一轮队列循环）
     $obl_battle_log->setPhase('prepare');
     battle_ap_recover($actor_data, $battle_cache, $obl_battle_log);
     # 保存先攻者数据到数据库
@@ -402,15 +427,46 @@ function battle_queue_prepare_next_round(&$actor_data, &$obl_battle_log, &$battl
 /**
  * 队列管理主函数（从 battle_main 拆出）
  *
- * 职责：四步流水线：create/ensure → advance(mark_done+disband+rebuild) → try_end。
- * 由入口函数在 battle_main 返回后调用（入口 3 不调 battle_main 时单独调用）。
+ * 职责：五步流水线：create/ensure → advance(mark_done+disband+rebuild) → 确定下一顺位+状态转换 → try_end。
+ * 返回结构化结果，调用方不再需要重复查询队列或手动做状态转换。
+ *
+ * @return array ['disbanded' => bool, 'rebuilt' => bool, 'next' => array|null]
+ *   disbanded: 队列是否已解散（战斗结束）
+ *   rebuilt:   队列是否已重建（新一轮）
+ *   next:      下一顺位者 ['pid' => int, 'type' => int] 或 null（解散后为 null）
  */
-function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache)
+function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): array
 {
+    $result = [
+        'disbanded' => false,
+        'rebuilt'   => false,
+        'next'      => null,
+    ];
+
     $obl_battle_log->setPhase('queue_check');
     battle_queue_ensure($actor_data, $obl_battle_log, $battle_cache);
     battle_queue_advance($actor_data, $obl_battle_log, $battle_cache);
 
+    # 确定下一顺位并同步到 state 表 + 状态转换
+    $qid = (int)$actor_data['bid'];
+    if ($qid <= 0) {
+        $result['disbanded'] = true;
+    } else {
+        $next = obl_fetch_queue_current_initiator($qid);
+        $result['next'] = $next;
+        obl_battle_state_set_next_pid($qid, $next ? (int)$next['pid'] : 0);
+
+        if ($next) {
+            if ($next['type'] == 0) {
+                obl_battle_state_transition($qid, 'player_turn');
+            } else {
+                obl_battle_state_refresh($qid);
+            }
+        }
+    }
+
     $obl_battle_log->setPhase('finish_check');
     battle_queue_try_end($actor_data, $obl_battle_log, $battle_cache);
+
+    return $result;
 }

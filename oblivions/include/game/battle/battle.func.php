@@ -20,6 +20,11 @@ function battle_state_init(&$actor_data)
 
 function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache)
 {
+    # 二次调用保护：已清理则跳过
+    if (empty($actor_data['action']) && empty($actor_data['bid'])) {
+        return;
+    }
+
     # 战斗已结束了，清空参战者的战斗状态
     $actor_data['action'] = '';
     # 如果还存在关联中的战斗队列，退出队列

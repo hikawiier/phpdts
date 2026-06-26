@@ -23,6 +23,7 @@ register_shutdown_function(function () {
     $error = error_get_last();
     if ($error && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) {
         ob_clean();
+        header('Content-Type: application/json');
         echo compatible_json_encode(array(
             'error' => 'PHP_FATAL',
             'message' => $error['message'] . ' in ' . $error['file'] . ':' . $error['line'],
@@ -43,6 +44,7 @@ $obl_lock_fp = fopen($obl_lock_file, 'w');
 if (!$obl_lock_fp || !flock($obl_lock_fp, LOCK_EX | LOCK_NB)) {
     // 另一个请求正在处理
     ob_clean();
+    header('Content-Type: application/json');
     echo compatible_json_encode(array('error' => 'COMMAND_IN_PROGRESS'));
     ob_end_flush();
     exit;
@@ -73,19 +75,18 @@ if ($command_rejected) {
 	}
 }
 
-// [C2b] NPC 待结算检测：NPC 事件未结算完时，拒绝推进 tick 的命令
-// 由战斗状态机管辖，查询是否有战场在 NPC_ACTING 状态
+// [C2b] 战场忙检测：有战场在处理中时，拒绝推进 tick 的命令
+// 由战斗状态机管辖，查询是否有战场在 PROCESSING 状态
 // 非推进 tick 的命令（查看状态等）不受此限制
 if (!$command_rejected
-    && obl_tick_is_pending_npc()
+    && obl_tick_has_busy_battle()
     && obl_command_advances_tick($command)) {
     $command_rejected = true;
-    // 迁移到 obl_error_log：NPC 待结算时拒绝命令，前端通过错误 Toast 即时感知
     if (isset($obl_error_log) && $obl_error_log) {
         $obl_error_log->emit('command.rejected', array(
             'command' => $command,
             'action'  => $pdata['action'],
-            'reason'  => 'npc_action_pending',
+            'reason'  => 'battle_busy',
         ), 'command');
     }
 }
@@ -98,17 +99,16 @@ if (!$command_rejected && $pdata['hp'] > 0) {
 	$mode = oblivions_cmd_dispatch($command, $pdata, $post);
 }
 
-// [C2d] 战斗状态机：命令执行完成后，从 WAITING_PLAYER 过渡到 PLAYER_DONE
-// 玩家动作已被 battle_main + battle_manage_queue 完整处理后才更新状态，
-// 避免原 [C2c] 在命令提交瞬间就设 PLAYER_ACTING 导致中间态卡死。
+// [C2d] 战斗状态机：命令执行完成后，从 PLAYER_TURN 过渡到 PROCESSING
+// 玩家动作已被 battle_main + battle_manage_queue 完整处理后才更新状态。
 if (!$command_rejected
     && function_exists('obl_command_advances_tick')
     && obl_command_advances_tick($command)) {
     $player_qid = (int)$pdata['bid'];
     if ($player_qid > 0
         && function_exists('obl_battle_state_get')
-        && obl_battle_state_get($player_qid) === OBL_BS_WAITING_PLAYER) {
-        obl_battle_state_transition($player_qid, 'player_action_complete');
+        && obl_battle_state_get($player_qid) === OBL_BS_PLAYER_TURN) {
+        obl_battle_state_transition($player_qid, 'player_acted');
     }
 }
 
@@ -147,20 +147,20 @@ obl_save_player($pdata);
 // [F] 游戏刻推进（白名单机制 + escape_skip_tick 例外 + 命令拒绝例外）
 // 顺序说明：先保存玩家数据（含 escape_skip_tick 清除），再推进 tick，
 // 避免 tick 已推进但玩家动作未持久化的不一致。
-// obl_tick 唯两处增加：玩家先攻轮（此处）/ NPC 先攻轮（obl_tick_dispatch 末尾），互斥。
+// obl_tick 唯两处增加：玩家回合（此处）/ NPC 回合（obl_tick_dispatch 末尾），互斥。
 // tick.func.php 已由 obl_bootstrap.php 加载，无需条件 include
 if (!$command_rejected && !$escape_skip_tick
     && obl_command_advances_tick($command)) {
     obl_tick_advance();             // obl_tick++ + 标记 $ginfochange（只改内存）
 
     // [F-bs] 战斗状态机：感知 tick 推进
-    // 状态转换：PLAYER_DONE → NPC_ACTING
-    // 仅当玩家在战场中且当前状态为 PLAYER_DONE 时触发
+    // tick 推进在 PROCESSING 状态下始终允许（转换表无对应事件时保持原状态）
+    // 仅刷新时间戳防止超时误判
     $player_qid = (int)$pdata['bid'];
     if ($player_qid > 0
         && function_exists('obl_battle_state_get')
-        && obl_battle_state_get($player_qid) === OBL_BS_PLAYER_DONE) {
-        obl_battle_state_transition($player_qid, 'tick_advanced');
+        && obl_battle_state_get($player_qid) === OBL_BS_PROCESSING) {
+        obl_battle_state_refresh($player_qid);
     }
 
     save_gameinfo();                // 命令路径需显式持久化（无 common 末尾兜底）
@@ -169,5 +169,6 @@ if (!$command_rejected && !$escape_skip_tick
 // [H] 响应（前端通过 api_v2.php 获取数据，本文件返回最小确认）
 // battlelog 不再随响应返回：所有 battlelog 持久化到文件，前端统一通过 api_v2.php 拉取 played=0 的条目。
 ob_clean();
+header('Content-Type: application/json');
 echo compatible_json_encode(array());
 ob_end_flush();

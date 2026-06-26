@@ -88,6 +88,14 @@ function obl_fetch_queue_count_by_qid($qid)
     return $row ? (int)$row['cnt'] : 0;
 }
 
+function obl_fetch_queue_has_player($qid)
+{
+    # 查队列中是否存在 type=0（玩家）的记录
+    global $db, $tablepre;
+    $result = $db->query("SELECT 1 FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND type = 0 LIMIT 1");
+    return $db->num_rows($result) > 0;
+}
+
 function obl_update_queue_done($pid, $qid, $done)
 {
     # 更新某 pid 在某 qid 的 done 标记，输入先攻队列唯一索引 qid，输出整数
@@ -100,7 +108,7 @@ function obl_update_queue_done($pid, $qid, $done)
 function obl_queue_insert_entry($pid, $qid, $type, $myorder)
 {
     global $db, $tablepre;
-    $db->query("INSERT INTO {$tablepre}oblqueue (pid, qid, type, qorder, myorder, done) VALUES (" . (int)$pid . ", " . (int)$qid . ", " . (int)$type . ", 0, " . (int)$myorder . ", 0)");
+    $db->query("INSERT INTO {$tablepre}oblqueue (pid, qid, type, last_acted, myorder, done) VALUES (" . (int)$pid . ", " . (int)$qid . ", " . (int)$type . ", 0, " . (int)$myorder . ", 0)");
 }
 
 function obl_queue_delete_entry($pid, $qid)
@@ -127,10 +135,17 @@ function obl_player_set_bid($pid, $qid)
     $db->query("UPDATE {$tablepre}oblplayers SET bid = " . (int)$qid . " WHERE pid = " . (int)$pid);
 }
 
-function obl_queue_update_qorder($pid, $qid, $qorder)
+function obl_queue_update_last_acted($pid, $qid, $myorder)
 {
     global $db, $tablepre;
-    $db->query("UPDATE {$tablepre}oblqueue SET qorder = " . (int)$qorder . " WHERE qid = " . (int)$qid . " AND pid = " . (int)$pid);
+    $db->query("UPDATE {$tablepre}oblqueue SET last_acted = " . (int)$myorder . " WHERE qid = " . (int)$qid . " AND pid = " . (int)$pid);
+}
+
+function obl_state_set_next_pid($qid, $pid)
+{
+    global $db, $tablepre;
+    if ($qid <= 0) return;
+    $db->query("UPDATE {$tablepre}oblbattle_state SET next_pid = " . (int)$pid . " WHERE qid = " . (int)$qid);
 }
 
 function obl_queue_next_qid()
@@ -169,7 +184,7 @@ function obl_state_create($qid, $initial_state) {
     global $db, $tablepre, $now;
     if ($qid <= 0) return;
     if (!isset($now)) $now = time();
-    $db->query("INSERT IGNORE INTO {$tablepre}oblbattle_state (qid, state, turn, updated_at) VALUES ("
+    $db->query("INSERT IGNORE INTO {$tablepre}oblbattle_state (qid, state, round_num, updated_at) VALUES ("
         . (int)$qid . ", '" . addslashes($initial_state) . "', 0, " . (int)$now . ")");
 }
 
@@ -189,10 +204,15 @@ function obl_state_get_all_active() {
     return $states;
 }
 
-function obl_state_has_npc_acting() {
+function obl_state_has_busy_battle() {
     global $db, $tablepre;
-    $result = $db->query("SELECT 1 FROM {$tablepre}oblbattle_state WHERE state = 'NPC_ACTING' LIMIT 1");
+    $result = $db->query("SELECT 1 FROM {$tablepre}oblbattle_state WHERE state = 'PROCESSING' LIMIT 1");
     return (bool)$db->fetch_array($result);
+}
+
+/** @deprecated 使用 obl_state_has_busy_battle */
+function obl_state_has_npc_acting() {
+    return obl_state_has_busy_battle();
 }
 
 function obl_state_find_stale($cutoff, $state) {

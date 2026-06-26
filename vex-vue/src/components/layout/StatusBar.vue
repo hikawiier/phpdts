@@ -86,15 +86,13 @@ const battleStateText = computed(() => {
   const state = playerStore.oblBattleState;
   const stateMap: Record<BattleState, string> = {
     IDLE: '空闲',
-    PLAYER_DONE: '玩家行动',
-    NPC_ACTING: 'NPC行动',
-    WAITING_PLAYER: '等待玩家',
-    ENDED: '战斗结束',
+    PLAYER_TURN: '等待玩家',
+    PROCESSING: '处理中',
   };
   return stateMap[state] || state;
 });
 
-// ── NPC 待结算提示（由状态机派生，NPC_ACTING 状态时显示） ──
+// ── 后端处理中提示（由状态机派生，PROCESSING 状态时显示） ──
 // 非 debug 模式下显示"NPC 行动中…"轻量提示；debug 模式下由 tick 调试信息覆盖
 const npcPending = computed(() => commandQueue.pendingNpc);
 
@@ -127,8 +125,8 @@ function onAvatarError(): void {
         <span
           v-if="npcPending"
           class="status-npc-pending"
-          title="NPC 事件结算中，请等待"
-        >NPC 行动中…</span>
+          title="后端处理中，请稍候"
+        >处理中…</span>
         <span
           class="status-tick-debug"
           :class="{ pending: tickPending }"

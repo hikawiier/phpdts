@@ -12,7 +12,7 @@ if (!defined('IN_GAME')) {
 //   1. battle_entry_player_ambush       玩家突袭 NPC（命令触发，后补票建队列）
 //   2. battle_entry_npc_ambush          NPC 突袭玩家（AI 决策，后补票建队列）
 //   3. battle_entry_encounter           遭遇战（移动目的地重叠，先建队列 + 先攻判定）
-//   4. battle_entry_npc_prepare_actions NPC 先攻准备（入口 3 分支 / 已有队列下一轮 NPC 先攻）
+//   4. battle_entry_npc_prepare_actions NPC 回合准备（入口 3 分支 / 已有队列下一轮 NPC 回合）
 //
 // 设计原则：
 //   - 命令层校验（HTTP 输入校验：存在/未死亡/同区域/射程内）由调用方完成
@@ -64,6 +64,7 @@ function battle_entry_player_ambush(&$pdata, $actions) {
 
     # 6. 执行动作 + 队列管理分离调用
     battle_main($pdata, $atk_act, $obl_battle_log, $battle_cache);
+    # 状态转换和 next_pid 已在 battle_manage_queue 内部完成
     battle_manage_queue($pdata, $obl_battle_log, $battle_cache);
 }
 
@@ -110,6 +111,7 @@ function battle_entry_npc_ambush(&$npc, $actions) {
 
     # 6. 执行动作 + 队列管理分离调用
     battle_main($npc, $atk_act, $obl_battle_log, $battle_cache);
+    # 状态转换和 next_pid 已在 battle_manage_queue 内部完成
     battle_manage_queue($npc, $obl_battle_log, $battle_cache);
 }
 
@@ -118,11 +120,11 @@ function battle_entry_npc_ambush(&$npc, $actions) {
  *
  * 由 move.func.php 检测到移动目的地与对手重叠时调用。
  * 不执行动作，只建队列 + 先攻判定，然后按先攻结果分支：
- *   - 玩家先攻 → 状态机 reset 为 WAITING_PLAYER（等玩家下个命令）
- *   - NPC 先攻 → 调用入口 4（NPC 先攻准备）
+ *   - 玩家先攻 → 状态机 set 为 PLAYER_TURN（等玩家下个命令）
+ *   - NPC 先攻 → 调用入口 4（NPC 回合准备）
  *
- * 状态初始记录由 battle_queue_create 内部调用 obl_battle_state_create 创建（初始 PLAYER_DONE），
- * 本函数按先攻结果用 obl_battle_state_reset 校正到正确状态。
+ * 状态初始记录由 battle_queue_create 内部调用 obl_battle_state_create 创建（初始 PROCESSING），
+ * 本函数按先攻结果校正到正确状态。
  *
  * @param array &$actor     触发者（玩家或 NPC,谁移动到此格）
  * @param array $combatants 显式参战者列表 [pid, pid, ...]
@@ -143,24 +145,15 @@ function battle_entry_encounter(&$actor, $combatants) {
     # 3. 触发者进入战斗状态
     battle_state_init($actor);
 
-    # 4. 通过队列管理建队列 + 先攻判定
-    #    battle_manage_queue 内部 battle_queue_create 会调用 obl_battle_state_create
-    battle_manage_queue($actor, $obl_battle_log, $battle_cache);
+    # 4. 通过队列管理建队列 + 先攻判定 + 状态转换
+    #    battle_manage_queue 内部完成：queue_create → advance → 确定 next + 状态转换 + try_end
+    #    调用方不再需要手动查队列或 set 状态
+    $result = battle_manage_queue($actor, $obl_battle_log, $battle_cache);
 
-    # 5. 按先攻结果校正状态机
-    $qid = (int)$actor['bid'];
-    if ($qid <= 0) return;
-
-    $first = obl_fetch_queue_current_initiator($qid);
-    if (!$first) return;
-
-    if ($first['type'] == 0) {
-        # 玩家先攻 → WAITING_PLAYER（绕过转换表直接定态，避免污染）
-        obl_battle_state_reset($qid, OBL_BS_WAITING_PLAYER);
-    } else {
-        # NPC 先攻 → NPC_ACTING，然后进入入口 4
-        obl_battle_state_reset($qid, OBL_BS_NPC_ACTING);
-        $npc_data = obl_fetch_playerdata_by_pid($first['pid']);
+    # 5. 如果下一顺位是 NPC，立即触发其回合
+    #    （入口 3 的特殊性：遭遇战需要在一个请求内完成队列创建 + NPC 先攻）
+    if ($result['next'] && $result['next']['type'] != 0) {
+        $npc_data = obl_fetch_playerdata_by_pid($result['next']['pid']);
         if ($npc_data) {
             obl_format_playerdata($npc_data);
             # NPC AI 生成动作合集
@@ -172,9 +165,9 @@ function battle_entry_encounter(&$actor, $combatants) {
 }
 
 /**
- * 入口 4：NPC 先攻准备
+ * 入口 4：NPC 回合准备
  *
- * 由入口 3 走 NPC 先攻的后续分支，或已有队列下一轮 NPC 先攻（tick 系统通过
+ * 由入口 3 走 NPC 回合的后续分支，或已有队列下一轮 NPC 回合（tick 系统通过
  * obl_tick_phase_battle_npc 触发）调用。
  * 流程：NPC AI 已生成 actions 合集 → 调用 battle_main。
  *
@@ -184,9 +177,9 @@ function battle_entry_encounter(&$actor, $combatants) {
  *
  * @param array &$npc    NPC 数据
  * @param array $actions AI 生成的动作数组 [{act_id, target}, ...]
- * @return void
+ * @return array battle_manage_queue 的结果 ['disbanded', 'rebuilt', 'next']
  */
-function battle_entry_npc_prepare_actions(&$npc, $actions) {
+function battle_entry_npc_prepare_actions(&$npc, $actions): array {
     global $obl_battle_log;
 
     # 1. 初始化 battle_log
@@ -203,7 +196,8 @@ function battle_entry_npc_prepare_actions(&$npc, $actions) {
 
     # 4. 执行动作 + 队列管理分离调用
     battle_main($npc, $atk_act, $obl_battle_log, $battle_cache);
-    battle_manage_queue($npc, $obl_battle_log, $battle_cache);
+    # 返回 battle_manage_queue 结果供调用方（tick handler）使用
+    return battle_manage_queue($npc, $obl_battle_log, $battle_cache);
 }
 
 // ── 辅助函数 ──
