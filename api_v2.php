@@ -118,11 +118,42 @@ switch ($action) {
     case 'ai_dump_save':
         handle_ai_dump_save();
         break;
+    case 'skill_cd_check':
+        handle_skill_cd_check();
+        break;
     case 'heartbeat':
         api_response('success');
         break;
     default:
         api_error('无效的API请求', 'INVALID_ACTION');
+}
+
+/**
+ * skill_cd_check — 查询技能是否定义了冷却
+ *
+ * 纯配置查询，不涉及玩家状态。
+ * 前端据此约束有 CD 的技能在装填队列中最多出现一次。
+ *
+ * GET / POST 参数：
+ *   skill_id  string  技能 ID
+ *
+ * 返回：
+ *   has_cd    bool    true=技能有 CD 定义，false=无 CD 或配置不存在
+ */
+function handle_skill_cd_check() {
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    $skill_id = isset($_REQUEST['skill_id']) ? trim($_REQUEST['skill_id']) : '';
+    if ($skill_id === '') {
+        api_error('缺少 skill_id 参数', 'MISSING_PARAM');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+    $has_cd = skill_has_cd($skill_id);
+
+    api_response('success', array('has_cd' => $has_cd));
 }
 
 function handle_player_info() {

@@ -25,6 +25,36 @@ function skill_get_config($skill_id) {
 }
 
 /**
+ * 检查技能配置中是否定义了冷却（cd > 0）
+ *
+ * 纯配置查询，不涉及玩家状态。用于前端队列约束：
+ * 有 CD 定义的技能在装填队列中最多出现一次。
+ *
+ * @param string $skill_id 技能 ID
+ * @return bool true=有 CD 定义，false=无 CD 定义或配置不存在
+ */
+function skill_has_cd($skill_id) {
+    $config = skill_get_config($skill_id);
+    if (!$config) return false;
+    return isset($config['cd']) && (int)$config['cd'] > 0;
+}
+
+/**
+ * 检查技能是否为终结技（finisher）
+ *
+ * 纯配置查询，不涉及玩家状态。用于后端排序兜底：
+ * 终结技在装填队列中只能存在一个且永远在末尾执行。
+ *
+ * @param string $skill_id 技能 ID
+ * @return bool true=是终结技，false=不是或配置不存在
+ */
+function skill_is_finisher($skill_id) {
+    $config = skill_get_config($skill_id);
+    if (!$config) return false;
+    return !empty($config['finisher']);
+}
+
+/**
  * 检查技能是否可用（不修改状态）
  *
  * 检查项：配置存在、actor 拥有该技能、CD 未锁定、AP 足够。
@@ -345,6 +375,7 @@ function skill_get_available_list(&$pdata) {
             'act_id'       => $skill_id,
             'apcost'       => $apcost,
             'cd'           => $cd,
+            'finisher'     => isset($config['finisher']) ? (int)$config['finisher'] : 0,
             'target'       => isset($config['target']) ? $config['target'] : 'self',
             'range_bonus'  => isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0,
             'category'     => isset($config['category']) ? $config['category'] : 'utility',

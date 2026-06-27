@@ -127,6 +127,18 @@ function onSkillClick(actId: string): void {
     return;
   }
 
+  // 有 CD 定义的技能在队列中只能出现一次
+  if (Number(skill.cd) > 0 && queue.value.some((item) => item.act_id === actId)) {
+    useToastStore().showToast('该技能有冷却，无法重复装填', 'warning', 3000);
+    return;
+  }
+
+  // 终结技在队列中只能出现一次
+  if (Number(skill.finisher) > 0 && queue.value.some((item) => item.act_id === actId)) {
+    useToastStore().showToast('终结技已存在，无法重复装填', 'warning', 3000);
+    return;
+  }
+
   if (skill.target === 'self') {
     // self 目标：直接加入队列，target 为玩家自己的 PID
     addToQueue(actId, playerPid.value);
@@ -200,7 +212,23 @@ function onAimExit(): void {
 // ══════════════════════════════════════════════════
 
 function addToQueue(actId: string, targetPid: number): void {
-  queue.value.push({ id: ++queueIdSeed, act_id: actId, target: targetPid });
+  const skill = skills.value.find((s) => s.act_id === actId);
+  const isFinisher = skill ? Number(skill.finisher) > 0 : false;
+
+  if (isFinisher) {
+    queue.value.push({ id: ++queueIdSeed, act_id: actId, target: targetPid });
+  } else {
+    // 普通技：如果队列有终结技，插入到它前面
+    const finisherIdx = queue.value.findIndex((item) => {
+      const s = skills.value.find((sk) => sk.act_id === item.act_id);
+      return s ? Number(s.finisher) > 0 : false;
+    });
+    if (finisherIdx >= 0) {
+      queue.value.splice(finisherIdx, 0, { id: ++queueIdSeed, act_id: actId, target: targetPid });
+    } else {
+      queue.value.push({ id: ++queueIdSeed, act_id: actId, target: targetPid });
+    }
+  }
 }
 
 function removeFromQueue(index: number): void {

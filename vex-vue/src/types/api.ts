@@ -215,6 +215,8 @@ export interface Skill {
   on_cd: boolean;
   /** 冷却总回合数（后端返回字符串） */
   cd: string;
+  /** 是否为终结技（1=是，0=否），终结技永远在队列末尾执行 */
+  finisher: number;
   /** 当前 tick（冷却剩余，后端返回字符串） */
   current_tick: string;
   /** 上一动作 tick（后端返回字符串） */

@@ -147,6 +147,16 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 **设计理由**：与结构化日志分离存储，避免错误日志污染正常日志流；独立裁剪策略，错误日志不参与正式日志的 200 条上限计数。
 
+### 1.12 Tag 系统（A/B 分类）
+
+战斗目标状态通过 Tag 统一描述。分两类：
+
+**Category A（主视角相关）**：`self`（目标是自己）、`out_of_range`（超出射程）。每次从当前 actor/target 重算，不缓存。
+
+**Category B（绝对状态）**：`dead`（`state=1`）、`escaped`（已逃跑）、`hidden`（隐身）。通过 `$battle_cache['tag_mutations'][pid]` 缓存，同一 `battle_main` 调用内跨 action 可见，随 cache 销毁自动清零。
+
+**配置驱动规则匹配**：`target_rules.require`（白名单）和 `target_rules.forbid`（黑名单），在 `battle_execute_verify` 中对标签集做匹配，失败时 emit 日志不执行。
+
 ---
 
 ## 二、核心设计原则
@@ -343,6 +353,27 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 **实施**：`battle.ts` 新增 `startDaemonPoll/stopDaemonPoll`，`App.vue` `onMounted` 启动。
 
 详细设计案见：[docs/前端守护进程心跳模型设计案.md](docs/前端守护进程心跳模型设计案.md)
+
+### 2.15 战斗执行阶段重构
+
+**核心变更**：将战斗执行拆为 verify → sort → execute → end 四阶段，引入 Tag 系统和缓存层分离运行时判断与 DB 写入。
+
+**三阶段死亡检测**：
+- **预检**（verify 中 `tag_dead` 函数）：首次构建目标标签时从 DB 派生 `dead` tag
+- **中检**（`battle_state_middle_check`）：伤害结算后只写缓存（`combatants[pid]` + `tag_mutations[pid]['dead']`），不改 DB state
+- **后清**（`battle_main_end`）：遍历 `combatants[pid]=0` 集中执行 cleanup（state=1 + state_clear / 仅 state_clear）
+
+**`combatants` 新语义**：`1`=能继续战斗，`0`=不能。有队列时从队列载入所有成员，无队列时仅自己。`battle_main_end` 消费后传给 `battle_manage_queue`。
+
+**HP 即时落库**：`battle_once_execute` 末尾调 `obl_save_player(both)`，执行中途崩溃时 HP 已写入，state 未更新，恢复后由 hp 检查兜底。
+
+### 2.16 终结技（Finisher）队列排序
+
+`finisher=1` 标记的技能为终结技。前端和后端双重约束：
+- **前端**：`addToQueue` 将普通技插入终结技前，终结技已存在时拒绝重复加入
+- **后端**：`battle_sort_actions` 在 verify 后 execute 前强制重排：普通技在前，finisher 在后；多个终结技只保留最后一个
+
+详细设计案见：[docs/终结技（Finisher）队列排序设计案.md](docs/终结技（Finisher）队列排序设计案.md)
 
 ---
 

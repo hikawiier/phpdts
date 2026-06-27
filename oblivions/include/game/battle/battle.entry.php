@@ -54,7 +54,7 @@ function battle_entry_player_ambush(&$pdata, $actions) {
     }
 
     # 3. 战斗上下文（外部传入，执行中填充 combatants）
-    $battle_cache = battle_cache_create($pdata['pid'], true);
+    $battle_cache = battle_cache_create($pdata, true);
 
     # 4. 设置 ambush_flag（一次性，battle_queue_create 中清除）
     $pdata['oblpara']['ambush_flag'] = true;
@@ -101,7 +101,7 @@ function battle_entry_npc_ambush(&$npc, $actions) {
     }
 
     # 3. 战斗上下文
-    $battle_cache = battle_cache_create($npc['pid'], true);
+    $battle_cache = battle_cache_create($npc, true);
 
     # 4. 设置 ambush_flag（一次性，battle_queue_create 中清除）
     $npc['oblpara']['ambush_flag'] = true;
@@ -140,7 +140,7 @@ function battle_entry_encounter(&$actor, $combatants) {
     }
 
     # 2. 战斗上下文（显式参战者列表，不执行动作）
-    $battle_cache = battle_cache_create($actor['pid'], false, array_fill_keys($combatants, 1));
+    $battle_cache = battle_cache_create($actor, false, array_fill_keys($combatants, 1));
 
     # 3. 触发者进入战斗状态
     battle_state_init($actor);
@@ -192,7 +192,7 @@ function battle_entry_npc_prepare_actions(&$npc, $actions): array {
     $atk_act = battle_entry_parse_actions($actions, $npc['pid'], 'npc_prepare');
 
     # 3. 战斗上下文
-    $battle_cache = battle_cache_create($npc['pid'], false);
+    $battle_cache = battle_cache_create($npc, false);
 
     # 4. 执行动作 + 队列管理分离调用
     battle_main($npc, $atk_act, $obl_battle_log, $battle_cache);
@@ -205,22 +205,39 @@ function battle_entry_npc_prepare_actions(&$npc, $actions): array {
 /**
  * 统一构建战斗上下文
  *
- * 消除 5 处重复的 $battle_cache 内联赋值。
- * $combatants 为 null 时默认初始化为仅含发起者（后补票模型）。
+ * $combatants 为 null 时默认按发起者是否已关联先攻队列决定初始化范围：
+ *   - 发起者 bid > 0 → 载入整个队列内所有 pid（代表一次 battle_main 生命周期后还能继续战斗的目标合集）
+ *   - 发起者无队列   → 仅自己（后补票模型）
  *
- * @param int      $initiator_pid 发起者 pid
- * @param bool     $is_ambush     是否突袭
- * @param array|null $combatants  显式参战者列表 [pid => 1, ...]
+ * 初始化 tag_mutations 为空数组，由 battle_build_target_tags 在 verify 阶段首次构建后填充。
+ *
+ * @param array      $initiator_data 发起者完整数据
+ * @param bool       $is_ambush     是否突袭
+ * @param array|null $combatants    显式参战者列表 [pid => 1, ...]
  * @return array
  */
-function battle_cache_create($initiator_pid, $is_ambush = false, $combatants = null) {
+function battle_cache_create(&$initiator_data, $is_ambush = false, $combatants = null) {
+    $initiator_pid = (int)$initiator_data['pid'];
+
     if ($combatants === null) {
-        $combatants = [$initiator_pid => 1];
+        // 发起者有战斗队列 → 载入队列内其他人
+        $qid = (int)($initiator_data['bid'] ?? 0);
+        if ($qid > 0) {
+            $all_pids = obl_fetch_queue_pids_by_qid($qid);
+            $combatants = [];
+            foreach ($all_pids as $pid) {
+                $combatants[(int)$pid] = 1;
+            }
+        } else {
+            // 无队列 → 仅自己
+            $combatants = [$initiator_pid => 1];
+        }
     }
     return [
-        'combatants' => $combatants,
-        'last_qid'   => 0,
-        'is_ambush'  => $is_ambush,
+        'combatants'    => $combatants,
+        'last_qid'      => 0,
+        'is_ambush'     => $is_ambush,
+        'tag_mutations' => [],
     ];
 }
 

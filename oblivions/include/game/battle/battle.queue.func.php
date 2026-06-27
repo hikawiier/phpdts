@@ -123,6 +123,9 @@ function battle_queue_create(&$actor_data, &$combatants, &$obl_battle_log)
     # 新建先攻队列：设 bid、建状态机
     global $obl_error_log;
 
+    // 临时判断，这个判断应该在ensure环节就进行
+    if(count($combatants)<2) return;
+
     $qid = obl_queue_next_qid();
 
     # 计算先攻顺位（基于先攻属性投掷 + ambush_flag 强制顺位 1）
@@ -141,6 +144,7 @@ function battle_queue_create(&$actor_data, &$combatants, &$obl_battle_log)
                 'qid' => $qid,
                 'rolls' => $initiative_result,
                 'ambush_pid' => $ambush_pid,
+                'combatants_counts' => count($combatants),
             ],
         ]);
     }
@@ -366,8 +370,8 @@ function battle_queue_ensure(&$actor_data, &$obl_battle_log, &$battle_cache)
     {
         $alive_pids = battle_get_alive_pids($battle_cache);
         # 逃跑后 bid=0 但 combatants 中可能只剩自己，无人可打则不建队列
-        $others = array_filter($alive_pids, fn($p) => $p !== (int)$actor_data['pid']);
-        if (empty($others)) return;
+        //$others = array_filter($alive_pids, fn($p) => $p !== (int)$actor_data['pid']);
+        //if (empty($others)) return;
         battle_queue_create($actor_data, $alive_pids, $obl_battle_log);
     }
 }

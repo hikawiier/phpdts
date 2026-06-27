@@ -119,3 +119,149 @@ function battle_apply_damage(&$actor_data, &$target_data, $damage, &$obl_battle_
         $target_data['hp'] = 0;
     }
 }
+
+// ================================================================
+// Tag 系统 / Tag system
+//
+// 目标状态标记统一描述。Cat A 始终从当前 actor/target 重算；Cat B 通过
+// $battle_cache['tag_mutations'][pid] 缓存，跨 action 可见。
+// 配套设计：oblivions/docs/战斗执行阶段重构设计案.md §2
+// ================================================================
+
+/**
+ * 单 tag 派生函数：目标已死（Cat B 首次派生用）
+ */
+function battle_tag_dead(&$target_data): bool {
+    return (int)$target_data['state'] === 1;
+}
+
+/**
+ * 单 tag 派生函数：目标是自己
+ */
+function battle_tag_self(&$actor_data, &$target_data): bool {
+    return (int)$target_data['pid'] === (int)$actor_data['pid'];
+}
+
+/**
+ * 单 tag 派生函数：目标超出当前 actor 射程
+ */
+function battle_tag_out_of_range(&$actor_data, &$target_data, &$battle_cache): bool {
+    return !battle_target_distance_check($actor_data, $target_data, $battle_cache);
+}
+
+/**
+ * 构建目标标签集（统一入口）
+ *
+ * Cat A（self/out_of_range）始终从当前 actor/target 重算；
+ * Cat B（dead/escaped/hidden）从 $battle_cache['tag_mutations'][pid] 读取缓存，
+ * 首次构建时从 DB 派生 dead，并将全量 Cat B 写回 tag_mutations。
+ *
+ * @param array  &$actor_data   动作者数据
+ * @param array  &$target_data   目标数据
+ * @param string $act_id         动作 ID（预留，便于未来动作驱动派生）
+ * @param array  &$battle_cache
+ * @return array [tag_name => bool, ...]
+ */
+function battle_build_target_tags(&$actor_data, &$target_data, $act_id, &$battle_cache): array {
+    $tags = [];
+    $pid = (int)$target_data['pid'];
+
+    // ── Cat A：始终重算（依赖当前 actor，不可缓存）──
+    $tags['self']         = battle_tag_self($actor_data, $target_data);
+    $tags['out_of_range'] = battle_tag_out_of_range($actor_data, $target_data, $battle_cache);
+
+    // ── Cat B：从缓存读取可变状态 tag ──
+    $cached = $battle_cache['tag_mutations'][$pid] ?? null;
+    if ($cached !== null) {
+        $tags['dead']    = !empty($cached['dead']);
+        $tags['escaped'] = !empty($cached['escaped']);
+        $tags['hidden']  = !empty($cached['hidden']);
+    } else {
+        // 首次构建：从 DB 派生 dead，escaped/hidden 默认 false
+        $tags['dead']    = battle_tag_dead($target_data);
+        $tags['escaped'] = false;
+        $tags['hidden']  = false;
+    }
+
+    // 只写 Cat B 到 tag_mutations（Cat A 每次重算）
+    $battle_cache['tag_mutations'][$pid] = [
+        'dead'    => $tags['dead'],
+        'escaped' => $tags['escaped'],
+        'hidden'  => $tags['hidden'],
+    ];
+
+    return $tags;
+}
+
+// ================================================================
+// 动作-目标规则匹配 / Action-target rule matching
+// 配套设计：§3
+// ================================================================
+
+/**
+ * 白名单+黑名单规则匹配
+ *
+ * @param array $config 技能配置（需含 target_rules）
+ * @param array $tags   battle_build_target_tags 返回的标签集
+ * @return array ['pass' => bool, 'reason' => string|null]
+ */
+function battle_check_target_rules($config, array $tags): array {
+    $rules = $config['target_rules'] ?? null;
+    if (!$rules) return ['pass' => true, 'reason' => null];
+
+    if (!empty($rules['require'])) {
+        foreach ($rules['require'] as $tag) {
+            if (empty($tags[$tag])) {
+                return ['pass' => false, 'reason' => "require:{$tag}"];
+            }
+        }
+    }
+
+    if (!empty($rules['forbid'])) {
+        foreach ($rules['forbid'] as $tag) {
+            if (!empty($tags[$tag])) {
+                return ['pass' => false, 'reason' => "forbid:{$tag}"];
+            }
+        }
+    }
+
+    return ['pass' => true, 'reason' => null];
+}
+
+// ================================================================
+// Actor 行动资格检查 / Actor can-act check
+// 配套设计：§6.1
+// ================================================================
+
+/**
+ * 检查 actor 当前是否能行动（state>0 或 hp<=0 视为不能行动）
+ *
+ * 独立于调用方，失败时 emit 失败原因。
+ *
+ * @param array               &$actor_data
+ * @param BattleLogCollector|null &$obl_battle_log
+ * @return bool
+ */
+function battle_actor_can_act(&$actor_data, &$obl_battle_log): bool {
+    if ((int)$actor_data['state'] > 0) {
+        if ($obl_battle_log) {
+            $obl_battle_log->emit([
+                'actor_pid'  => (int)$actor_data['pid'],
+                'action_id'  => 'verify.actor',
+                'extra'      => ['result' => 'failed', 'reason' => 'actor_dead'],
+            ]);
+        }
+        return false;
+    }
+    if ((int)$actor_data['hp'] <= 0) {
+        if ($obl_battle_log) {
+            $obl_battle_log->emit([
+                'actor_pid'  => (int)$actor_data['pid'],
+                'action_id'  => 'verify.actor',
+                'extra'      => ['result' => 'failed', 'reason' => 'actor_hp_zero'],
+            ]);
+        }
+        return false;
+    }
+    return true;
+}

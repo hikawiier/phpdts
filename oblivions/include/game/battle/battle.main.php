@@ -25,9 +25,15 @@ function battle_main(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
     battle_verify($actor_data, $atk_act, $obl_battle_log, $battle_cache); 
 
     if (!empty($atk_act)) {
+        // 终结技排序（安全兜底，不信任前端顺序）
+        battle_sort_actions($atk_act);
+
         $obl_battle_log->setPhase('excute');
         battle_execute($actor_data, $atk_act, $obl_battle_log, $battle_cache);    
     }
+
+    // ── 集中 cleanup（state=1、queue_exit、obl_save_player）──
+    battle_main_end($actor_data, $atk_act, $obl_battle_log, $battle_cache);
 }
 
 function battle_verify(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
@@ -52,28 +58,26 @@ function battle_execute(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cach
     //target 可以是单个 pid 或 pid 数组（影响多目标的动作）
     foreach ($atk_act as $act) {
         $act_id = $act['act_id'];
-        $target = $act['target'];
 
-        # target 统一数组化，使用统一逻辑执行流程
-        $targets_array = is_array($target) ? $target : array($target);
+        // A. 动作者能不能行动（per act 一次）
+        if (!battle_actor_can_act($actor_data, $obl_battle_log)) continue;
+
+        $targets_array = is_array($act['target']) ? $act['target'] : array($act['target']);
 
         foreach ($targets_array as $target_id) {
-            $target_data = battle_target_check($target_id, $actor_data, $obl_battle_log, $battle_cache);  //目标合法性检测函数：检测目标是不是还活着，是不是在技能射程外；成功返回目标data，失败返回false；
-            if (!$target_data) continue; //目标不合法 跳过执行
-            battle_once_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache); //单次先攻动作结算
+            $verify_result = battle_execute_verify(
+                $actor_data,
+                ['act_id' => $act_id, 'target' => $target_id],
+                $obl_battle_log,
+                $battle_cache
+            );
+            if (!$verify_result) continue;
+
+            $target_data = &$verify_result['target_data'];
+
+            battle_once_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
         }
     }
-}
-
-function battle_target_check($target_id, &$actor_data, &$obl_battle_log, &$battle_cache)
-{
-    $target_data = obl_fetch_playerdata_by_pid($target_id); //获取目标data
-    if (!$target_data) return false; //目标不存在 不合法
-    //检测目标存活状态
-    if (!battle_target_alive_check($target_data,$obl_battle_log,$battle_cache)) return false; //目标死亡 不合法
-    //目标不是自己的情况下 检测目标是否在技能射程内
-    if($target_id != $actor_data['pid'] && !battle_target_distance_check($actor_data, $target_data, $battle_cache)) return false; //目标不在射程内 不合法
-    return $target_data;
 }
 
 function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache)
@@ -81,7 +85,7 @@ function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_
     # 受击目标进入战斗状态（突袭入口的受击目标在此初始化）
     battle_state_init($target_data);
 
-    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑）
+    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑；可写 tag_mutations）
     include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
     skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
 
@@ -93,8 +97,7 @@ function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_
     $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
     battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
 
-    // 记录攻击日志（必须在 battle_target_alive_check 之前 emit，确保攻击日志的 log_id 小于击杀日志）
-    // 否则前端按 log_id 升序播放时会先播"战斗结束"再播"攻击伤害"，造成时序错乱
+    // 记录攻击日志（在 middle_check 之前 emit，确保攻击日志的 log_id 小于后续状态日志）
     if ($obl_battle_log) {
         $obl_battle_log->emit([
             'actor_pid'    => (int)$actor_data['pid'],
@@ -112,28 +115,211 @@ function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_
         ]);
     }
 
-    $survival_flag = battle_target_alive_check($target_data, $obl_battle_log, $battle_cache); //目标存活状态检测，判定死亡，或者复活。如果目标没死，返回true，否则返回false；
-    
-    if ($survival_flag)
-    {
-        //建立参战者队列 ，key为pid，value为1（活着）
-        $battle_cache['combatants'][$target_data['pid']] = 1; //目标还活着的情况下，把目标的pid加入到参战者数组里；
-    }
-    else
-    {
-        //参战者队列里的目标死了，value为0（死亡）
-        if(isset($battle_cache['combatants'][$target_data['pid']])) $battle_cache['combatants'][$target_data['pid']] = 0; 
-    }
-
-    //defend_battle_prepare(); //反击策略准备函数
-    //defend_battle_verify();  //反击策略校验函数
-    //defend_battle_queue_check(); //建立反击策略队列
-    //defend_battle_once_execute(); //反击策略单次执行函数
-    //反击策略系统暂不实现
+    // ── 后检：用 tag 判定能否继续战斗，只写缓存（combatants + tag_mutations），不写 DB ──
+    battle_state_middle_check($actor_data, $target_data, $act_id, $obl_battle_log, $battle_cache);
 
     obl_save_player($actor_data); //保存攻击者数据到数据库
     obl_save_player($target_data); //保存目标数据到数据库
 }
 
+// ================================================================
+// 执行阶段校验 / Execute verify
+// 配套设计：§7
+// ================================================================
 
+/**
+ * 单 action-目标 校验：获取目标 → 构建 tag → 比对 target_rules
+ *
+ * @param array  &$actor_data  动作者数据
+ * @param array  $act          ['act_id' => string, 'target' => int]
+ * @param BattleLogCollector &$obl_battle_log
+ * @param array  &$battle_cache
+ * @return array|null ['target_data' => &array, 'tags' => array] 或 null
+ */
+function battle_execute_verify(&$actor_data, $act, &$obl_battle_log, &$battle_cache) {
+    $act_id    = $act['act_id'];
+    $target_id = (int)$act['target'];
+
+    // B. 获取目标数据
+    $target_data = obl_fetch_playerdata_by_pid($target_id);
+    if (!$target_data) {
+        // B4：pid 不存在
+        if ($obl_battle_log) {
+            $obl_battle_log->emit([
+                'actor_pid'  => (int)$actor_data['pid'],
+                'action_id'  => "verify.{$act_id}",
+                'target_pid' => $target_id,
+                'extra'      => ['result' => 'failed', 'reason' => 'target_not_found'],
+            ]);
+        }
+        return null;
+    }
+
+    // C. 构建目标标签（内部自动合并 tag_mutations）
+    $tags = battle_build_target_tags($actor_data, $target_data, $act_id, $battle_cache);
+
+    // D. 动作-标签规则对齐
+    $config = skill_get_config($act_id);
+    if ($config !== null) {
+        $check = battle_check_target_rules($config, $tags);
+        if (!$check['pass']) {
+            if ($obl_battle_log) {
+                $obl_battle_log->emit([
+                    'actor_pid'  => (int)$actor_data['pid'],
+                    'action_id'  => "verify.{$act_id}",
+                    'target_pid' => $target_id,
+                    'extra'      => ['result' => 'failed', 'reason' => $check['reason'], 'tags' => $tags],
+                ]);
+            }
+            return null;
+        }
+    }
+
+    return ['target_data' => &$target_data, 'tags' => $tags];
+}
+
+// ================================================================
+// 执行内状态后检 / Middle check
+// 配套设计：§8
+// ================================================================
+
+/**
+ * 伤害结算后写入缓存：combatants + tag_mutations
+ *
+ * 检测规则（互斥）：
+ *   - 已有 escaped mutation → combatants[pid]=0，不改 dead
+ *   - hp>0 且 state==0     → combatants[pid]=1
+ *   - 其他（hp<=0 或 state=1）→ combatants[pid]=0 + tag_mutations[pid]['dead']=true
+ *
+ * @param array  &$actor_data
+ * @param array  &$target_data
+ * @param string $act_id
+ * @param BattleLogCollector|null &$obl_battle_log
+ * @param array  &$battle_cache
+ * @return void
+ */
+function battle_state_middle_check(&$actor_data, &$target_data, $act_id, &$obl_battle_log, &$battle_cache): void {
+    $pid = (int)$target_data['pid'];
+    $hp  = (int)$target_data['hp'];
+
+    // 读取当前缓存标签
+    $mutations = $battle_cache['tag_mutations'][$pid] ?? [];
+    $escaped = !empty($mutations['escaped']);
+    $isDead = $hp <= 0 || (int)$target_data['state'] === 1;
+
+    if (!$isDead && !$escaped) {
+        $battle_cache['combatants'][$pid] = 1;
+    } elseif ($escaped) {
+        // 已逃跑：只标记 combatants，不改 dead
+        $battle_cache['combatants'][$pid] = 0;
+    } else {
+        // 死亡：标记 combatants + 更新 mutation
+        $battle_cache['combatants'][$pid] = 0;
+        $battle_cache['tag_mutations'][$pid]['dead'] = true;
+
+        if ($obl_battle_log) {
+            $obl_battle_log->emit([
+                'actor_pid'    => (int)$actor_data['pid'],
+                'target_pid'   => $pid,
+                'action_id'    => 'state.middle_check',
+                'extra'        => [
+                    'result' => 'died',
+                    'hp'     => $hp,
+                    'state'  => (int)$target_data['state'],
+                    'tags'   => $mutations,
+                ],
+            ]);
+        }
+    }
+}
+
+// ================================================================
+// 集中 cleanup / battle_main_end
+// 配套设计：§9
+// ================================================================
+
+/**
+ * battle_main 末尾集中处理 cleanup
+ *
+ * 遍历 combatants，对 status=0 的 pid 执行 cleanup：
+ *   - escaped mutation → 跳过（escape.calc 已处理）
+ *   - dead mutation    → battle_state_clear（state=1 + queue_exit + save）
+ *   - 兜底              → battle_state_clear
+ *
+ * @param array  &$actor_data
+ * @param array  &$atk_act
+ * @param BattleLogCollector &$obl_battle_log
+ * @param array  &$battle_cache
+ * @return void
+ */
+function battle_main_end(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void {
+    if (empty($battle_cache['combatants'])) return;
+
+    foreach ($battle_cache['combatants'] as $pid => $status) 
+    {
+        if ($status !== 0) continue;
+
+        $mutations = $battle_cache['tag_mutations'][(int)$pid] ?? [];
+
+        $target_data = $actor_data['pid'] == $pid ? $actor_data : obl_fetch_playerdata_by_pid((int)$pid);
+        if (!$target_data) continue;
+
+        //在这里更新死亡状态
+        if (!empty($mutations['dead']))  $target_data['state'] = $target_data['state'] ?: 1;
+
+        //在这里执行必要的清理
+        if(!empty($mutations['escaped']) || !empty($mutations['dead']))
+        {
+            battle_state_clear($target_data, $obl_battle_log, $battle_cache);
+            if ($obl_battle_log) {
+                $obl_battle_log->emit([
+                    'actor_pid'  => (int)$actor_data['pid'],
+                    'target_pid' => (int)$pid,
+                    'action_id'  => 'main_end.fallback',
+                    'extra'      => ['reason' => 'success clear escape or dead','now_bid' => $actor_data['bid']],
+                ]);
+            }
+            continue;
+        }
+
+        // 兜底：combatants=0 代表不能继续参加战斗
+        // 即便没有 dead/escaped tag → 仍执行 state_clear
+        if ($obl_battle_log) {
+            $obl_battle_log->emit([
+                'actor_pid'  => (int)$actor_data['pid'],
+                'target_pid' => (int)$pid,
+                'action_id'  => 'main_end.fallback',
+                'extra'      => ['reason' => 'combatants_zero_no_tag'],
+            ]);
+        }
+        battle_state_clear($target_data, $obl_battle_log, $battle_cache);
+    }
+}
+
+/**
+ * 终结技排序（verify 后、execute 前调用）
+ *
+ * 强制将 finisher 动作排列到队列末尾，确保终结技最后执行。
+ * 若存在多个终结技，只保留最后一个（后提交覆盖前面的）。
+ *
+ * @param array &$atk_act 动作数组（引用）
+ */
+function battle_sort_actions(array &$atk_act) {
+    $normal = array();
+    $finishers = array();
+
+    foreach ($atk_act as $act) {
+        if (skill_is_finisher($act['act_id'])) {
+            $finishers[] = $act;
+        } else {
+            $normal[] = $act;
+        }
+    }
+
+    if (count($finishers) > 1) {
+        $finishers = array(array_pop($finishers));
+    }
+
+    $atk_act = array_merge($normal, $finishers);
+}
 

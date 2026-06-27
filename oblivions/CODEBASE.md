@@ -51,8 +51,8 @@ oblivions/
 │       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
 │       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
 │       ├── log.func.php        # 结构化日志收集器 + 持久化/读取
-│       ├── battle.func.php     # 战斗系统：回合/动作执行/战斗结束（详见 §8.8）
-│       ├── battle_log.func.php # 战斗日志收集器 + played 标记机制（详见 §8.9）
+│       ├── battle.func.php     # 战斗系统功能函数（Tag/规则/状态管理，详见 §8.8）
+│       ├── battle_log.func.php # 战斗日志收集器 + played 标记机制（详见 §8.10）
 │       └── enemy_ai.func.php   # NPC 敌人 AI 核心（17 函数：初始化/tick 结算/感知/决策/碰撞）
 ├── gamedata/
 │   ├── obl_config.php          # 可调参数配置
@@ -532,7 +532,7 @@ api_response('success', array(
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
 | `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
 | `obl_battle_start` | `enemy_pid` (int) | `obl_battle_initiate($enemy_pid, $pdata)` | 玩家主动攻击：直接进入 battle 状态 |
-| `obl_battle_action` | `action_id` (string) | `obl_battle_resolve_round($action_id, $pdata)` | 战斗动作（玩家回合执行 + NPC 自动执行） |
+| `obl_battle_action` | `actions` (JSON) | `cmd_handle_obl_battle_action($pdata, $actions)` | 战斗动作：入口 5，通过 battle_main→battle_manage_queue 分离流程 |
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -934,76 +934,69 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_get_tile_neighbors` | `($pgroup, $pls): array` | 获取地图格的邻居列表 |
 | `obl_get_player_vision_range` | `(&$player): int` | 获取玩家视野范围（MVP 固定值 3，用于敌人 discovered 管理） |
 
-### 8.8 battle.func.php — 战斗系统
+### 8.8 battle.func.php — 战斗功能函数
 
-战斗系统核心，回合机制。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
+战斗系统基础功能。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
 
-**模块 1：接口预留函数**（4 函数，阶段一返回固定值，未来由技能/装备系统覆盖）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_get_range` | `(&$pdata): int` | 玩家攻击射程（阶段一固定 1，未来由武器类型决定） |
-| `obl_get_weapon_attack_modes` | `(&$pdata): array` | 玩家可用攻击模式（阶段一固定 `['unarmed_strike']`） |
-| `obl_calc_damage` | `($att, $def, $weapon_bonus = 0): int` | 伤害公式 `max(1, att - def + weapon_bonus)`，保底 1 |
-| `obl_get_initiative_rate` | `(&$pdata): int` | 先攻率（阶段一固定 50，未来由敏捷/技能/装备覆盖） |
-
-**模块 2：辅助函数**（2 函数）
+**模块 1：战斗状态管理**（2 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_actor_id` | `(&$pdata): string` | 战斗单位标识符（`'player'` 或 `'enemy_{pid}'`） |
-| `obl_battle_action_name` | `($action_id): string` | 动作显示名（`unarmed_strike`→`空手攻击`，`escape`→`逃跑`） |
+| `battle_state_init` | `(&$actor_data): void` | 初始化参战者战斗状态（设 `action='battle'`） |
+| `battle_state_clear` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 清理战斗状态：清 action → 退出队列（queue_exit）→ 恢复 AP → save |
 
-**模块 3：战斗状态管理**（2 函数）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_battle_init_state` | `(&$pdata): void` | 初始化 `oblpara['battle']`（含先攻队列占位） |
-| `obl_battle_clear_state` | `(&$pdata): void` | 清除 `oblpara['battle']`（战斗结束时调用） |
-
-**模块 4：先攻队列管理**（4 函数）
+**模块 2：数值辅助**（3 函数，与 battle.calc.php 配合）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_roll_initiative` | `(&$player, &$enemy, $player_roll_override = null): array` | 先攻判定：摇随机数 + 排序 + 生成队列。玩家主动攻击时传 101 强制先攻。含先攻补正（玩家非第一顺位时随机数 += 第一顺位者 × 25%，1v1 中无实际效果，为 1vN 预留） |
-| `obl_battle_get_current_initiator` | `(&$pdata): array\|null` | 获取当前顺位（第一个 done=0 的队列项） |
-| `obl_battle_mark_done` | `(&$pdata, $pid): void` | 标记某个 pid 的回合已完成（done=1） |
-| `obl_battle_all_done` | `(&$pdata): bool` | 检查是否所有人都已完成回合 |
+| `battle_ap_recover` | `(&$actor_data, &$battle_cache, &$obl_battle_log): void` | AP 恢复（每轮开始时，恢复量为 max_ap，不超过上限） |
+| `battle_act_verify` | `(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache): bool` | 单动作校验：委托 skill_act_verify 查配置/拥有/CD/AP/扣 AP |
+| `battle_apply_damage` | `(&$actor_data, &$target_data, $damage, &$obl_battle_log, &$battle_cache): void` | 扣除目标 HP，保底 0 |
 
-**模块 5：战斗发起与载入**（4 函数）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_battle_validate_target` | `($enemy_pid, &$pdata, &$enemy): string` | 校验攻击目标合法性（敌人存在/已发现/同区域/BFS 距离 ≤ 射程），不修改状态，返回错误信息（空=成功） |
-| `obl_battle_initiate` | `($enemy_pid, &$pdata): string` | 玩家主动攻击入口：校验 + 状态检测 + emit `battle.start` + 先攻判定（强制先攻）+ NPC 自动执行 |
-| `obl_battle_enter_battle` | `(&$player, &$enemy): void` | 状态检测：双方 `action='battle'` + `bid` 互指 + 初始化战斗状态 |
-| `obl_battle_resolve_round` | `($action_id, &$pdata): string` | 战斗载入流程入口（玩家提交 obl_battle_action 时调用）：执行玩家回合 + NPC 自动执行直到玩家顺位或战斗结束 |
-
-**模块 6：NPC 自动执行**（2 函数）
+**模块 3：目标状态检测**（2 函数，旧接口，逐步被 tag 系统替代）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_auto_npc` | `(&$player, &$enemy): string` | NPC 自动执行循环：NPC 是当前顺位时自动执行回合，直到轮到玩家或战斗结束。所有人都完成时重新先攻判定 |
-| `obl_battle_encounter` | `(&$player, &$enemy): void` | 遭遇战入口（tick 结算中 NPC 移动到玩家格时调用）：状态检测 + 互相 discovered=1 + emit `battle.start` + 先攻判定 + NPC 自动执行 + 立即持久化 battlelog（避免写到错误 pid 文件） |
+| `battle_target_alive_check` | `(&$target_data, &$obl_battle_log, &$battle_cache): bool` | 存活检测：hp<=0 且 state=0 → 设 state=1 + state_clear；state=1 → 返回 false |
+| `battle_target_distance_check` | `(&$actor_data, &$target_data, &$battle_cache): bool` | 射程检测（阶段一恒返回 true） |
 
-**模块 7：回合执行**（5 函数）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_battle_load_attack_queue` | `(&$actor, $action_id): array` | 加载先攻者攻击动作队列（玩家用提交的 action_id，敌人 AI 行为树固定 unarmed_strike） |
-| `obl_battle_check_counter` | `(&$defender): array\|null` | 检查被攻击者是否有反击策略（留接口，阶段一返回 null） |
-| `obl_battle_execute_counter` | `(&$defender, &$attacker): void` | 执行被攻击者的反击动作（留接口，阶段一空实现） |
-| `obl_battle_execute` | `(&$actor, &$target, $action_id): string` | 回合执行：加载攻击队列 → foreach 执行动作 → 检查反击 → 死亡判定。返回 `'continue'`/`'escape'`/`'victory'` |
-| `obl_battle_do_action` | `(&$actor, &$target, $action_id, $turn): bool` | 执行单个攻击动作（unarmed_strike 计算伤害扣 HP / escape 50% 概率成功）。emit battlelog 时附带 `enemy_pid` 用于前端分组。返回 true=继续，false=战斗结束 |
-
-**模块 8：战斗结束**（2 函数）
+**模块 4：Tag 系统**（4 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_battle_check_end` | `(&$player, &$enemy): string` | 检查战斗是否结束（`'continue'`/`'victory'`/`'defeat'`） |
-| `obl_battle_end` | `(&$player, &$enemy, $result): void` | 结束战斗：**先获取 turn 再清空状态**（避免清空后 turn=0 导致 battle.end 日志排序错误）→ 清空 action/bid/oblpara['battle'] → 设置死亡方 state=1 → emit `battle.end` → 逃跑成功时设置 `escape_skip_tick` 标志 → 保存双方数据 |
+| `battle_tag_dead` | `(&$target_data): bool` | 单 tag 派生：`target.state === 1` |
+| `battle_tag_self` | `(&$actor_data, &$target_data): bool` | 单 tag 派生：`target.pid === actor.pid` |
+| `battle_tag_out_of_range` | `(&$actor_data, &$target_data, &$battle_cache): bool` | 单 tag 派生：`!battle_target_distance_check` |
+| `battle_build_target_tags` | `(&$actor_data, &$target_data, $act_id, &$battle_cache): array` | 统一构建目标标签集：Cat A（self/out_of_range）重算；Cat B（dead/escaped/hidden）从 `tag_mutations[pid]` 读取缓存/DB 首次派生，写回缓存 |
 
-### 8.9 battle_log.func.php — 战斗日志系统
+**模块 5：规则匹配**（1 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `battle_check_target_rules` | `($config, array $tags): array` | 白名单（require）+ 黑名单（forbid）规则匹配，返回 `['pass'=>bool,'reason'=>string\|null]` |
+
+**模块 6：Actor 检查**（1 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `battle_actor_can_act` | `(&$actor_data, &$obl_battle_log): bool` | Actor 行动资格检查（state>0 或 hp<=0 视为不能行动），失败时 emit |
+
+### 8.9 battle.main.php — 战斗执行模块
+
+verify（校验）→ sort（终结技排序）→ execute（执行+后检）→ end（集中 cleanup）四阶段分离。
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `battle_main` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 回合主函数：verify → sort_actions → execute → main_end。队列管理由调用方在返回后调 `battle_manage_queue` |
+| `battle_verify` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 回合校验：遍历 atk_act 调用 battle_act_verify，失败的 unset |
+| `battle_execute` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 遍历 atk_act：actor_can_act → 对每个 target 调 execute_verify → once_execute |
+| `battle_once_execute` | `(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache): void` | 单次受击：state_init → skill_execute → calc_damage → apply_damage → middle_check → save(both) |
+| `battle_execute_verify` | `(&$actor_data, $act, &$obl_battle_log, &$battle_cache): ?array` | 单 action-target 校验：fetch target → build_tags → check target_rules，返回 `['target_data','tags']` 或 null |
+| `battle_state_middle_check` | `(&$actor_data, &$target_data, $act_id, &$obl_battle_log, &$battle_cache): void` | 伤害结算后写缓存（combatants + tag_mutations），不改 DB。三路：存活→1，逃跑→0不改dead，死→0+dead=true |
+| `battle_main_end` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 集中 cleanup：遍历 combatants[pid]=0，dead→state=1+clear，escaped→clear(不改state)，兜底→clear |
+| `battle_sort_actions` | `(array &$atk_act): void` | 终结技排序：普通技在前，finisher 在后；多终结技只保留最后一个 |
+
+### 8.10 battle_log.func.php — 战斗日志系统
 
 战斗日志收集与持久化，与 obl_log 分离（详见 [DESIGN.md §1.10](./DESIGN.md#110-战斗日志-battle-log-与-played-标记机制)）。
 
@@ -1019,14 +1012,51 @@ NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构
 | `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
 | `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `oblivions/cache/battles/obl_battle_log*.json`） |
 
-### 8.10 battle.queue.func.php — 战斗队列管理
+### 8.11 battle.entry.php — 战斗入口
+
+4 种战斗入口 + 1 个玩家回合入口（入口 5），统一调用 battle_main + battle_manage_queue 分离模式。
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `battle_manage_queue` | `(&$actor_data, &$obl_battle_log, &$battle_cache): array` | 队列管理入口（done/rebuild/disband），返回 `['disbanded'=>bool, 'rebuilt'=>bool, 'next'=>array\|null]`；内部同步 `next_pid` 到 state 表并做状态转换，调用方无需再查队列 |
-| `battle_queue_ensure` | `(...): void` | 确保 actor_data 关联先攻队列 |
+| `battle_entry_player_ambush` | `(&$pdata, $actions): void` | 入口 1：玩家突袭 NPC。命令触发，后补票建队列 |
+| `battle_entry_npc_ambush` | `(&$npc, $actions): void` | 入口 2：NPC 突袭玩家。AI 决策触发，后补票建队列 |
+| `battle_entry_encounter` | `(&$actor, $combatants): void` | 入口 3：遭遇战。移动重叠触发，先建队列+先攻判定。NPC 先攻时立即触发入口 4 |
+| `battle_entry_npc_prepare_actions` | `(&$npc, $actions): array` | 入口 4：NPC 回合准备。tick 系统或入口 3 分支触发，返回 manage_queue 结果 |
+| `cmd_handle_obl_battle_action` | `(&$pdata, $actions = null): void` | 入口 5：玩家回合动作。`obl_battle_action` 命令处理器（位于 oblivions_commands.php） |
+| `battle_cache_create` | `(&$initiator_data, $is_ambush = false, $combatants = null): array` | 统一构建战斗上下文。有队列→载入全部成员，无队列→仅自己。初始化 `combatants` + `tag_mutations` |
+| `battle_entry_parse_actions` | `($actions, $actor_pid, $entry): array` | 解析 actions 合集为 `$atk_act` 格式 |
+
+### 8.12 skill.main.php — 技能系统核心
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `skill_get_config` | `($skill_id): array\|null` | 获取技能配置（带静态缓存） |
+| `skill_get_all_configs` | `(): array` | 加载全部技能配置 |
+| `skill_has_cd` | `($skill_id): bool` | 检查技能是否有 CD 定义 |
+| `skill_is_finisher` | `($skill_id): bool` | 检查技能是否为终结技（配置 `finisher=1`） |
+| `skill_is_usable` | `(&$actor_data, $skill_id): bool` | 检查技能是否可用（配置存在/拥有/CD/AP），不修改状态 |
+| `skill_format_skillpara` | `(&$skillpara): void` | 技能数据格式化：解码 JSON+补默认值 |
+| `skill_ensure_defaults` | `(&$skillpara): void` | 确保 skillpara 存在默认字段 |
+| `skill_strip_temporary` | `(&$skillpara): void` | 剥离临时技能 |
+| `skill_act_verify` | `(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache): bool` | 动作校验入口：查配置/拥有/CD/AP/扣 AP |
+| `skill_execute` | `(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache): void` | 技能执行入口：按 category 分发到 calc/escape 等 |
+| `skill_get_available_list` | `(&$pdata): array` | 获取可用技能列表（含运行时状态：on_cd/available） |
+
+### 8.13 battle.queue.func.php — 战斗队列管理
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `battle_manage_queue` | `(&$actor_data, &$obl_battle_log, &$battle_cache): array` | 队列管理入口（ensure → advance → try_end），返回 `['disbanded','rebuilt','next']`；内部同步 `next_pid` 到 state 表并做状态转换 |
+| `battle_queue_ensure` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 确保 actor_data 关联先攻队列（无队列时创建） |
+| `battle_queue_create` | `(&$actor_data, &$combatants, &$obl_battle_log): void` | 创建队列+状态机：设 bid → 写 bra_oblqueue → 创建 bra_oblbattle_state |
+| `battle_queue_rebuild` | `($qid, $combatants, &$obl_battle_log): void` | 重建队列（不设 bid，不建状态机） |
+| `battle_queue_join` | `(&$actor_data, $qid, &$obl_battle_log): void` | 加入已有队列 |
+| `battle_queue_done` | `(&$actor_data, $qid, &$obl_battle_log): void` | 标记 pid 回合完成 |
+| `battle_queue_update` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 检查全员 done → 解散/重建/下轮 |
+| `battle_queue_exit` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 从队列删除自己，设 bid=0 |
 | `battle_queue_advance` | `(...): void` | 标记 done + 解散/重建检查 + 更新 `last_acted` |
 | `battle_queue_try_end` | `(...): void` | 战斗结束检测 |
+| `battle_queue_prepare_next_round` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 准备下一轮：AP 恢复 + 重置全员 done + 更新 last_acted |
 
 ---
 

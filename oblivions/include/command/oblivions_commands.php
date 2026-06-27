@@ -106,16 +106,6 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
     }
     obl_format_playerdata($enemy);
 
-    if ((int)$enemy['state'] !== 0) {
-        if (isset($obl_error_log) && $obl_error_log) {
-            $obl_error_log->emit('battle_start.target_dead', array(
-                'pid' => (int)$pdata['pid'],
-                'target_pid' => $ambush_target_pid,
-                'target_state' => (int)$enemy['state'],
-            ), 'command');
-        }
-        return;
-    }
     if (empty($enemy['discovered'])) {
         if (isset($obl_error_log) && $obl_error_log) {
             $obl_error_log->emit('battle_start.target_undiscovered', array(
@@ -156,7 +146,7 @@ function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
 }
 
 /**
- * 玩家回合（已有先攻队列的情况下）
+ * 玩家回合（已有先攻队列的情况下）（战斗入口5）
  *
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
  * 流程：解析 actions → battle_main。
@@ -191,7 +181,7 @@ function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
     }
 
     # 3. 战斗上下文
-    $battle_cache = battle_cache_create($pdata['pid'], false);
+    $battle_cache = battle_cache_create($pdata, false);
 
     # 4. 执行动作 + 队列管理分离调用
     battle_main($pdata, $atk_act, $obl_battle_log, $battle_cache);

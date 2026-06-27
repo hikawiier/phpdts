@@ -28,15 +28,23 @@ return [
         'category'      => 'attack',
         'damage_type'   => 'physical',
         'damage_factor' => 1.0,
+        'target_rules'  => [
+            'forbid'  => ['self', 'dead'],
+        ],
     ],
-    # ── 逃跑类 ──────────────────────────────
+    # ── 逃跑类（终结技）─────────────────────
     'escape' => [
         'apcost'        => 0,
         'cd'            => 1,
+        'finisher'      => 1,
         'target'        => 'self',
         'range_bonus'   => 0,
         'lifetime'      => 'permanent',
         'category'      => 'escape',
+        'target_rules'  => [
+            'require' => ['self'],
+            'forbid'  => ['dead'],
+        ],
     ],
     # ── 工具类 ──────────────────────────────
     'heal' => [
