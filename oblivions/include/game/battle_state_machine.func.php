@@ -52,7 +52,7 @@ function obl_battle_state_set($qid, $state) {
 
 /**
  * 创建战场状态记录
- * 在 battle_queue_create 创建先攻队列后调用
+ * 在 battle_queue_create_and_init 创建先攻队列后调用
  *
  * 实现说明：使用 INSERT IGNORE，记录已存在时不覆盖。
  * - 新建队列：插入新记录，状态为 $initial_state
@@ -68,7 +68,7 @@ function obl_battle_state_create($qid, $initial_state = OBL_BS_PROCESSING) {
 
 /**
  * 销毁战场状态记录
- * 在 battle_queue_update 检测到队列解散时调用
+ * 在 battle_manage_queue 步骤 2 检测到队列解散时调用
  *
  * @param int $qid 先攻队列编号
  * @return void

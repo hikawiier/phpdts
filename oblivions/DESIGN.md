@@ -157,6 +157,23 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 **配置驱动规则匹配**：`target_rules.require`（白名单）和 `target_rules.forbid`（黑名单），在 `battle_execute_verify` 中对标签集做匹配，失败时 emit 日志不执行。
 
+### 1.13 战斗入口 (Battle Entry)
+
+`battle_entry_dispatch` 是唯一战斗入口，采用三层分离：入口调度（`battle.entry.php`）→ 动作执行（`battle.main.php`）→ 队列管理（`battle.queue.*.php`）。
+
+**3 种触发模式**：
+
+| 模式 | 触发源 | 队列 |
+|------|--------|------|
+| `ambush` | 玩家/NPC 突袭 | 后补票建队列（先执行动作，后建队列） |
+| `player_turn` | 玩家命令 | 已有队列中推进 |
+| `npc_turn` | tick 结算 NPC 回合 | 已有队列中推进（允许空动作） |
+
+**核心约束**：
+- 所有触发源不做任何合法性判断，只传 raw `$actions`
+- actions 解析/校验统一由 dispatch 内部完成
+- 目标合法性（存在/射程/死亡等）由战斗执行阶段的 Tag 系统拦截
+
 ---
 
 ## 二、核心设计原则

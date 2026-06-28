@@ -82,7 +82,7 @@ function battle_execute(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cach
 
 function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache)
 {
-    # 受击目标进入战斗状态（突袭入口的受击目标在此初始化）
+    # 受击目标进入战斗状态（突袭时首次命中触发）
     battle_state_init($target_data);
 
     // 技能执行（处理非伤害效果，如逃跑等复杂逻辑；可写 tag_mutations）

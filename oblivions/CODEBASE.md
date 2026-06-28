@@ -45,15 +45,34 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 oblivions/
 ├── include/
 │   ├── core/
-│   │   └── obl_command.php     # Oblivions 命令入口（由 command.php require，处理全部命令流程 + 并发锁）
+│   │   ├── obl_bootstrap.php     # 统一加载入口（按拓扑排序分 8 层加载所有函数库，详见 §4）
+│   │   └── obl_command.php       # Oblivions 命令入口（由 command.php require，处理全部命令流程 + 并发锁）
+│   ├── command/
+│   │   ├── oblivions_router.php       # Oblivions 命令子路由（分发到各 cmd_handle_obl_*，含 actions JSON 解析）
+│   │   └── oblivions_commands.php     # 6 个命令处理器（explore/search/pickup/discard + battle_start/battle_action）
+│   ├── gamectl/
+│   │   ├── init.func.php         # 游戏初始化（obl_rs_game 主入口 + obl_init_enemies 敌人生成 + 建表/地图/迷雾生成）
+│   │   └── state.func.php        # 游戏状态机（触发 obl_rs_game）
 │   └── game/
-│       ├── player.func.php     # 玩家数据层：认证/抓取/格式化/保存 + 道具栏 + battle 状态防呆 + 命令状态过滤
-│       ├── explore.func.php    # 探索/搜索/拾取/丢弃核心逻辑
-│       ├── move.func.php       # 移动/地图数据加载/BFS距离计算
-│       ├── log.func.php        # 结构化日志收集器 + 持久化/读取
-│       ├── battle.func.php     # 战斗系统功能函数（Tag/规则/状态管理，详见 §8.8）
-│       ├── battle_log.func.php # 战斗日志收集器 + played 标记机制（详见 §8.10）
-│       └── enemy_ai.func.php   # NPC 敌人 AI 核心（17 函数：初始化/tick 结算/感知/决策/碰撞）
+│       ├── obl_global.func.php   # 公共函数（obl_get_config 等）
+│       ├── log.func.php          # 结构化日志收集器 + 持久化/读取（详见 §8.6）
+│       ├── battle_log.func.php   # 战斗日志收集器 + played 标记机制（详见 §8.10）
+│       ├── sql.func.php          # SQL 操作封装（队列/状态机查询）
+│       ├── player.func.php       # 玩家数据层：认证/抓取/格式化/保存 + 道具栏 + 命令状态过滤（详见 §8.1）
+│       ├── move.func.php         # 移动/地图数据加载/BFS距离计算（详见 §8.4）
+│       ├── generate.func.php     # 区域资源生成（道具/POI/野生道具，详见 §8.5）
+│       ├── vision.func.php       # 视野/迷雾/发现系统（BFS视野 + 迷雾点亮 + 敌人发现/discovered 管理）
+│       ├── explore.func.php      # 探索/搜索/拾取/丢弃核心逻辑（详见 §8.3）
+│       ├── enemy_ai.func.php     # NPC 敌人 AI 行为（10 函数：tick 监听器/决策/移动，详见 §8.7）
+│       ├── tick.func.php         # 游戏刻核心（推进控制/监听器注册/事件调度，详见 §8.2）
+│       ├── battle_state_machine.func.php  # 战斗状态机（PLAYER_TURN/PROCESSING 状态转换）
+│       └── battle/
+│           ├── battle.func.php       # 战斗功能函数（Tag/规则/状态管理，详见 §8.8）
+│           ├── battle.calc.php       # 伤害计算
+│           ├── battle.main.php       # 战斗执行（verify→sort→execute→end，详见 §8.9）
+│           ├── battle.entry.php      # 战斗入口（battle_entry_dispatch 唯一入口，详见 §8.11）
+│           ├── battle.queue.func.php # 战斗队列管理接口（详见 §8.13）
+│           └── battle.queue.main.php # 队列管理实现
 ├── gamedata/
 │   ├── obl_config.php          # 可调参数配置
 │   ├── item_table.php          # 道具模板表
@@ -89,12 +108,10 @@ oblivions/
 |------|------|
 | `include/core/global.func.php` | `oblivions_is_active()` 定义 + `save_gameinfo()` Oblivions 分支 |
 | `include/core/common.inc.php` | 全局入口：初始化 `$obl_log` + `$obl_battle_log` + tick 事件触发 |
-| `include/command/router.php` | Oblivions 命令路由注册（含 obl_battle_start / obl_battle_action） |
-| `include/command/handlers/oblivions_commands.php` | 6个Oblivions命令处理器（explore/search/pickup/discard + battle_start/battle_action） |
-| `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支 |
-| `api_v2.php` | 8个API端点（player_info/player_inventory/game_map/tile_actions/obl_log/battle_log/enemies/ai_dump_save） |
+| `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支（Oblivions 模式由 oblivions_router.php 直接调用 obl_move） |
+| `api_v2.php` | 12 个 API 端点（player_info/player_inventory/game_map/tile_actions/obl_log/obl_error/battle_log/enemies/skill_list/skill_cd_check/ai_dump_save/heartbeat） |
 | `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
-| `include/gamectl/system.func.php` | 游戏初始化时调用 `obl_init_enemies()` 生成 NPC 敌人 |
+| `include/gamectl/system.func.php` | `rs_init_areas()` 在 Oblivions 模式下跳过禁区系统初始化 |
 | `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex-vue/dist/index.html`（生产）或 dev server（开发） |
 
@@ -531,8 +548,8 @@ api_response('success', array(
 | `obl_search` | `iaid` (int) | `obl_search_poi($iaid, $pdata)` | 搜索POI |
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
 | `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
-| `obl_battle_start` | `enemy_pid` (int) | `obl_battle_initiate($enemy_pid, $pdata)` | 玩家主动攻击：直接进入 battle 状态 |
-| `obl_battle_action` | `actions` (JSON) | `cmd_handle_obl_battle_action($pdata, $actions)` | 战斗动作：入口 5，通过 battle_main→battle_manage_queue 分离流程 |
+| `obl_battle_start` | `actions` (JSON) | `cmd_handle_obl_battle_start($pdata, $actions)` | 玩家突袭：通过 `battle_entry_dispatch('ambush')` 执行 |
+| `obl_battle_action` | `actions` (JSON) | `cmd_handle_obl_battle_action($pdata, $actions)` | 玩家回合：通过 `battle_entry_dispatch('player_turn')` 执行 |
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -885,54 +902,39 @@ return [
 
 ### 8.7 enemy_ai.func.php — NPC 敌人 AI
 
-NPC 敌人系统核心，17 个函数按模块分组。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
+NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
 
-**模块 1：NPC 生成**（4 函数）
+> **模块迁移说明**：NPC 生成（`obl_init_enemies` / `obl_create_enemy_record` / `obl_get_occupied_positions` / `obl_pick_available_tile`）已迁至 `gamectl/init.func.php`；discovered 状态管理（`obl_discover_enemies` / `obl_update_enemy_discovered` / `obl_get_player_vision_range`）已迁至 `vision.func.php`。本文件仅保留 AI 行为逻辑。
 
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_init_enemies` | `(): void` | 生成所有区域的 NPC 敌人（在 `rs_init_oblivions` 中调用，按 `enemy_pool.php` 配置） |
-| `obl_create_enemy_record` | `($enemy_type, $pgroup, $pls): int\|false` | 创建敌人记录（从 `enemies_config.php` 读属性，写入 oblplayers） |
-| `obl_get_occupied_positions` | `($pgroup): array` | 获取指定区域已占用的 pls（玩家+NPC，`{pls => true}`） |
-| `obl_pick_available_tile` | `($available_pls, &$occupied): int\|false` | 从可用格列表随机选一个未被占用的 |
-
-**模块 2：NPC AI 结算**（2 函数）
+**模块 1：Tick 事件监听器**（2 函数，由 `tick.func.php` 末尾集中注册）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_resolve_all_enemy_ai` | `(): void` | 全局结算入口（在 `obl_resolve_tick_events` 中调用，查询所有玩家并结算其所在区域敌人） |
-| `obl_enemy_tick` | `(&$enemy, &$player): void` | 单个敌人的 AI 决策：行动意愿门控 → 感知范围内追击 / 否则按 ai_type 行动 |
+| `obl_tick_phase_battle_npc` | `($delta, &$ctx): void` | battle_npc phase 监听器：查询活跃先攻队列，当前顺位者是 NPC 时执行 NPC 回合（`obl_ai_select_combat_action` → `battle_entry_dispatch('npc_turn')`），最多处理 1 个回合 |
+| `obl_tick_phase_idle_npc` | `($delta, &$ctx): void` | idle_npc phase 监听器：结算当前玩家所在区域的非战斗敌人 AI（`obl_enemy_tick`），战斗中的敌人跳过 |
 
-**模块 3：移动逻辑**（4 函数）
+**模块 2：AI 决策**（2 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_enemy_move` | `(&$enemy, $target_pls, &$player): bool` | 敌人移动（可在雾中移动，目标格=玩家格时触发碰撞战斗，移动后更新 discovered） |
-| `obl_enemy_chase_player` | `(&$enemy, &$player): void` | 追击玩家（计算向玩家移动的下一步） |
-| `obl_enemy_patrol` | `(&$enemy, &$player): void` | 巡逻（随机选邻居格移动） |
+| `obl_enemy_tick` | `(&$enemy, &$player): void` | 单敌人 AI 决策：死亡/战斗中跳过 → 行动意愿门控 → 按 `ai_type` 行动（patrol/aggressive/idle）。追击/突袭/碰撞战斗待 tick 框架重构后实现 |
+| `obl_ai_select_combat_action` | `(&$npc_data, $target_pid): array` | 战斗技能选择：从 `oblpara['combat_skills']` 选第一个可用技能（CD/AP 检查），无可用时回退 `unarmed_strike`。按技能配置 `target` 字段决定目标（self→自身 pid，其他→传入 target_pid） |
+
+**模块 3：移动逻辑**（3 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_enemy_move` | `(&$enemy, $target_pls, &$player): bool` | 敌人移动（可在雾中移动）：校验 passable/占用/玩家格 → 更新 pls → 更新 discovered → save。在玩家视野内时 emit 移动日志 |
+| `obl_enemy_patrol` | `(&$enemy, &$player): void` | 巡逻：随机选邻居格移动 |
 | `obl_enemy_hunt` | `(&$enemy, &$player): void` | 主动搜寻（MVP 简化为巡逻） |
 
-**模块 4：碰撞战斗**（1 函数）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_resolve_collision_battle` | `(&$a, &$b): void` | 碰撞战斗结算（过渡实现：设 action='battle' → emit 日志 → 立即清除。`$a` 永远是发起方/移动方） |
-
-**模块 5：discovered 状态管理**（2 函数）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `obl_discover_enemies` | `($player_pgroup, $player_pls, $vision_range): void` | 玩家探索时发现敌人（设 discovered=1 + 清除敌人格迷雾 + emit 日志） |
-| `obl_update_enemy_discovered` | `(&$enemy, &$player): void` | 敌人移动后更新 discovered（超出玩家视野→0，仍在视野内→清除迷雾） |
-
-**模块 6：占用检查与辅助函数**（4 函数）
+**模块 4：占用检查与辅助函数**（3 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `obl_is_tile_occupied_by_others` | `($pgroup, $pls, $exclude_pid): bool` | 检查地图格是否被其他单位占用 |
 | `obl_calc_next_step_towards` | `($pgroup, $from_pls, $to_pls): int\|false` | 计算向目标移动的下一步（选距离最近的邻居格） |
 | `obl_get_tile_neighbors` | `($pgroup, $pls): array` | 获取地图格的邻居列表 |
-| `obl_get_player_vision_range` | `(&$player): int` | 获取玩家视野范围（MVP 固定值 3，用于敌人 discovered 管理） |
 
 ### 8.8 battle.func.php — 战斗功能函数
 
@@ -1002,8 +1004,9 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
-| `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。在 `common.inc.php` 入口初始化为全局 `$obl_battle_log` |
-| `BattleLogCollector::emit` | `($turn, $actor, $action_id, $action_name, $target, $effect_value = 0, $extra = null, $position = null, $enemy_pid = 0): void` | 追加一条战斗日志（含 `enemy_pid` 用于前端按战斗分组） |
+| `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。由 `battle_entry_ensure_battle_log` 统一初始化为全局 `$obl_battle_log` |
+| `BattleLogCollector::setPhase` | `($phase): void` | 设置当前阶段标识（`prepare`/`verify`/`excute`/`queue_check`/`finish_check`），由 `battle_main` 各阶段调用 |
+| `BattleLogCollector::emit` | `(array $params): void` | 追加一条战斗日志。`$params` 支持键：`actor_pid`/`actor_type`/`target_pid`/`target_type`/`action_id`/`effect_value`/`extra`。存储时附加 `ts` + 当前 `phase` |
 | `BattleLogCollector::getEntries` | `(): array` | 获取本请求累积的战斗日志条目 |
 | `BattleLogCollector::hasEntries` | `(): bool` | 本请求是否有战斗日志 |
 | `obl_battle_log_get_old_max` | `(): int` | 读取 battle_log 历史归档最大批次配置（带静态缓存） |
@@ -1014,17 +1017,14 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 ### 8.11 battle.entry.php — 战斗入口
 
-4 种战斗入口 + 1 个玩家回合入口（入口 5），统一调用 battle_main + battle_manage_queue 分离模式。
+唯一战斗入口 `battle_entry_dispatch`，与 `battle.main.php`（执行）+ `battle.queue.*.php`（队列）三层分离。3 种触发模式：`ambush`（突袭，后补票建队列）/ `player_turn`（玩家回合）/ `npc_turn`（NPC 回合，允许空动作）。所有触发源不做合法性判断，只传 raw `$actions`，解析/校验统一由 dispatch 内部完成。
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `battle_entry_player_ambush` | `(&$pdata, $actions): void` | 入口 1：玩家突袭 NPC。命令触发，后补票建队列 |
-| `battle_entry_npc_ambush` | `(&$npc, $actions): void` | 入口 2：NPC 突袭玩家。AI 决策触发，后补票建队列 |
-| `battle_entry_encounter` | `(&$actor, $combatants): void` | 入口 3：遭遇战。移动重叠触发，先建队列+先攻判定。NPC 先攻时立即触发入口 4 |
-| `battle_entry_npc_prepare_actions` | `(&$npc, $actions): array` | 入口 4：NPC 回合准备。tick 系统或入口 3 分支触发，返回 manage_queue 结果 |
-| `cmd_handle_obl_battle_action` | `(&$pdata, $actions = null): void` | 入口 5：玩家回合动作。`obl_battle_action` 命令处理器（位于 oblivions_commands.php） |
+| `battle_entry_dispatch` | `($mode, &$actor, $actions = null, $extra = []): array\|void` | 唯一战斗入口。`$mode`：`'ambush' \| 'player_turn' \| 'npc_turn'`。ambush/player_turn 无返回值，npc_turn 返回 `battle_manage_queue` 结果 |
+| `battle_entry_ensure_battle_log` | `(): void` | 确保 `$obl_battle_log` 已初始化（dispatch 统一调用） |
 | `battle_cache_create` | `(&$initiator_data, $is_ambush = false, $combatants = null): array` | 统一构建战斗上下文。有队列→载入全部成员，无队列→仅自己。初始化 `combatants` + `tag_mutations` |
-| `battle_entry_parse_actions` | `($actions, $actor_pid, $entry): array` | 解析 actions 合集为 `$atk_act` 格式 |
+| `battle_entry_parse_actions` | `($actions, $actor_pid, $entry, $allow_empty = false): array` | 解析 actions 合集为 `$atk_act` 格式。空动作且 `$allow_empty=false` 时 emit 错误日志 |
 
 ### 8.12 skill.main.php — 技能系统核心
 
@@ -1078,7 +1078,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 - **`$pdata` 引用传递**: 所有修改玩家数据的函数接受 `&$pdata`，禁止函数内 `extract()`
 - **日志输出**: 通过 `global $obl_log` + `$obl_log->emit($id, $logcategory, $params)`
-- **战斗日志输出**: 通过 `global $obl_battle_log` + `$obl_battle_log->emit($turn, $actor, $action_id, $action_name, $target, $effect_value, $extra, $position, $enemy_pid)`
+- **战斗日志输出**: 通过 `global $obl_battle_log` + `$obl_battle_log->emit(array $params)`，`$params` 键：`actor_pid`/`actor_type`/`target_pid`/`target_type`/`action_id`/`effect_value`/`extra`
 - **数据库操作**: 使用全局 `$db` + `$tablepre`，SQL中表名写 `{$tablepre}oblmapxxx`
 - **配置读取**: 通过 `obl_get_config()` 获取，带静态缓存，不直接 include
 
@@ -1099,11 +1099,10 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 ### 9.5 战斗日志 emit 规范
 
-- **必须传 `enemy_pid`**：所有 `$obl_battle_log->emit()` 调用必须传第 9 个参数 `enemy_pid`，用于前端按战斗分组播放
-- **actor 是玩家时**：`enemy_pid = target['pid']`
-- **actor 是敌人时**：`enemy_pid = actor['pid']`
-- **turn=0 用于非回合事件**：`battle.start` / `initiative.roll` / `battle.end` 用 turn=0，前端显示为"战斗开始"分隔符
-- **turn>=1 用于回合内动作**：`unarmed_strike` / `escape` 用实际回合号，前端显示为"回合 N"分隔符
+- **单参数关联数组**：`$obl_battle_log->emit([...])`，必传键 `actor_pid`/`actor_type`/`target_pid`/`target_type`/`action_id`，按需传 `effect_value`/`extra`
+- **actor_type 约定**：`0`=玩家，`>0`=敌人类型 ID（与 `bra_oblplayers.type` 一致）
+- **前端按 actor_pid 分组播放**：前端用 `actor_pid`（NPC 的 pid）对战斗日志分组，每组按 `log_id` 排序播放
+- **phase 由 setPhase 标记**：`battle_main` 各阶段开始时调 `setPhase('verify'|'excute'|...)`，emit 时自动附加当前 phase 到条目
 
 ---
 
@@ -1122,17 +1121,16 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 4. 拾取/丢弃道具
 5. 搜索POI → 掉落表生成 + 机制触发
 6. 移动 → 移动后自动探索（跳过体力检查）
-7. 移动推进游戏刻 → obl_resolve_tick_events($delta)
-   → 循环 $delta 次调用 obl_resolve_all_enemy_ai()
-     → 逐个玩家所在区域的敌人执行 obl_enemy_tick()
-       → 感知范围内：追击玩家（obl_enemy_chase_player）
-       → 感知范围外：按 ai_type 行动（patrol/aggressive/idle）
-       → 敌人移动到玩家格 → 碰撞战斗（obl_resolve_collision_battle）
-8. 战斗流程:
-   8.1 玩家主动攻击：obl_battle_start 命令 → obl_battle_initiate（校验+状态检测+先攻判定+NPC自动执行）
-   8.2 遭遇战：tick 结算中 NPC 移动到玩家格 → obl_battle_encounter（状态检测+先攻判定+NPC自动执行）
-   8.3 战斗动作：obl_battle_action 命令 → obl_battle_resolve_round（玩家回合+NPC自动执行）
-   8.4 战斗结束：obl_battle_end（清空状态+设置死亡+emit 日志+保存）
+7. 移动推进游戏刻 → obl_resolve_tick_events($delta) → obl_tick_dispatch($delta, $ctx)
+   → 阶段 1 battle_npc：obl_tick_phase_battle_npc（战斗中 NPC 回合，当前顺位是 NPC 时执行）
+   → 阶段 2 idle_npc：obl_tick_phase_idle_npc（非战斗敌人 AI）
+     → 逐个当前区域敌人执行 obl_enemy_tick() → 按 ai_type 行动（patrol/aggressive/idle）
+   → 阶段 3 post：tick 后处理（预留扩展）
+8. 战斗流程（统一入口 battle_entry_dispatch）:
+   8.1 玩家突袭：obl_battle_start 命令 → battle_entry_dispatch('ambush')（执行动作 + 后补票建队列）
+   8.2 玩家回合：obl_battle_action 命令 → battle_entry_dispatch('player_turn')（在已有队列中推进）
+   8.3 NPC 回合：tick 结算 → battle_entry_dispatch('npc_turn')（AI 决策 + 队列推进）
+   8.4 战斗结束：battle_manage_queue 内部 try_end 检测（队列解散 + 状态清理）
 ```
 
 每一步操作产生的日志通过 `$obl_log->emit()` 收集，请求结束前由 `obl_log_persist()` 持久化。
@@ -1179,11 +1177,11 @@ commandQueue.execute({ command: 'obl_discard', slot: String(slotNumber) }); // s
 // 移动
 commandQueue.execute({ command: 'move', moveto: String(targetPls) });
 
-// 玩家主动攻击（直接进入 battle 状态）
-commandQueue.execute({ command: 'obl_battle_start', enemy_pid: String(enemyPid) });
+// 玩家突袭（预装填动作数组，JSON 字符串）
+commandQueue.execute({ command: 'obl_battle_start', actions: JSON.stringify([{ act_id: 'unarmed_strike', target: enemyPid }]) });
 
-// 战斗动作（玩家回合）
-commandQueue.execute({ command: 'obl_battle_action', action_id: 'unarmed_strike' });
+// 战斗动作（玩家回合，预装填动作数组，JSON 字符串）
+commandQueue.execute({ command: 'obl_battle_action', actions: JSON.stringify([{ act_id: 'unarmed_strike', target: enemyPid }]) });
 ```
 
 ### 11.4 战斗日志标记

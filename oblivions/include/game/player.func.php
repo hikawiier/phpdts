@@ -58,6 +58,25 @@ function obl_fetch_playerdata_by_pid($pid) {
 }
 
 /**
+ * 批量获取玩家数据
+ *
+ * @param int[] $pids PID 数组
+ * @return array [pid => data, ...] 已格式化的数据映射，不存在的 pid 不会出现在结果中
+ */
+function obl_fetch_playerdata_batch(array $pids): array {
+    if (empty($pids)) return [];
+    global $db, $tablepre;
+    $ids = implode(',', array_map('intval', $pids));
+    $result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE pid IN ({$ids})");
+    $map = [];
+    while ($row = $db->fetch_array($result)) {
+        obl_format_playerdata($row);
+        $map[(int)$row['pid']] = $row;
+    }
+    return $map;
+}
+
+/**
  * 通过 name 抓取玩家数据（type=0）
  *
  * @param string $name

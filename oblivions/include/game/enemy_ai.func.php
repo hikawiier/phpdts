@@ -89,20 +89,15 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 			continue;
 		}
 
-		# 初始化 battle_log（入口处局部初始化）
-		if (!$obl_battle_log) {
-			include_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
-			$obl_battle_log = new BattleLogCollector();
-		}
-
 		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
 		$atk_act = obl_ai_select_combat_action($npc_data, $ctx['player']['pid']);
 
-		# 通过入口 4 调用 battle_main（统一战斗入口路径）
-		include_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
-		# battle_entry_npc_prepare_actions 内部调用 battle_manage_queue，
+		# 通过 battle_entry_dispatch 调用 battle_main（统一战斗入口路径，battle.entry.php 已由 obl_bootstrap.php 加载）
+		# battle_entry_dispatch 内部调用 battle_manage_queue，
 		# 已包含：done → update → 确定 next + 状态转换 + try_end
-		$result = battle_entry_npc_prepare_actions($npc_data, $atk_act);
+		$result = battle_entry_dispatch('npc_turn', $npc_data, $atk_act, [
+			'allow_empty_actions' => true,
+		]);
 
 		# 请求推进 tick（由调度器末尾统一推进，替代旧的 $obl_tick_advanced 引用传递）
 		obl_tick_request_advance();
@@ -196,9 +191,7 @@ function obl_enemy_tick(&$enemy, &$player)
  * @return array 动作数组 [['act_id' => skill_id, 'target' => pid], ...]
  */
 function obl_ai_select_combat_action(&$npc_data, $target_pid) {
-	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-
-	# 读取战斗技能偏好列表
+	# 读取战斗技能偏好列表（skill.main.php 已由 obl_bootstrap.php 加载）
 	$combat_skills = isset($npc_data['oblpara']['combat_skills'])
 		? $npc_data['oblpara']['combat_skills']
 		: array('unarmed_strike');

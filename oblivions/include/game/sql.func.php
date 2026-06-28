@@ -96,6 +96,13 @@ function obl_fetch_queue_has_player($qid)
     return $db->num_rows($result) > 0;
 }
 
+function obl_update_queue_done_and_last_acted($pid, $qid, $done, $myorder) {
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblqueue SET done=" . (int)$done
+        . ", last_acted=" . (int)$myorder
+        . " WHERE pid=" . (int)$pid . " AND qid=" . (int)$qid);
+}
+
 function obl_update_queue_done($pid, $qid, $done)
 {
     # 更新某 pid 在某 qid 的 done 标记，输入先攻队列唯一索引 qid，输出整数
@@ -135,6 +142,14 @@ function obl_player_set_bid($pid, $qid)
     $db->query("UPDATE {$tablepre}oblplayers SET bid = " . (int)$qid . " WHERE pid = " . (int)$pid);
 }
 
+function obl_player_set_bid_batch(array $pids, int $qid): void {
+    if (empty($pids)) return;
+    global $db, $tablepre;
+    $ids = implode(',', array_map('intval', $pids));
+    $qid = (int)$qid;
+    $db->query("UPDATE {$tablepre}oblplayers SET bid = {$qid} WHERE pid IN ({$ids})");
+}
+
 function obl_queue_update_last_acted($pid, $qid, $myorder)
 {
     global $db, $tablepre;
@@ -162,6 +177,17 @@ function obl_queue_next_myorder($qid)
     $result = $db->query("SELECT MAX(myorder) AS max_myorder FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid);
     $row = $db->fetch_array($result);
     return $row && $row['max_myorder'] ? (int)$row['max_myorder'] + 1 : 1;
+}
+
+function obl_queue_update_myorder($pid, $qid, $myorder) {
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblqueue SET myorder=" . (int)$myorder
+        . " WHERE pid=" . (int)$pid . " AND qid=" . (int)$qid);
+}
+
+function obl_queue_reset_done_by_qid($qid) {
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblqueue SET done=0 WHERE qid=" . (int)$qid);
 }
 
 // ── 状态机读写 ──
