@@ -29,6 +29,11 @@ if (!defined('IN_GAME')) {
  *   cmd_handle_obl_battle_action → mode='player_turn'  玩家在已有队列中的回合，由前端提交玩家动作
  *   obl_tick_phase_battle_npc    → mode='npc_turn'     NPC 在已有队列中的回合，由 obl_ai_select_combat_action 生成动作后传入
  *
+ * 三模式合并为统一骨架，差异点由条件分支处理：
+ *   - ambush：前置 battle_state_init + 后置 battle_queue_setup
+ *   - npc_turn：允许空动作 + 返回 $result
+ *   - player_turn/ambush：空动作时 early return
+ *
  * @param string     $mode    入口模式：'ambush' | 'player_turn' | 'npc_turn'
  * @param array     &$actor   发起者数据
  * @param array|null $actions 动作数组 [{act_id, target}, ...]
@@ -38,52 +43,68 @@ if (!defined('IN_GAME')) {
 function battle_entry_dispatch($mode, &$actor, $actions = null, $extra = []) {
     global $obl_battle_log;
 
-    // ── 0. 统一初始化 battle_log ──
     battle_entry_ensure_battle_log();
 
-    if ($mode === 'ambush') {
-        // ── 突袭（玩家/NPC），后补票建队列 ──
-        $atk_act = battle_entry_parse_actions($actions, $actor['pid'], $mode, false);
-        if (empty($atk_act)) return;
+    $is_ambush = ($mode === 'ambush');
+    $is_npc    = ($mode === 'npc_turn');
 
-        $battle_cache = battle_cache_create($actor, true);
+    // ── 1. 动作解析 ──
+    $atk_act = battle_entry_parse_actions($actions, $actor['pid'], $mode, $is_npc);
+    if (!$is_npc && empty($atk_act)) return;
 
+    // ── 2. 构建战斗缓存 ──
+    $battle_cache = battle_cache_create($actor, $is_ambush);
+
+    // ── 3. 首次进入战斗（仅 ambush） ──
+    if ($is_ambush) {
         $actor['oblpara']['ambush_flag'] = true;
         battle_state_init($actor);
+    }
 
-        battle_main($actor, $atk_act, $obl_battle_log, $battle_cache);
+    // ── 4. 动作执行 ──
+    battle_main($actor, $atk_act, $obl_battle_log, $battle_cache);
 
-        $queue_online = battle_queue_setup($actor, $obl_battle_log, $battle_cache['combatants']);
-        if ($queue_online) {
-            battle_manage_queue($actor, $obl_battle_log, $battle_cache);
-        } else {
-            battle_state_clear($actor, $obl_battle_log, $battle_cache);
+    // ── 4.5 战斗清理（返回 ambush 下 actor 退出标志） ──
+    $ambusher_quit_flag = battle_main_end($actor, $atk_act, $obl_battle_log, $battle_cache);
+
+    // ── 5. 队列后补票（仅 ambush） ──
+    if ($is_ambush) {
+        // 5a.突袭的特殊战斗结束方式-突袭者暴毙或逃跑了
+        if ($ambusher_quit_flag) {
+            if ($obl_battle_log) {
+                $obl_battle_log->setPhase('ambush_battle_end');
+                $obl_battle_log->emit([
+                    'ambusher_pid'  => (int)$actor['pid'],
+                    'ambusher_name' => $actor['name'],
+                    'reason'        => 'ambush_' . $ambusher_quit_flag,
+                ]);
+            }
+            battle_state_clear($actor, $obl_battle_log, $battle_cache, 'ambush_' . $ambusher_quit_flag);
+            return;
         }
-        return;
+        // 5b.突袭的特殊战斗结束方式-突袭者一轮就杀光了所有敌人
+        $pids = battle_queue_setup($actor, $obl_battle_log, $battle_cache['combatants']);
+        if ($pids === false) {
+            if ($obl_battle_log) {
+                $obl_battle_log->setPhase('ambush_battle_end');
+                $obl_battle_log->emit([
+                    'ambusher_pid'  => (int)$actor['pid'],
+                    'ambusher_name' => $actor['name'],
+                    'reason'        => 'ambush_killed_all',
+                ]);
+            }
+            battle_state_clear($actor, $obl_battle_log, $battle_cache, 'ambush_killed_all');
+            return;
+        }
+        // 都没有，初始化先攻队列，滑入标准战斗流程
+        battle_queue_create_and_init($actor, $pids, $obl_battle_log);
     }
 
-    if ($mode === 'player_turn') {
-        // ── 玩家在已有队列中的回合 ──
-        $atk_act = battle_entry_parse_actions($actions, $actor['pid'], $mode, false);
-        if (empty($atk_act)) return;
+    // ── 6. 队列管理 ──
+    $result = battle_manage_queue($actor, $obl_battle_log, $battle_cache);
 
-        $battle_cache = battle_cache_create($actor, false);
-
-        battle_main($actor, $atk_act, $obl_battle_log, $battle_cache);
-        battle_manage_queue($actor, $obl_battle_log, $battle_cache);
-        return;
-    }
-
-    if ($mode === 'npc_turn') {
-        // ── NPC 在已有队列中的回合（允许空动作） ──
-        $atk_act = battle_entry_parse_actions($actions, $actor['pid'], $mode, true);
-
-        $battle_cache = battle_cache_create($actor, false);
-
-        battle_main($actor, $atk_act, $obl_battle_log, $battle_cache);
-        $result = battle_manage_queue($actor, $obl_battle_log, $battle_cache);
-        return $result;
-    }
+    // ── 7. 返回（仅 npc_turn 需要结果） ──
+    if ($is_npc) return $result;
 }
 
 // ── 辅助函数 ──

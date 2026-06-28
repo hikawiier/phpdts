@@ -945,7 +945,7 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `battle_state_init` | `(&$actor_data): void` | 初始化参战者战斗状态（设 `action='battle'`） |
-| `battle_state_clear` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 清理战斗状态：清 action → 退出队列（queue_exit）→ 恢复 AP → save |
+| `battle_state_clear` | `(&$actor_data, &$obl_battle_log, &$battle_cache, $reason = 'unknown'): void` | 清理战斗状态：reason='death' 时设 state=1；清 action → queue_exit → 恢复 AP → save |
 
 **模块 2：数值辅助**（3 函数，与 battle.calc.php 配合）
 
@@ -981,7 +981,7 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `battle_actor_can_act` | `(&$actor_data, &$obl_battle_log): bool` | Actor 行动资格检查（state>0 或 hp<=0 视为不能行动），失败时 emit |
+| `battle_actor_can_act` | `(&$actor_data, &$obl_battle_log, &$battle_cache = null): bool` | Actor 行动资格检查（state>0 或 hp<=0 视为不能行动），失败时 emit + 写 combatants 缓存 |
 
 ### 8.9 battle.main.php — 战斗执行模块
 
@@ -995,7 +995,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `battle_once_execute` | `(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache): void` | 单次受击：state_init → skill_execute → calc_damage → apply_damage → middle_check → save(both) |
 | `battle_execute_verify` | `(&$actor_data, $act, &$obl_battle_log, &$battle_cache): ?array` | 单 action-target 校验：fetch target → build_tags → check target_rules，返回 `['target_data','tags']` 或 null |
 | `battle_state_middle_check` | `(&$actor_data, &$target_data, $act_id, &$obl_battle_log, &$battle_cache): void` | 伤害结算后写缓存（combatants + tag_mutations），不改 DB。三路：存活→1，逃跑→0不改dead，死→0+dead=true |
-| `battle_main_end` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 集中 cleanup：遍历 combatants[pid]=0，dead→state=1+clear，escaped→clear(不改state)，兜底→clear |
+| `battle_main_end` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): ?string` | 集中 cleanup：对 combatants[pid]=0 执行清理；ambush 下 actor quit 时返回 'dead'|'escaped'，不清理 actor |
 | `battle_sort_actions` | `(array &$atk_act): void` | 终结技排序：普通技在前，finisher 在后；多终结技只保留最后一个 |
 
 ### 8.10 battle_log.func.php — 战斗日志系统

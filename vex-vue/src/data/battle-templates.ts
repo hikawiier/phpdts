@@ -1,188 +1,131 @@
 // ══════════════════════════════════════════════════
 // battle_log 渲染模板 / Battle log render templates
 //
-// 按 action_id 索引，每个模板定义渲染函数。
+// 按 directedKind 分发渲染（设计案3 v3）。
 // 后端只传索引 ID（actor_pid/target_pid/action_id），前端负责渲染文案。
 //
 // 人称渲染规则：
 //   actor_type === 0 → "你"
-//   actor_type > 0  → 显示 actor 名称（从 context.npcName 获取）
+//   actor_type > 0  → 显示 actor_name（从 entry 直接读，不查 API）
 //
-// 迁移自现有 vex/data/battle-templates.js（M6 阶段 1）。
+// 关联文档：oblivions/docs/设计案3-重构前端播放系统.md §六
 // ══════════════════════════════════════════════════
 
 import { escapeHtml } from '@/utils/format';
-import type { BattleLogEntry } from '@/types/api';
+import type { DirectedEntry, DirectedKind } from '@/stores/battle-director';
 
-/**
- * 战斗播放上下文
- *
- * 由 battleStore.buildPlayContext() 构建，供 BattleModal + battle-templates 共用。
- * 包含双方名称/HP/位置等运行时信息。
- *
- * 兼容字段（enemyName/enemyHp/enemyMaxHp）保留，与原前端 battle-modal.js renderHeader 一致。
- */
-export interface BattlePlayContext {
-  /** 敌人 PID */
-  npcPid: number;
-  /** 敌人名称 */
-  npcName: string;
-  /** 敌人当前 HP */
-  npcHp: number;
-  /** 敌人最大 HP */
-  npcMaxHp: number;
-  /** 敌人位置 pls（可选，用于战斗标题） */
-  npcLocation: string | number | null;
-  /** 玩家当前 HP */
-  playerHp: number;
-  /** 玩家最大 HP */
-  playerMaxHp: number;
-  /** 玩家名称 */
-  playerName: string;
-  // ── 兼容旧字段名（供 battle-modal.js renderHeader 使用） ──
-  enemyName: string;
-  enemyHp: number;
-  enemyMaxHp: number;
-}
-
-/** battle_log 渲染模板接口 */
-export interface BattleLogTemplate {
-  /**
-   * 渲染单条 battle_log 为 HTML 字符串
-   * @param entry battle_log 条目
-   * @param ctx 播放上下文
-   * @returns HTML 字符串（空字符串表示该条目不需要渲染）
-   */
-  render: (entry: BattleLogEntry, ctx: BattlePlayContext) => string;
-}
-
-/** action_id → 渲染模板映射 */
-export const BATTLE_TEMPLATES: Record<string, BattleLogTemplate> = {
-  unarmed_strike: {
-    render(entry, ctx) {
-      const actor = displayActor(entry, ctx);
-      const target = displayTarget(entry, ctx);
-      const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
-      return (
-        `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-        `对<span class="red">${escapeHtml(target)}</span>` +
-        `使用了空手攻击，造成 <span class="yellow">${entry.effect_value}</span> 点伤害。`
-      );
-    },
-  },
-  escape: {
-    render(entry, ctx) {
-      const actor = displayActor(entry, ctx);
-      const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
-      return (
-        `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-        `尝试逃跑。`
-      );
-    },
-  },
-  flee: {
-    render(entry, ctx) {
-      const actor = displayActor(entry, ctx);
-      const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
-      return (
-        `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-        `成功逃离了战斗！`
-      );
-    },
-  },
-  battle_end: {
-    render(entry, ctx) {
-      if (Number(entry.actor_type) !== 0) {
-        // NPC 被清除 → 玩家胜利
-        return `<span class="yellow">═══ 战斗胜利！你击败了 ${escapeHtml(ctx.npcName)} ═══</span>`;
-      }
-      return `<span class="text-fg-dim">═══ 战斗结束 ═══</span>`;
-    },
-  },
-  ap_recover: {
-    // AP 恢复：轻量提示，不渲染为模态框条目
-    render() {
-      return '';
-    },
-  },
-  'initiative.roll': {
-    // 先攻掷骰：不渲染为模态框条目（投掷结果保留在 entry.extra.rolls 供 debug 或未来扩展使用）
-    render() {
-      return '';
-    },
-  },
-  queue_create: {
-    render() {
-      return '';
-    },
-  },
-  queue_update: {
-    render() {
-      return '';
-    },
-  },
+/** 按 directedKind 分发的渲染模板映射 */
+const KIND_TEMPLATES: Record<DirectedKind, (e: DirectedEntry, playerPid: number) => string> = {
+  action: renderAction,
+  initiative: renderInitiative,
+  flee: renderFlee,
+  combatant_cleared: renderCombatantCleared,
+  battle_end: renderBattleEnd,
+  ambush_battle_end: renderAmbushBattleEnd,
+  display: renderDisplay,
 };
 
 /**
- * 显示攻击方人称
+ * 渲染 DirectedEntry 为 HTML 字符串
  *
- * actor_type === 0 → "你"
- * actor_type > 0  → ctx.npcName（兜底"未知敌人"）
+ * @param entry 导演编排后的条目
+ * @param playerPid 当前玩家 PID（供判断胜负等，当前未用，预留）
+ * @returns HTML 字符串（空字符串表示该条目不需要渲染）
  */
-function displayActor(entry: BattleLogEntry, ctx: BattlePlayContext): string {
-  if (Number(entry.actor_type) === 0) return '你';
-  return ctx.npcName || '未知敌人';
+export function renderDirectedEntryHtml(entry: DirectedEntry, playerPid: number = 0): string {
+  const template = KIND_TEMPLATES[entry.directedKind];
+  return template ? template(entry, playerPid) : '';
 }
 
-/**
- * 显示受击方人称
- *
- * target_type === 0 → "你"
- * target_type > 0  → ctx.npcName（兜底"未知敌人"）
- */
-function displayTarget(entry: BattleLogEntry, ctx: BattlePlayContext): string {
-  if (Number(entry.target_type) === 0) return '你';
-  if (Number(entry.target_type) > 0) return ctx.npcName || '未知敌人';
+// ─────────────────────────────────────────────────
+// 各 directedKind 渲染函数
+// ─────────────────────────────────────────────────
+
+/** action：pre+post 合并动作 */
+function renderAction(e: DirectedEntry, _playerPid: number): string {
+  const actor = e.actor_name || displayActorByType(e.actor_type);
+  const target = e.target_name || displayTargetByType(e.target_type);
+  const actorClass = Number(e.actor_type) === 0 ? 'yellow' : 'red';
+  const actionName = e.action_id ?? '未知动作';
+
+  if (actionName === 'unarmed_strike') {
+    return (
+      `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
+      `对<span class="red">${escapeHtml(target)}</span>` +
+      `使用了空手攻击，造成 <span class="yellow">${e.effect_value}</span> 点伤害。`
+    );
+  }
+  return `<span class="${actorClass}">${escapeHtml(actor)}</span>使用了${escapeHtml(actionName)}。`;
+}
+
+/** initiative：先攻掷骰，不渲染为模态框条目（先攻顺序面板由 BattleModal 单独渲染） */
+function renderInitiative(_e: DirectedEntry, _playerPid: number): string {
   return '';
 }
 
-/**
- * 渲染单条 battle_log 条目为 HTML
- *
- * 迁移自现有 vex/data/battle-templates.js renderBattleLogEntryHtml()。
- *
- * @param entry battle_log 条目
- * @param context 播放上下文 { npcName, npcLocation, ... }
- * @returns HTML 字符串（空字符串表示该条目不需要渲染）
- */
-export function renderBattleLogEntryHtml(
-  entry: BattleLogEntry,
-  context: BattlePlayContext | null | undefined,
-): string {
-  const ctx: BattlePlayContext = context || {
-    npcPid: 0,
-    npcName: '未知敌人',
-    npcHp: 0,
-    npcMaxHp: 1,
-    npcLocation: null,
-    playerHp: 0,
-    playerMaxHp: 1,
-    playerName: '',
-    enemyName: '未知敌人',
-    enemyHp: 0,
-    enemyMaxHp: 1,
-  };
+/** flee：逃跑 */
+function renderFlee(e: DirectedEntry, _playerPid: number): string {
+  const actor = e.actor_name || '未知';
+  const actorClass = Number(e.actor_type) === 0 ? 'yellow' : 'red';
+  return `<span class="${actorClass}">${escapeHtml(actor)}</span>成功逃离了战斗！`;
+}
 
-  const template = BATTLE_TEMPLATES[entry.action_id];
-  if (template && template.render) {
-    return template.render(entry, ctx);
+/** combatant_cleared：某人被清出队列（死亡/逃跑） */
+function renderCombatantCleared(e: DirectedEntry, _playerPid: number): string {
+  const clearedName = e.cleared_name ?? '未知';
+  const reason = e.reason ?? 'unknown';
+  if (reason === 'death') {
+    return `<span class="red">${escapeHtml(clearedName)}</span>被击倒。`;
   }
+  if (reason === 'escaped') {
+    return `<span class="yellow">${escapeHtml(clearedName)}</span>逃离了战场。`;
+  }
+  return '';
+}
 
-  // 默认模板
-  const actor = displayActor(entry, ctx);
-  const actorClass = Number(entry.actor_type) === 0 ? 'yellow' : 'red';
-  return (
-    `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
-    `使用了${escapeHtml(entry.action_id)}。`
-  );
+/** battle_end：标准战斗终结，统一显示"战斗结束"（不区分玩家胜负） */
+function renderBattleEnd(_e: DirectedEntry, _playerPid: number): string {
+  return `<span class="text-fg-dim">═══ 战斗结束 ═══</span>`;
+}
+
+/** ambush_battle_end：突袭阶段结束 */
+function renderAmbushBattleEnd(e: DirectedEntry, _playerPid: number): string {
+  const ambusherName = e.ambusher_name ?? '未知';
+  const reason = e.reason ?? '';
+  if (reason === 'ambush_killed_all') {
+    return `<span class="yellow">═══ 突袭成功，${escapeHtml(ambusherName)} 杀光了所有敌人 ═══</span>`;
+  }
+  if (reason === 'ambush_dead') {
+    return `<span class="red">═══ 突袭失败，${escapeHtml(ambusherName)} 被击倒 ═══</span>`;
+  }
+  if (reason === 'ambush_escaped') {
+    return `<span class="yellow">═══ 突袭结束，${escapeHtml(ambusherName)} 已逃离 ═══</span>`;
+  }
+  return `<span class="text-fg-dim">═══ 突袭结束 ═══</span>`;
+}
+
+/** display：其他纯展示（ap_recover/verify_failed/middle_check 等） */
+function renderDisplay(e: DirectedEntry, _playerPid: number): string {
+  if (e.phase === 'ap_recover') return '';  // AP 恢复不渲染为模态框条目
+  if (e.phase === 'execute_verify_failed') {
+    const actor = e.actor_name || '未知';
+    return `<span class="yellow">${escapeHtml(actor)}</span>的动作校验失败：${escapeHtml(e.reason ?? '')}`;
+  }
+  if (e.phase === 'middle_check_target_dead') return '';  // 由 combatant_cleared 承载
+  return '';
+}
+
+// ─────────────────────────────────────────────────
+// 兜底人称推导（优先用 entry.actor_name / entry.target_name）
+// ─────────────────────────────────────────────────
+
+function displayActorByType(actorType: number | null): string {
+  if (Number(actorType) === 0) return '你';
+  return '未知敌人';
+}
+
+function displayTargetByType(targetType: number | null): string {
+  if (Number(targetType) === 0) return '你';
+  if (Number(targetType) > 0) return '未知敌人';
+  return '';
 }

@@ -15,10 +15,10 @@ require_once GAME_ROOT . './oblivions/include/game/player.func.php';
 require_once GAME_ROOT . './oblivions/include/game/sql.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
-//回合主函数（不含队列管理，1 次出手 = 1 Turn = 1 tick）
+//回合主函数（纯执行，不含队列管理与 cleanup，1 次出手 = 1 Turn = 1 tick）
 // $actor_data=先攻者data $atk_act=动作数组（数字索引，每项含 act_id + target）
-// $battle_cache 由调用方传入并在 battle_main 返回后传给 battle_manage_queue
-// 队列管理（创建/更新/解散/结束检测）由调用方在 battle_main 返回后调用 battle_manage_queue()
+// $battle_cache 由调用方传入并在 battle_main 返回后传给 battle_main_end + battle_manage_queue
+// 队列管理与 cleanup 由调用方在 battle_main 返回后依次调用 battle_main_end() + battle_manage_queue()
 function battle_main(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
 {
     $obl_battle_log->setPhase('verify');
@@ -31,9 +31,6 @@ function battle_main(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
         $obl_battle_log->setPhase('excute');
         battle_execute($actor_data, $atk_act, $obl_battle_log, $battle_cache);    
     }
-
-    // ── 集中 cleanup（state=1、queue_exit、obl_save_player）──
-    battle_main_end($actor_data, $atk_act, $obl_battle_log, $battle_cache);
 }
 
 function battle_verify(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache)
@@ -60,7 +57,7 @@ function battle_execute(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cach
         $act_id = $act['act_id'];
 
         // A. 动作者能不能行动（per act 一次）
-        if (!battle_actor_can_act($actor_data, $obl_battle_log)) continue;
+        if (!battle_actor_can_act($actor_data, $obl_battle_log, $battle_cache)) continue;
 
         $targets_array = is_array($act['target']) ? $act['target'] : array($act['target']);
 
@@ -85,33 +82,47 @@ function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_
     # 受击目标进入战斗状态（突袭时首次命中触发）
     battle_state_init($target_data);
 
-    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑；可写 tag_mutations）
+    // 执行动作前保存 HP 快照
+    $actor_hp_before  = (int)$actor_data['hp'];
+    $target_hp_before = (int)$target_data['hp'];
+
+    // ── 动作执行前快照 ──
+    if ($obl_battle_log) {
+        $obl_battle_log->setPhase('once_execute_pre');
+        $obl_battle_log->emit([
+            'actor_pid'     => (int)$actor_data['pid'],
+            'actor_type'    => (int)$actor_data['type'],
+            'actor_name'    => $actor_data['name'],
+            'actor_hp'      => $actor_hp_before,
+            'actor_max_hp'  => (int)$actor_data['mhp'],
+            'target_pid'    => (int)$target_data['pid'],
+            'target_type'   => (int)$target_data['type'],
+            'target_name'   => $target_data['name'],
+            'target_hp'     => $target_hp_before,
+            'target_max_hp' => (int)$target_data['mhp'],
+            'action_id'     => $act_id,
+        ]);
+    }
+
+    // 技能执行（处理非伤害效果，如逃跑等复杂逻辑；可写 tag_mutations，不改 HP）
     include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
     skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
 
-    // 扣血前保存 HP 快照
-    $actor_oldhp  = (int)$actor_data['hp'];
-    $target_oldhp = (int)$target_data['hp'];
-
     //执行act_id具体的打击动作
-    $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache); //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
-    battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache); //伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP
+    $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache);
+    battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache);
 
-    // 记录攻击日志（在 middle_check 之前 emit，确保攻击日志的 log_id 小于后续状态日志）
+    // ── 动作执行后快照 ──
     if ($obl_battle_log) {
+        $obl_battle_log->setPhase('once_execute_post');
         $obl_battle_log->emit([
             'actor_pid'    => (int)$actor_data['pid'],
-            'actor_type'   => (int)$actor_data['type'],
+            'actor_hp'     => (int)$actor_data['hp'],
             'target_pid'   => (int)$target_data['pid'],
-            'target_type'  => (int)$target_data['type'],
+            'target_hp'    => (int)$target_data['hp'],
             'action_id'    => $act_id,
             'effect_value' => $damage,
-            'extra'        => [
-                'actor_oldhp'   => $actor_oldhp,
-                'target_oldhp'  => $target_oldhp,
-                'actor_newhp'   => (int)$actor_data['hp'],
-                'target_newhp'  => (int)$target_data['hp'],
-            ],
+            'success'      => true,
         ]);
     }
 
@@ -145,11 +156,12 @@ function battle_execute_verify(&$actor_data, $act, &$obl_battle_log, &$battle_ca
     if (!$target_data) {
         // B4：pid 不存在
         if ($obl_battle_log) {
+            $obl_battle_log->setPhase('execute_verify_failed');
             $obl_battle_log->emit([
                 'actor_pid'  => (int)$actor_data['pid'],
-                'action_id'  => "verify.{$act_id}",
-                'target_pid' => $target_id,
-                'extra'      => ['result' => 'failed', 'reason' => 'target_not_found'],
+                'actor_name' => $actor_data['name'],
+                'action_id'  => $act_id,
+                'reason'     => 'target_not_found',
             ]);
         }
         return null;
@@ -164,11 +176,12 @@ function battle_execute_verify(&$actor_data, $act, &$obl_battle_log, &$battle_ca
         $check = battle_check_target_rules($config, $tags);
         if (!$check['pass']) {
             if ($obl_battle_log) {
+                $obl_battle_log->setPhase('execute_verify_failed');
                 $obl_battle_log->emit([
                     'actor_pid'  => (int)$actor_data['pid'],
-                    'action_id'  => "verify.{$act_id}",
-                    'target_pid' => $target_id,
-                    'extra'      => ['result' => 'failed', 'reason' => $check['reason'], 'tags' => $tags],
+                    'actor_name' => $actor_data['name'],
+                    'action_id'  => $act_id,
+                    'reason'     => $check['reason'],
                 ]);
             }
             return null;
@@ -218,16 +231,12 @@ function battle_state_middle_check(&$actor_data, &$target_data, $act_id, &$obl_b
         $battle_cache['tag_mutations'][$pid]['dead'] = true;
 
         if ($obl_battle_log) {
+            $obl_battle_log->setPhase('middle_check_target_dead');
             $obl_battle_log->emit([
-                'actor_pid'    => (int)$actor_data['pid'],
-                'target_pid'   => $pid,
-                'action_id'    => 'state.middle_check',
-                'extra'        => [
-                    'result' => 'died',
-                    'hp'     => $hp,
-                    'state'  => (int)$target_data['state'],
-                    'tags'   => $mutations,
-                ],
+                'actor_pid'   => (int)$actor_data['pid'],
+                'target_pid'  => $pid,
+                'target_name' => $target_data['name'],
+                'action_id'   => $act_id,
             ]);
         }
     }
@@ -239,61 +248,69 @@ function battle_state_middle_check(&$actor_data, &$target_data, $act_id, &$obl_b
 // ================================================================
 
 /**
- * battle_main 末尾集中处理 cleanup
+ * battle_main 后的集中 cleanup（由 battle_entry_dispatch step 4.5 调用）
  *
- * 遍历 combatants，对 status=0 的 pid 执行 cleanup：
- *   - escaped mutation → 跳过（escape.calc 已处理）
- *   - dead mutation    → battle_state_clear（state=1 + queue_exit + save）
- *   - 兜底              → battle_state_clear
+ * 对 combatants[pid]=0 的战场单位执行清理。
+ * ambush 模式下 actor 死亡/逃离时不清理 actor，改返回 flag 给 dispatch 决策。
  *
  * @param array  &$actor_data
  * @param array  &$atk_act
  * @param BattleLogCollector &$obl_battle_log
  * @param array  &$battle_cache
- * @return void
+ * @return string|null ambush 下 actor 退出时返回 'dead'|'escaped'，否则 null
  */
-function battle_main_end(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void {
-    if (empty($battle_cache['combatants'])) return;
+function battle_main_end(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): ?string {
+    if (empty($battle_cache['combatants'])) return null;
 
-    foreach ($battle_cache['combatants'] as $pid => $status) 
-    {
+    $actor_pid = (int)$actor_data['pid'];
+    $is_ambush = !empty($battle_cache['is_ambush']);
+    $ambusher_quit = null;
+
+    // ── Turn end hook：当前 combatant 的行动已全部执行完毕（仅 Phase 1）──
+    if (!empty($actor_data['bid'])) {
+        battle_hook_turn_end($actor_data, $obl_battle_log, $battle_cache);
+    }
+
+    // ── Actor 补充死亡检测（写缓存，统一由 foreach 处理）──
+    if ((int)$actor_data['hp'] <= 0 || (int)$actor_data['state'] > 0) {
+        $battle_cache['combatants'][$actor_pid] = 0;
+        $battle_cache['tag_mutations'][$actor_pid]['dead'] = true;
+    }
+
+    foreach ($battle_cache['combatants'] as $pid => $status) {
         if ($status !== 0) continue;
 
-        $mutations = $battle_cache['tag_mutations'][(int)$pid] ?? [];
+        // ambush actor quit → 不清理，返回 flag 让 dispatch 决策
+        if ($is_ambush && (int)$pid === $actor_pid) {
+            $mutations = $battle_cache['tag_mutations'][$actor_pid] ?? [];
+            if (!empty($mutations['escaped'])) {
+                $ambusher_quit = 'escaped';
+                continue;
+            }
+            if (!empty($mutations['dead'])) {
+                $ambusher_quit = 'dead';
+                continue;
+            }
+        }
 
+        $mutations = $battle_cache['tag_mutations'][(int)$pid] ?? [];
         $target_data = $actor_data['pid'] == $pid ? $actor_data : obl_fetch_playerdata_by_pid((int)$pid);
         if (!$target_data) continue;
 
-        //在这里更新死亡状态
-        if (!empty($mutations['dead']))  $target_data['state'] = $target_data['state'] ?: 1;
+        $reason = !empty($mutations['escaped']) ? 'escaped' : (!empty($mutations['dead']) ? 'death' : 'unknown');
 
-        //在这里执行必要的清理
-        if(!empty($mutations['escaped']) || !empty($mutations['dead']))
-        {
-            battle_state_clear($target_data, $obl_battle_log, $battle_cache);
-            if ($obl_battle_log) {
-                $obl_battle_log->emit([
-                    'actor_pid'  => (int)$actor_data['pid'],
-                    'target_pid' => (int)$pid,
-                    'action_id'  => 'main_end.fallback',
-                    'extra'      => ['reason' => 'success clear escape or dead','now_bid' => $actor_data['bid']],
-                ]);
-            }
-            continue;
-        }
-
-        // 兜底：combatants=0 代表不能继续参加战斗
-        // 即便没有 dead/escaped tag → 仍执行 state_clear
         if ($obl_battle_log) {
+            $obl_battle_log->setPhase('combatant_cleared');
             $obl_battle_log->emit([
-                'actor_pid'  => (int)$actor_data['pid'],
-                'target_pid' => (int)$pid,
-                'action_id'  => 'main_end.fallback',
-                'extra'      => ['reason' => 'combatants_zero_no_tag'],
-            ]);
+                'cleared_pid'  => (int)$pid,
+                'cleared_name' => $target_data['name'],
+                'reason'       => $reason,
+            ], $reason === 'unknown');
         }
-        battle_state_clear($target_data, $obl_battle_log, $battle_cache);
+        battle_state_clear($target_data, $obl_battle_log, $battle_cache, $reason);
     }
+
+    return $ambusher_quit;
 }
 
 /**

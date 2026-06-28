@@ -225,3 +225,33 @@ function obl_battle_state_find_stale($timeout_seconds = 30, $state = OBL_BS_PROC
     if (!isset($now)) $now = time();
     return obl_state_find_stale($now - $timeout_seconds, $state);
 }
+
+/**
+ * 轮数递增（round_num + 1）
+ *
+ * 由 battle_queue_rebuild 在重建先攻队列末尾调用。
+ * round_num 0-indexed：Round 1 = 0，第一次 rebuild 后为 1（Round 2）。
+ *
+ * @param int $qid 队列编号
+ */
+function obl_battle_state_increment_round($qid) {
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblbattle_state SET round_num = round_num + 1 WHERE qid = " . (int)$qid);
+}
+
+/**
+ * 读取战场的 round_num
+ *
+ * 供 BattleLogCollector::setRoundNum() 调用，使 emit 的 bl_round_num 与 DB 一致。
+ * round_num 0-indexed：Round 1 = 0，第一次 rebuild 后为 1（Round 2）。
+ *
+ * @param int $qid 队列编号
+ * @return int round_num（qid 不存在或 <=0 返回 0）
+ */
+function obl_battle_state_get_round_num($qid) {
+    global $db, $tablepre;
+    if ($qid <= 0) return 0;
+    $result = $db->query("SELECT round_num FROM {$tablepre}oblbattle_state WHERE qid = " . (int)$qid);
+    $row = $db->fetch_array($result);
+    return $row ? (int)$row['round_num'] : 0;
+}

@@ -174,6 +174,8 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 - actions 解析/校验统一由 dispatch 内部完成
 - 目标合法性（存在/射程/死亡等）由战斗执行阶段的 Tag 系统拦截
 
+**队列生命周期后处理**：`battle_manage_queue` 返回后，调用方通过 `result.disbanded` 区分两条清理路径——解散时调 `battle_state_clear`（退队列、清 bid/action、AP 回满），存活时由 step 6 prepare 为下一顺位者恢复 AP 并保存。前者是"战斗结束打扫干净"，后者是"下一个人准备上场"，互不重叠。
+
 ---
 
 ## 二、核心设计原则
@@ -378,7 +380,7 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 **三阶段死亡检测**：
 - **预检**（verify 中 `tag_dead` 函数）：首次构建目标标签时从 DB 派生 `dead` tag
 - **中检**（`battle_state_middle_check`）：伤害结算后只写缓存（`combatants[pid]` + `tag_mutations[pid]['dead']`），不改 DB state
-- **后清**（`battle_main_end`）：遍历 `combatants[pid]=0` 集中执行 cleanup（state=1 + state_clear / 仅 state_clear）
+- **后清**（`battle_main_end`）：actor 死亡检测→state_clear('death')，再遍历 `combatants[pid]=0` 按 reason 调 state_clear（death 时内部设 state=1）
 
 **`combatants` 新语义**：`1`=能继续战斗，`0`=不能。有队列时从队列载入所有成员，无队列时仅自己。`battle_main_end` 消费后传给 `battle_manage_queue`。
 

@@ -154,25 +154,19 @@ function battle_queue_create_and_init(&$actor_data, array $pids, &$obl_battle_lo
     obl_battle_state_create($qid, OBL_BS_PROCESSING);
 
     if ($obl_battle_log) {
+        // 队列新建 = Round 1（0-indexed），同步到 collector 后再 emit initiative_roll
+        $obl_battle_log->setRoundNum(0);
+        $obl_battle_log->setPhase('queue_create');
         $obl_battle_log->emit([
-            'actor_pid'   => $actor_pid,
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => 'queue_create',
-            'extra'       => ['qid' => $qid, 'count' => count($sorted)],
-        ]);
+            'qid'        => $qid,
+            'combatants' => $sorted,
+        ], true);  // debug
+        $obl_battle_log->setPhase('initiative_roll');
         $obl_battle_log->emit([
-            'actor_pid'   => $actor_pid,
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => 'initiative.roll',
-            'extra'       => [
-                'qid'    => $qid,
-                'rolls'  => $sorted,
-                'ambush' => $ambush_pid > 0,
-            ],
+            'qid'        => $qid,
+            'rolls'      => $sorted,
+            'ambush_pid' => $ambush_pid > 0 ? (int)$actor_data['pid'] : 0,
+            'combatants' => $sorted,
         ]);
     }
 
@@ -211,17 +205,11 @@ function battle_queue_set_initiative($qid, &$actor_data, &$obl_battle_log, $ambu
     }
 
     if ($obl_battle_log) {
+        $obl_battle_log->setPhase('initiative_roll');
         $obl_battle_log->emit([
-            'actor_pid'   => (int)$actor_data['pid'],
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => 'initiative.roll',
-            'extra'       => [
-                'qid'    => $qid,
-                'rolls'  => $sorted,
-                'ambush' => $ambush_pid > 0,
-            ],
+            'qid'        => $qid,
+            'rolls'      => $sorted,
+            'ambush_pid' => $ambush_pid,
         ]);
     }
 

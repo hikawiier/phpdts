@@ -204,31 +204,11 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
     # 1. 查配置
     $config = skill_get_config($act_id);
     if (!$config) {
-        if ($obl_battle_log) {
-            $obl_battle_log->emit([
-                'actor_pid'   => (int)$actor_data['pid'],
-                'actor_type'  => (int)$actor_data['type'],
-                'target_pid'  => 0,
-                'target_type' => -1,
-                'action_id'   => $act_id,
-                'extra'       => ['result' => 'failed', 'reason' => 'no_config'],
-            ]);
-        }
         return false;
     }
 
     # 2. 检查是否拥有该技能
     if (!isset($actor_data['skillpara'][$act_id])) {
-        if ($obl_battle_log) {
-            $obl_battle_log->emit([
-                'actor_pid'   => (int)$actor_data['pid'],
-                'actor_type'  => (int)$actor_data['type'],
-                'target_pid'  => 0,
-                'target_type' => -1,
-                'action_id'   => $act_id,
-                'extra'       => ['result' => 'failed', 'reason' => 'not_owned'],
-            ]);
-        }
         return false;
     }
 
@@ -237,32 +217,12 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
     $lstact = isset($actor_data['skillpara'][$act_id]['lstact']) ? (int)$actor_data['skillpara'][$act_id]['lstact'] : 0;
     $cd = isset($config['cd']) ? (int)$config['cd'] : 0;
     if ($cd > 0 && ($current_tick - $lstact) < $cd) {
-        if ($obl_battle_log) {
-            $obl_battle_log->emit([
-                'actor_pid'   => (int)$actor_data['pid'],
-                'actor_type'  => (int)$actor_data['type'],
-                'target_pid'  => 0,
-                'target_type' => -1,
-                'action_id'   => $act_id,
-                'extra'       => ['result' => 'failed', 'reason' => 'on_cd', 'remaining' => $cd - ($current_tick - $lstact)],
-            ]);
-        }
         return false;
     }
 
     # 4. 检查 AP
     $apcost = isset($config['apcost']) ? (int)$config['apcost'] : 0;
     if ($apcost > 0 && (int)$actor_data['ap'] < $apcost) {
-        if ($obl_battle_log) {
-            $obl_battle_log->emit([
-                'actor_pid'   => (int)$actor_data['pid'],
-                'actor_type'  => (int)$actor_data['type'],
-                'target_pid'  => 0,
-                'target_type' => -1,
-                'action_id'   => $act_id,
-                'extra'       => ['result' => 'failed', 'reason' => 'no_ap', 'ap' => (int)$actor_data['ap'], 'apcost' => $apcost],
-            ]);
-        }
         return false;
     }
 
@@ -273,16 +233,6 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
         $verify_func = $act_id . '_verify_check';
         if (function_exists($verify_func)) {
             if (!$verify_func($actor_data, $obl_battle_log, $battle_cache)) {
-                if ($obl_battle_log) {
-                    $obl_battle_log->emit([
-                        'actor_pid'   => (int)$actor_data['pid'],
-                        'actor_type'  => (int)$actor_data['type'],
-                        'target_pid'  => 0,
-                        'target_type' => -1,
-                        'action_id'   => $act_id,
-                        'extra'       => ['result' => 'failed', 'reason' => 'verify_check_failed'],
-                    ]);
-                }
                 return false;
             }
         }
@@ -293,17 +243,6 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
         $actor_data['ap'] -= $apcost;
     }
     $actor_data['skillpara'][$act_id]['lstact'] = $current_tick;
-
-    if ($obl_battle_log) {
-        $obl_battle_log->emit([
-            'actor_pid'   => (int)$actor_data['pid'],
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => $act_id,
-            'extra'       => ['result' => 'passed', 'apcost' => $apcost, 'tick' => $current_tick],
-        ]);
-    }
     return true;
 }
 

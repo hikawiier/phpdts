@@ -5,15 +5,13 @@ if (!defined('IN_GAME')) {
 
 function escape_calc(&$actor_data, &$target_data, &$obl_battle_log, &$battle_cache)
 {
-    # 1. emit flee battlelog（前端通过 'flee' 动作 ID 渲染逃跑到目的地色）
+    # 1. emit flee battlelog（前端渲染逃跑到目的地色）
     if ($obl_battle_log) {
+        $obl_battle_log->setPhase('flee');
         $obl_battle_log->emit([
-            'actor_pid'   => (int)$actor_data['pid'],
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => 'flee',
-            'extra'       => ['success' => true],
+            'actor_pid'  => (int)$actor_data['pid'],
+            'actor_name' => $actor_data['name'],
+            'success'    => true,
         ]);
     }
 

@@ -270,24 +270,70 @@ export interface OblErrorLogResponse {
   total: number;
 }
 
-/** 战斗日志条目（api_v2.php?action=battle_log） */
+/** 先攻掷骰结果项（battle_log.rolls / combatants 数组元素） */
+export interface RollData {
+  pid: number;
+  myorder: number;
+  roll: number;
+  initiative: number;
+  type: number;
+  is_ambush: boolean;
+}
+
+/**
+ * 战斗日志条目（api_v2.php?action=battle_log）
+ *
+ * 字段对应后端 BattleLogCollector::emit() 的实际输出（设计案2 v3）。
+ * 后端 obl_battle_log_load 默认过滤 debug=true，前端拿到的全是 debug=false 原料。
+ */
 export interface BattleLogEntry {
-  id: string; // 'battle.action'
-  log_id: string;
-  turn: string;
-  actor: string; // 'player' | 'enemy_{pid}'
-  actor_type: string; // '0'=玩家，>'0'=敌人类型（后端返回字符串）
-  actor_pid: string;
-  target: string;
-  target_type: string;
-  target_pid: string;
-  action_id: string; // unarmed_strike / escape / battle.start / battle.end / initiative.roll / queue_create / queue_update / ap_recover / ...
-  action_name: string;
-  effect_value: string;
-  extra: Record<string, unknown> | null;
-  phase: string; // 'excute' / 'finish_check' 等（控制动画播放）
-  played: string;
-  ts: string;
+  log_id: number;
+  played: number;
+  ts: number;
+
+  // 事件标识
+  phase: string;
+  action_id: string | null;
+
+  // 行动者信息
+  actor_pid: number | null;
+  actor_type: number | null;
+  actor_name: string | null;
+  actor_hp: number | null;
+  actor_max_hp: number | null;
+  actor_ap: number | null;
+  actor_max_ap: number | null;
+
+  // 目标信息
+  target_pid: number | null;
+  target_type: number | null;
+  target_name: string | null;
+  target_hp: number | null;
+  target_max_hp: number | null;
+
+  // 效果
+  effect_value: number | null;
+  success: boolean | null;
+
+  // 事件元数据
+  qid: number | null;
+  rolls: RollData[] | null;
+  ambush_pid: number | null;
+  combatants: RollData[] | null;
+  reason: string | null;
+  winner_pid: number | null;
+  cleared_pid: number | null;
+  cleared_name: string | null;
+  ambusher_pid: number | null;
+  ambusher_name: string | null;
+
+  // 渲染/调试
+  debug: boolean;
+
+  // 边界标记（后端 BattleLogCollector 自动填充）
+  bl_turn_num: number | null;       // null=Phase 0/尚未开始，1+=第 N turn
+  bl_round_num: number | null;      // null=Phase 0 无队列，0+=第 N round（0-indexed）
+  bl_segment_flag: 'round_start' | 'turn_start' | 'battle_end' | 'ambush_battle_end' | null;
 }
 
 /** 战斗日志响应（api_v2.php?action=battle_log） */

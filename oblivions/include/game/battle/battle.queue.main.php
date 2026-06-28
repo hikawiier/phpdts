@@ -11,17 +11,18 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 /**
- * 先攻队列创建入口
+ * 先攻队列检查入口
  *
- * 从参战者地图 combatants_map 中过滤存活者，调 battle_queue_create_and_init
- * 一次完成建队列+投先攻。ambush_flag 的消费内化在 create_and_init 中。
+ * 从参战者地图 combatants_map 中过滤存活者（status=1），
+ * 够数时返回 pids 数组，不够数返回 false。
+ * 不执行队列创建——由 dispatch 根据返回值决定是否调 battle_queue_create_and_init。
  *
  * @param array  &$actor_data      发起者数据
  * @param array  &$obl_battle_log  战斗日志收集器
  * @param array   $combatants_map  参战者地图 [pid => 0|1]
- * @return bool  队列是否创建成功
+ * @return array|false  存活者 pid 数组，不足 2 人时返回 false
  */
-function battle_queue_setup(&$actor_data, &$obl_battle_log, $combatants_map): bool
+function battle_queue_setup(&$actor_data, &$obl_battle_log, $combatants_map)
 {
     if (!empty($actor_data['bid'])) return false;
 
@@ -32,7 +33,7 @@ function battle_queue_setup(&$actor_data, &$obl_battle_log, $combatants_map): bo
 
     if (count($pids) < 2) return false;
 
-    return battle_queue_create_and_init($actor_data, $pids, $obl_battle_log) > 0;
+    return $pids;
 }
 
 /**
@@ -53,18 +54,22 @@ function battle_queue_rebuild($qid, &$actor_data, &$obl_battle_log): array
 
     obl_queue_reset_done_by_qid($qid);
 
+    // ── Round 边界：先递增 DB round_num → 同步到 collector → 再 emit initiative_roll
+    //    确保 initiative_roll 条目的 bl_round_num 为新轮次编号（0-indexed）──
+    obl_battle_state_increment_round($qid);
+    if ($obl_battle_log) {
+        $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
+    }
+
     // 重建时无突袭，ambush_pid = 0
+    // battle_queue_set_initiative 内部会 emit initiative_roll（携带新 bl_round_num）
     $result = battle_queue_set_initiative($qid, $actor_data, $obl_battle_log, 0);
 
     if ($obl_battle_log) {
+        $obl_battle_log->setPhase('queue_rebuild');
         $obl_battle_log->emit([
-            'actor_pid'   => (int)$actor_data['pid'],
-            'actor_type'  => (int)$actor_data['type'],
-            'target_pid'  => 0,
-            'target_type' => -1,
-            'action_id'   => 'queue_rebuild',
-            'extra'       => ['qid' => $qid],
-        ]);
+            'qid' => $qid,
+        ], true);  // debug
     }
 
     return $result;
@@ -90,8 +95,15 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
     // ── 一次性读取所有队列行 ──
     $queue_rows = obl_fetch_queue_all_by_qid($qid);
     if (empty($queue_rows)) {
+        if ($obl_battle_log) {
+            $obl_battle_log->setPhase('battle_end');
+            $obl_battle_log->emit([
+                'winner_pid' => (int)$actor_data['pid'],
+                'reason'     => 'queue_empty',
+            ]);
+        }
         $actor_data['bid'] = 0;
-        battle_state_clear($actor_data, $obl_battle_log, $battle_cache);
+        battle_state_clear($actor_data, $obl_battle_log, $battle_cache, 'battle_end');
         $result['disbanded'] = true;
         return $result;
     }
@@ -118,11 +130,18 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
 
     // ── 2. 解散判定 ──
     if ($count <= 1 || !$has_player) {
+        if ($obl_battle_log) {
+            $obl_battle_log->setPhase('battle_end');
+            $obl_battle_log->emit([
+                'winner_pid' => (int)$actor_data['pid'],
+                'reason'     => 'disband',
+            ]);
+        }
         obl_queue_delete_by_qid($qid);
         obl_battle_state_transition($qid, 'battle_end');
         obl_battle_state_destroy($qid);
         $actor_data['bid'] = 0;
-        battle_state_clear($actor_data, $obl_battle_log, $battle_cache);
+        battle_state_clear($actor_data, $obl_battle_log, $battle_cache, 'battle_end');
         $result['disbanded'] = true;
         return $result;
     }
@@ -152,10 +171,18 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
         }
     }
 
-    // ── 6. 下一轮准备 ──
+    // ── 6. 存活路径（对应队列生命周期后处理的"下一个人准备上场"）──
+    // 队列未解散时为下一顺位者恢复 AP 并保存
     $obl_battle_log->setPhase('prepare');
-    battle_ap_recover($actor_data, $battle_cache, $obl_battle_log);
-    obl_save_player($actor_data);
+    if ($next) {
+        $next_data = obl_fetch_playerdata_by_pid((int)$next['pid']);
+        if ($next_data) {
+            // ── Turn start hook：先递增 turnNum，再执行 AP 恢复（emit 时 bl_turn_num 已为当前回合编号）──
+            battle_hook_turn_start($next_data, $obl_battle_log, $battle_cache);
+            battle_ap_recover($next_data, $battle_cache, $obl_battle_log);
+            obl_save_player($next_data);
+        }
+    }
 
     return $result;
 }

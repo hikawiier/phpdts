@@ -17,7 +17,12 @@ if (!defined('IN_GAME')) {
 // - 前端拉取 played=0 的条目播放，播完调 mark_battle_log_played.php 标记 played=1
 // - 文件不被清空，保留历史记录
 //
-// 相关文档：oblivions/docs/战斗演出系统设计案.md
+// 边界标记字段（由 BattleLogCollector 自动填充）：
+// - bl_turn_num:  Turn 计数（null=Phase 0/尚未开始，1+=第 N turn），由 battle_hook_turn_start 递增
+// - bl_round_num: Round 计数（null=Phase 0 无队列，0+=第 N round，0-indexed），从 DB oblbattle_state.round_num 读
+// - bl_segment_flag: phase 自动映射的段边界标记（round_start/turn_start/battle_end/ambush_battle_end/null）
+//
+// 相关文档：oblivions/docs/设计案2-新建前端导演系统.md
 // ================================================================
 
 /**
@@ -31,40 +36,104 @@ class BattleLogCollector {
     /** @var array 本请求累积的战斗日志条目 */
     private $entries = [];
 
-    /** @var string 阶段标识（prepare / verify / excute / queue_check / finish_check） */
+    /** @var string 阶段标识 */
     private $phase = '';
 
+    /** @var int|null Turn 计数（0=尚未开始，1+=第 N turn），由 battle_hook_turn_start 递增 */
+    private $turnNum = 0;
+
+    /** @var int|null Round 计数（null=Phase 0 无队列，0+=第 N round，0-indexed），从 DB 缓存 */
+    private $roundNum = null;
+
+    /** @var array phase 级默认 debug 映射 */
+    private static array $phaseDebugDefault = [
+        'initiative_roll'          => false,
+        'queue_create'             => true,
+        'queue_rebuild'            => true,
+        'once_execute_pre'         => false,
+        'once_execute_post'        => false,
+        'execute_verify_failed'    => false,
+        'middle_check_target_dead' => false,
+        'actor_state_check'        => true,
+        'ap_recover'               => false,
+        'flee'                     => false,
+        'combatant_cleared'        => false,
+        'battle_end'               => false,
+        'ambush_battle_end'        => false,
+    ];
+
+    /** @var array phase → bl_segment_flag 自动映射 */
+    private static array $phaseSegmentFlag = [
+        'initiative_roll'    => 'round_start',
+        'ap_recover'         => 'turn_start',
+        'battle_end'         => 'battle_end',
+        'ambush_battle_end'  => 'ambush_battle_end',
+    ];
+
     /**
-     * 设置当前阶段标识（battle_main 各阶段开始时调用）
-     * @param string $phase prepare / verify / excute / queue_check / finish_check
+     * 设置当前阶段标识
+     * @param string $phase
      */
     public function setPhase($phase) {
         $this->phase = (string)$phase;
     }
 
     /**
+     * Turn 计数递增（由 battle_hook_turn_start 调用）
+     */
+    public function nextTurn(): void {
+        $this->turnNum++;
+    }
+
+    /**
+     * 设置 Round 计数（由 battle_queue_create_and_init / battle_queue_rebuild 调用）
+     * @param int $num round_num（0-indexed）
+     */
+    public function setRoundNum(int $num): void {
+        $this->roundNum = $num;
+    }
+
+    /**
      * 追加一条战斗日志
      *
-     * @param array $params 关联数组，支持键：
-     *   - actor_pid    (int)    行动者 PID
-     *   - actor_type   (int)    行动者类型：0=玩家，>0=NPC
-     *   - target_pid   (int)    目标 PID：0=无实体目标
-     *   - target_type  (int)    目标类型：-1=无实体目标，0=玩家，>0=NPC
-     *   - action_id    (string) 动作 ID（如 'unarmed_strike'）
-     *   - effect_value (int)    效果值（伤害值、恢复量等）
-     *   - extra        (array|null) 额外信息（HP 快照、事件元数据等）
+     * @param array    $params 关联数组
+     * @param bool|null $debug  true=调试/false=渲染/null=按 phase 自动推断
      */
-    public function emit(array $params) {
+    public function emit(array $params, ?bool $debug = null) {
+        $debug = $debug ?? (self::$phaseDebugDefault[$this->phase] ?? true);
         $this->entries[] = [
-            'actor_pid'    => (int)($params['actor_pid'] ?? 0),
-            'actor_type'   => (int)($params['actor_type'] ?? -1),
-            'target_pid'   => (int)($params['target_pid'] ?? 0),
-            'target_type'  => (int)($params['target_type'] ?? -1),
-            'action_id'    => (string)($params['action_id'] ?? ''),
-            'effect_value' => (int)($params['effect_value'] ?? 0),
-            'extra'        => isset($params['extra']) ? $params['extra'] : null,
-            'ts'           => time(),
             'phase'        => $this->phase,
+            'action_id'    => $params['action_id']    ?? null,
+            'actor_pid'    => $params['actor_pid']    ?? null,
+            'actor_type'   => $params['actor_type']   ?? null,
+            'actor_name'   => $params['actor_name']   ?? null,
+            'actor_hp'     => $params['actor_hp']     ?? null,
+            'actor_max_hp' => $params['actor_max_hp'] ?? null,
+            'actor_ap'     => $params['actor_ap']     ?? null,
+            'actor_max_ap' => $params['actor_max_ap'] ?? null,
+            'target_pid'    => $params['target_pid']    ?? null,
+            'target_type'   => $params['target_type']   ?? null,
+            'target_name'   => $params['target_name']   ?? null,
+            'target_hp'     => $params['target_hp']     ?? null,
+            'target_max_hp' => $params['target_max_hp'] ?? null,
+            'effect_value' => $params['effect_value'] ?? null,
+            'success'      => $params['success']      ?? null,
+            'qid'          => $params['qid']          ?? null,
+            'rolls'        => $params['rolls']        ?? null,
+            'ambush_pid'   => $params['ambush_pid']   ?? null,
+            'combatants'   => $params['combatants']   ?? null,
+            'reason'       => $params['reason']       ?? null,
+            'winner_pid'   => $params['winner_pid']   ?? null,
+            'cleared_pid'   => $params['cleared_pid']   ?? null,
+            'cleared_name'  => $params['cleared_name']  ?? null,
+            'ambusher_pid'  => $params['ambusher_pid']  ?? null,
+            'ambusher_name' => $params['ambusher_name'] ?? null,
+            'debug'        => $debug,
+            'ts'           => time(),
+
+            'bl_turn_num'     => $this->turnNum > 0 ? $this->turnNum : null,
+            'bl_round_num'    => $this->roundNum,
+            'bl_segment_flag' => self::$phaseSegmentFlag[$this->phase] ?? null,
         ];
     }
 
@@ -155,12 +224,14 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
  * 从文件读取未播放的战斗日志（played=0）
  *
  * 不清空文件。前端播放后通过 mark_battle_log_played.php 标记 played=1。
+ * $includeDebug=false 时过滤掉 debug=true 的条目（渲染管线只需非调试数据）。
  *
- * @param int $groomid 房间 ID
- * @param int $pid      玩家 ID
+ * @param int  $groomid      房间 ID
+ * @param int  $pid          玩家 ID
+ * @param bool $includeDebug 是否包含 debug 条目（默认 false）
  * @return array 未播放的战斗日志条目数组（played=0）
  */
-function obl_battle_log_load($groomid, $pid) {
+function obl_battle_log_load($groomid, $pid, $includeDebug = false) {
     $log_file = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
     if (!file_exists($log_file)) return [];
 
@@ -172,6 +243,7 @@ function obl_battle_log_load($groomid, $pid) {
     $unplayed = [];
     foreach ($entries as $e) {
         if (empty($e['played']) || (int)$e['played'] === 0) {
+            if (!$includeDebug && !empty($e['debug'])) continue;
             $unplayed[] = $e;
         }
     }

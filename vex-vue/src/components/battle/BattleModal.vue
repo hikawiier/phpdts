@@ -2,9 +2,10 @@
 // ══════════════════════════════════════════════════
 // 战斗演出模态框 / Battle Presentation Modal
 //
-// 替代现有 vex/js/battle-modal.js 的 DOM 操作逻辑。
-// 纯展示模态框，播放 battlelog 条目：
-// - 逐条显示，每条带淡入动画（替代原前端打字机效果）
+// 纯展示模态框，按 PlaySegment 分段播放 battlelog 条目：
+// - 逐条显示，每条带淡入动画
+// - 段首插入段分隔符（── 突袭 ── / ── 第 N 轮 ── / ── 战斗结束 ──）
+// - HP 条从 DirectedEntry.hpSnapshot 更新
 // - 播放完自动关闭
 // - 遮罩拦截点击，播放期间禁止操作
 //
@@ -12,15 +13,17 @@
 // - battleStore.battleModalOpen 变为 true 时开始播放
 // - 播放完成后调用 battleStore.notifyModalClosed() 通知 store
 //
-// Teleport to body：避免 position: fixed 与父级 transform 冲突（迁移计划风险点 7.3）
+// Teleport to body：避免 position: fixed 与父级 transform 冲突
+//
+// 关联文档：oblivions/docs/设计案3-重构前端播放系统.md §五
 // ══════════════════════════════════════════════════
 
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
-import { renderBattleLogEntryHtml } from '@/data/battle-templates';
-import type { BattleLogEntry } from '@/types/api';
+import { renderDirectedEntryHtml } from '@/data/battle-templates';
+import type { DirectedEntry, PlaySegment } from '@/stores/battle-director';
 
-// ── 播放参数（与原前端 battle-modal.js 一致） ──
+// ── 播放参数 ──
 const ENTRY_INTERVAL = 500;       // 条目间隔 ms
 const COMPLETE_HOLD = 1200;       // 播放完停留 ms
 const OVERLAY_FADE_IN = 250;      // 模态框淡入 ms
@@ -30,7 +33,7 @@ const ENTRY_FADE_DELAY = 20;      // 条目淡入前延迟 ms（触发 CSS trans
 // ── 模态框状态 ──
 const overlayOpen = ref<boolean>(false);
 const overlayClosing = ref<boolean>(false);
-/** 是否正在播放（并发守卫，防止 store 在上一次播放未结束时再触发） */
+/** 是否正在播放（并发守卫） */
 const playing = ref<boolean>(false);
 
 // ── 显示的条目 ──
@@ -51,7 +54,6 @@ const playerMaxHp = ref<number>(1);
 // ── 播放控制 ──
 let currentTimer: ReturnType<typeof setTimeout> | null = null;
 let cancelRequested = false;
-/** sleep 的 reject 句柄，卸载时主动 reject 避免 playBattleLog 永久挂起 */
 let rejectSleep: ((e?: unknown) => void) | null = null;
 
 const battleStore = useBattleStore();
@@ -61,6 +63,13 @@ const enemyHpClass = computed<string>(() => hpBarClass(enemyHp.value, enemyMaxHp
 const playerHpClass = computed<string>(() => hpBarClass(playerHp.value, playerMaxHp.value));
 const enemyHpPercent = computed<string>(() => hpPercent(enemyHp.value, enemyMaxHp.value));
 const playerHpPercent = computed<string>(() => hpPercent(playerHp.value, playerMaxHp.value));
+
+/** HP 条是否显示（仅 turn/phase0 段显示） */
+const showHpBar = computed<boolean>(() => {
+  const seg = battleStore.currentSegment;
+  if (!seg) return false;
+  return seg.kind === 'turn' || seg.kind === 'phase0';
+});
 
 function hpBarClass(hp: number, maxHp: number): string {
   const percent = maxHp > 0 ? (hp / maxHp) * 100 : 0;
@@ -100,50 +109,40 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function playBattleLog(): Promise<void> {
-  // 并发守卫：上一次播放未结束时跳过
   if (playing.value) {
     battleStore.notifyModalClosed();
     return;
   }
   playing.value = true;
   try {
-  const entries = battleStore.battleLogEntries;
-  const ctx = battleStore.playContext;
-  if (!entries.length || !ctx) {
-    battleStore.notifyModalClosed();
-    return;
-  }
+    const segment = battleStore.currentSegment as PlaySegment | null;
+    const entries = battleStore.battleLogEntries as DirectedEntry[];
+    if (!segment) {
+      battleStore.notifyModalClosed();
+      return;
+    }
+    // battle_end/ambush_battle_end 段可能 entries 为空但仍需显示
+    if (entries.length === 0 && segment.kind !== 'battle_end' && segment.kind !== 'ambush_battle_end') {
+      battleStore.notifyModalClosed();
+      return;
+    }
 
-  // 初始化 HP 和名称
-  enemyName.value = ctx.enemyName || '敌人';
-  enemyHp.value = ctx.enemyHp || 0;
-  enemyMaxHp.value = ctx.enemyMaxHp || 1;
-  playerHp.value = ctx.playerHp || 0;
-  playerMaxHp.value = ctx.playerMaxHp || 1;
+    // 初始化 HP（从段首条 action entry 的 hpSnapshot 读 before 值）
+    initHpFromSegment(entries);
 
-  // 清空正文
-  displayedEntries.value = [];
+    // 清空正文
+    displayedEntries.value = [];
 
-  // 显示模态框
-  overlayOpen.value = true;
-  overlayClosing.value = false;
-
-  // 等待模态框淡入
-  await sleep(OVERLAY_FADE_IN);
-  if (cancelRequested) return;
-
-  // 按 log_id 排序
-  const sorted = [...entries].sort((a, b) => Number(a.log_id || 0) - Number(b.log_id || 0));
-
-  // 逐条播放
-  for (let i = 0; i < sorted.length; i++) {
+    // 显示模态框
+    overlayOpen.value = true;
+    overlayClosing.value = false;
+    await sleep(OVERLAY_FADE_IN);
     if (cancelRequested) return;
 
-    const entry = sorted[i];
-
-    // 首条 entry 前显示"战斗开始"分隔符
-    if (i === 0) {
-      displayedEntries.value.push({ html: '── 战斗开始 ──', shown: false, isDivider: true });
+    // 段分隔符
+    const divider = getSegmentDivider();
+    if (divider) {
+      displayedEntries.value.push({ html: divider.html, shown: false, isDivider: true });
       await nextTick();
       displayedEntries.value[displayedEntries.value.length - 1].shown = true;
       scrollToBottom();
@@ -151,68 +150,89 @@ async function playBattleLog(): Promise<void> {
       if (cancelRequested) return;
     }
 
-    // 渲染条目 HTML
-    const html = renderBattleLogEntryHtml(entry, ctx);
-    if (html) {
-      displayedEntries.value.push({ html, shown: false, isDivider: false });
-      await nextTick();
-      // 触发淡入动画
-      await sleep(ENTRY_FADE_DELAY);
-      displayedEntries.value[displayedEntries.value.length - 1].shown = true;
-      scrollToBottom();
+    // 逐条播放
+    const sorted = [...entries].sort((a, b) => Number(a.log_id || 0) - Number(b.log_id || 0));
+    for (const entry of sorted) {
+      if (cancelRequested) return;
+      const html = renderDirectedEntryHtml(entry, battleStore.currentPid);
+      if (html) {
+        displayedEntries.value.push({ html, shown: false, isDivider: false });
+        await nextTick();
+        await sleep(ENTRY_FADE_DELAY);
+        displayedEntries.value[displayedEntries.value.length - 1].shown = true;
+        scrollToBottom();
+      }
+      updateHpFromSnapshot(entry);
+      await sleep(ENTRY_INTERVAL);
     }
 
-    // 更新 HP 条
-    updateHpBars(entry);
+    if (cancelRequested) return;
+    await sleep(COMPLETE_HOLD);
+    if (cancelRequested) return;
 
-    await sleep(ENTRY_INTERVAL);
-  }
+    overlayClosing.value = true;
+    overlayOpen.value = false;
+    await sleep(OVERLAY_FADE_OUT);
+    overlayClosing.value = false;
+    displayedEntries.value = [];
 
-  if (cancelRequested) return;
-
-  // 播放完停留
-  await sleep(COMPLETE_HOLD);
-  if (cancelRequested) return;
-
-  // 关闭模态框（带淡出动画）
-  overlayClosing.value = true;
-  overlayOpen.value = false;
-  await sleep(OVERLAY_FADE_OUT);
-  overlayClosing.value = false;
-  displayedEntries.value = [];
-
-  // 通知 store 播放完成
-  battleStore.notifyModalClosed();
+    battleStore.notifyModalClosed();
   } catch {
-    // 组件卸载时 sleep 被 reject，通知 store 播放中断（避免 store Promise 永久挂起）
     battleStore.notifyModalClosed();
   } finally {
     playing.value = false;
   }
 }
 
-/**
- * 根据 battlelog 条目更新 HP 条
- *
- * 从 entry.extra 的 target_newhp 读取。
- * 根据 actor_type/target_type 判断哪一方是玩家、哪一方是 NPC。
- */
-function updateHpBars(entry: BattleLogEntry): void {
-  if (!entry.extra) return;
-  const extra = entry.extra as { target_newhp?: number };
-
-  // 玩家攻击敌人 → 更新敌人 HP
-  if (Number(entry.actor_type) === 0 && Number(entry.target_type) > 0) {
-    if (extra.target_newhp !== undefined) {
-      enemyHp.value = extra.target_newhp;
+/** 从段首条 action entry 的 hpSnapshot 初始化 HP 条 */
+function initHpFromSegment(entries: DirectedEntry[]): void {
+  const firstAction = entries.find(e => e.directedKind === 'action' && e.hpSnapshot);
+  if (firstAction?.hpSnapshot) {
+    const snap = firstAction.hpSnapshot;
+    if (Number(firstAction.actor_type) === 0) {
+      enemyName.value = firstAction.target_name ?? '敌人';
+      enemyHp.value = snap.targetHpBefore;
+      enemyMaxHp.value = snap.targetMaxHp;
+      playerHp.value = snap.actorHpBefore;
+      playerMaxHp.value = snap.actorMaxHp;
+    } else if (Number(firstAction.target_type) === 0) {
+      enemyName.value = firstAction.actor_name ?? '敌人';
+      enemyHp.value = snap.actorHpBefore;
+      enemyMaxHp.value = snap.actorMaxHp;
+      playerHp.value = snap.targetHpBefore;
+      playerMaxHp.value = snap.targetMaxHp;
     }
   }
+}
 
-  // 敌人攻击玩家 → 更新玩家 HP
-  if (Number(entry.actor_type) > 0 && Number(entry.target_type) === 0) {
-    if (extra.target_newhp !== undefined) {
-      playerHp.value = extra.target_newhp;
-    }
+/** 根据 DirectedEntry 的 hpSnapshot 更新 HP 条 */
+function updateHpFromSnapshot(entry: DirectedEntry): void {
+  if (!entry.hpSnapshot) return;
+  const snap = entry.hpSnapshot;
+  if (Number(entry.actor_type) === 0) {
+    enemyHp.value = snap.targetHpAfter;
+    enemyMaxHp.value = snap.targetMaxHp;
+    playerHp.value = snap.actorHpAfter;
+    playerMaxHp.value = snap.actorMaxHp;
+  } else if (Number(entry.target_type) === 0) {
+    playerHp.value = snap.targetHpAfter;
+    playerMaxHp.value = snap.targetMaxHp;
+    enemyHp.value = snap.actorHpAfter;
+    enemyMaxHp.value = snap.actorMaxHp;
+  }
+}
+
+/** 获取当前段的分隔符（无则返回 null） */
+function getSegmentDivider(): { html: string } | null {
+  const seg = battleStore.currentSegment as PlaySegment | null;
+  if (!seg) return null;
+  switch (seg.kind) {
+    case 'phase0':            return { html: '── 突袭 ──' };
+    case 'round':             return { html: `── 第 ${seg.meta.roundNum ?? 0} 轮 ──` };
+    case 'turn':              return null;
+    case 'battle_end':        return { html: '── 战斗结束 ──' };
+    case 'ambush_battle_end': return { html: '── 突袭结束 ──' };
+    default:                  return null;
   }
 }
 
@@ -240,8 +260,6 @@ onUnmounted(() => {
     clearTimeout(currentTimer);
     currentTimer = null;
   }
-  // 主动 reject sleep，让 playBattleLog 的 await sleep 抛异常进入 catch
-  // catch 中调用 notifyModalClosed() 通知 store resolve Promise，避免永久挂起
   if (rejectSleep) {
     const r = rejectSleep;
     rejectSleep = null;
@@ -257,8 +275,8 @@ onUnmounted(() => {
       :class="{ open: overlayOpen, closing: overlayClosing }"
     >
       <div class="battle-modal">
-        <!-- 头部：双方名称 + HP 条 -->
-        <div class="battle-modal-header">
+        <!-- 头部：双方名称 + HP 条（仅 turn/phase0 段显示） -->
+        <div v-if="showHpBar" class="battle-modal-header">
           <div class="battle-modal-combatant enemy">
             <span class="battle-modal-combatant-name">{{ enemyName }}</span>
             <div class="battle-modal-hp-bar">
@@ -283,7 +301,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 正文：battlelog 逐条显示 -->
+        <!-- 正文：battlelog 逐条显示（含段分隔符） -->
         <div ref="bodyRef" class="battle-modal-body">
           <div
             v-for="(entry, i) in displayedEntries"
