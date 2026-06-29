@@ -17,7 +17,7 @@ vex-vue 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用
 - Tailwind CSS v4（`@tailwindcss/vite` 插件，构建时编译）
 - 自定义 CSS（`terminal.css` + `battle.css`，覆盖 Tailwind 无法处理的部分）
 - IBM Plex Mono 等宽字体
-- GSAP（玩家角色标靶弹起/倒下动画）
+- GSAP（角色层动画：标靶弹起/倒下/呼吸）
 - 原生 fetch API（无 axios 依赖）
 
 **部署方式**：
@@ -43,9 +43,10 @@ vex-vue/
 ├── tsconfig.json           # TypeScript 配置
 ├── .env.production         # 生产环境变量（VITE_API_BASE=/phpdts, VITE_DEBUG=false）
 ├── .gitignore              # 忽略 node_modules/dist/*.local/.DS_Store
-├── public/                 # 静态资源（构建时原样复制到 dist）
+├── public/
 │   └── img/
-│       └── test2.png       # 玩家角色立绘（1-bit 漫画风格）
+│       ├── test2.png       # 玩家角色立绘（1-bit 漫画风格，旧素材）
+│       └── 4.png           # 玩家角色立绘（当前使用）
 └── src/
     ├── main.ts             # 入口：createApp + createPinia + 挂载 #app
     ├── App.vue             # 根布局：StatusBar + LeftPanel + RightPanel + 浮动组件
@@ -55,7 +56,7 @@ vex-vue/
     ├── assets/
     │   └── styles/
     │       ├── input.css       # Tailwind 源文件（@theme 色板定义）
-    │       ├── terminal.css    # 自定义样式（CRT/地图格/按钮/动画/日志类/状态栏/模态框/Toast）
+    │       ├── terminal.css    # 自定义样式（CRT/地图格/角色层/按钮/动画/日志类/状态栏/模态框/Toast）
     │       └── battle.css      # 战斗样式（战斗模态框/碰撞动画/伤害数字/回合光效/装填区）
     ├── components/
     │   ├── actions/
@@ -86,9 +87,10 @@ vex-vue/
     │   │   ├── LogPanel.vue            # 日志面板（v-for + 滚动 + 未读计数）
     │   │   └── LogUnreadBtn.vue        # 未读日志提示按钮
     │   └── map/
-    │       ├── MapContainer.vue        # 地图容器（缩放按钮 + 网格）
-    │       └── MapGrid.vue             # 地图网格（v-for 渲染 + 敌人 + 迷雾）
+    │       ├── MapContainer.vue        # 地图容器（缩放按钮 + 立绘调试按钮 + 网格）
+    │       └── MapGrid.vue             # 地图网格（v-for 渲染 cells + 角色层 actors + 迷雾）
     ├── composables/
+    │   ├── useActors.ts            # 多角色动画层（actor DOM 引用 + 位置同步 + GSAP 动画 + 意图派发）
     │   ├── useDebugBus.ts          # DebugBus（?debug=ai 时收集事件流）
     │   ├── useLogScroll.ts         # 日志滚动逻辑（自动滚动 + 未读计数）
     │   ├── useMapBusiness.ts       # 地图业务逻辑（clickMove/handleEnemyClick）
@@ -98,11 +100,12 @@ vex-vue/
     │   ├── useMapZoom.ts           # 地图缩放状态
     │   └── useToastPosition.ts     # Toast 位置管理（isAnyOverlayOpen + 位置类）
     ├── data/
-    │   ├── battle-templates.ts     # battle_log 渲染模板（按 action_id 索引）
+    │   ├── battle-templates.ts     # battle_log 渲染模板（按 act_id 索引）
     │   ├── log-templates.ts        # 结构化日志模板（按 id 索引）+ renderLogEntry
     │   ├── skill-templates.ts      # 技能模板（按 act_id 索引）+ getSkillTemplate
     │   └── terrain-desc.ts         # 地形描述词库 + generateTerrainDesc
     ├── stores/
+    │   ├── actors.ts               # 角色层数据（actors computed 派生自 mapStore）
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
     │   ├── battle-director.ts      # 战斗导演模块（同步纯函数：编排 raw entries → 分层演出脚本 PlayScript）
     │   ├── command-queue.ts        # 命令队列（防抖 + 锁定 + 冷却）
@@ -110,13 +113,16 @@ vex-vue/
     │   ├── inventory.ts            # 背包 + 装备（loadInventory + handleDiscard）
     │   ├── log.ts                  # 日志（refreshLog + 增量检测 + Toast 触发）
     │   ├── map.ts                  # 地图（loadMap + updateMapData + enemies）
+    │   ├── player-avatar.ts        # 玩家小人意图状态机（intent/intentSeq/isDown/pendingIntent + 自动恢复）
     │   ├── player.ts               # 玩家信息（loadPlayerInfo + computed 属性）
     │   ├── tileAction.ts           # 地图格动作（探索/搜索/拾取/丢弃/区域切换 + 模态框）
     │   ├── toast.ts                # Toast（showToast + 同类合并）
     │   └── ui.ts                   # UI 全局状态（抽屉/模态框/战斗按钮三态/标签）
     ├── types/
+    │   ├── actor.ts                # 角色小人类型（ActorKind/Actor）
     │   ├── api.ts                  # API 响应类型定义（PlayerInfo/Enemy/GameMap/BattleLogEntry 等）
-    │   └── events.ts               # 语义事件类型定义（AppEvent + 事件数据接口）
+    │   ├── events.ts               # 语义事件类型定义（AppEvent + 事件数据接口）
+    │   └── player-avatar.ts        # 玩家小人动画意图类型（PlayerAvatarIntent）
     └── utils/
         ├── format.ts               # 工具（escapeHtml / isFalsy 等）
         └── perf.ts                 # 性能分析工具（perf.mark/span/spanAsync，默认关闭）
@@ -202,6 +208,7 @@ battle（战斗）
 ├─────────────────────────────────────────────────────────────┤
 │  Composables（use*.ts）                                      │
 │  ├─ 纯逻辑层（无响应式状态，或仅模块级缓存）                  │
+│  ├─ useActors：角色层动画（位置同步 + GSAP + 意图派发）       │
 │  ├─ useMapBusiness：clickMove/handleEnemyClick 业务编排      │
 │  ├─ useMapInteraction：缩放/平移/键盘/触摸交互               │
 │  ├─ useMapReachability：BFS 可达性 + findPath 寻路           │
@@ -272,6 +279,8 @@ submitCommand(params)                     // POST command.php
 |--------|--------|--------|------|
 | `map:loaded` | mapStore | tileAction, inventory, log | 地图数据加载完成 |
 | `game:action-completed` | tileAction, inventory, useMapBusiness, battle | tileAction, inventory, log, player, battle | 任何游戏操作成功后 |
+| `game:npc-settled` | battleStore | mapStore | NPC 回合轮询结束、敌人位置稳定 |
+| `game:tick-advanced` | playerStore | battleStore | tick 推进，触发 NPC 回合检测 |
 | `map:click-current` | useMapBusiness | tileAction | 点击当前格触发探索 |
 | `ui:toast` | 各 store | toastStore | 显示 Toast 通知 |
 | `battle:started` | battleStore | uiStore | 战斗开始（同步按钮三态） |
@@ -285,8 +294,8 @@ submitCommand(params)                     // POST command.php
 | `preload:executed` | PreloadArea | battleStore | 装填区执行完成，刷新战斗状态 |
 | `log:force-scroll` | logStore | useLogScroll | 强制日志滚动到底部 |
 | `log:add-unread` | logStore | useLogScroll | 累加未读日志计数 |
-| `player:popup` | StatusBar.vue（调试按钮） | MapGrid.vue | 手动触发玩家角色标靶弹起动画 |
-| `player:fall` | StatusBar.vue（调试按钮） | MapGrid.vue | 手动触发玩家角色倒下动画 |
+
+> 立绘调试按钮（弹/倒）已从事件总线迁移为直接调用 `playerAvatarStore.debugPopUp()` / `debugFall()`，不再走 `player:popup` / `player:fall` 事件。
 
 ---
 
@@ -460,6 +469,8 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 |-------|------|---------|-------------|
 | `playerStore` | 玩家信息 | `playerInfo` | `loadPlayerInfo(forceRefresh)` |
 | `mapStore` | 地图数据 | `curLoc`/`curRegion`/`links`/`enemies` | `loadMap()`/`updateMapData(patch)` |
+| `actorsStore` | 角色层数据（派生） | `actors`(computed) | （无 action，computed 从 mapStore 派生） |
+| `playerAvatarStore` | 玩家小人意图状态机 | `intent`/`intentSeq`/`isDown`/`pendingIntent`/`hpRatio` | `onEnter()`/`onMove()`/`onBattleStart()`/`onBattleEnd()`/`onHit()`/`onDie()`/`onLowHp()`/`onNormalHp()`/`debugPopUp()`/`debugFall()`/`notifyUp()`/`notifyDown()` |
 | `tileActionStore` | 地图格动作 | `tileActions`/`modalOpen`/`modalType` | `handleExplore()`/`handleSearch(iaid)`/`handlePickup(iid)`/`handlePickupAll(items)`/`handleSwitchRegion()` |
 | `inventoryStore` | 背包 + 装备 | `inventoryData`/`equipment`(computed) | `loadInventory()`/`handleDiscard(slot)` |
 | `logStore` | 游戏日志 | `entries`/`lastTs` | `refreshLog(forceScroll)` |
@@ -667,6 +678,21 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 - NPC 回合轮询（`startNpcTurnRefresh`/`stopNpcTurnRefresh`）：保留
 - `command-queue.ts` + `isProcessingBattle` 锁：保留
 
+### 8.9 战斗事件 → 玩家小人意图接入
+
+`battle.ts` 在播放流程中调用 `playerAvatarStore` 的 action 驱动玩家立绘动画，共 6 处接入点：
+
+| 接入点 | 调用 | 触发时机 |
+|--------|------|---------|
+| `enterBattleMode` | `onBattleStart()` | 被动遭遇战（敌人发现玩家） |
+| `startBattle` | `onBattleStart()` | 主动攻击 |
+| `exitBattleMode` | `onBattleEnd()` | 战斗结束 |
+| `playTurnSegment` | `onHit()` | 玩家受击（hpSnapshot 过滤：仅真实掉血触发） |
+| `playTurnSegment` | `onDie()` | 玩家死亡主判定（combatant_cleared + reason='death'） |
+| `playBattleEndSegment` | `onDie()` | 玩家死亡兜底判定（winnerPid !== currentPid） |
+
+受击判定用 `hpSnapshot.targetHpAfter < targetHpBefore` 过滤未命中/0 伤害；死亡主判定用 `combatant_cleared` 条目实时触发（不等 battle_end 段），兜底判定用 `segment.meta.winnerPid` 补判。store 内 50ms 防抖 + isDown 状态机保证重复调用安全。
+
 ---
 
 ## 九、Composable 层
@@ -685,7 +711,32 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 - `useMapBusiness.setupMapCallbacks()` 调用 `setRenderCallbacks()` 和 `setInteractionCallbacks()` 注入业务回调
 - `useMapInteraction` 通过 `_onKeyMove` 回调触发 `useMapBusiness.clickMove`
 
-### 9.2 其他 composables
+### 9.2 角色动画层（useActors）
+
+`useActors(gridRef)` 是多角色动画 composable，替代旧的 `usePlayerAvatar`（已删除）。管理所有 actor 的 DOM 引用、位置同步、GSAP 动画、意图派发。
+
+**三层职责**：
+- **位置同步**（`syncActorPosition`）：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移，同时设 actor `width/height` 等于 cell 尺寸（让 `.actor-img` 的 `height:150%` 生效）
+- **z-index 切换**：`popUp` 回弹 `onStart` 加 `.popped`（z-index:10 浮出），`fall` `onComplete` 移除（z-index:-1 被 `.map-background` 遮挡）
+- **GSAP 动画**：`resetTransform`/`setDown`/`startIdle`/`popUp`/`fall`，参数沿用旧 usePlayerAvatar
+
+**关键设计**：
+- `resetTransform`/`setDown` 不动 `x/y/xPercent/yPercent/width/height`（位置由 `syncActorPosition` 管，避免被动画覆盖）
+- 角色投影由 `.actor-img` 的 CSS `filter: drop-shadow(0 4px 4px rgba(0,0,0,0.6))` 提供，跟随立绘形状，无需独立阴影元素
+- `notifyUp` 挂在回弹 tween 的 `onComplete`（非 timeline.onComplete，因末尾 idle `repeat:-1` 会导致 timeline 永不完成）
+- `watch(intentSeq)` 而非 `watch(intent)`：连续移动（intent 都是 'move'）时 intentSeq 递增确保每次都触发
+
+**位置同步的三路 watch**：
+
+| 触发场景 | 机制 | 说明 |
+|---------|------|------|
+| 缩放 / resize | `ResizeObserver` 监听 `#mapGrid` 尺寸变化 | `watch(gridRef)` 创建/清理 observer，回调用 `requestAnimationFrame` 同步 |
+| 移动（curLoc 变化） | `watch(mapStore.curLoc)` | 先 `syncAllPositions` 再 `playerAvatarStore.onMove()` |
+| actor 列表变化 | `watch(actorsStore.actors)` | 初始挂载 / 区域切换 |
+
+**关键导出**：`setActorRef(id, el)` / `syncAllPositions()` / `dispose()`
+
+### 9.3 其他 composables
 
 | Composable | 职责 |
 |-----------|------|
@@ -693,7 +744,7 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 | `useToastPosition` | Toast 位置响应式计算（`isAnyOverlayOpen()`/`toastPositionClass`） |
 | `useDebugBus` | DebugBus 单例（`?debug=ai` 时收集事件流供调试） |
 
-### 9.3 useToastPosition 位置规则
+### 9.4 useToastPosition 位置规则
 
 Toast 位置根据 2 级页面开关状态响应式计算：
 
@@ -719,9 +770,11 @@ App.vue
 ├── main
 │   ├── LeftPanel.vue
 │   │   └── MapContainer.vue
-│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 敌人 + 迷雾 + 玩家角色立绘
-│   │       └── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
-│   │       └── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
+│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 角色层（actors v-for）+ 迷雾
+│   │       │   └── （角色层 .actor × N 与 .map-cell × N 同级，详见 §10.3）
+│   │       ├── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
+│   │       ├── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
+│   │       └── 缩放控件 + 立绘调试按钮（弹/倒，直调 playerAvatarStore）
 │   └── RightPanel.vue
 │       ├── LogPanel.vue             # 日志面板
 │       │   ├── LogEntry.vue
@@ -749,25 +802,93 @@ RightPanel.vue (battle mode)
 1. **Store 驱动**：组件读取 store 的 ref/computed 响应式渲染，调用 store action 触发业务
 2. **事件触发动画**：store `broadcast` 事件 → 组件 `listen` 后执行 DOM 动画（如 `CollisionAnimation`）
 3. **Teleport to body**：模态框类组件（`Modal`/`BattleModal`）使用 `<Teleport to="body">` 避免 `position: fixed` 与父级 `transform` 冲突
-4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放
+4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放；`useActors` 通过 `watch(() => playerAvatarStore.intentSeq)` 派发动画
 
-### 10.3 玩家角色标靶动画
+### 10.3 角色层（多角色动画架构）
 
-当前格（`cell.isCurrent`）使用 `test2.png` 立绘替代原本的 `[我]` 文字标识，并通过 GSAP 实现标靶式弹起/倒下动画：
+玩家立绘（及未来 NPC/敌怪小人）独立为 `#mapGrid` 内与 `.map-cell` 同级的角色层，通过 GSAP 实现标靶式弹起/倒下/呼吸动画。架构采用事件源 → 意图层 → 动画层 → DOM 层四层解耦。
 
-- **立绘资源**：`public/img/test2.png`（1-bit 漫画风格，白身黑线）
-- **定位**：`MapGrid.vue` 当前格内用绝对定位 `<img class="player-avatar">` 渲染，底部对齐当前格中心
-- **视觉分离**：白色描边 + 柔和黑色投影，使黑线稿角色在黑底地图上清晰可辨
-- **当前格样式**：浅灰底 `#2a2a2a` + 细白框，与周围格子区分但不过亮
-- **入场动画**：`MapGrid.vue` 首次挂载时触发一次弹起（`elastic.out` 回弹）
-- **调试控制**：`StatusBar.vue` 顶部状态栏提供 `[弹起]` / `[倒下]` 两个按钮，通过 `dataManager.broadcast('player:popup' | 'player:fall')` 触发
-- **倒下处理**：`fallAvatar()` 动画结束后将角色 `alpha` 设为 `0`，避免残留元素挤占当前格文字布局
+**四层架构**：
+
+```
+事件源层（battle.ts / MapGrid.vue / 调试按钮）
+    ↓ 调用 playerAvatarStore.onXxx()
+意图层（playerAvatarStore：intent/intentSeq/isDown/pendingIntent）
+    ↓ intentSeq 变化
+动画层（useActors composable）
+    ↓ watch(intentSeq) 派发动画 + watch(curLoc/actors) + ResizeObserver 同步位置
+DOM 层（#mapGrid > .actor × N，与 .map-cell × N 同级）
+```
+
+**数据层**（`actorsStore`）：
+- `actors` computed 从 `mapStore` 派生：当前格存在时生成 `player` actor（`{id:'player', kind:'player', pls:curLoc, img:'/img/4.png'}`）
+- 敌人/NPC actor 预留（代码注释，未来取消注释即可启用）
+
+**DOM 层**（`MapGrid.vue`）：
+- `.actor` 与 `.map-cell` 同为 `#mapGrid` 直接子元素，`position:absolute` 脱离 grid 流
+- `:class="{ popped: !playerAvatarStore.isDown }"` 直接读 store 状态切换 z-index
+- `:ref` 用函数形式绑定到 `setActorRef`，收集 actor DOM 引用
+- `.actor-img`（`<img>`）是 `.actor` 子元素，`height:150%` 相对 actor 高度（actor 高度由同步设为 cell 高度）
+
+**位置同步**（`useActors.syncActorPosition`）：
+- 算法与 `centerOnPlayer` 一致：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移
+- 同时设 actor `width/height` 等于 cell 尺寸，让 `.actor-img` 的 `height:150%` 生效
+- GSAP `x/y/xPercent:-50/yPercent:-100` 让 actor 中心底部对准 cell 底部中心
+- 三路触发：`ResizeObserver`（缩放/resize）+ `watch(curLoc)`（移动）+ `watch(actors)`（初始挂载/区域切换）
+
+**z-index 切换**（class 切换）：
+
+| 状态 | class | actor z-index | 视觉 |
+|------|-------|---------------|------|
+| 倒下（setDown / fall 后） | 无 `.popped` | -1 | 被 `.map-background`（z-index:0）遮挡 |
+| 站立（popUp 回弹开始） | `.popped` | 10 | 浮出所有 cell 之上 |
+
+切换时机：`popUp` 回弹 tween 的 `onStart` 加 `.popped`；`fall` 的 `timeline.onComplete` 移除 `.popped`。
+
+**角色投影**：
+- 由 `.actor-img` 的 CSS `filter: drop-shadow(...)` 提供，含白色描边（4 方向 1px 白色 drop-shadow）+ 黑色投影（`drop-shadow(0 4px 4px rgba(0,0,0,0.6))`）
+- 投影跟随立绘形状，idle/popUp/fall 任何状态都自然显示，无需独立阴影元素
+- 黑线稿角色在黑底地图上靠白色描边 + 黑色投影实现视觉分离
+
+**GSAP 动画**（`useActors`）：
+- `resetTransform`：重置 scale/rotation/alpha（不动位置）
+- `setDown`：扁平倒地状态（`scaleY:0.04, rotation:-90, alpha:0.25`）
+- `startIdle`：呼吸循环（`scaleY:1.02, scaleX:0.99, yoyo, repeat:-1`）
+- `popUp`：4 段 timeline（淡入 → 蓄力 → 回弹加 `.popped` + `notifyUp` → idle 循环）
+- `fall`：2 段 timeline（蓄力 → 倒下移除 `.popped` + `notifyDown`）
+
+**意图映射**（`INTENT_HANDLERS`，11 种意图）：
+- `enter`/`popup` → `setDown + popUp`（先倒下再弹起）
+- `move` → `resetTransform + startIdle`
+- `die`/`fall` → `fall`
+- `battle-start`/`battle-end`/`hit`/`low-hp`/`normal-hp`/`idle` → `startIdle`（预留扩展点，未来可替换为战斗姿态/flinch/低 HP 摇晃等）
+
+**自动恢复**（`pendingIntent` 回调链）：
+- 任何非 `die`/`fall` 意图触发时若 `isDown=true`：暂存 next 到 `pendingIntent`，只派发 `popup`
+- `popUp` 回弹完成时 composable 调 `notifyUp()`，store 派发 `pendingIntent`
+- 不使用 `setTimeout`，避免 `killTweensOf` 打断 popUp 动画
+
+**调试按钮**：
+- 位于 `MapContainer.vue` 缩放条左侧（`弹` / `倒` 两个按钮）
+- 直接调用 `playerAvatarStore.debugPopUp()` / `debugFall()`，不走事件总线
+- `StatusBar.vue` 的旧调试按钮已移除
+
+**HP 危险接入**（`MapGrid.vue`）：
+- `watch(() => playerStore.hp / playerStore.mhp)` 触发 `setHpRatio` + `onLowHp`（<30%）/ `onNormalHp`（≥30%）
+- 当前 low-hp/normal-hp 映射 idle，未来可扩展低 HP 摇晃动画
 
 相关实现文件：
-- `src/components/map/MapGrid.vue` — 渲染 + 动画逻辑
-- `src/components/layout/StatusBar.vue` — 调试按钮
-- `src/assets/styles/terminal.css` — 调试按钮样式
-- `src/types/events.ts` — `player:popup` / `player:fall` 事件类型
+- [src/composables/useActors.ts](src/composables/useActors.ts) — 动画层（DOM 引用 + 位置同步 + GSAP + 意图派发）
+- [src/stores/actors.ts](src/stores/actors.ts) — 数据层（actor 列表 computed 派生）
+- [src/stores/player-avatar.ts](src/stores/player-avatar.ts) — 意图层（intent 状态机 + 自动恢复）
+- [src/types/actor.ts](src/types/actor.ts) — Actor/ActorKind 类型
+- [src/types/player-avatar.ts](src/types/player-avatar.ts) — PlayerAvatarIntent 类型
+- [src/components/map/MapGrid.vue](src/components/map/MapGrid.vue) — DOM 层（角色层 v-for + HP watch）
+- [src/components/map/MapContainer.vue](src/components/map/MapContainer.vue) — 调试按钮
+- [src/assets/styles/terminal.css](src/assets/styles/terminal.css) — `.actor` / `.actor.popped` / `.actor-img` 样式
+- [src/stores/battle.ts](src/stores/battle.ts) — 6 处事件接入（详见 §8.9）
+
+> 设计案见 [docs/ACTORS_LAYER_REFACTOR.md](docs/ACTORS_LAYER_REFACTOR.md)（注：该设计案记录的 `.actor-shadow` 独立阴影元素已在实施后移除，角色投影改由立绘 img 的 `drop-shadow` 滤镜提供）。
 
 ---
 
@@ -862,15 +983,23 @@ perf.clear();
 - `BattleLogEntry` — 战斗日志（所有数值字段为 string）
 - `OblLogResponse` / `BattleLogResponse` / `EnemiesResponse` — 响应包装
 
-### 12.2 事件类型（`types/events.ts`）
+### 12.2 角色层类型（`types/actor.ts` + `types/player-avatar.ts`）
 
-- `AppEvent` — 语义事件名联合类型（18 个事件，含 `player:popup` / `player:fall` 调试事件）
+- `ActorKind` — 角色类型联合（`'player' | 'npc' | 'enemy'`）
+- `Actor` — 角色小人数据（`id` / `kind` / `pls` / `img`）
+- `PlayerAvatarIntent` — 玩家小人动画意图（11 种：`enter`/`move`/`battle-start`/`battle-end`/`hit`/`die`/`low-hp`/`normal-hp`/`popup`/`fall`/`idle`）
+
+### 12.3 事件类型（`types/events.ts`）
+
+- `AppEvent` — 语义事件名联合类型（17 个事件）
 - `ToastEventData` / `MapClickCurrentEventData` / `BattleStartedEventData` 等 — 事件数据接口
 - `PreloadInitEventData` — 装填区初始化事件（`mode: 'pre-battle' | 'in-battle'`）
 - `PlayCollisionEventData` / `PlayDamageNumbersEventData` — 战斗演出事件
 - `DebugBusEntry` / `DebugStateSnapshot` — DebugBus 调试类型
 
-### 12.3 战斗模板分发（`data/battle-templates.ts`）
+> 立绘调试按钮（`player:popup` / `player:fall`）已从事件类型中移除，改为直接调用 `playerAvatarStore.debugPopUp()` / `debugFall()`。
+
+### 12.4 战斗模板分发（`data/battle-templates.ts`）
 
 按 `directedKind` 分发的 7 种渲染函数定义在 `KIND_TEMPLATES` 映射中：
 - `renderAction` — 动作条目（读 actor_name/target_name/effect_value，含 unarmed_strike 特殊渲染）
@@ -917,3 +1046,5 @@ perf.clear();
 | `vex/css/terminal.css` | `assets/styles/terminal.css` |
 | `vex/css/battle.css` | `assets/styles/battle.css` |
 | `oblivions/mark_battle_log_played.php` | 零依赖接口，前端通过 `api/client.ts: markBattleLogPlayed` 调用（已从 vex/ 迁移至 oblivions/） |
+
+> 玩家立绘动画最初在 `MapGrid.vue` 内联 GSAP 实现（单 actor + StatusBar 调试按钮 + `player:popup`/`player:fall` 事件），后经两次重构：先抽离为 `usePlayerAvatar` composable + `playerAvatarStore`（单 actor 架构），再重构为 `useActors` + `actorsStore` 的多角色层架构（立绘迁出 cell，独立为 `#mapGrid` 内与 cells 同级的角色层）。`usePlayerAvatar.ts` 已删除，`player:popup`/`player:fall` 事件已从 `events.ts` 移除。

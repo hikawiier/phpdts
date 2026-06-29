@@ -31,6 +31,7 @@ import { ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { markBattleLogPlayed } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
+import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import type { BattleLogEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
 import {
   direct,
@@ -198,6 +199,9 @@ export const useBattleStore = defineStore('battle', () => {
     enemyLocation.value = null;
 
     updateActionPanel(playerTurn);
+
+    // 玩家小人：被动遭遇战也触发战斗开始意图
+    usePlayerAvatarStore().onBattleStart();
   }
 
   /**
@@ -219,6 +223,9 @@ export const useBattleStore = defineStore('battle', () => {
 
     dataManager.invalidate('enemies');
     dataManager.broadcast('battle:ended');
+
+    // 玩家小人：战斗结束意图
+    usePlayerAvatarStore().onBattleEnd();
   }
 
   /**
@@ -265,6 +272,9 @@ export const useBattleStore = defineStore('battle', () => {
     });
 
     dataManager.broadcast('battle:started', { enemyPid });
+
+    // 玩家小人：战斗开始意图
+    usePlayerAvatarStore().onBattleStart();
   }
 
   // ══════════════════════════════════════════════════
@@ -444,11 +454,31 @@ export const useBattleStore = defineStore('battle', () => {
     updateEnemyNameFromSegment(segment);
     await refreshEnemyLocation(npcPid);
 
-    // 碰撞动画（读 animation 字段，不判断 action_id）
+    // 碰撞动画 + 受击意图 + 死亡主判定
     for (const e of segment.entries) {
       if (e.animation === 'collision') {
         dataManager.broadcast('battle:play-collision', { entry: e, npcPid });
+
+        // 玩家受击意图（hpSnapshot 过滤无效受击）
+        if (
+          Number(e.target_pid) === currentPid.value
+          && Number(e.target_type) === 0
+          && e.hpSnapshot !== null
+          && e.hpSnapshot.targetHpAfter < e.hpSnapshot.targetHpBefore
+        ) {
+          usePlayerAvatarStore().onHit();
+        }
+
         await sleep(COLLISION_ANIM_DURATION);
+      }
+
+      // 玩家死亡主判定（combatant_cleared 实时触发）
+      if (
+        e.directedKind === 'combatant_cleared'
+        && Number(e.cleared_pid) === currentPid.value
+        && e.reason === 'death'
+      ) {
+        usePlayerAvatarStore().onDie();
       }
     }
 
@@ -464,6 +494,13 @@ export const useBattleStore = defineStore('battle', () => {
 
   /** Battle End 段：标准战斗终结 */
   async function playBattleEndSegment(segment: PlaySegment, npcPid: number): Promise<void> {
+    // 兜底：玩家死亡意图（万一 combatant_cleared 主判定未触发）
+    // 主判定在 playTurnSegment 循环内的 combatant_cleared 分支
+    const winnerPid = segment.meta?.winnerPid;
+    if (winnerPid != null && Number(winnerPid) !== currentPid.value) {
+      usePlayerAvatarStore().onDie();
+    }
+
     await playSegmentInModal(segment, { npcPid, isBattleEnd: true });
   }
 

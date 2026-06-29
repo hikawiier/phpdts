@@ -12,11 +12,13 @@
 
 import MapGrid from './MapGrid.vue';
 import { useMapStore } from '@/stores/map';
+import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { computed } from 'vue';
 import { getPlaceName } from '@/utils/format';
 import { escapeHtml } from '@/utils/format';
 
 const mapStore = useMapStore();
+const playerAvatarStore = usePlayerAvatarStore();
 
 // ── 地图信息（响应式渲染，替代 useMapBusiness.updateMapInfo 的 innerHTML） ──
 const mapInfoHtml = computed(() => {
@@ -64,6 +66,18 @@ const mapInfoHtml = computed(() => {
 
       <!-- 缩放控件（id 保留供 useMapInteraction 绑定事件） -->
       <div class="zoom-controls" title="Ctrl+滚轮缩放 | 拖拽平移">
+        <!-- 调试按钮组（玩家立绘动画） -->
+        <div class="avatar-debug-group" title="玩家立绘动画调试">
+          <button
+            class="zoom-btn debug"
+            @click="playerAvatarStore.debugPopUp()"
+          >弹</button>
+          <button
+            class="zoom-btn debug"
+            @click="playerAvatarStore.debugFall()"
+          >倒</button>
+        </div>
+        <span class="zoom-controls-divider">|</span>
         <button id="zoomOut" class="zoom-btn">-</button>
         <span id="zoomLevel" class="zoom-label">1.0x</span>
         <button id="zoomIn" class="zoom-btn">+</button>

@@ -8,15 +8,8 @@
 
 /* ═══ CRT 特效 ═══ */
 
-/* 扫描线 */
-body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background: repeating-linear-gradient(0deg,
-        rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 1px, transparent 1px, transparent 3px
-    );
-    pointer-events: none; z-index: 10000;
-}
+/* 扫描线已移除：深色区域不可见，亮色区域反而削弱清晰度，净效果为负。
+   CRT 质感由下方暗角单独承担。如需恢复，重新添加 body::before 规则即可。 */
 /* 暗角 */
 body::after {
     content: '';
@@ -105,8 +98,7 @@ body::after {
     transition: background 0.12s, color 0.12s;
 }
 .zoom-btn:hover {
-    background: #fff;
-    color: #0a0a0a;
+    background: rgba(255, 255, 255, 0.15);
 }
 .zoom-label {
     color: #555;
@@ -115,13 +107,86 @@ body::after {
     text-align: center;
 }
 
+/* 调试按钮组（缩放条左侧，玩家立绘动画） */
+.zoom-controls .avatar-debug-group {
+    display: inline-flex;
+    gap: 2px;
+}
+.zoom-controls .avatar-debug-group .zoom-btn.debug {
+    font-size: 10px;
+    color: #888;
+    width: auto;
+    min-width: 28px;
+    padding: 0 4px;
+}
+.zoom-controls .avatar-debug-group .zoom-btn.debug:hover {
+    color: #fff;
+    background: #333;
+}
+.zoom-controls-divider {
+    color: #444;
+    margin: 0 2px;
+}
+
 /* ═══ 地图格（DOM grid + ASCII 字符内容） ═══ */
 
 .ascii-map-grid {
     display: grid;
     gap: 0;
     padding: 2px;
+    position: relative;  /* 让 .actor / .map-background absolute 定位相对 grid */
+    isolation: isolate;  /* 创建独立层叠上下文：内部 z-index 不影响外部，且让 .map-background 能遮挡 .actor(z-index:-1) */
 }
+
+/* ═══ 背景层 ═══ */
+/* 独立背景层：与 .actor 同级，z-index:0 遮挡 .actor(z-index:-1) 的倒下/扁平状态。
+   复刻 demo 的 #map { z-index:1 } 整体遮挡 #actor(z-index:0) 效果。
+   未来可替换为背景图层（background-image）。 */
+.map-background {
+    position: absolute;
+    inset: 0;              /* 覆盖 #mapGrid 的 padding box（含 padding） */
+    background: #000;
+    pointer-events: none;  /* 不阻挡 cells 的点击 */
+    z-index: 0;
+}
+
+/* ═══ 角色层（actor）═══ */
+/* 立绘独立为 #mapGrid 直接子元素，与 cells 同级，复刻 demo 的 z-index 切换丝滑效果 */
+/* 尺寸由 useActors 的 syncActorPosition 动态设置（等于 cell 尺寸） */
+
+.actor {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    z-index: -1;    /* 倒下/扁平状态：被 .map-background(z-index:0) 整体遮挡（含 gap/边界外区域） */
+    transform-origin: bottom center;
+    will-change: transform, opacity;
+}
+/* popped 状态：浮出 cells 之上（站立/idle 时） */
+.actor.popped {
+    z-index: 10;
+}
+
+/* 立绘图片：height 相对 actor 高度（actor 高度由 syncActorPosition 设为 cell 高度） */
+.actor-img {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    height: 150%;   /* 相对 actor 高度，等于 cell 高度的 150% */
+    width: auto;
+    transform: translateX(-50%);  /* 水平居中（CSS 初始值，GSAP 接管 img 时不影响 actor transform） */
+    image-rendering: auto;
+    filter:
+        drop-shadow( 1px  0 0 #fff)
+        drop-shadow(-1px  0 0 #fff)
+        drop-shadow( 0  1px 0 #fff)
+        drop-shadow( 0 -1px 0 #fff)
+        drop-shadow(0 4px 4px rgba(0, 0, 0, 0.6));
+}
+
+/* v3：普通 cell 加 z-index:1，确保倒下立绘（rotation:-90 延伸到相邻 cell）
+   被所有 cell 遮挡，复刻 demo 的 #map { z-index:1 } 整体遮挡效果 */
 .map-cell {
     color: #888;
     display: flex;
@@ -131,6 +196,7 @@ body::after {
     font-weight: bold;
     cursor: default;
     position: relative;
+    z-index: 1;     /* v3 新增：普通格 z-index:1，遮挡倒下立绘 */
     transition: background 0.1s, color 0.1s, border-color 0.1s;
     user-select: none;
     border: 1px solid rgba(68,68,68,0.3);
@@ -146,8 +212,7 @@ body::after {
     cursor: pointer;
 }
 .map-cell.reachable:hover {
-    background: #fff;
-    color: #0a0a0a;
+    background: rgba(255, 255, 255, 0.15);
 }
 /* 当前格：发光 */
 .map-cell.current {
@@ -293,8 +358,7 @@ body::after {
     transition: background 0.12s, color 0.12s;
 }
 .term-btn:hover {
-    background: #fff;
-    color: #0a0a0a;
+    background: rgba(255, 255, 255, 0.15);
 }
 .term-btn:active {
     opacity: 0.7;

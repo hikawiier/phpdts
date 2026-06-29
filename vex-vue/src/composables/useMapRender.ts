@@ -364,7 +364,7 @@ function applyGridLayout(
   const parent = (containerEl || (gridEl ? gridEl.parentElement : null)) as HTMLElement | null;
   const containerWidth = parent ? parent.offsetWidth - 16 : 0;
   const newBaseSize = Math.max(baseMin, Math.min(baseMax, Math.floor(containerWidth / cols)));
-  const newBaseHeight = Math.max(isMobile ? 22 : 32, Math.floor(newBaseSize * 0.6));
+  const newBaseHeight = Math.max(isMobile ? 26 : 36, Math.floor(newBaseSize * 0.75));
 
   baseSize.value = newBaseSize;
   baseHeight.value = newBaseHeight;

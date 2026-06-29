@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>World of Horror 美学风格 Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #000;
+    color: #fff;
+    font-family: 'Courier New', 'IBM Plex Mono', 'Consolas', monospace;
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+  }
+  h1 {
+    color: #fff;
+    font-size: 12px;
+    letter-spacing: 5px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  #stage {
+    position: relative;
+    border: 2px solid #fff;
+    background: #000;
+    /* 硬边角，无圆角，无柔和阴影 */
+  }
+  #map {
+    display: grid;
+    gap: 0;
+    background: #000;
+    padding: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .cell {
+    width: 64px; height: 64px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 12px;
+    font-weight: 700;
+    position: relative;
+    background: #000;
+    color: rgba(255,255,255,0.75);
+  }
+  /* 方案 A：浅灰底 + 黑色投影 */
+  .cell.me {
+    background: #2a2a2a;
+    color: #fff;
+    outline: 1px solid rgba(255,255,255,0.4);
+    outline-offset: -1px;
+    z-index: 2;
+  }
+  /* 方案 B：深底 + 白色投影
+  .cell.me {
+    background: #000;
+    color: #fff;
+    outline: 1px solid rgba(255,255,255,0.25);
+    outline-offset: -1px;
+    z-index: 2;
+  }
+  */
+  .cell.me .pulse { animation: pulse 1.5s steps(2) infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+  .cell.enemy {
+    color: #ff4444;
+    border-color: rgba(255,68,68,0.4);
+    cursor: crosshair;
+  }
+  .cell.fog {
+    color: rgba(255,255,255,0.3);
+    border-style: dashed;
+    border-color: rgba(255,255,255,0.2);
+  }
+  .cell.name { color: #fff; font-size: 11px; }
+  .cell.coord { color: rgba(255,255,255,0.25); font-size: 10px; }
+  .cell.exit .label::before { content: '▸ '; color: #fff; }
+
+  /* 扫描线 overlay */
+  #scanlines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255,255,255,0.04) 2px,
+      rgba(255,255,255,0.04) 4px
+    );
+  }
+  /* 抖动点阵 overlay */
+  #dither {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    background-image: radial-gradient(#fff 1px, transparent 1px);
+    background-size: 4px 4px;
+    opacity: 0.05;
+  }
+
+  /* 角色容器 */
+  #actor {
+    position: absolute;
+    left: 0; top: 0;
+    width: 96px; height: 96px;
+    pointer-events: none;
+    z-index: 0;
+    transform-origin: bottom center;
+    will-change: transform, opacity;
+  }
+  #actor img {
+    height: 100%; width: auto;
+    display: block; margin: 0 auto;
+    image-rendering: auto;
+    /* 方案 A：白色描边 + 柔和黑色投影 */
+    filter:
+      drop-shadow( 1px  0 0 #fff)
+      drop-shadow(-1px  0 0 #fff)
+      drop-shadow( 0  1px 0 #fff)
+      drop-shadow( 0 -1px 0 #fff)
+      drop-shadow(0 4px 4px rgba(0,0,0,0.6));
+    /* 方案 B：白色描边 + 白色投影
+    filter:
+      drop-shadow( 1px  0 0 #fff)
+      drop-shadow(-1px  0 0 #fff)
+      drop-shadow( 0  1px 0 #fff)
+      drop-shadow( 0 -1px 0 #fff)
+      drop-shadow(0 4px 4px rgba(255,255,255,0.35));
+    */
+  }
+  #actor.popped { z-index: 10; }
+
+  /* 方案 A：柔和黑色椭圆投影 */
+  #shadow {
+    position: absolute;
+    left: 0; top: 0;
+    width: 70px; height: 14px;
+    background: rgba(0,0,0,0.55);
+    border-radius: 50%;
+    filter: blur(3px);
+    pointer-events: none;
+    z-index: 0;
+    transform-origin: center center;
+  }
+  /* 方案 B：白色椭圆投影
+  #shadow {
+    position: absolute;
+    left: 0; top: 0;
+    width: 70px; height: 14px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 50%;
+    filter: blur(3px);
+    pointer-events: none;
+    z-index: 0;
+    transform-origin: center center;
+  }
+  */
+
+  #ui { display: flex; gap: 12px; }
+  button {
+    background: #000; color: #fff;
+    border: 2px solid #fff;
+    border-radius: 0;
+    padding: 8px 16px;
+    font-family: inherit; font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.08s steps(2);
+  }
+  button:hover, button:active {
+    background: #fff; color: #000;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hint { color: rgba(255,255,255,0.3); font-size: 11px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <h1>▸ World of Horror Aesthetic</h1>
+  <div id="stage">
+    <div id="map"></div>
+    <div id="dither"></div>
+    <div id="scanlines"></div>
+    <div id="actor"><img src="../../public/img/4.png" alt="char" /></div>
+    <div id="shadow"></div>
+  </div>
+  <div id="ui">
+    <button id="btnPop">▶ Pop Up</button>
+    <button id="btnReset">▶ Fall Down</button>
+  </div>
+  <div class="hint">1-bit · dithering · hard edges · inverted selection · no horror mood</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script>
+// ============ 1. 地图 ============
+const COLS = 10, ROWS = 6, CELL = 64, PAD = 2;
+const map = document.getElementById('map');
+map.style.gridTemplateColumns = `repeat(${COLS}, ${CELL}px)`;
+map.style.gridTemplateRows = `repeat(${ROWS}, ${CELL}px)`;
+
+const HERO_COL = 3, HERO_ROW = 2;
+const placeNames = ['密林','废墟','沼泽','荒原','深谷','哨站','遗迹','裂谷','营地','断桥'];
+let nameIdx = 0;
+
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const isMe = (c === HERO_COL && r === HERO_ROW);
+    const isEnemy = (c === 6 && r === 1);
+    const isFog = (c >= 8 && r >= 4);
+    const isExit = (c === 9 && r === 3);
+
+    if (isMe) {
+      cell.classList.add('me');
+      cell.innerHTML = '<span class="pulse">[我] 废墟</span>';
+    } else if (isEnemy) {
+      cell.classList.add('enemy');
+      cell.innerHTML = '<span>[斥候]</span>';
+    } else if (isFog) {
+      cell.classList.add('fog');
+      cell.innerHTML = '?';
+    } else if (isExit) {
+      cell.classList.add('exit','name');
+      cell.innerHTML = '<span class="label">隘口</span>';
+    } else {
+      if ((c+r) % 3 === 0 && nameIdx < placeNames.length) {
+        cell.classList.add('name');
+        cell.innerHTML = `<span>${placeNames[nameIdx++]}</span>`;
+      } else {
+        cell.classList.add('coord');
+        cell.innerHTML = `${String.fromCharCode(65+c)}${r+1}`;
+      }
+    }
+    map.appendChild(cell);
+  }
+}
+
+// ============ 2. 角色定位 ============
+const actor = document.getElementById('actor');
+const shadow = document.getElementById('shadow');
+
+const baseX = HERO_COL * CELL + CELL/2 + PAD;
+const baseY = (HERO_ROW + 1) * CELL + PAD;
+
+function setActorDown() {
+  actor.classList.remove('popped');
+  gsap.killTweensOf(actor);
+  gsap.killTweensOf(shadow);
+  gsap.set(actor, {
+    x: baseX, y: baseY,
+    xPercent: -50, yPercent: -100,
+    scaleY: 0.04, scaleX: 1.0,
+    rotation: -90,
+    alpha: 0.25,
+    transformOrigin: 'bottom center'
+  });
+  gsap.set(shadow, {
+    x: baseX, y: baseY - 2,
+    xPercent: -50, yPercent: -50,
+    scale: 1.2, alpha: 0.5,
+    transformOrigin: 'center center'
+  });
+}
+
+function popUp() {
+  if (actor.classList.contains('popped')) return;
+  const tl = gsap.timeline();
+  tl.to(actor, { alpha: 1, duration: 0.08, ease: 'none' });
+  tl.to(actor, {
+    scaleY: 0.02, scaleX: 1.05, rotation: -95,
+    duration: 0.12, ease: 'power1.in'
+  });
+  tl.to(actor, {
+    scaleY: 1, scaleX: 1, rotation: 0,
+    duration: 0.9, ease: 'elastic.out(1, 0.55)',
+    onStart: () => actor.classList.add('popped')
+  });
+  tl.to(shadow, {
+    scale: 0.35, alpha: 0.12,
+    duration: 0.7, ease: 'power2.out'
+  }, 0.2);
+  tl.to(actor, {
+    scaleY: 1.02, scaleX: 0.99,
+    duration: 0.6, ease: 'sine.inOut',
+    yoyo: true, repeat: -1
+  });
+}
+
+setActorDown();
+
+function resetFall() {
+  if (!actor.classList.contains('popped')) return;
+  gsap.killTweensOf(actor);
+  gsap.killTweensOf(shadow);
+  const tl = gsap.timeline({
+    onComplete: () => {
+      actor.classList.remove('popped');
+      setActorDown();
+    }
+  });
+  tl.to(actor, {
+    rotation: -22, scaleY: 1.05, scaleX: 0.96,
+    duration: 0.1, ease: 'power1.out'
+  });
+  tl.to(actor, {
+    rotation: -90, scaleY: 0.04, scaleX: 1.0,
+    alpha: 0.25,
+    duration: 0.32, ease: 'power2.in'
+  });
+  tl.to(shadow, {
+    scale: 1.2, alpha: 0.5,
+    duration: 0.28, ease: 'power2.out'
+  }, 0.08);
+}
+
+document.getElementById('btnPop').addEventListener('click', popUp);
+document.getElementById('btnReset').addEventListener('click', resetFall);
+</script>
+</body>
+</html>
