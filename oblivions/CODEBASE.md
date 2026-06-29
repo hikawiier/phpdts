@@ -1002,16 +1002,26 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 战斗日志收集与持久化，与 obl_log 分离（详见 [DESIGN.md §1.10](./DESIGN.md#110-战斗日志-battle-log-与-played-标记机制)）。
 
+**BattleLogCollector 关键设计：**
+- **12 phase 体系**：`initiative_roll` / `queue_create` / `queue_rebuild` / `once_execute_pre` / `once_execute_post` / `execute_verify_failed` / `middle_check_target_dead` / `combatant_cleared` / `actor_state_check` / `ap_recover` / `flee` / `battle_end` / `ambush_battle_end`。每个 phase 对应明确的最小参数集，消除占位符和 extra 滥用
+- **render/debug 分离**：`emit()` 新增 `$debug` 参数（true=调试/false=渲染/null=按 phase 自动推断）。默认 debug 映射表 `$phaseDebugDefault` 控制各 phase 是否需要渲染（如 `queue_create` / `actor_state_check` 默认 debug=true 前端不可见）
+- **边界标记**：每个条目自动携带 `bl_turn_num`（Turn 计数，null=Phase 0）、`bl_round_num`（Round 计数，null=Phase 0）、`bl_segment_flag`（段边界信号：`round_start`/`turn_start`/`battle_end`/`ambush_battle_end`/null）。`$phaseSegmentFlag` 映射表控制哪些 phase 触发边界标记
+- **Turn/Round 管理**：`nextTurn()` 由 `battle_hook_turn_start` 调用递增；`setRoundNum()` 由 `battle_queue_create_and_init` / `battle_queue_rebuild` 调用同步 DB 的 round_num
+- **字段完整**：emit 时给全名称（`actor_name`/`target_name`/`cleared_name`/`ambusher_name`）和 HP 快照（`actor_hp`/`actor_max_hp`/`target_hp`/`target_max_hp`），前端无需查 API
+- **once_execute 拆分**：`once_execute_pre`（动作执行前快照，含名称/HP） + `once_execute_post`（动作执行后快照，含 effect_value/success），前端配对合并为完整动作条目
+
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
 | `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。由 `battle_entry_ensure_battle_log` 统一初始化为全局 `$obl_battle_log` |
-| `BattleLogCollector::setPhase` | `($phase): void` | 设置当前阶段标识（`prepare`/`verify`/`excute`/`queue_check`/`finish_check`），由 `battle_main` 各阶段调用 |
-| `BattleLogCollector::emit` | `(array $params): void` | 追加一条战斗日志。`$params` 支持键：`actor_pid`/`actor_type`/`target_pid`/`target_type`/`action_id`/`effect_value`/`extra`。存储时附加 `ts` + 当前 `phase` |
+| `BattleLogCollector::setPhase` | `($phase): void` | 设置当前 phase（12 个事件类型之一），emit 时自动附加 |
+| `BattleLogCollector::nextTurn` | `(): void` | Turn 计数递增（由 `battle_hook_turn_start` 调用） |
+| `BattleLogCollector::setRoundNum` | `(int $num): void` | 设置 Round 计数（由队列创建/重建调用） |
+| `BattleLogCollector::emit` | `(array $params, ?bool $debug = null): void` | 追加一条战斗日志。`$params` 支持键：`action_id` / `actor_pid/type/name/hp/max_hp/ap/max_ap` / `target_pid/type/name/hp/max_hp` / `effect_value` / `success` / `qid` / `rolls` / `ambush_pid` / `combatants` / `reason` / `winner_pid` / `cleared_pid` / `cleared_name` / `ambusher_pid` / `ambusher_name`。存储时附加 `ts` + 当前 `phase` + `debug` + `bl_turn_num`/`bl_round_num`/`bl_segment_flag` |
 | `BattleLogCollector::getEntries` | `(): array` | 获取本请求累积的战斗日志条目 |
 | `BattleLogCollector::hasEntries` | `(): bool` | 本请求是否有战斗日志 |
 | `obl_battle_log_get_old_max` | `(): int` | 读取 battle_log 历史归档最大批次配置（带静态缓存） |
 | `obl_battle_log_persist` | `($logger, $groomid, $pid): void` | 持久化战斗日志到文件（追加模式 + log_id 分配 + played=0 + LOCK_EX） |
-| `obl_battle_log_load` | `($groomid, $pid): array` | 从文件读取**未播放**的战斗日志（played=0），不清空文件 |
+| `obl_battle_log_load` | `($groomid, $pid, $includeDebug = false): array` | 从文件读取**未播放**的战斗日志（played=0），`$includeDebug=false` 时自动过滤 `debug=true` 的条目 |
 | `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
 | `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `oblivions/cache/battles/obl_battle_log*.json`） |
 
@@ -1099,10 +1109,13 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 ### 9.5 战斗日志 emit 规范
 
-- **单参数关联数组**：`$obl_battle_log->emit([...])`，必传键 `actor_pid`/`actor_type`/`target_pid`/`target_type`/`action_id`，按需传 `effect_value`/`extra`
+- **双参数 emit**：`$obl_battle_log->emit(array $params, ?bool $debug = null)`。`$debug` 省略时按 phase 自动推断（`$phaseDebugDefault`），显式传入覆盖默认
+- **无占位符**：未提供的字段记为 `null`，不使用 `0`/`-1`/`''` 等占位符
+- **无 extra**：所有字段均为正式字段，无 `extra` 中间容器
+- **按 phase 分布**：不同 phase 填不同字段集，未填的为 `null`（如 `initiative_roll` 只填 `qid`/`rolls`/`ambush_pid`；`once_execute_pre` 填 actor/target 全名+HP+action_id；`once_execute_post` 只填 actor/target HP+effect_value+success）
 - **actor_type 约定**：`0`=玩家，`>0`=敌人类型 ID（与 `bra_oblplayers.type` 一致）
-- **前端按 actor_pid 分组播放**：前端用 `actor_pid`（NPC 的 pid）对战斗日志分组，每组按 `log_id` 排序播放
-- **phase 由 setPhase 标记**：`battle_main` 各阶段开始时调 `setPhase('verify'|'excute'|...)`，emit 时自动附加当前 phase 到条目
+- **段边界自动填充**：emit 输出的 `bl_turn_num`/`bl_round_num`/`bl_segment_flag` 由 `BattleLogCollector` 内部自动计算，各调用点无需关心
+- **phase 由 setPhase 标记**：各函数内部调 `setPhase('initiative_roll'|'once_execute_pre'|'once_execute_post'|'flee'|'combatant_cleared'|'battle_end'|'ambush_battle_end'|...)`，emit 时自动附加当前 phase
 
 ---
 

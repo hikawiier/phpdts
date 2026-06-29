@@ -228,8 +228,7 @@ function getSegmentDivider(): { html: string } | null {
   if (!seg) return null;
   switch (seg.kind) {
     case 'phase0':            return { html: '── 突袭 ──' };
-    case 'round':             return { html: `── 第 ${seg.meta.roundNum ?? 0} 轮 ──` };
-    case 'turn':              return null;
+    case 'turn':              return { html: `── 第 ${seg.meta.roundNum ?? 0} 轮 ──` };
     case 'battle_end':        return { html: '── 战斗结束 ──' };
     case 'ambush_battle_end': return { html: '── 突袭结束 ──' };
     default:                  return null;

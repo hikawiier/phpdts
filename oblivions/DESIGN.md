@@ -94,8 +94,6 @@
 **命名约定**：
 - 代码注释用"回合"指 Turn，"轮"指 Round
 - 旧术语"先攻轮"已废弃——原义即为"回合"（Turn，单人次行动），**从未涉及"轮"（Round）的概念**。表述时按实际层级区分：单人次行动用"回合"，全队列循环用"轮"
-- API `battle_log` 的 `turn` 字段（前端长期依赖）保留原名不更改
-- 历史设计文档（`docs/已完成任务/`、`docs/原始方案/`）保留旧术语不追溯修改
 
 ### 1.9 结构化日志 (Structured Log)
 
@@ -120,6 +118,23 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 | **API 端点** | `obl_log` | `battle_log` |
 | **前端用途** | 日志区渲染 + Toast 触发 | 战斗模态框播放 + 碰撞动画 |
 
+**phase 细分与原料补全**：
+
+后端 emit 已从粗粒度 4-phase 细分为 12+ 事件类型 phase（`initiative_roll` / `once_execute_pre` / `once_execute_post` / `flee` / `combatant_cleared` / `battle_end` / `ambush_battle_end` 等）。每个 phase 对应明确的最小参数集：消除占位符（未提供字段记为 null）、消除 extra 滥用（所有字段为正式字段）、补全名称和 HP 快照（前端无需查 API）。
+
+**render/debug 分离**：
+
+每条 emit 携带 `debug` 布尔字段，由 phase 级默认映射表控制（如 `queue_create` / `actor_state_check` / `queue_rebuild` 默认 debug=true）。`obl_battle_log_load` 新增 `$includeDebug` 参数，前端轮询时默认 `false`，只获取渲染原料，减小 payload。debug 条目保留在后端文件中但不传输。
+
+**边界标记字段**：
+
+每个条目自动附加三个边界标记字段：
+- `bl_turn_num` — Turn 计数（null=Phase 0/尚未开始，1+=第 N turn），由 `battle_hook_turn_start` 递增
+- `bl_round_num` — Round 计数（null=Phase 0 无队列，0+=第 N round），从 DB `oblbattle_state.round_num` 同步
+- `bl_segment_flag` — 段边界信号（`round_start`/`turn_start`/`battle_end`/`ambush_battle_end`/null），由 phase 自动映射
+
+这些字段供前端导演系统进行分层分段编排，不依赖 phase 字符串推断。
+
 **played 标记机制**：
 
 ```
@@ -128,8 +143,9 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
   → 命令响应只返回 {}（不再附带 battlelog 字段）
 
 前端 fetchAndPlayBattleLog()
-  → gameApi('battle_log') → 返回 played=0 的条目
-  → 按 enemy_pid 分组 → 每组播放（碰撞动画 + 模态框 + 残留伤害数字）
+  → gameApi('battle_log') → 返回 played=0 的条目（已过滤 debug=true）
+  → BattleDirector.direct(entries) → 编排为 PlayScript
+  → playScript(script) → 逐段执行
   → POST mark_battle_log_played.php 标记 played=1
 ```
 
@@ -258,19 +274,25 @@ $obl_log->emit('move.success', 'move', [
 - 单机部署足够，无需分布式锁
 - 性能优于 DB 锁
 
-### 2.7 三阶段战斗演出
+### 2.7 三层战斗演出架构
 
-战斗日志播放采用三阶段流程，建立可扩展的战斗演出框架：
+战斗日志从产出到消费经历三层，每层职责独立：
 
-1. **碰撞动画阶段**（地图上）：攻击方冲刺 + 受击方抖动，不含伤害数字（避免"未卜先知"）
-2. **模态框阶段**（中央遮罩）：按 log_id 排序播放 battlelog，turn=0 显示"战斗开始"分隔符，turn>=1 显示"回合 N"分隔符
-3. **残留伤害数字阶段**（地图格上）：模态框关闭后，在受击方格子上淡入显示伤害数字
+1. **后端原料层**（PHP `BattleLogCollector`）
+   - emit 时补全名称、HP 快照、边界标记字段（`bl_turn_num`/`bl_round_num`/`bl_segment_flag`）
+   - 按 phase 精细区分事件类型，设置默认 `debug` 标记控制前端可见性
+   - 不预判前端如何消费，专注提供完整的原始事件结构
 
-**职责分离**（前端核心设计）：
-- `battleStore.fetchAndPlayBattleLog()` — 纯播放器，不涉及状态判断
-- `battleStore.refreshBattle()` — 状态管理，播放完成后根据 action 决定后续
-- `BattleModal.vue` — 演出组件，卸载时主动 reject 解锁 async 链路
-- store 侧 Promise 加 30s 超时兜底
+2. **前端导演层**（`battle-director.ts`）
+   - 同步纯函数，输入 raw entries → 输出 `PlayScript`
+   - 配对 pre/post → 构建分层段（Phase 0/Round/Turn/BattleEnd）
+   - 不涉及网络、不涉及 DOM、不涉及组件状态
+
+3. **前端演员层**（`battle.ts` + `BattleModal.vue`）
+   - 按段播放：碰撞动画 → 模态框渲染 → 伤害数字
+   - 纯执行，不涉及编排逻辑
+
+**约束**：生产端和消费端不互斥，同一文件可多次追加后一次性拉取播放。导演层与演员层均幂等——同名脚本可复播。
 
 ### 2.8 区域切换日志拆分
 
@@ -315,7 +337,26 @@ normal（探索）←→ battle（战斗）
 - NPC 与玩家共用同一套属性获取接口，技能效果对双方一致
 - 新增 NPC 类型时只需配置技能组合，无需修改属性获取逻辑
 
-### 2.12 新文件必须注册到 obl_bootstrap
+### 2.12 战斗执行阶段重构（Tag + combatants 缓存）
+
+**核心变更**：将战斗执行拆为 verify → sort → execute → end 四阶段，引入 Tag 系统和缓存层分离运行时判断与 DB 写入。
+
+**三阶段死亡检测**：
+- **预检**（verify 中 `tag_dead` 函数）：首次构建目标标签时从 DB 派生 `dead` tag
+- **中检**（`battle_state_middle_check`）：伤害结算后只写缓存（`combatants[pid]` + `tag_mutations[pid]['dead']`），不改 DB state
+- **后清**（`battle_main_end`）：actor 死亡检测→state_clear('death')，再遍历 `combatants[pid]=0` 按 reason 调 state_clear（death 时内部设 state=1）
+
+**`combatants` 新语义**：`1`=能继续战斗，`0`=不能。有队列时从队列载入所有成员，无队列时仅自己。`battle_main_end` 消费后传给 `battle_manage_queue`。
+
+**HP 即时落库**：`battle_once_execute` 末尾调 `obl_save_player(both)`，执行中途崩溃时 HP 已写入，state 未更新，恢复后由 hp 检查兜底。
+
+### 2.13 终结技（Finisher）队列排序
+
+`finisher=1` 标记的技能为终结技。前端和后端双重约束：
+- **前端**：`addToQueue` 将普通技插入终结技前，终结技已存在时拒绝重复加入
+- **后端**：`battle_sort_actions` 在 verify 后 execute 前强制重排：普通技在前，finisher 在后；多个终结技只保留最后一个
+
+### 2.14 新文件必须注册到 obl_bootstrap
 
 Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php` 集中加载所有函数库。
 
@@ -330,7 +371,7 @@ Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php`
 
 > 当前 8 层加载清单见 [CODEBASE.md](./CODEBASE.md#引导加载bootstrap)。
 
-### 2.13 后端日志 ID 必须有前端模板对应
+### 2.15 后端日志 ID 必须有前端模板对应
 
 Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前端有对应的渲染模板，否则前端会静默失败（渲染为空或 undefined），不会报错，非常难排查：
 
@@ -351,7 +392,7 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 
 ---
 
-### 2.14 前端守护进程模型（心跳）
+### 2.16 前端守护进程模型（心跳）
 
 前端是后端游戏刻推进的唯一驱动力。
 
@@ -371,28 +412,58 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 
 **实施**：`battle.ts` 新增 `startDaemonPoll/stopDaemonPoll`，`App.vue` `onMounted` 启动。
 
-详细设计案见：[docs/前端守护进程心跳模型设计案.md](docs/前端守护进程心跳模型设计案.md)
+### 2.17 Phase 0 vs Phase 1 — 两阶段战斗执行分离
 
-### 2.15 战斗执行阶段重构
+战斗执行分为两个本质不同的阶段：
 
-**核心变更**：将战斗执行拆为 verify → sort → execute → end 四阶段，引入 Tag 系统和缓存层分离运行时判断与 DB 写入。
+| | Phase 0（突袭阶段） | Phase 1（标准战斗阶段） |
+|---|---|---|
+| **触发条件** | `obl_battle_start` 时立即执行 | 玩家/敌人队列存在后执行 |
+| **队列** | 无队列（不创建 `oblbattle_queue`） | 有队列，按先攻排序 |
+| **Turn/Round** | 无 Turn/Round（`bl_turn_num=null`） | 有 Turn/Round 递增 |
+| **边界信号** | 达到 `ambush_battle_end` 条件（被攻击者全死/全逃）→ `ambush_battle_end` 段 | `round_start` / `turn_start` / `battle_end` |
+| **可以执行的动作** | 仅无队列的动作（如先攻回合、逃跑检测） | 队列中任意动作 |
+| **战斗日志** | `bl_segment_flag` 固定为 `null`，自动归入 `phase0` 段 | `bl_segment_flag` 携带 `round_start`/`turn_start` |
 
-**三阶段死亡检测**：
-- **预检**（verify 中 `tag_dead` 函数）：首次构建目标标签时从 DB 派生 `dead` tag
-- **中检**（`battle_state_middle_check`）：伤害结算后只写缓存（`combatants[pid]` + `tag_mutations[pid]['dead']`），不改 DB state
-- **后清**（`battle_main_end`）：actor 死亡检测→state_clear('death')，再遍历 `combatants[pid]=0` 按 reason 调 state_clear（death 时内部设 state=1）
+**设计理由**：
+- Phase 0 本质是一个"战斗预热"阶段——先处理先攻掷骰、确认双方能否进入标准战斗。Phase 1 才是真正的回合制战斗
+- 两阶段分离后，导演系统可以按段类型渲染不同 UI（Phase 0 显示"突袭"头，Phase 1 显示"第N轮/第N回合"头）
+- 旧版将 Phase 0 和 Phase 1 混在一起 emit，前端通过 `turn=0` 和 `action_id` 猜测阶段归属，导致渲染逻辑复杂且脆弱
 
-**`combatants` 新语义**：`1`=能继续战斗，`0`=不能。有队列时从队列载入所有成员，无队列时仅自己。`battle_main_end` 消费后传给 `battle_manage_queue`。
+**实施**：`BuildLogCollector` 自动管理 `bl_turn_num`/`bl_round_num`：Phase 0 期间两者均为 `null`；队列首次创建时 `setRoundNum(0)+nextTurn()` 触发 `round_start+turn_start` 进入 Phase 1。`battle_queue_rebuild` 也会调 `setRoundNum` 同步 DB 的 `round_num`。
 
-**HP 即时落库**：`battle_once_execute` 末尾调 `obl_save_player(both)`，执行中途崩溃时 HP 已写入，state 未更新，恢复后由 hp 检查兜底。
+### 2.18 前端导演系统概念
 
-### 2.16 终结技（Finisher）队列排序
+**为什么需要导演层**：
+- 后端 emit 的事件是扁平的（按执行顺序排列的日志条目列表），每个条目只携带当前事件的信息
+- 前端播放需要"上下文"——需要知道哪些条目属于同一个回合、哪些是 pre/post 配对、战斗何时开始何时结束
+- 旧方案是播放器兼任导编职责：在播放过程中实时判断 `action_id=xxx` 来决定渲染方式，导致 `BattleModal.vue` 逻辑膨胀
 
-`finisher=1` 标记的技能为终结技。前端和后端双重约束：
-- **前端**：`addToQueue` 将普通技插入终结技前，终结技已存在时拒绝重复加入
-- **后端**：`battle_sort_actions` 在 verify 后 execute 前强制重排：普通技在前，finisher 在后；多个终结技只保留最后一个
+**导演层与后端原料层的契约**：
 
-详细设计案见：[docs/终结技（Finisher）队列排序设计案.md](docs/终结技（Finisher）队列排序设计案.md)
+后端负责提供"足够原始且完整"的原料（名称、HP 快照、边界标记），导演层负责将这些原料排列成具有层次结构的"剧本"（PlayScript）。
+
+```
+后端 emit 3 条：
+  [once_execute_pre, actor="玩家", target="野狼A", hp=30→25]
+  [queue_create, ...]                           ← debug=true（前端不可见）
+  [once_execute_post, actor="玩家", target="野狼A", dmg=5]  
+
+导演编排为 1 条 DirectedEntry（kind=action）：
+  玩家 → 野狼A: 5点伤害 [HP: 30→25]
+```
+
+**关键设计决策**：
+1. **导演层是纯同步函数**：不涉及网络请求、不涉及 DOM。`direct(entries) → PlayScript` 的纯函数签名使其可测试、可复播、可调试
+2. **段 (Segment) 是播放的最小组织单位**：每个段包含一个段类型（phase0/round/turn/battle_end/ambush_battle_end）、段元数据（轮数/回合数/行动者/胜利者）、以及该段内的有序列队条目
+3. **配对的 pre/post 合并为 action**：`pairPrePost` 用栈算法匹配 `once_execute_pre` 和 `once_execute_post`。pre 记录动作执行前的全部状态快照，post 记录执行结果（伤害值/是否成功）。配对后合并为单条 `action` 条目供前端渲染
+4. **边界信号驱动分段**：不依赖 phase 字符串理解，而是依赖 `bl_segment_flag` 驱动。`round_start` → 截断当前段并开始新 round；`turn_start` → 截断并开始新 turn。这降低了后端 phase 变动时导演层需要调整的风险
+5. **异常健壮性**：悬空 pre（无 post 配对）降级为 `display` 渲染；孤儿 post（无 pre）直接渲染；尾部未配对条目自动归入当前段
+6. **段元数据完整**：每个段携带 `roundNum`/`turnNum`/`actorPid`/`actorName`/`initiatorOrder` 等，演员层无需回溯上一个条目
+
+**调试便利**：`direct()` 运行时自动挂载 `window.__battleScript` 和 `window.__battleRawEntries`，浏览器控制台直接检查编排结果。`exportScriptToJson()` 可将脚本导出为 JSON 文件下载，方便离线分析。
+
+**旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPid`+`buildSegments` 替代）、`playBattleLogGroup`（由 `playScript` 替代）、`buildPlayContext`（后端 pre emit 已带名称/HP）、`BATTLE_TEMPLATES` 按 action_id 索引（由 `KIND_TEMPLATES` 按 directedKind 分发替代）。
 
 ---
 

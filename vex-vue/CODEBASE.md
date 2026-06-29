@@ -100,6 +100,7 @@ vex-vue/
     │   └── terrain-desc.ts         # 地形描述词库 + generateTerrainDesc
     ├── stores/
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
+    │   ├── battle-director.ts      # 战斗导演模块（同步纯函数：编排 raw entries → 分层演出脚本 PlayScript）
     │   ├── command-queue.ts        # 命令队列（防抖 + 锁定 + 冷却）
     │   ├── data-manager.ts         # 数据层（白名单缓存 + 去重 + 事件总线）
     │   ├── inventory.ts            # 背包 + 装备（loadInventory + handleDiscard）
@@ -500,217 +501,165 @@ class CommandQueue {
 
 ## 八、战斗演出系统
 
-> 这是前端最复杂的子系统，涉及 store + 组件 + 事件 + Promise 协调。
+> 这是前端最复杂的子系统，采用**三层架构**（后端给全原料 → 导演集中编排 → 演员纯执行）。
 
-### 8.1 整体流程
+### 8.1 架构总览
 
 ```
-玩家点击敌人（handleEnemyClick）
-  ↓ 前端校验攻击距离（BFS distance === 1）
-  ↓
-battleStore.startBattle(enemyPid)
-  ├─ currentMode = 'battle'
-  ├─ isPlayerTurn = true
-  ├─ broadcast('battle:preload-init', { mode: 'pre-battle', enemyPid, playerPid })
-  │    ↓ PreloadArea 组件初始化装填区
-  └─ broadcast('battle:started', { enemyPid })
-       ↓ uiStore.battleBtnState = 'battle'
+后端（原料层）              前端导演（编排层）             前端演员（执行层）
+BattleLogCollector          battle-director.ts            battle.ts / BattleModal.vue
+  emit() 12 phase             direct(entries)               playScript(script)
+  debug 标记                  ├─ pairPrePost()               ├─ playPhase0Segment
+  bl_turn_num/bl_round_num    ├─ buildSegments()             ├─ playRoundSegment
+  bl_segment_flag             └─→ PlayScript                 ├─ playTurnSegment
+  名称/HP 原料                  { segments[] }                ├─ playBattleEndSegment
+  → JSON 文件                  ├─ phase0                     └─ playAmbushBattleEndSegment
+                                ├─ round(roundNum)
+                                ├─ turn(turnNum,actorPid)
+                                ├─ battle_end
+                                └─ ambush_battle_end
+```
 
-玩家在装填区选择动作 → 点击执行
-  ↓
-PreloadArea 提交 obl_battle_start（pre-battle）/ obl_battle_action（in-battle）
+**导演 vs 演员职责分离**：
+- `battle-director.ts`：同步纯函数，输入 raw entries → 输出 `PlayScript`，不做任何渲染
+- `battle.ts`：播放器，按 `PlaySegment` 逐段执行（碰撞动画 → 模态框 → 伤害数字）
+- `BattleModal.vue`：模态框演出组件，专注逐条播放 + HP 条更新
+
+### 8.2 三类核心输出类型
+
+**DirectedKind**（7 种渲染分发标记）：`action`（pre+post 合并动作）| `initiative`（先攻掷骰）| `flee`（逃跑）| `combatant_cleared`（某人离场）| `battle_end`（标准战斗终结）| `ambush_battle_end`（突袭阶段结束）| `display`（纯展示）
+
+**SegmentKind**（5 种段类型）：`phase0`（Phase 0 突袭攻击，无 Turn/Round）| `round`（Phase 1 一轮）| `turn`（Phase 1 一回合）| `battle_end`（标准战斗终结段）| `ambush_battle_end`（突袭阶段结束段）
+
+**SegmentMeta**：段元数据含 `roundNum` / `turnNum` / `actorPid` / `actorName` / `initiatorOrder` / `ambushPid` / `winnerPid` / `reason` / `ambusherPid`
+
+### 8.3 整体流程（新版）
+
+```
+玩家点击敌人 → battleStore.startBattle(enemyPid)
+  ├─ 切换战斗模式 + 初始化装填区（pre-battle / in-battle）
+  └─ broadcast('battle:started')
+
+玩家装填动作 → 点击执行 → 提交 obl_battle_start / obl_battle_action
   ↓ broadcast('preload:executed')
   ↓
 battleStore.onPreloadExecuted()
-  ├─ invalidate('player_info'/'enemies'/'battle_log')
+  ├─ invalidate 相关缓存
   └─ refreshBattle()
-       ↓
-       ┌─ 拉取 player_info → 判断 action
-       │   ├─ action='battle' → enterBattleMode + 启停 NPC 刷新
-       │   └─ action='' → 战斗已结束（不立即退出，等 battlelog 播完）
+       ├─ 拉取 player_info → 判断 action
+       │   ├─ action='battle' → 维持战斗模式
+       │   └─ action='' → 播放完 battlelog 后退出
        │
-       └─ fetchAndPlayBattleLog()  ← 纯播放器，不涉及状态判断
-            ├─ 拉取 battle_log（played=0）
-            ├─ groupByEncounter（按 NPC pid 分组）
-            ├─ 逐组 playBattleLogGroup：
-            │    1. broadcast('battle:play-collision') → CollisionAnimation 碰撞动画
-            │    2. battleModalOpen=true → BattleModal 播放模态框（await Promise）
-            │    3. broadcast('battle:play-damage-numbers') → DamageNumber 残留伤害
-            └─ markBattleLogPlayed() 标记 played=1
+       └─ fetchAndPlayBattleLog()
+            ├─ 拉取 battle_log（played=0，后端已过滤 debug=true）
+            ├─ BattleDirector.direct(entries) → 编排为 PlayScript
+            ├─ extractNpcPid(script) → 替代旧 groupByEncounter
+            ├─ playScript(script, npcPid) → 逐段执行
+            │    各段播放：
+            │      phase0     → 更新敌人名称 → 碰撞动画 → 模态框（含段分隔符 + HP 条）
+            │      round      → 碰撞动画 → 模态框（先攻面板）
+            │      turn       → 更新敌人名称 → 碰撞动画 → 模态框（含 HP 条）→ 伤害数字
+            │      battle_end → 模态框（战斗结束文字）
+            │      ambush_battle_end → 模态框（突袭结束文字）
+            └─ markBattleLogPlayed() 标记所有原始 log_id
        ↓
-       播放完成后根据 action 决定后续：
-       ├─ action='battle' + 玩家回合 → showToast('你的回合')
-       └─ action='' → exitBattleMode() → broadcast('battle:ended')
+       播放完成后根据 action 决定后续
 ```
 
-### 8.2 fetchAndPlayBattleLog 纯播放器模式
+### 8.4 fetchAndPlayBattleLog（新版）
 
-`fetchAndPlayBattleLog()` 重构后只负责"拉取-播放-标记"，**不涉及**：
-- action 判断（由 `refreshBattle` 负责）
-- `exitBattleMode` 调用（由 `refreshBattle` 负责）
-- toast 显示（由 `refreshBattle` 负责）
+接入导演编排，`playScript` 替代旧 `playBattleLogGroup`：
 
 ```typescript
 async function fetchAndPlayBattleLog(): Promise<void> {
-  if (isPlayingBattleLog.value) return;  // 防重入
-  // ... 拉取 battle_log
+  if (isPlayingBattleLog.value) return;
+  const entries = (await dataManager.fetch('battle_log', true)).data?.entries ?? [];
+  if (entries.length === 0) return;
   isPlayingBattleLog.value = true;
   try {
-    const groups = groupByEncounter(entries);
-    for (const group of groups) {
-      await playBattleLogGroup(group.entries, group.npcPid);
-    }
-    await markBattleLogPlayed(currentGroomid, currentPid, allLogIds);
+    const script = direct(entries);           // 导演：同步编排
+    if (script.segments.length === 0) return;
+    const npcPid = extractNpcPid(script);      // 替代 groupByEncounter
+    await playScript(script, npcPid);           // 演员：逐段执行
+    await markBattleLogPlayed(groomid, pid, collectAllLogIds(entries));
   } finally {
     isPlayingBattleLog.value = false;
   }
 }
 ```
 
-### 8.3 BattleModal sleep reject 取消机制
+`direct()` 运行时会挂载 `window.__battleScript` 和 `window.__battleRawEntries`，可在浏览器控制台直接检查导演编排结果。
 
-`BattleModal.vue` 播放 battlelog 时使用 `await sleep(ms)` 控制节奏。组件卸载时需主动 reject sleep，避免 `playBattleLog` 永久挂起。
+### 8.5 playScript 逐段执行
 
-**实现**（`BattleModal.vue`）：
+`playScript` 按 `segment.kind` 分发到 5 种段播放函数。每段通过 `playSegmentInModal` 统一处理模态框流程：
 
-```typescript
-let rejectSleep: ((e?: unknown) => void) | null = null;
+- **phase0/round 段**：`alwaysShowHeader: true` 确保段分隔符可见（即使 entries 渲染为空）
+- **turn 段**：执行碰撞动画（读 `entry.animation` 字段），播放模态框后发伤害数字事件
+- **battle_end/ambush_battle_end 段**：`isBattleEnd: true` 确保模态框打开显示结束文字
 
-function sleep(ms: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    rejectSleep = reject;  // 保存 reject 句柄
-    currentTimer = setTimeout(() => {
-      rejectSleep = null;
-      resolve();
-    }, ms);
-  });
-}
+`playSegmentInModal` 通过 `renderDirectedEntryHtml(entry, playerPid)` 按 `directedKind` 分发渲染，替代旧按 `action_id` 索引的模板系统。
 
-async function playBattleLog(): Promise<void> {
-  try {
-    // ... 逐条播放，多处 await sleep
-    await sleep(ENTRY_INTERVAL);
-    // ...
-  } catch {
-    // 组件卸载时 sleep 被 reject，通知 store 播放中断
-    battleStore.notifyModalClosed();
-  } finally {
-    playing.value = false;
-  }
-}
+### 8.6 battle-director.ts 核心函数
 
-onUnmounted(() => {
-  cancelRequested = true;
-  if (currentTimer) clearTimeout(currentTimer);
-  if (rejectSleep) {
-    const r = rejectSleep;
-    rejectSleep = null;
-    r(new Error('BattleModal unmounted'));  // 主动 reject
-  }
-});
-```
+| 函数 | 说明 |
+|------|------|
+| `direct(entries)` | 主入口：配对 pre/post → 构建 segments → 返回 PlayScript。开发模式挂载 `__battleScript`/`__battleRawEntries` 到 window |
+| `pairPrePost(entries)` | 栈配对：pre 压栈 → interleaving 条目缓冲 → post 合并 pre+post。异常处理：悬空 pre / 孤儿 post / 尾部未配对 pre 降级为 display |
+| `mergePrePost(pre, post)` | 合并为 action DirectedEntry。非伤害动作白名单（escape）→ hpSnapshot=null；攻击动作 → 计算 actorHpBefore/After + targetHpBefore/After |
+| `buildSegments(entries)` | 按 `bl_segment_flag` 驱动分段：`round_start`→round, `turn_start`→turn, `battle_end`/`ambush_battle_end`→单条段立即关闭。Phase 0 条目不携带边界信号时自动归入 phase0 段 |
+| `extractNpcPid(script)` | 从脚本中提取 NPC PID（替代旧 groupByEncounter） |
+| `collectAllLogIds(entries)` | 收集所有原始 log_id 供 markBattleLogPlayed 使用（含异常降级条目的 log_id） |
+| `exportScriptToJson(script?)` | 调试用：将当前 PlayScript 导出为 JSON 文件下载 |
 
-### 8.4 Store 侧 Promise 超时兜底
+### 8.7 BattleLogEntry 字段类型（新版）
 
-`playBattleLogGroup` 中等待模态框播放完成的 Promise 加 30s 超时兜底，防止组件异常卸载未通知导致永久挂起：
-
-```typescript
-// battleStore.playBattleLogGroup
-battleModalOpen.value = true;
-await new Promise<void>((resolve) => {
-  const timeout = setTimeout(() => {
-    _modalResolve = null;
-    resolve();  // 30s 超时自动 resolve
-  }, MODAL_TIMEOUT);  // 30000ms
-  _modalResolve = () => {
-    clearTimeout(timeout);
-    resolve();
-  };
-});
-```
-
-`BattleModal` 播放完成后调用 `battleStore.notifyModalClosed()` → 触发 `_modalResolve()` → resolve Promise → 继续后续流程。
-
-### 8.5 NPC 回合自动刷新
-
-NPC 顺位时，后端会在下次 `common.inc` 加载时执行 NPC 先攻轮。前端通过定时拉取 `player_info` 触发后端推进：
-
-```typescript
-const NPC_TURN_REFRESH_INTERVAL = 2000;  // 2秒
-
-function startNpcTurnRefresh(): void {
-  npcTurnRefreshTimer = setInterval(() => {
-    dataManager.invalidate('player_info');
-    dataManager.invalidate('battle_log');
-    refreshBattle();
-  }, NPC_TURN_REFRESH_INTERVAL);
-}
-```
-
-玩家顺位时停止定时器，等待玩家操作。
-
-### 8.6 BattleModal 并发守卫
-
-`BattleModal.vue` 的 `playing` ref 防止 store 在上一次播放未结束时再触发：
-
-```typescript
-async function playBattleLog(): Promise<void> {
-  if (playing.value) {
-    battleStore.notifyModalClosed();  // 直接通知 store 跳过
-    return;
-  }
-  playing.value = true;
-  try { /* ... */ } finally { playing.value = false; }
-}
-```
-
-### 8.7 BattleLogEntry 字段类型
-
-> **重要**：后端 PHP 返回的所有数值字段实际为 **string 类型**。
-
-`types/api.ts` 中 `BattleLogEntry` 的字段定义：
+后端 `BattleLogCollector::emit()` 改造后，字段结构已从旧版（含 `extra`/占位符）更新为完整原料集：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | string | 固定 `'battle.action'` |
-| `log_id` | string | 文件内自增 ID（用于标记 played） |
-| `turn` | string | 先攻轮序号（0=战斗开始/结束，1+=回合 N） |
-| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
-| `actor_type` | string | `'0'`=玩家，`>'0'`=敌人类型 |
-| `actor_pid` | string | 行动方 PID |
-| `target` | string | 目标标识 |
-| `target_type` | string | 目标类型 |
-| `target_pid` | string | 目标 PID |
-| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`battle_end` 等） |
-| `action_name` | string | 动作显示名 |
-| `effect_value` | string | 效果值（伤害值等） |
-| `extra` | object\|null | 额外信息（含 `target_newhp` 供 HP 条更新） |
-| `phase` | string | `'excute'`/`'finish_check'` 等（控制动画播放） |
-| `played` | string | `'0'`=未播放，`'1'`=已播放 |
-| `ts` | string | Unix 时间戳 |
+| `phase` | string | 12+ 事件类型之一（`once_execute_pre`/`once_execute_post`/`initiative_roll`/`flee`/`combatant_cleared`/`battle_end`/`ambush_battle_end` 等） |
+| `action_id` | string\|null | 动作 ID（`unarmed_strike`/`escape` 等，`initiative_roll`/`battle_end` 等无动作事件为 null） |
+| `actor_pid/type/name` | number\|null | 行动者信息（含名称，无需查 API） |
+| `actor_hp/max_hp` | number\|null | 行动者 HP 快照（仅 pre/post/ap_recover 等有） |
+| `target_pid/type/name` | number\|null | 目标信息（含名称） |
+| `target_hp/max_hp` | number\|null | 目标 HP 快照 |
+| `effect_value` | number\|null | 效果值（伤害数值等） |
+| `success` | boolean\|null | 动作是否成功（flee/execute 通用） |
+| `reason` | string\|null | 原因（`death`/`escaped`/`queue_empty`/`disband`/`ambush_killed_all` 等） |
+| `winner_pid` | number\|null | 战斗赢家 PID（仅 `battle_end` 有） |
+| `cleared_pid/cleared_name` | number\|string\|null | 被清理的 combatant（仅 `combatant_cleared` 有） |
+| `ambusher_pid/ambusher_name` | number\|string\|null | 突袭者（仅 `ambush_battle_end` 有） |
+| `debug` | boolean | 调试标记（前端默认拉取的条目均为 false） |
+| `bl_turn_num` | number\|null | Turn 计数（null=Phase 0/尚未开始） |
+| `bl_round_num` | number\|null | Round 计数（null=Phase 0 无队列） |
+| `bl_segment_flag` | string\|null | 段边界信号（`round_start`/`turn_start`/`battle_end`/`ambush_battle_end`/null） |
+| `log_id/played/ts` | number | 持久化元数据 |
 
-**使用规范**：所有数值字段需 `Number()` 转换，如 `Number(entry.actor_type) === 0` 判断玩家。
+> **说明**：后端 `compatible_json_encode()` 对所有 int 字段返回 string 类型。TypeScript 类型中这些字段声明为 `number | null` 后由 `Number()`/`parseInt()` 转换。
 
-### 8.8 战斗日志分组播放
+### 8.8 旧播放逻辑的清理
 
-`groupByEncounter(entries)` 按 NPC pid 分组（单 NPC 战斗约束下，所有条目归入同一组）：
+以下旧逻辑已由导演系统替代并移除：
 
-```typescript
-function groupByEncounter(entries: BattleLogEntry[]): { npcPid: number; entries: BattleLogEntry[] }[] {
-  let npcPid = 0;
-  for (const e of entries) {
-    if (Number(e.actor_type) > 0) { npcPid = Number(e.actor_pid); break; }
-    if (Number(e.target_type) > 0) { npcPid = Number(e.target_pid); break; }
-  }
-  if (npcPid === 0) return [];
-  return [{ npcPid, entries }];
-}
-```
+| 函数/状态 | 替代方案 |
+|----------|---------|
+| `groupByEncounter` | `extractNpcPid` + `buildSegments` |
+| `playBattleLogGroup` | `playScript` 逐段执行 |
+| `buildPlayContext` | 后端 pre emit 已带名称/HP，导演 HpSnapshot 携带 from/to |
+| `refreshContextFromApi` | `updateEnemyNameFromSegment` + `refreshEnemyLocation` |
+| `rebuildInitialHpFromEntries` | `initHpFromSegment`（从首条 action entry 的 hpSnapshot 读） |
+| `playContext` ref | 不再需要 |
+| `extractEnemyPid` | `extractNpcPid` |
+| `BattlePlayContext` 接口 | 由 DirectedEntry/HpSnapshot 替代 |
+| `BATTLE_TEMPLATES` 按 action_id 索引 | `KIND_TEMPLATES` 按 directedKind 分发 |
+| `renderBattleLogEntryHtml` | `renderDirectedEntryHtml` |
 
-每组三阶段播放：
-1. **碰撞动画**（地图上）：`broadcast('battle:play-collision')` → `CollisionAnimation` 冲刺+抖动，无伤害数字
-2. **模态框**（中央遮罩）：`battleModalOpen=true` → `BattleModal` 逐条播放 battlelog，含 HP 条更新
-3. **残留伤害数字**（地图格上）：`broadcast('battle:play-damage-numbers')` → `DamageNumber` 模态框关闭后淡入
+**保留的组件/逻辑**：
+- `CollisionAnimation` + `DamageNumber`：动画和伤害数字组件保留，数据源改为 segment entries
+- `BattleModal` sleep reject + 30s 超时兜底：保留
+- NPC 回合轮询（`startNpcTurnRefresh`/`stopNpcTurnRefresh`）：保留
+- `command-queue.ts` + `isProcessingBattle` 锁：保留
 
 ---
 
@@ -897,26 +846,18 @@ perf.clear();
 - `PlayCollisionEventData` / `PlayDamageNumbersEventData` — 战斗演出事件
 - `DebugBusEntry` / `DebugStateSnapshot` — DebugBus 调试类型
 
-### 12.3 战斗播放上下文（`data/battle-templates.ts`）
+### 12.3 战斗模板分发（`data/battle-templates.ts`）
 
-```typescript
-export interface BattlePlayContext {
-  npcPid: number;
-  npcName: string;
-  npcHp: number;
-  npcMaxHp: number;
-  npcLocation: string | number | null;
-  playerHp: number;
-  playerMaxHp: number;
-  playerName: string;
-  // 兼容旧字段名
-  enemyName: string;
-  enemyHp: number;
-  enemyMaxHp: number;
-}
-```
+按 `directedKind` 分发的 7 种渲染函数定义在 `KIND_TEMPLATES` 映射中：
+- `renderAction` — 动作条目（读 actor_name/target_name/effect_value，含 unarmed_strike 特殊渲染）
+- `renderInitiative` — 先攻掷骰（纯数据，返回空字符串不由条目渲染）
+- `renderFlee` — 逃跑成功
+- `renderCombatantCleared` — 战斗者离场（读 cleared_name + reason）
+- `renderBattleEnd` — 战斗终结（统一显示"战斗结束"，不区分胜负）
+- `renderAmbushBattleEnd` — 突袭结束（读 ambusher_name + reason）
+- `renderDisplay` — 其他事件（ap_recover/verify_failed/middle_check 等）
 
-由 `battleStore.buildPlayContext(npcPid)` 构建，供 `BattleModal` + `battle-templates` 共用。
+`BattlePlayContext` 已移除——模板所需名称/HP 直接从 entry 字段（`actor_name`/`target_name`/`cleared_name`/`ambusher_name`/`hpSnapshot`）读取，不再需要查 API 构建上下文。
 
 ---
 
@@ -939,6 +880,8 @@ export interface BattlePlayContext {
 | `vex/js/log.js` | `stores/log.ts` + `components/log/*` + `composables/useLogScroll.ts` |
 | `vex/js/toast-position.js` | `composables/useToastPosition.ts` |
 | `vex/js/battle.js` | `stores/battle.ts` |
+| —（新增） | `stores/battle-director.ts` |
+| `vex/js/battle-render.js`（重构） | `data/battle-templates.ts` |
 | `vex/js/battle-modal.js` | `components/battle/BattleModal.vue` |
 | `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` |
 | `vex/js/battle-render.js` | `data/battle-templates.ts` |

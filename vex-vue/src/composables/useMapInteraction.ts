@@ -14,6 +14,7 @@
 
 import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
+import { useBattleStore } from '@/stores/battle';
 import { commandQueue } from '@/stores/command-queue';
 import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP } from '@/composables/useMapRender';
 import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapReachability';
@@ -298,10 +299,13 @@ export function initMapInteraction(
   const onKeyDown = (e: KeyboardEvent): void => {
     // 输入框聚焦时忽略
     const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+    if (target.tagName === 'INPUT' || target.tagName === 'TAGNAME') return;
     // 模态框/抽屉打开时忽略（与现有 map-interaction.js 一致）
     const uiStore = useUiStore();
     if (uiStore.modalOpen || uiStore.playerDrawerOpen || uiStore.inventoryDrawerOpen) return;
+    // 战斗演出播放期间禁止键盘操作
+    const battleStore = useBattleStore();
+    if (battleStore.battleModalOpen) return;
 
     let dx = 0, dy = 0;
     switch (e.key) {

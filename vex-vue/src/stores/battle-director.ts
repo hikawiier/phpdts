@@ -316,6 +316,7 @@ function buildSegments(entries: DirectedEntry[]): PlayScript {
   let current: PlaySegment | null = null;
   let roundCounter = 0;
   let turnCounter = 0;
+  let hasSeenRoundStart = false;
 
   const closeCurrent = (): void => {
     if (current && current.entries.length > 0) {
@@ -325,36 +326,20 @@ function buildSegments(entries: DirectedEntry[]): PlayScript {
   };
 
   for (const e of entries) {
-    // ── 段边界信号 ──
+    // ── 段边界信号：round_start/turn_start 仅更新计数器，不创建段 ──
+    //    （边界条目由后端在 battle_main 之后才 emit，内容条目已在前面，
+    //      若创建独立段则内容无法归入正确轮次且段内无可见内容。）
     if (e.bl_segment_flag === 'round_start') {
       closeCurrent();
-      roundCounter++;
-      turnCounter = 0;   // 新 round 重置 turn 计数
-      current = {
-        kind: 'round',
-        entries: [e],
-        meta: {
-          roundNum: roundCounter,
-          initiatorOrder: e.rolls ?? undefined,
-          ambushPid: e.ambush_pid ?? undefined,
-        },
-      };
+      hasSeenRoundStart = true;
+      roundCounter = (e.bl_round_num ?? 0) + 1;
+      turnCounter = 0;
       continue;
     }
 
     if (e.bl_segment_flag === 'turn_start') {
       closeCurrent();
-      turnCounter++;
-      current = {
-        kind: 'turn',
-        entries: [e],
-        meta: {
-          roundNum: roundCounter,
-          turnNum: turnCounter,
-          actorPid: e.actor_pid ?? undefined,
-          actorName: e.actor_name ?? undefined,
-        },
-      };
+      turnCounter = e.bl_turn_num ?? 0;
       continue;
     }
 
@@ -388,12 +373,29 @@ function buildSegments(entries: DirectedEntry[]): PlayScript {
 
     // ── 非边界条目：归入当前段 ──
     if (!current) {
-      // 无 open segment：Phase 0 段（bl_turn_num === null && bl_round_num === null）
-      current = {
-        kind: 'phase0',
-        entries: [e],
-        meta: { isPhase0: true },
-      };
+      if (hasSeenRoundStart || e.bl_round_num !== null) {
+        // Phase 1 内容（有轮次信息）
+        const displayRound = hasSeenRoundStart
+          ? roundCounter
+          : ((e.bl_round_num ?? 0) + 1);
+        current = {
+          kind: 'turn',
+          entries: [e],
+          meta: {
+            roundNum: displayRound,
+            turnNum: turnCounter,
+            actorPid: e.actor_pid ?? undefined,
+            actorName: e.actor_name ?? undefined,
+          },
+        };
+      } else {
+        // 无轮次信息 → Phase 0（突袭攻击）
+        current = {
+          kind: 'phase0',
+          entries: [e],
+          meta: { isPhase0: true },
+        };
+      }
     } else {
       current.entries.push(e);
     }

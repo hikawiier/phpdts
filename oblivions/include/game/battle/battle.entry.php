@@ -61,15 +61,25 @@ function battle_entry_dispatch($mode, &$actor, $actions = null, $extra = []) {
         battle_state_init($actor);
     }
 
-    // ── 4. 动作执行 ──
+    // ── 4. 非突袭模式：同步 roundNum 到 battle_log collector ──
+    //    确保 battle_main 中 emit 的内容条目携带正确的 bl_round_num，
+    //    而非 Phase 0 的 null，供前端区分 Phase 0/Phase 1。
+    if (!$is_ambush) {
+        $qid = (int)($actor['bid'] ?? 0);
+        if ($qid > 0 && $obl_battle_log) {
+            $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
+        }
+    }
+
+    // ── 5. 动作执行 ──
     battle_main($actor, $atk_act, $obl_battle_log, $battle_cache);
 
-    // ── 4.5 战斗清理（返回 ambush 下 actor 退出标志） ──
+    // ── 5.5 战斗清理（返回 ambush 下 actor 退出标志） ──
     $ambusher_quit_flag = battle_main_end($actor, $atk_act, $obl_battle_log, $battle_cache);
 
-    // ── 5. 队列后补票（仅 ambush） ──
+    // ── 6. 队列后补票（仅 ambush） ──
     if ($is_ambush) {
-        // 5a.突袭的特殊战斗结束方式-突袭者暴毙或逃跑了
+        // 6a.突袭的特殊战斗结束方式-突袭者暴毙或逃跑了
         if ($ambusher_quit_flag) {
             if ($obl_battle_log) {
                 $obl_battle_log->setPhase('ambush_battle_end');
@@ -82,7 +92,7 @@ function battle_entry_dispatch($mode, &$actor, $actions = null, $extra = []) {
             battle_state_clear($actor, $obl_battle_log, $battle_cache, 'ambush_' . $ambusher_quit_flag);
             return;
         }
-        // 5b.突袭的特殊战斗结束方式-突袭者一轮就杀光了所有敌人
+        // 6b.突袭的特殊战斗结束方式-突袭者一轮就杀光了所有敌人
         $pids = battle_queue_setup($actor, $obl_battle_log, $battle_cache['combatants']);
         if ($pids === false) {
             if ($obl_battle_log) {
@@ -100,10 +110,10 @@ function battle_entry_dispatch($mode, &$actor, $actions = null, $extra = []) {
         battle_queue_create_and_init($actor, $pids, $obl_battle_log);
     }
 
-    // ── 6. 队列管理 ──
+    // ── 7. 队列管理 ──
     $result = battle_manage_queue($actor, $obl_battle_log, $battle_cache);
 
-    // ── 7. 返回（仅 npc_turn 需要结果） ──
+    // ── 8. 返回（仅 npc_turn 需要结果） ──
     if ($is_npc) return $result;
 }
 

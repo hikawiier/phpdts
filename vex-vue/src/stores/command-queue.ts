@@ -14,6 +14,7 @@ import { submitCommand, type CommandResult } from '@/api/client';
 import { dataManager } from '@/stores/data-manager';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerStore } from '@/stores/player';
+import { useBattleStore } from '@/stores/battle';
 
 /**
  * 推进 tick 的命令白名单（与后端 obl_command_advances_tick() 保持一致）
@@ -47,6 +48,11 @@ class CommandQueue {
     }
     if (this._cooldown > Date.now()) {
       return { success: false, error: 'COOLDOWN', message: '冷却中' };
+    }
+
+    // ── 战斗演出锁：播放 battlelog 期间阻止所有命令 ──
+    if (useBattleStore().isPlayingBattleLog) {
+      return { success: false, error: 'PLAYING_BATTLE_LOG', message: '战斗演出中，请稍候' };
     }
 
     // ── 状态机锁：PROCESSING 状态时阻止推进 tick 的命令 ──
@@ -97,9 +103,9 @@ class CommandQueue {
     }
   }
 
-  /** 是否锁定中（HTTP 锁或 PROCESSING 状态锁） */
+  /** 是否锁定中（HTTP 锁 / PROCESSING 状态锁 / 战斗演出锁） */
   get isLocked(): boolean {
-    return this._locked || usePlayerStore().oblBattleState === 'PROCESSING';
+    return this._locked || usePlayerStore().oblBattleState === 'PROCESSING' || useBattleStore().isPlayingBattleLog;
   }
 
   /** 后端是否处理中（PROCESSING 状态，由状态机派生，供 UI 绑定） */
