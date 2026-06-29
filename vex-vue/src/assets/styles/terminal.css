@@ -573,6 +573,13 @@ body::after {
     transition: color 0.12s;
 }
 .status-bar-btn:hover { color: #fff; }
+.status-bar-btn.debug { color: #666; }
+.status-bar-btn.debug:hover { color: #bbb; }
+.status-bar-divider {
+    color: #444;
+    margin: 0 2px;
+    user-select: none;
+}
 
 .status-tick-debug {
     display: none;        /* 默认隐藏，?debug=ai 时显示 */

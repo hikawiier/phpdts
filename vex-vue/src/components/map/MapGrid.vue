@@ -21,12 +21,12 @@
 // ══════════════════════════════════════════════════
 
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
+import gsap from 'gsap';
 import { useMapStore } from '@/stores/map';
 import {
   cells,
   gridStyle,
   nameFontSize,
-  meFontSize,
   renderMapGrid,
   resetRenderState,
   triggerCellClick,
@@ -89,6 +89,115 @@ function onCellLeave(cell: CellData): void {
   }
 }
 
+// ─── 玩家角色标靶动画（demo 迁移） ───
+function getPlayerAvatar(): HTMLElement | null {
+  return gridRef.value?.querySelector('.player-avatar') as HTMLElement | null;
+}
+
+function resetAvatarTransform(el: HTMLElement): void {
+  gsap.set(el, {
+    xPercent: -50,
+    yPercent: 0,
+    transformOrigin: 'bottom center',
+  });
+}
+
+function setAvatarDown(el: HTMLElement): void {
+  gsap.killTweensOf(el);
+  resetAvatarTransform(el);
+  gsap.set(el, {
+    scaleY: 0.04,
+    scaleX: 1,
+    rotation: -90,
+    alpha: 0.25,
+  });
+}
+
+function startIdleAnimation(el?: HTMLElement | null): void {
+  const target = el || getPlayerAvatar();
+  if (!target) return;
+  gsap.killTweensOf(target);
+  gsap.to(target, {
+    scaleY: 1.02,
+    scaleX: 0.99,
+    duration: 0.6,
+    ease: 'sine.inOut',
+    yoyo: true,
+    repeat: -1,
+  });
+}
+
+function popUpAvatar(el?: HTMLElement | null): void {
+  const target = el || getPlayerAvatar();
+  if (!target) return;
+  gsap.killTweensOf(target);
+  const tl = gsap.timeline();
+  tl.to(target, { alpha: 1, duration: 0.08, ease: 'none' });
+  tl.to(target, {
+    scaleY: 0.02,
+    scaleX: 1.05,
+    rotation: -95,
+    duration: 0.12,
+    ease: 'power1.in',
+  });
+  tl.to(target, {
+    scaleY: 1,
+    scaleX: 1,
+    rotation: 0,
+    duration: 0.9,
+    ease: 'elastic.out(1, 0.55)',
+  });
+  // idle 呼吸：与 demo 一致
+  tl.to(target, {
+    scaleY: 1.02,
+    scaleX: 0.99,
+    duration: 0.6,
+    ease: 'sine.inOut',
+    yoyo: true,
+    repeat: -1,
+  });
+}
+
+function fallAvatar(el?: HTMLElement | null, onComplete?: () => void): void {
+  const target = el || getPlayerAvatar();
+  if (!target) return;
+  gsap.killTweensOf(target);
+  const tl = gsap.timeline({ onComplete });
+  tl.to(target, {
+    rotation: -22,
+    scaleY: 1.05,
+    scaleX: 0.96,
+    duration: 0.1,
+    ease: 'power1.out',
+  });
+  tl.to(target, {
+    rotation: -90,
+    scaleY: 0.04,
+    scaleX: 1,
+    alpha: 0,
+    duration: 0.32,
+    ease: 'power2.in',
+  });
+}
+
+// 玩家位置变化时（移动后），新格子的角色立绘直接启动 idle 呼吸
+watch(
+  () => mapStore.curLoc,
+  () => {
+    nextTick(() => {
+      const el = getPlayerAvatar();
+      if (!el) return;
+      resetAvatarTransform(el);
+      gsap.set(el, { scaleY: 1, scaleX: 1, rotation: 0, alpha: 1 });
+      startIdleAnimation(el);
+    });
+  },
+);
+
+// 调试事件监听
+const onDebugPopup = (): void => popUpAvatar();
+const onDebugFall = (): void => fallAvatar();
+
 // ─── 监听 mapStore 数据变化 → 重新应用布局 + 居中 ───
 // cells computed 会自动重新计算（响应式），这里只需处理布局 + 居中
 watch(
@@ -140,6 +249,19 @@ onMounted(() => {
   // 3. 初始化交互事件（缩放/平移/键盘/触摸）
   cleanupInteraction = initMapInteraction(containerRef.value, gridRef.value);
 
+  // 4. 注册角色标靶动画调试事件
+  dataManager.listen('player:popup', onDebugPopup);
+  dataManager.listen('player:fall', onDebugFall);
+
+  // 5. 首次入场：角色从倒下状态弹起（仅初始加载一次，移动时不重复）
+  nextTick(() => {
+    const el = getPlayerAvatar();
+    if (el) {
+      setAvatarDown(el);
+      popUpAvatar(el);
+    }
+  });
+
   initialized = true;
 });
 
@@ -148,6 +270,8 @@ onUnmounted(() => {
     cleanupInteraction();
     cleanupInteraction = null;
   }
+  dataManager.unlisten('player:popup', onDebugPopup);
+  dataManager.unlisten('player:fall', onDebugFall);
   resetRenderState();
   initialized = false;
 });
@@ -186,10 +310,16 @@ onUnmounted(() => {
           <span class="cell-name" :style="{ fontSize: nameFontSize + 'px' }">?</span>
         </template>
 
-        <!-- 当前格：[我] + 前缀 + 地名 -->
+        <!-- 当前格：角色立绘 + 前缀 + 地名 -->
         <template v-else-if="cell.isCurrent">
-          <span class="cell-name pulse-white">
-            <span class="cell-me" :style="{ fontSize: meFontSize + 'px' }">[我]</span>{{ cell.prefix }}{{ cell.displayLabel }}
+          <img
+            :key="mapStore.curLoc ?? 'none'"
+            class="player-avatar"
+            src="/img/3.png"
+            alt="player"
+          />
+          <span class="cell-name pulse-white player-label">
+            {{ cell.prefix }}{{ cell.displayLabel }}
           </span>
         </template>
 
@@ -213,3 +343,38 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* ═══ 玩家角色标靶动画样式（demo 迁移）═══ */
+
+/* 当前格：浅灰底 + 细白框（方案 A） */
+:deep(.map-cell.current) {
+  background: #2a2a2a;
+  outline: 1px solid rgba(255, 255, 255, 0.4);
+  outline-offset: -1px;
+}
+
+/* 玩家角色立绘 */
+:deep(.player-avatar) {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 150%;
+  width: auto;
+  /* 定位由 JS 通过 GSAP xPercent/yPercent 管理，避免 CSS transform 与 GSAP 冲突 */
+  pointer-events: none;
+  z-index: 3;
+  /* 白色描边 + 柔和黑色投影 */
+  filter:
+    drop-shadow( 1px  0 0 #fff)
+    drop-shadow(-1px  0 0 #fff)
+    drop-shadow( 0  1px 0 #fff)
+    drop-shadow( 0 -1px 0 #fff)
+    drop-shadow(0 4px 4px rgba(0, 0, 0, 0.6));
+}
+
+/* 当前格文字标签：保持自然居中，不要被角色挤到底部 */
+:deep(.map-cell.current .player-label) {
+  z-index: 2;
+}
+</style>

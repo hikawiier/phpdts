@@ -26,6 +26,9 @@ export type AppEvent =
   | 'battle:preload-init'
   // ── M6 瞄准模式事件（组件间通信） ──
   | 'battle:aim-target-selected'
+  // ── 角色标靶动画调试事件 ──
+  | 'player:popup'
+  | 'player:fall'
 
 /** 事件回调 */
 export type EventCallback = (data?: unknown) => void;

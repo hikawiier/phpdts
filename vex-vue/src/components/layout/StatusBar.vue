@@ -159,6 +159,9 @@ function onAvatarError(): void {
         <button class="status-bar-btn" @click="uiStore.togglePlayerDrawer">[属性]</button>
         <button class="status-bar-btn" @click="onBattleBtnClick">[{{ uiStore.battleBtnText() }}]</button>
         <button class="status-bar-btn" @click="uiStore.toggleInventoryDrawer">[背包]</button>
+        <span class="status-bar-divider">|</span>
+        <button class="status-bar-btn debug" @click="dataManager.broadcast('player:popup')">[弹起]</button>
+        <button class="status-bar-btn debug" @click="dataManager.broadcast('player:fall')">[倒下]</button>
       </div>
     </div>
     <!-- 右侧：头像 -->

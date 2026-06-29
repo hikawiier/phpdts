@@ -17,6 +17,7 @@ vex-vue 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用
 - Tailwind CSS v4（`@tailwindcss/vite` 插件，构建时编译）
 - 自定义 CSS（`terminal.css` + `battle.css`，覆盖 Tailwind 无法处理的部分）
 - IBM Plex Mono 等宽字体
+- GSAP（玩家角色标靶弹起/倒下动画）
 - 原生 fetch API（无 axios 依赖）
 
 **部署方式**：
@@ -37,11 +38,14 @@ vex-vue 是 PHPDTS 大逃杀游戏 **Oblivions 模式** 的专用前端，采用
 ```
 vex-vue/
 ├── index.html              # SPA 入口 HTML
-├── package.json            # 依赖配置（vue/pinia/vite/tailwind/typescript）
+├── package.json            # 依赖配置（vue/pinia/vite/tailwind/typescript/gsap）
 ├── vite.config.js          # Vite 配置（proxy keepAlive + base 路径 + manualChunks）
 ├── tsconfig.json           # TypeScript 配置
 ├── .env.production         # 生产环境变量（VITE_API_BASE=/phpdts, VITE_DEBUG=false）
 ├── .gitignore              # 忽略 node_modules/dist/*.local/.DS_Store
+├── public/                 # 静态资源（构建时原样复制到 dist）
+│   └── img/
+│       └── test2.png       # 玩家角色立绘（1-bit 漫画风格）
 └── src/
     ├── main.ts             # 入口：createApp + createPinia + 挂载 #app
     ├── App.vue             # 根布局：StatusBar + LeftPanel + RightPanel + 浮动组件
@@ -281,6 +285,8 @@ submitCommand(params)                     // POST command.php
 | `preload:executed` | PreloadArea | battleStore | 装填区执行完成，刷新战斗状态 |
 | `log:force-scroll` | logStore | useLogScroll | 强制日志滚动到底部 |
 | `log:add-unread` | logStore | useLogScroll | 累加未读日志计数 |
+| `player:popup` | StatusBar.vue（调试按钮） | MapGrid.vue | 手动触发玩家角色标靶弹起动画 |
+| `player:fall` | StatusBar.vue（调试按钮） | MapGrid.vue | 手动触发玩家角色倒下动画 |
 
 ---
 
@@ -713,7 +719,7 @@ App.vue
 ├── main
 │   ├── LeftPanel.vue
 │   │   └── MapContainer.vue
-│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 敌人 + 迷雾
+│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 敌人 + 迷雾 + 玩家角色立绘
 │   │       └── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
 │   │       └── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
 │   └── RightPanel.vue
@@ -744,6 +750,24 @@ RightPanel.vue (battle mode)
 2. **事件触发动画**：store `broadcast` 事件 → 组件 `listen` 后执行 DOM 动画（如 `CollisionAnimation`）
 3. **Teleport to body**：模态框类组件（`Modal`/`BattleModal`）使用 `<Teleport to="body">` 避免 `position: fixed` 与父级 `transform` 冲突
 4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放
+
+### 10.3 玩家角色标靶动画
+
+当前格（`cell.isCurrent`）使用 `test2.png` 立绘替代原本的 `[我]` 文字标识，并通过 GSAP 实现标靶式弹起/倒下动画：
+
+- **立绘资源**：`public/img/test2.png`（1-bit 漫画风格，白身黑线）
+- **定位**：`MapGrid.vue` 当前格内用绝对定位 `<img class="player-avatar">` 渲染，底部对齐当前格中心
+- **视觉分离**：白色描边 + 柔和黑色投影，使黑线稿角色在黑底地图上清晰可辨
+- **当前格样式**：浅灰底 `#2a2a2a` + 细白框，与周围格子区分但不过亮
+- **入场动画**：`MapGrid.vue` 首次挂载时触发一次弹起（`elastic.out` 回弹）
+- **调试控制**：`StatusBar.vue` 顶部状态栏提供 `[弹起]` / `[倒下]` 两个按钮，通过 `dataManager.broadcast('player:popup' | 'player:fall')` 触发
+- **倒下处理**：`fallAvatar()` 动画结束后将角色 `alpha` 设为 `0`，避免残留元素挤占当前格文字布局
+
+相关实现文件：
+- `src/components/map/MapGrid.vue` — 渲染 + 动画逻辑
+- `src/components/layout/StatusBar.vue` — 调试按钮
+- `src/assets/styles/terminal.css` — 调试按钮样式
+- `src/types/events.ts` — `player:popup` / `player:fall` 事件类型
 
 ---
 
@@ -840,7 +864,7 @@ perf.clear();
 
 ### 12.2 事件类型（`types/events.ts`）
 
-- `AppEvent` — 语义事件名联合类型（16 个事件）
+- `AppEvent` — 语义事件名联合类型（18 个事件，含 `player:popup` / `player:fall` 调试事件）
 - `ToastEventData` / `MapClickCurrentEventData` / `BattleStartedEventData` 等 — 事件数据接口
 - `PreloadInitEventData` — 装填区初始化事件（`mode: 'pre-battle' | 'in-battle'`）
 - `PlayCollisionEventData` / `PlayDamageNumbersEventData` — 战斗演出事件

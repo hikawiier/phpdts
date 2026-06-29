@@ -67,8 +67,9 @@ function renderErrorEntry(entry: ErrorLogEntry): string {
 }
 
 export const useErrorLogStore = defineStore('error-log', () => {
-  /** 增量检测：记录已展示的最大 ts */
-  const lastTs = ref<number>(0);
+  /** 增量检测：记录已展示的最大 ts（持久化到 localStorage，页面刷新不丢失） */
+  const LS_KEY = 'obl-error-last-ts';
+  const lastTs = ref<number>(Number(localStorage.getItem(LS_KEY) || '0'));
 
   /** 轮询是否运行中 */
   const polling = ref<boolean>(false);
@@ -105,8 +106,9 @@ export const useErrorLogStore = defineStore('error-log', () => {
       const newEntries = allEntries.filter((e) => e.ts > prevLastTs);
       if (newEntries.length === 0) return;
 
-      // ── 更新 lastTs（取全部条目的最大 ts，避免遗漏） ──
+      // ── 更新 lastTs（取全部条目的最大 ts，避免遗漏）+ 持久化 ──
       lastTs.value = allEntries[allEntries.length - 1].ts;
+      localStorage.setItem(LS_KEY, String(lastTs.value));
 
       // ── 触发 Toast ──
       const toastStore = useToastStore();
