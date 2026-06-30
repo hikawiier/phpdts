@@ -37,7 +37,6 @@ import { initMapInteraction, centerOnPlayer } from '@/composables/useMapInteract
 import { setupMapCallbacks } from '@/composables/useMapBusiness';
 import { dataManager } from '@/stores/data-manager';
 import { useMapEntities } from '@/composables/useMapEntities';
-import { useEntitiesStore } from '@/stores/entities';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
 import type { MapEntity } from '@/types/map-entity';
@@ -45,7 +44,6 @@ import type { MapEntity } from '@/types/map-entity';
 const mapStore = useMapStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const playerStore = usePlayerStore();
-const entitiesStore = useEntitiesStore();
 
 // ─── DOM 引用（供布局计算 + 交互事件使用） ───
 const gridRef = ref<HTMLElement | null>(null);
@@ -54,7 +52,7 @@ const containerRef = ref<HTMLElement | null>(null);
 // ─── 多实体动画 composable（替代 useActors） ───
 // gridRef 复用上面的 #mapGrid 引用，useMapEntities 内部 watch(gridRef) 挂载 ResizeObserver
 const entityAnim = useMapEntities(gridRef);
-const { setEntityRef, syncAllPositions, dispose: disposeEntities } = entityAnim;
+const { setEntityRef, syncAllPositions, displayEntities, dispose: disposeEntities } = entityAnim;
 
 // ─── 交互事件 cleanup 函数 ───
 let cleanupInteraction: (() => void) | null = null;
@@ -224,10 +222,10 @@ onUnmounted(() => {
           </span>
         </template>
 
-        <!-- 敌人格：[敌人名] + 前缀 + 地名 -->
+        <!-- 敌人格：前缀 + 地名（敌人名由立绘呈现） -->
         <template v-else-if="cell.hasEnemy">
           <span class="cell-name">
-            <span class="cell-enemy">[{{ cell.enemyName }}]</span>{{ cell.prefix }}{{ cell.displayLabel }}
+            {{ cell.prefix }}{{ cell.displayLabel }}
           </span>
         </template>
 
@@ -245,8 +243,9 @@ onUnmounted(() => {
       <!-- 实体层：所有地图实体（actor/poi/grass/crevice/worm，与 cells 同级，absolute 定位） -->
       <!-- 可见性由 useMapEntities 通过 GSAP alpha 控制（z-index 固定 10，不再切换） -->
       <!-- 角色投影由 .entity-img 的 CSS filter: drop-shadow 提供，无需独立阴影元素 -->
+      <!-- displayEntities 中间层：新敌人立即渲染，消失的敌人保留直到淡出动画完成 -->
       <div
-        v-for="entity in entitiesStore.entities"
+        v-for="entity in displayEntities"
         :key="entity.id"
         :ref="el => setEntityRef(entity.id, el as HTMLElement | null)"
         class="entity"

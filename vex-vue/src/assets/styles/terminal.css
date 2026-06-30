@@ -193,6 +193,14 @@ body::after {
     width: auto;
     transform: translateX(-50%);  /* 水平居中（CSS 初始值，GSAP 接管 entity 时不影响 img transform） */
     image-rendering: auto;
+    /* NPC 默认：白色光晕投影（无描边） */
+    filter:
+    drop-shadow(1px 0 0 #701e1e) drop-shadow(-1px 0 0 #ac1b1b) drop-shadow(0 1px 0 #701e1e) drop-shadow(0 -1px 0 #701e1e)
+        drop-shadow(0 4px 4px rgba(0, 0, 0, 0.918));
+}
+
+/* player 立绘：方案 A（白色描边 + 黑色投影） */
+.entity-player .entity-img {
     filter:
         drop-shadow( 1px  0 0 #fff)
         drop-shadow(-1px  0 0 #fff)
@@ -336,13 +344,6 @@ body::after {
     display: block;
     font-size: 8px;
     margin-bottom: 1px;
-}
-/* [敌人名] 标识换行 + 红色警示 */
-.map-cell .cell-enemy {
-    display: block;
-    font-size: 8px;
-    margin-bottom: 1px;
-    color: #ff4444;
 }
 
 /* ═══ 按钮（终端样式） ═══ */

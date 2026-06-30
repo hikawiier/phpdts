@@ -33,26 +33,25 @@ export const useEntitiesStore = defineStore('entities', () => {
         actorKind: 'player',
         pls: mapStore.curLoc,
         img: '/img/4.png',
-        imgHeightRatio: 1.5,
+        imgHeightRatio: 1.25,
       });
     }
 
-    // 敌人 actors（state===0 的活动敌人，预留，当前不渲染立绘）
-    // 未来启用时取消注释
-    // if (mapStore.enemies) {
-    //   for (const e of mapStore.enemies) {
-    //     if (Number(e.state) === 0) {
-    //       list.push({
-    //         id: `enemy-${e.pid}`,
-    //         kind: 'actor',
-    //         actorKind: 'enemy',
-    //         pls: e.pls,
-    //         img: `/img/enemy_${e.icon}.png`,
-    //         imgHeightRatio: 1.5,
-    //       });
-    //     }
-    //   }
-    // }
+    // 敌人 actors（state===0 的活动敌人）
+    if (mapStore.enemies) {
+      for (const e of mapStore.enemies) {
+        if (Number(e.state) === 0) {
+          list.push({
+            id: `enemy-${e.pid}`,
+            kind: 'actor',
+            actorKind: 'enemy',
+            pls: e.pls,
+            img: `/img/n_${e.type}.png`,
+            imgHeightRatio: 1.25,
+          });
+        }
+      }
+    }
 
     // 未来：NPC / POI / 草丛 / 蠕虫 / 裂隙
     // 各自从 mapStore 数据派生，push 到 list
