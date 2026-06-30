@@ -20,6 +20,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { PlayerAvatarIntent } from '@/types/player-avatar';
+import type { AttackKind } from '@/types/actor-animation';
 
 export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   const intent = ref<PlayerAvatarIntent>('idle');
@@ -28,6 +29,9 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   const hpRatio = ref(1);
   const lastIntentTs = ref(0);
   const pendingIntent = ref<PlayerAvatarIntent | null>(null);
+  const isFled = ref(false);
+  const lastAttackTargetId = ref<string | null>(null);
+  const lastAttackKind = ref<AttackKind>('melee');
 
   // ── 内部：派发意图 ──
   // 防抖：同一意图 50ms 内重复触发只执行一次
@@ -55,9 +59,24 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   function onEnter(): void       { dispatchWithRecovery('enter'); }
   function onMove(): void        { dispatchWithRecovery('move'); }
   function onBattleStart(): void { dispatchWithRecovery('battle-start'); }
-  function onBattleEnd(): void   { dispatchWithRecovery('battle-end'); }
+  function onBattleEnd(): void {
+    // flee 后 player alpha=0，退出战斗时需恢复可见性
+    if (isFled.value) {
+      isFled.value = false;
+      dispatchWithRecovery('enter');  // 触发 setDown+popUp（alpha:0→1）恢复可见
+      return;
+    }
+    dispatchWithRecovery('battle-end');
+  }
   function onHit(): void         { dispatchWithRecovery('hit'); }
   function onDie(): void         { dispatchIntent('die'); }
+  function onFlee(): void        { isFled.value = true; dispatchIntent('flee'); }
+  function onRevive(): void      { dispatchIntent('revive'); }
+  function onAttack(targetId?: string, kind?: AttackKind): void {
+    lastAttackTargetId.value = targetId ?? null;
+    lastAttackKind.value = kind ?? 'melee';
+    dispatchWithRecovery('attack');
+  }
   function onLowHp(): void       { dispatchWithRecovery('low-hp'); }
   function onNormalHp(): void    { dispatchWithRecovery('normal-hp'); }
 
@@ -91,12 +110,18 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     hpRatio,
     lastIntentTs,
     pendingIntent,
+    isFled,
+    lastAttackTargetId,
+    lastAttackKind,
     onEnter,
     onMove,
     onBattleStart,
     onBattleEnd,
     onHit,
     onDie,
+    onFlee,
+    onRevive,
+    onAttack,
     onLowHp,
     onNormalHp,
     debugPopUp,

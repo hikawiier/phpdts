@@ -18,13 +18,13 @@
 import gsap from 'gsap';
 import {
   setDown, startIdle, popUp, fall,
-  moveActor, jumpActor, arriveAnim, fadeOut,
+  moveActor, jumpActor, arriveAnim, fadeOut, hitAnim, attackAnim,
   updateEntityZIndex,
 } from '@/animations/actorAnimations';
-import type { ActorAnimation } from '@/types/actor-animation';
+import type { ActorAnimation, AttackKind } from '@/types/actor-animation';
 
 /** 重新导出类型，供 useMapEntities 引用 */
-export type { ActorAnimation, MoveTier } from '@/types/actor-animation';
+export type { ActorAnimation, MoveTier, AttackKind } from '@/types/actor-animation';
 
 /** 鸭子步阈值（≤此值走鸭子步） */
 const DUCK_MAX_GRID = 1.5;
@@ -130,6 +130,19 @@ export function useActorAnimation(): ActorAnimation {
     fadeOut(e, onDone);
   }
 
+  function playHit(direction?: 1 | -1 | 0): void {
+    const e = getEl();
+    // hitAnim 内部已 killTweensOf；onComplete 调 startIdle 恢复呼吸循环
+    // （段 2 结束后角色停在 scaleY:1 静止状态，不调 startIdle 会失去 idle 动画）
+    hitAnim(e, direction, () => startIdle(e));
+  }
+
+  function playAttack(targetPosition?: { x: number; y: number }, kind?: AttackKind): void {
+    const e = getEl();
+    // attackAnim 内部已 killTweensOf；onComplete 调 startIdle 恢复呼吸循环
+    attackAnim(e, targetPosition, kind, () => startIdle(e));
+  }
+
   return {
     setEl,
     enter,
@@ -138,6 +151,8 @@ export function useActorAnimation(): ActorAnimation {
     playFall,
     moveTo,
     playFadeOut,
+    playHit,
+    playAttack,
     lockMove,
     unlockMove,
     getPosition,

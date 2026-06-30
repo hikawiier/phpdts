@@ -32,6 +32,8 @@ import { dataManager } from '@/stores/data-manager';
 import { markBattleLogPlayed } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
+import { getActorById } from '@/composables/actorRegistry';
+import { resolveActionSpec } from '@/animations/action-specs';
 import type { BattleLogEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
 import {
   direct,
@@ -49,8 +51,8 @@ export const NPC_TURN_REFRESH_INTERVAL = 1000;
 /** 守护进程心跳间隔（毫秒）— 纯后端 tick 激活，不与前端业务耦合 */
 const DAEMON_BEAT_INTERVAL = 200;
 
-/** 碰撞动画总时长（毫秒）— 300ms 动画 + 120ms 延迟 + 30ms 缓冲 */
-const COLLISION_ANIM_DURATION = 450;
+/** 清场动画时长（毫秒）— playFadeOut 0.35s + 缓冲 */
+const CLEARED_ANIM_DURATION = 450;
 
 /** "你的回合" Toast 显示时长（毫秒） */
 const YOUR_TURN_TOAST_DURATION = 2000;
@@ -459,26 +461,77 @@ export const useBattleStore = defineStore('battle', () => {
       if (e.animation === 'collision') {
         dataManager.broadcast('battle:play-collision', { entry: e, npcPid });
 
-        // 玩家受击意图（hpSnapshot 过滤无效受击）
-        if (
-          Number(e.target_pid) === currentPid.value
-          && Number(e.target_type) === 0
-          && e.hpSnapshot !== null
-          && e.hpSnapshot.targetHpAfter < e.hpSnapshot.targetHpBefore
-        ) {
-          usePlayerAvatarStore().onHit();
-        }
+        // 受击动画（hpSnapshot 过滤无效受击）
+        if (e.hpSnapshot) {
+          const actor_pid = Number(e.actor_pid);
+          const actor_type = Number(e.actor_type);
+          const target_pid = Number(e.target_pid);
+          const target_type = Number(e.target_type);
+          const hpDropped = e.hpSnapshot.targetHpAfter < e.hpSnapshot.targetHpBefore;
 
-        await sleep(COLLISION_ANIM_DURATION);
+          // 按动作类型解析时序规格（impactAt / target.duration / attacker.kind）
+          const spec = resolveActionSpec(e.action_id);
+
+          // 阶段 1：攻击者动画（kind 由 spec 驱动）
+          // 玩家走 intent 系统（避免绕过 playerAvatarStore 状态机），敌人直接命令式调用
+          {
+            const targetId = target_type === 0 ? 'player' : `enemy-${target_pid}`;
+            if (actor_type === 0 && actor_pid === currentPid.value) {
+              usePlayerAvatarStore().onAttack(targetId, spec.attacker.kind);
+            } else if (actor_type !== 0) {
+              const targetPos = getActorById(targetId)?.getPosition();
+              getActorById(`enemy-${actor_pid}`)?.playAttack(targetPos, spec.attacker.kind);
+            }
+          }
+
+          // 等待命中时刻（impactAt），再触发受击——实现"攻击→命中→受击"因果时序
+          // 攻击后摇（impactAt ~ 攻击动画结束）与受击动画重叠播放
+          await sleep(spec.attacker.impactAt);
+
+          // 阶段 2：受击动画（仅命中时播放）
+          if (hpDropped) {
+            if (target_pid === currentPid.value && target_type === 0) {
+              // 玩家受击
+              usePlayerAvatarStore().onHit();
+            } else if (target_type !== 0) {
+              // 敌人受击：基于 attacker/target 实际 x 坐标计算受击方向
+              const attackerId = actor_type === 0 ? 'player' : `enemy-${actor_pid}`;
+              const attackerPos = getActorById(attackerId)?.getPosition();
+              const targetPos = getActorById(`enemy-${target_pid}`)?.getPosition();
+              // 攻击者在目标左边 → 目标被推向右（dir=1）；右边 → 推向左（dir=-1）；位置未知 → 仅压缩（dir=0）
+              const dir: 1 | -1 | 0 = attackerPos && targetPos
+                ? (attackerPos.x < targetPos.x ? 1 : -1)
+                : 0;
+              getActorById(`enemy-${target_pid}`)?.playHit(dir);
+            }
+          }
+
+          // 等待受击动画完成（攻击后摇已重叠在内）
+          await sleep(spec.target.duration);
+        }
       }
 
-      // 玩家死亡主判定（combatant_cleared 实时触发）
-      if (
-        e.directedKind === 'combatant_cleared'
-        && Number(e.cleared_pid) === currentPid.value
-        && e.reason === 'death'
-      ) {
-        usePlayerAvatarStore().onDie();
+      // 清场动画（combatant_cleared 实时触发）
+      if (e.directedKind === 'combatant_cleared') {
+        const cleared_pid = Number(e.cleared_pid);
+        const reason = e.reason;
+
+        if (cleared_pid === currentPid.value) {
+          if (reason === 'death') {
+            usePlayerAvatarStore().onDie();
+          } else if (reason === 'escaped') {
+            usePlayerAvatarStore().onFlee();
+          }
+        } else if (cleared_pid === npcPid) {
+          const actor = getActorById(`enemy-${cleared_pid}`);
+          if (reason === 'death' || reason === 'escaped') {
+            // 死亡和逃跑都走 playFadeOut（与 entities watch 一致，无时序冲突）
+            // playFall 留给未来 POI 转换（后端保留尸体时不触发 entities watch）
+            actor?.playFadeOut();
+          }
+        }
+
+        await sleep(CLEARED_ANIM_DURATION);
       }
     }
 

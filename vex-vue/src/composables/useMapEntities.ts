@@ -31,6 +31,7 @@ import { useEntitiesStore } from '@/stores/entities';
 import { useMapStore } from '@/stores/map';
 import { updateEntityZIndex } from '@/animations/actorAnimations';
 import { useActorAnimation } from '@/composables/useActorAnimation';
+import { registerActor, unregisterActor, getActorById } from '@/composables/actorRegistry';
 import type { ActorAnimation, MoveTier } from '@/types/actor-animation';
 import type { MapEntity } from '@/types/map-entity';
 
@@ -93,13 +94,16 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
   function setEntityRef(id: string, el: HTMLElement | null): void {
     if (el) {
       entityRefs.set(id, el);
-      // actor 创建控制器并命令式注入 el
+      // actor 创建控制器并命令式注入 el；同步注册到全局 registry 供 battle.ts 查询
       if (!actors.has(id)) {
-        actors.set(id, useActorAnimation());
+        const controller = useActorAnimation();
+        actors.set(id, controller);
+        registerActor(id, controller);
       }
       actors.get(id)!.setEl(el);
     } else {
       entityRefs.delete(id);
+      unregisterActor(id);
       actors.delete(id);  // killAll 在 dispose 统一处理，这里仅移除引用
       enemyLastPls.delete(id);
       enteredEntities.delete(id);
@@ -374,14 +378,30 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
         if (!player) return;
         const intent = playerAvatarStore.intent;
         switch (intent) {
-          case 'enter': case 'popup':
+          case 'enter': case 'popup': case 'revive':
             player.enter(() => playerAvatarStore.notifyUp());
             break;
           case 'die': case 'fall':
             player.playFall(() => playerAvatarStore.notifyDown());
             break;
+          case 'hit':
+            player.playHit();
+            break;
+          case 'attack': {
+            // 查 lastAttackTargetId 对应的演员位置算冲撞方向
+            // targetId 为 null 或演员已不存在（已死亡移除）时，playAttack 退化为默认朝右冲撞
+            const targetId = playerAvatarStore.lastAttackTargetId;
+            const targetPos = targetId ? getActorById(targetId)?.getPosition() : undefined;
+            player.playAttack(targetPos, playerAvatarStore.lastAttackKind);
+            break;
+          }
+          case 'flee':
+            // 无 notifyDown：flee 是"逃跑离开"非"倒下死亡"，不设 isDown=true
+            // player 保持 alpha=0，由 onBattleEnd 检查 isFled 后派 'enter' 恢复可见性
+            player.playFadeOut();
+            break;
           default:
-            // move / battle-start / battle-end / hit / low-hp / normal-hp / idle → idle
+            // move / battle-start / battle-end / low-hp / normal-hp / idle → idle
             player.idle();
         }
       });

@@ -15,6 +15,9 @@ export type PlayerAvatarIntent =
   | 'battle-end'    // 战斗结束
   | 'hit'           // 玩家受击（真实掉血）
   | 'die'           // 玩家死亡
+  | 'attack'        // 玩家发动攻击（冲撞）
+  | 'flee'          // 玩家逃跑（淡出，不设 isDown）
+  | 'revive'        // 玩家复活弹起（复用 enter/popUp）
   | 'low-hp'        // HP 进入危险区（< 30%）
   | 'normal-hp'     // HP 恢复到安全区（≥ 30%）
   | 'popup'         // 调试：弹起

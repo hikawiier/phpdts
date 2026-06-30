@@ -14,6 +14,7 @@
 // ══════════════════════════════════════════════════
 
 import gsap from 'gsap';
+import type { AttackKind } from '@/types/actor-animation';
 
 // z-index 基准：Z_STANDING + Math.round(y)，Y 越大（屏幕越下方）z-index 越高
 // 模拟透视：下方 actor 遮挡上方 actor。Z_STANDING=10 保证立绘始终在 cells(z-index:1) 之上
@@ -230,5 +231,128 @@ export function fadeOut(el: HTMLElement, onComplete?: () => void): void {
     scaleX: 0.7,
     duration: 0.35,
     ease: 'power2.in',
+  });
+}
+
+/**
+ * 受击摇晃动画（动漫感 3 段）：深压缩+侧倾 → 反向过头 → elastic 振荡回正
+ * direction: 1 右偏（被左侧攻击者打中）/ -1 左偏（被右侧攻击者打中）/ 0 仅压缩无偏移
+ * 总时长 ~0.42s，与 playTurnSegment 的 COLLISION_ANIM_DURATION(450ms) 对齐
+ *
+ * 段 1（0~0.10s）：scaleY 深压缩到 0.70 + scaleX 横向拉伸 1.15 + 朝受击方向侧倾 8° + 偏移 1.8dx
+ * 段 2（0.10~0.22s）：scaleY 拉伸过头 1.18 + scaleX 压缩 0.92 + 反向侧倾 -6° + 反向偏移 2.4dx（动漫感核心：摆过头）
+ * 段 3（0.22~0.42s）：elastic.out(1, 0.4) 自动振荡回正 + 补回 0.6dx 偏移
+ *
+ * 约束：x 用 += / -= 相对偏移，三段偏移和为 0（1.8 - 2.4 + 0.6 = 0），不污染 syncEntityPosition 的位置
+ *       direction=0 时 dx=0、rotation=0，仅播放 scaleY/scaleX 形变（无方向偏移与侧倾）
+ */
+export function hitAnim(
+  el: HTMLElement,
+  direction: 1 | -1 | 0 = 0,
+  onComplete?: () => void,
+): void {
+  gsap.killTweensOf(el);
+  const dx = direction * 6;
+  const tl = gsap.timeline({ onComplete: () => onComplete?.() });
+  // 段 1：深压缩 + 横向拉伸 + 朝受击方向侧倾 + 大幅偏移
+  tl.to(el, {
+    scaleY: 0.70,
+    scaleX: 1.15,
+    rotation: direction * 8,
+    x: `+=${dx * 1.8}`,
+    duration: 0.10,
+    ease: 'power2.in',
+  });
+  // 段 2：反向拉伸过头 + 反向侧倾（动漫感核心：身体反弹摆过头）
+  tl.to(el, {
+    scaleY: 1.18,
+    scaleX: 0.92,
+    rotation: direction * -6,
+    x: `-=${dx * 2.4}`,
+    duration: 0.12,
+    ease: 'power2.out',
+  });
+  // 段 3：elastic 自动振荡回正 + 补回偏移
+  tl.to(el, {
+    scaleY: 1,
+    scaleX: 1,
+    rotation: 0,
+    x: `+=${dx * 0.6}`,
+    duration: 0.20,
+    ease: 'elastic.out(1, 0.4)',
+  });
+}
+
+/**
+ * 攻击冲撞动画
+ *
+ * melee（默认）：蓄力后撤 → 朝目标方向冲撞 → 回正，总时长 ~0.3s
+ * ranged：蓄力后仰 → 释放前倾 → 回正，总时长 ~0.3s
+ *
+ * 方向计算：由 targetPosition 与 actor 当前 x/y 算方向向量；未传则默认朝右
+ * 约束：用绝对定位 startX/startY，段 3 回原位，避免污染 syncEntityPosition
+ *
+ * @param targetPosition 目标位置（用于 melee 算方向），undefined 时默认朝右冲撞
+ * @param kind 'melee'（冲撞）或 'ranged'（姿势），默认 'melee'
+ */
+export function attackAnim(
+  el: HTMLElement,
+  targetPosition?: { x: number; y: number },
+  kind: AttackKind = 'melee',
+  onComplete?: () => void,
+): void {
+  gsap.killTweensOf(el);
+  updateEntityZIndex(el);
+
+  const startX = gsap.getProperty(el, 'x') as number;
+  const startY = gsap.getProperty(el, 'y') as number;
+
+  const tl = gsap.timeline({ onComplete: () => onComplete?.() });
+
+  if (kind === 'ranged') {
+    // ranged：蓄力后仰 → 释放前倾 → 回正（不位移）
+    tl.to(el, { scaleY: 0.92, rotation: -5, duration: 0.1, ease: 'power1.in' });
+    tl.to(el, { scaleY: 1.08, rotation: 8, duration: 0.15, ease: 'power2.out' });
+    tl.to(el, { scaleY: 1, rotation: 0, duration: 0.05, ease: 'power2.inOut' });
+    return;
+  }
+
+  // melee：蓄力 → 冲撞 → 回正
+  // 方向向量（默认朝右）
+  let dx = 15;
+  let dy = 0;
+  if (targetPosition) {
+    const distX = targetPosition.x - startX;
+    const distY = targetPosition.y - startY;
+    const dist = Math.sqrt(distX * distX + distY * distY);
+    if (dist > 0) {
+      dx = (distX / dist) * 15;
+      dy = (distY / dist) * 15;
+    }
+  }
+
+  // 段 1（0~0.08s）：蓄力（scaleY 拉伸 + 微后撤 30%）
+  tl.to(el, {
+    scaleY: 1.15,
+    x: startX - dx * 0.3,
+    y: startY - dy * 0.3,
+    duration: 0.08,
+    ease: 'power1.in',
+  });
+  // 段 2（0.08~0.2s）：冲撞（朝目标方向位移 15px + 压缩）
+  tl.to(el, {
+    x: startX + dx,
+    y: startY + dy,
+    scaleY: 0.95,
+    duration: 0.12,
+    ease: 'power2.out',
+  });
+  // 段 3（0.2~0.3s）：回正（回原位 + scale 回 1）
+  tl.to(el, {
+    x: startX,
+    y: startY,
+    scaleY: 1,
+    duration: 0.1,
+    ease: 'power2.inOut',
   });
 }
