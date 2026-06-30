@@ -37,21 +37,15 @@ export const useMapStore = defineStore('map', () => {
   // ── 加载状态 ──
   const loading = ref<boolean>(false);
   const error = ref<string>('');
-  /** 上一次加载时的区域（用于区域切换检测） */
-  const prevRegionSnapshot = ref<string | number | null>(null);
 
   /**
    * 统一更新 mapData 属性（P10：集中修改权）
-   *
-   * 与现有 updateMapData() 语义一致：返回 { prevRegion } 供调用方做区域切换判断。
    */
-  function updateMapData(patch: Partial<MapPatch>): { prevRegion: string | number | null } {
-    const prevRegion = curRegion.value;
+  function updateMapData(patch: Partial<MapPatch>): void {
     if (patch.curLoc !== undefined) curLoc.value = patch.curLoc;
     if (patch.curRegion !== undefined) curRegion.value = patch.curRegion;
     if (patch.links !== undefined) links.value = patch.links;
     if (patch.enemies !== undefined) enemies.value = patch.enemies;
-    return { prevRegion };
   }
 
   /**
@@ -60,7 +54,6 @@ export const useMapStore = defineStore('map', () => {
    * 迁移自现有 vex/js/map.js loadMap()：
    *   - 并行 fetch game_map + enemies（经 dataManager 去重 + 缓存）
    *   - updateMapData 更新状态
-   *   - 区域切换时记录 prevRegion（供 MapGrid.vue 做 CRT 闪烁过渡）
    *   - 广播 map:loaded（各面板监听后自行刷新）
    *
    * 注意：renderMapGrid + centerOnPlayer 不在此处调用，
@@ -96,16 +89,11 @@ export const useMapStore = defineStore('map', () => {
       }
 
       const d = result.data as GameMap;
-      const { prevRegion } = updateMapData({
+      updateMapData({
         curLoc: d.currentLocation !== undefined ? d.currentLocation : null,
         curRegion: d.currentRegion !== undefined ? d.currentRegion : null,
         links: d.links || null,
       });
-
-      // 区域切换 CRT 闪烁过渡（供 MapGrid.vue 检测并应用动画）
-      if (prevRegion !== null && prevRegion !== curRegion.value) {
-        prevRegionSnapshot.value = prevRegion;
-      }
 
       // 等待 enemy 请求完成（与 game_map 处理并行，此时通常已完成）
       try {
@@ -152,7 +140,6 @@ export const useMapStore = defineStore('map', () => {
     enemies.value = [];
     loading.value = false;
     error.value = '';
-    prevRegionSnapshot.value = null;
   }
 
   return {
@@ -163,7 +150,6 @@ export const useMapStore = defineStore('map', () => {
     enemies,
     loading,
     error,
-    prevRegionSnapshot,
     // actions
     updateMapData,
     loadMap,

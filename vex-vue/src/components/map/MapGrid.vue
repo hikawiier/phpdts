@@ -11,7 +11,6 @@
 //   - v-for 渲染 cells（替代 innerHTML 命令式渲染）
 //   - onMounted: 注册业务回调 + 应用布局 + 初始化交互 + 居中
 //   - watch mapStore 数据变化 → 重新应用布局 + 居中
-//   - watch prevRegionSnapshot → CRT 闪烁过渡
 //   - onUnmounted: 清理事件监听 + 重置渲染状态
 //
 // 注意：#mapGrid 和 #mapContainer 的 id 保留（与现有 CSS + useMapInteraction 一致）。
@@ -37,24 +36,25 @@ import {
 import { initMapInteraction, centerOnPlayer } from '@/composables/useMapInteraction';
 import { setupMapCallbacks } from '@/composables/useMapBusiness';
 import { dataManager } from '@/stores/data-manager';
-import { useActors } from '@/composables/useActors';
-import { useActorsStore } from '@/stores/actors';
+import { useMapEntities } from '@/composables/useMapEntities';
+import { useEntitiesStore } from '@/stores/entities';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
+import type { MapEntity } from '@/types/map-entity';
 
 const mapStore = useMapStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const playerStore = usePlayerStore();
-const actorsStore = useActorsStore();
+const entitiesStore = useEntitiesStore();
 
 // ─── DOM 引用（供布局计算 + 交互事件使用） ───
 const gridRef = ref<HTMLElement | null>(null);
 const containerRef = ref<HTMLElement | null>(null);
 
-// ─── 多角色动画 composable（替代 usePlayerAvatar） ───
-// gridRef 复用上面的 #mapGrid 引用，useActors 内部 watch(gridRef) 挂载 ResizeObserver
-const avatarAnim = useActors(gridRef);
-const { setActorRef, syncAllPositions, dispose: disposeActors } = avatarAnim;
+// ─── 多实体动画 composable（替代 useActors） ───
+// gridRef 复用上面的 #mapGrid 引用，useMapEntities 内部 watch(gridRef) 挂载 ResizeObserver
+const entityAnim = useMapEntities(gridRef);
+const { setEntityRef, syncAllPositions, dispose: disposeEntities } = entityAnim;
 
 // ─── 交互事件 cleanup 函数 ───
 let cleanupInteraction: (() => void) | null = null;
@@ -69,6 +69,12 @@ const placeholderText = computed<string>(() => {
   if (!mapStore.links) return '等待地图加载...';
   return 'no grid data';
 });
+
+// ─── 实体立绘高度动态绑定（imgHeightRatio × 100%） ───
+function imgStyle(entity: MapEntity): Record<string, string> {
+  const ratio = entity.imgHeightRatio ?? 1;
+  return { height: `${ratio * 100}%` };
+}
 
 // ─── 单元格事件处理 ───
 function onCellClick(cell: CellData): void {
@@ -101,7 +107,7 @@ function onCellLeave(cell: CellData): void {
 }
 
 // ─── HP 危险/恢复触发 ───
-// 注意：watch(curLoc) 已迁入 useActors（移动后需先 syncAllPositions 再触发 onMove）
+// 注意：watch(curLoc) 已迁入 useMapEntities（移动后需先 syncAllPositions 再触发 onMove）
 watch(
   () => {
     const mhp = playerStore.mhp || 1;
@@ -137,20 +143,6 @@ watch(
   { deep: false }, // 顶层引用变化即可（loadMap 会替换整个 links/enemies）
 );
 
-// ─── 监听区域切换 → CRT 闪烁过渡 ───
-watch(
-  () => mapStore.prevRegionSnapshot,
-  (prev) => {
-    if (!initialized || prev === null) return;
-    if (gridRef.value) {
-      gridRef.value.classList.add('crt-transition');
-      setTimeout(() => {
-        if (gridRef.value) gridRef.value.classList.remove('crt-transition');
-      }, 500);
-    }
-  },
-);
-
 onMounted(() => {
   if (!gridRef.value || !containerRef.value) return;
 
@@ -168,11 +160,11 @@ onMounted(() => {
   // 3. 初始化交互事件（缩放/平移/键盘/触摸）
   cleanupInteraction = initMapInteraction(containerRef.value, gridRef.value);
 
-  // 4. 首次入场：先同步 actor 位置，再触发 enter 意图（动画层会 setDown + popUp）
+  // 4. 首次入场动画由 useMapEntities 的 entities watch 接管：
+  //    player el 可用后自动触发 onEnter（setDown + popUp），覆盖预加载和异步加载两种场景。
   //    syncAllPositions 作为初始同步保险（ResizeObserver 首次触发可能延迟一帧）
   nextTick(() => {
     syncAllPositions();
-    playerAvatarStore.onEnter();
   });
 
   initialized = true;
@@ -183,7 +175,7 @@ onUnmounted(() => {
     cleanupInteraction();
     cleanupInteraction = null;
   }
-  disposeActors();
+  disposeEntities();
   resetRenderState();
   initialized = false;
 });
@@ -198,7 +190,7 @@ onUnmounted(() => {
   >
     <!-- 地图网格（保留 id 供 useMapRender + useMapInteraction 使用） -->
     <div id="mapGrid" ref="gridRef" class="ascii-map-grid" :style="gridStyle">
-      <!-- 背景层：遮挡 actor 倒下/扁平状态（z-index:0 > actor z-index:-1） -->
+      <!-- 背景层：纯视觉黑底（立绘可见性由 GSAP alpha 控制，不依赖 z-index 遮挡） -->
       <div class="map-background"></div>
 
       <!-- 数据不可用时显示占位 -->
@@ -250,18 +242,18 @@ onUnmounted(() => {
         </template>
       </div>
 
-      <!-- 角色层：所有小人（与 cells 同级，absolute 定位） -->
-      <!-- 玩家 .popped 直接读 playerAvatarStore.isDown；未来多角色按 actor.kind 分发 -->
-      <!-- 角色投影由 .actor-img 的 CSS filter: drop-shadow 提供，无需独立阴影元素 -->
+      <!-- 实体层：所有地图实体（actor/poi/grass/crevice/worm，与 cells 同级，absolute 定位） -->
+      <!-- 可见性由 useMapEntities 通过 GSAP alpha 控制（z-index 固定 10，不再切换） -->
+      <!-- 角色投影由 .entity-img 的 CSS filter: drop-shadow 提供，无需独立阴影元素 -->
       <div
-        v-for="actor in actorsStore.actors"
-        :key="actor.id"
-        :ref="el => setActorRef(actor.id, el as HTMLElement | null)"
-        class="actor"
-        :class="{ popped: actor.id === 'player' ? !playerAvatarStore.isDown : true }"
-        :data-actor-id="actor.id"
+        v-for="entity in entitiesStore.entities"
+        :key="entity.id"
+        :ref="el => setEntityRef(entity.id, el as HTMLElement | null)"
+        class="entity"
+        :class="[`entity-${entity.kind}`, { 'entity-player': entity.id === 'player' }]"
+        :data-entity-id="entity.id"
       >
-        <img class="actor-img" :src="actor.img" :alt="actor.id" />
+        <img class="entity-img" :src="entity.img" :alt="entity.id" :style="imgStyle(entity)" />
       </div>
     </div>
   </div>
@@ -269,7 +261,7 @@ onUnmounted(() => {
 
 <style scoped>
 /* ═══ 当前格背景样式 ═══ */
-/* 立绘已迁出到 #mapGrid 直接子元素（角色层 .actor），相关样式在 terminal.css 全局定义 */
+/* 立绘已迁出到 #mapGrid 直接子元素（实体层 .entity），相关样式在 terminal.css 全局定义 */
 
 :deep(.map-cell.current) {
   background: #2a2a2a;

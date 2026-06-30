@@ -6,6 +6,21 @@
 
 /* ─── IBM Plex Mono 已在 index.html 通过 Google Fonts 引入 ─── */
 
+/* ═══ z-index 层级变量（MAP_LAYER_SYSTEM 设计案） ═══ */
+/* 阶段 1：仅声明，现有元素暂不改用变量（阶段 2 改造） */
+:root {
+    /* ── 固定层 ── */
+    --z-actor-down:     -1;   /* 已废弃：可见性改由 GSAP alpha 控制，z-index 不再切换 */
+    --z-ground-bg:       0;   /* 地面背景层（map-background） */
+    --z-cell:            1;   /* 地图格层（沿用现状） */
+    --z-cell-current:    2;   /* 当前格（沿用现状） */
+    --z-ground-deco:     3;   /* 地面装饰层（裂隙，未来引入） */
+    /* ── Y 排序层（1000+，由 JS 动态设置，阶段 2 引入） ── */
+    /* ── 固定层（在 Y 排序之上） ── */
+    --z-air-occluder: 2000;   /* 空中遮挡物（树冠、屋顶，未来引入） */
+    --z-overlay-ui:   3000;   /* 顶层 UI */
+}
+
 /* ═══ CRT 特效 ═══ */
 
 /* 扫描线已移除：深色区域不可见，亮色区域反而削弱清晰度，净效果为负。
@@ -134,13 +149,12 @@ body::after {
     display: grid;
     gap: 0;
     padding: 2px;
-    position: relative;  /* 让 .actor / .map-background absolute 定位相对 grid */
-    isolation: isolate;  /* 创建独立层叠上下文：内部 z-index 不影响外部，且让 .map-background 能遮挡 .actor(z-index:-1) */
+    position: relative;  /* 让 .entity / .map-background absolute 定位相对 grid */
+    isolation: isolate;  /* 创建独立层叠上下文：内部 z-index 不影响外部 */
 }
 
 /* ═══ 背景层 ═══ */
-/* 独立背景层：与 .actor 同级，z-index:0 遮挡 .actor(z-index:-1) 的倒下/扁平状态。
-   复刻 demo 的 #map { z-index:1 } 整体遮挡 #actor(z-index:0) 效果。
+/* 独立背景层：纯视觉背景（黑色底）。立绘可见性由 GSAP alpha 控制，不再依赖 z-index 遮挡。
    未来可替换为背景图层（background-image）。 */
 .map-background {
     position: absolute;
@@ -150,32 +164,34 @@ body::after {
     z-index: 0;
 }
 
-/* ═══ 角色层（actor）═══ */
-/* 立绘独立为 #mapGrid 直接子元素，与 cells 同级，复刻 demo 的 z-index 切换丝滑效果 */
-/* 尺寸由 useActors 的 syncActorPosition 动态设置（等于 cell 尺寸） */
+/* ═══ 实体层（entity）═══ */
+/* 立绘独立为 #mapGrid 直接子元素，与 cells 同级 */
+/* 尺寸由 useMapEntities 的 syncEntityPosition 动态设置（等于 cell 尺寸 × 跨度） */
 
-.actor {
+/* 通用实体容器（actor/poi/grass/crevice/worm 共享） */
+.entity {
     position: absolute;
     left: 0;
     top: 0;
     pointer-events: none;
-    z-index: -1;    /* 倒下/扁平状态：被 .map-background(z-index:0) 整体遮挡（含 gap/边界外区域） */
+    z-index: 10;    /* 固定浮出 cells(z-index:1) 之上，可见性由 GSAP alpha 控制 */
     transform-origin: bottom center;
     will-change: transform, opacity;
 }
-/* popped 状态：浮出 cells 之上（站立/idle 时） */
-.actor.popped {
-    z-index: 10;
+/* player 实体默认透明：避免首次渲染到 GSAP 接管之间立绘"透出来" */
+/* GSAP 的 setDown(alpha:0)/popUp(alpha:1) 会通过 style.opacity 覆盖此默认值 */
+.entity.entity-player {
+    opacity: 0;
 }
+/* z-index 固定 10，可见性由 GSAP alpha 控制（删除原 .actor.popped 规则） */
 
-/* 立绘图片：height 相对 actor 高度（actor 高度由 syncActorPosition 设为 cell 高度） */
-.actor-img {
+/* 立绘图片：height 由 MapGrid.vue 的 imgStyle() 动态绑定（ratio * 100%） */
+.entity-img {
     position: absolute;
     left: 50%;
     bottom: 0;
-    height: 150%;   /* 相对 actor 高度，等于 cell 高度的 150% */
     width: auto;
-    transform: translateX(-50%);  /* 水平居中（CSS 初始值，GSAP 接管 img 时不影响 actor transform） */
+    transform: translateX(-50%);  /* 水平居中（CSS 初始值，GSAP 接管 entity 时不影响 img transform） */
     image-rendering: auto;
     filter:
         drop-shadow( 1px  0 0 #fff)
@@ -185,8 +201,7 @@ body::after {
         drop-shadow(0 4px 4px rgba(0, 0, 0, 0.6));
 }
 
-/* v3：普通 cell 加 z-index:1，确保倒下立绘（rotation:-90 延伸到相邻 cell）
-   被所有 cell 遮挡，复刻 demo 的 #map { z-index:1 } 整体遮挡效果 */
+/* 普通 cell z-index:1，在背景层(z-index:0)之上、立绘(z-index:10)之下 */
 .map-cell {
     color: #888;
     display: flex;
@@ -196,7 +211,7 @@ body::after {
     font-weight: bold;
     cursor: default;
     position: relative;
-    z-index: 1;     /* v3 新增：普通格 z-index:1，遮挡倒下立绘 */
+    z-index: 1;     /* 普通格在背景层之上 */
     transition: background 0.1s, color 0.1s, border-color 0.1s;
     user-select: none;
     border: 1px solid rgba(68,68,68,0.3);
@@ -299,18 +314,6 @@ body::after {
 @keyframes move-flash {
     0%   { background: rgba(255,255,255,0.25); }
     100% { background: transparent; }
-}
-/* 区域切换 CRT 闪烁 */
-#mapGrid.crt-transition {
-    animation: crt-flicker 0.5s ease-out;
-}
-@keyframes crt-flicker {
-    0%   { opacity: 0; }
-    10%  { opacity: 1; }
-    20%  { opacity: 0.2; }
-    30%  { opacity: 1; }
-    50%  { opacity: 0.6; }
-    100% { opacity: 1; }
 }
 /* unreachable */
 .map-cell.unreachable {

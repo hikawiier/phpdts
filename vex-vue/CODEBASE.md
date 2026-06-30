@@ -1,4 +1,4 @@
-# vex-vue 前端项目 — 代码库说明
+﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
 
 > 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
 > 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
@@ -56,7 +56,7 @@ vex-vue/
     ├── assets/
     │   └── styles/
     │       ├── input.css       # Tailwind 源文件（@theme 色板定义）
-    │       ├── terminal.css    # 自定义样式（CRT/地图格/角色层/按钮/动画/日志类/状态栏/模态框/Toast）
+    │       ├── terminal.css    # 自定义样式（CRT/地图格/实体层/按钮/动画/日志类/状态栏/模态框/Toast）
     │       └── battle.css      # 战斗样式（战斗模态框/碰撞动画/伤害数字/回合光效/装填区）
     ├── components/
     │   ├── actions/
@@ -88,9 +88,9 @@ vex-vue/
     │   │   └── LogUnreadBtn.vue        # 未读日志提示按钮
     │   └── map/
     │       ├── MapContainer.vue        # 地图容器（缩放按钮 + 立绘调试按钮 + 网格）
-    │       └── MapGrid.vue             # 地图网格（v-for 渲染 cells + 角色层 actors + 迷雾）
+    │       └── MapGrid.vue             # 地图网格（v-for 渲染 cells + 实体层 entities + 迷雾）
     ├── composables/
-    │   ├── useActors.ts            # 多角色动画层（actor DOM 引用 + 位置同步 + GSAP 动画 + 意图派发）
+    │   ├── useMapEntities.ts      # 多实体动画层（entity DOM 引用 + 位置同步 + z-index 更新 + GSAP 动画 + 意图派发）
     │   ├── useDebugBus.ts          # DebugBus（?debug=ai 时收集事件流）
     │   ├── useLogScroll.ts         # 日志滚动逻辑（自动滚动 + 未读计数）
     │   ├── useMapBusiness.ts       # 地图业务逻辑（clickMove/handleEnemyClick）
@@ -105,7 +105,7 @@ vex-vue/
     │   ├── skill-templates.ts      # 技能模板（按 act_id 索引）+ getSkillTemplate
     │   └── terrain-desc.ts         # 地形描述词库 + generateTerrainDesc
     ├── stores/
-    │   ├── actors.ts               # 角色层数据（actors computed 派生自 mapStore）
+    │   ├── entities.ts             # 实体层数据（entities computed 派生自 mapStore，不依赖 isDown）
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
     │   ├── battle-director.ts      # 战斗导演模块（同步纯函数：编排 raw entries → 分层演出脚本 PlayScript）
     │   ├── command-queue.ts        # 命令队列（防抖 + 锁定 + 冷却）
@@ -119,7 +119,7 @@ vex-vue/
     │   ├── toast.ts                # Toast（showToast + 同类合并）
     │   └── ui.ts                   # UI 全局状态（抽屉/模态框/战斗按钮三态/标签）
     ├── types/
-    │   ├── actor.ts                # 角色小人类型（ActorKind/Actor）
+    │   ├── map-entity.ts           # 地图实体类型（EntityKind/EntityLayer/ActorKind/MapEntity）
     │   ├── api.ts                  # API 响应类型定义（PlayerInfo/Enemy/GameMap/BattleLogEntry 等）
     │   ├── events.ts               # 语义事件类型定义（AppEvent + 事件数据接口）
     │   └── player-avatar.ts        # 玩家小人动画意图类型（PlayerAvatarIntent）
@@ -208,7 +208,7 @@ battle（战斗）
 ├─────────────────────────────────────────────────────────────┤
 │  Composables（use*.ts）                                      │
 │  ├─ 纯逻辑层（无响应式状态，或仅模块级缓存）                  │
-│  ├─ useActors：角色层动画（位置同步 + GSAP + 意图派发）       │
+│  ├─ useMapEntities：实体层动画（位置同步 + z-index 更新 + GSAP + 意图派发）       │
 │  ├─ useMapBusiness：clickMove/handleEnemyClick 业务编排      │
 │  ├─ useMapInteraction：缩放/平移/键盘/触摸交互               │
 │  ├─ useMapReachability：BFS 可达性 + findPath 寻路           │
@@ -469,7 +469,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 |-------|------|---------|-------------|
 | `playerStore` | 玩家信息 | `playerInfo` | `loadPlayerInfo(forceRefresh)` |
 | `mapStore` | 地图数据 | `curLoc`/`curRegion`/`links`/`enemies` | `loadMap()`/`updateMapData(patch)` |
-| `actorsStore` | 角色层数据（派生） | `actors`(computed) | （无 action，computed 从 mapStore 派生） |
+| `entitiesStore` | 实体层数据（派生） | `entities`(computed) | （无 action，computed 从 mapStore 派生，不依赖 isDown） |
 | `playerAvatarStore` | 玩家小人意图状态机 | `intent`/`intentSeq`/`isDown`/`pendingIntent`/`hpRatio` | `onEnter()`/`onMove()`/`onBattleStart()`/`onBattleEnd()`/`onHit()`/`onDie()`/`onLowHp()`/`onNormalHp()`/`debugPopUp()`/`debugFall()`/`notifyUp()`/`notifyDown()` |
 | `tileActionStore` | 地图格动作 | `tileActions`/`modalOpen`/`modalType` | `handleExplore()`/`handleSearch(iaid)`/`handlePickup(iid)`/`handlePickupAll(items)`/`handleSwitchRegion()` |
 | `inventoryStore` | 背包 + 装备 | `inventoryData`/`equipment`(computed) | `loadInventory()`/`handleDiscard(slot)` |
@@ -711,18 +711,18 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 - `useMapBusiness.setupMapCallbacks()` 调用 `setRenderCallbacks()` 和 `setInteractionCallbacks()` 注入业务回调
 - `useMapInteraction` 通过 `_onKeyMove` 回调触发 `useMapBusiness.clickMove`
 
-### 9.2 角色动画层（useActors）
+### 9.2 实体动画层（useMapEntities）
 
-`useActors(gridRef)` 是多角色动画 composable，替代旧的 `usePlayerAvatar`（已删除）。管理所有 actor 的 DOM 引用、位置同步、GSAP 动画、意图派发。
+`useMapEntities(gridRef)` 是多实体动画 composable，替代旧的 `useActors`（已删除）和 `usePlayerAvatar`（已删除）。管理所有地图实体（actor/poi/grass/crevice/worm）的 DOM 引用、位置同步、z-index 更新、GSAP 动画、意图派发。
 
 **三层职责**：
-- **位置同步**（`syncActorPosition`）：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移，同时设 actor `width/height` 等于 cell 尺寸（让 `.actor-img` 的 `height:150%` 生效）
-- **z-index 切换**：`popUp` 回弹 `onStart` 加 `.popped`（z-index:10 浮出），`fall` `onComplete` 移除（z-index:-1 被 `.map-background` 遮挡）
+- **位置同步**（`syncEntityPosition`）：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移，同时设实体 `width/height` 等于 cell 尺寸 × 跨度（让 `.entity-img` 的 `height` 生效）
+- **z-index 更新**（`updateEntityZIndex`）：基于 `isDown` 状态切换 z-index（阶段 1 硬编码 -1/10，阶段 2 将改用 Y 排序动态计算）
 - **GSAP 动画**：`resetTransform`/`setDown`/`startIdle`/`popUp`/`fall`，参数沿用旧 usePlayerAvatar
 
 **关键设计**：
 - `resetTransform`/`setDown` 不动 `x/y/xPercent/yPercent/width/height`（位置由 `syncActorPosition` 管，避免被动画覆盖）
-- 角色投影由 `.actor-img` 的 CSS `filter: drop-shadow(0 4px 4px rgba(0,0,0,0.6))` 提供，跟随立绘形状，无需独立阴影元素
+- 角色投影由 `.entity-img` 的 CSS `filter: drop-shadow(0 4px 4px rgba(0,0,0,0.6))` 提供，跟随立绘形状，无需独立阴影元素
 - `notifyUp` 挂在回弹 tween 的 `onComplete`（非 timeline.onComplete，因末尾 idle `repeat:-1` 会导致 timeline 永不完成）
 - `watch(intentSeq)` 而非 `watch(intent)`：连续移动（intent 都是 'move'）时 intentSeq 递增确保每次都触发
 
@@ -732,9 +732,9 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 |---------|------|------|
 | 缩放 / resize | `ResizeObserver` 监听 `#mapGrid` 尺寸变化 | `watch(gridRef)` 创建/清理 observer，回调用 `requestAnimationFrame` 同步 |
 | 移动（curLoc 变化） | `watch(mapStore.curLoc)` | 先 `syncAllPositions` 再 `playerAvatarStore.onMove()` |
-| actor 列表变化 | `watch(actorsStore.actors)` | 初始挂载 / 区域切换 |
+| 实体列表变化 | `watch(entitiesStore.entities)` | 初始挂载 / 区域切换 |
 
-**关键导出**：`setActorRef(id, el)` / `syncAllPositions()` / `dispose()`
+**关键导出**：`setEntityRef(id, el)` / `syncAllPositions()` / `dispose()`
 
 ### 9.3 其他 composables
 
@@ -770,7 +770,7 @@ App.vue
 ├── main
 │   ├── LeftPanel.vue
 │   │   └── MapContainer.vue
-│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 角色层（actors v-for）+ 迷雾
+│   │       ├── MapGrid.vue          # v-for 渲染地图格 + 实体层（entities v-for）+ 迷雾
 │   │       │   └── （角色层 .actor × N 与 .map-cell × N 同级，详见 §10.3）
 │   │       ├── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
 │   │       ├── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
@@ -802,11 +802,11 @@ RightPanel.vue (battle mode)
 1. **Store 驱动**：组件读取 store 的 ref/computed 响应式渲染，调用 store action 触发业务
 2. **事件触发动画**：store `broadcast` 事件 → 组件 `listen` 后执行 DOM 动画（如 `CollisionAnimation`）
 3. **Teleport to body**：模态框类组件（`Modal`/`BattleModal`）使用 `<Teleport to="body">` 避免 `position: fixed` 与父级 `transform` 冲突
-4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放；`useActors` 通过 `watch(() => playerAvatarStore.intentSeq)` 派发动画
+4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放；`useMapEntities` 通过 `watch(() => playerAvatarStore.intentSeq)` 派发动画
 
-### 10.3 角色层（多角色动画架构）
+### 10.3 实体层（多实体动画架构）
 
-玩家立绘（及未来 NPC/敌怪小人）独立为 `#mapGrid` 内与 `.map-cell` 同级的角色层，通过 GSAP 实现标靶式弹起/倒下/呼吸动画。架构采用事件源 → 意图层 → 动画层 → DOM 层四层解耦。
+玩家立绘（及未来 NPC/敌怪/POI/草丛/蠕虫/裂隙）独立为 `#mapGrid` 内与 `.map-cell` 同级的实体层，通过 GSAP 实现标靶式弹起/倒下/呼吸动画。架构采用事件源 → 意图层 → 动画层 → DOM 层四层解耦。
 
 **四层架构**：
 
@@ -815,47 +815,52 @@ RightPanel.vue (battle mode)
     ↓ 调用 playerAvatarStore.onXxx()
 意图层（playerAvatarStore：intent/intentSeq/isDown/pendingIntent）
     ↓ intentSeq 变化
-动画层（useActors composable）
-    ↓ watch(intentSeq) 派发动画 + watch(curLoc/actors) + ResizeObserver 同步位置
-DOM 层（#mapGrid > .actor × N，与 .map-cell × N 同级）
+动画层（useMapEntities composable）
+    ↓ watch(intentSeq) 派发动画 + watch(curLoc/entities) + ResizeObserver 同步位置
+DOM 层（#mapGrid > .entity × N，与 .map-cell × N 同级）
 ```
 
-**数据层**（`actorsStore`）：
-- `actors` computed 从 `mapStore` 派生：当前格存在时生成 `player` actor（`{id:'player', kind:'player', pls:curLoc, img:'/img/4.png'}`）
-- 敌人/NPC actor 预留（代码注释，未来取消注释即可启用）
+**数据层**（`entitiesStore`）：
+- `entities` computed 从 `mapStore` 派生：当前格存在时生成 `player` actor（`{id:'player', kind:'actor', actorKind:'player', pls:curLoc, img:'/img/4.png', imgHeightRatio:1.5}`）
+- **不依赖 `playerAvatarStore.isDown`**：避免 isDown 变化触发 entities 重算 → watch(entities) → syncAllPositions（多余）
+- 敌人/NPC/POI/草丛/蠕虫/裂隙预留（代码注释，未来取消注释即可启用）
 
 **DOM 层**（`MapGrid.vue`）：
-- `.actor` 与 `.map-cell` 同为 `#mapGrid` 直接子元素，`position:absolute` 脱离 grid 流
-- `:class="{ popped: !playerAvatarStore.isDown }"` 直接读 store 状态切换 z-index
-- `:ref` 用函数形式绑定到 `setActorRef`，收集 actor DOM 引用
-- `.actor-img`（`<img>`）是 `.actor` 子元素，`height:150%` 相对 actor 高度（actor 高度由同步设为 cell 高度）
+- `.entity` 与 `.map-cell` 同为 `#mapGrid` 直接子元素，`position:absolute` 脱离 grid 流
+- `:class="`entity-${entity.kind}`"` 按实体类型添加 class（如 `entity-actor`）
+- z-index 由 JS 通过 `el.style.zIndex` 动态设置（删除原 `:class="{ popped: ... }"` 绑定）
+- `:ref` 用函数形式绑定到 `setEntityRef`，收集实体 DOM 引用
+- `.entity-img`（`<img>`）是 `.entity` 子元素，`height` 由 `imgStyle()` 动态绑定（`imgHeightRatio × 100%`，actor=150%）
 
-**位置同步**（`useActors.syncActorPosition`）：
+**位置同步**（`useMapEntities.syncEntityPosition`）：
 - 算法与 `centerOnPlayer` 一致：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移
-- 同时设 actor `width/height` 等于 cell 尺寸，让 `.actor-img` 的 `height:150%` 生效
-- GSAP `x/y/xPercent:-50/yPercent:-100` 让 actor 中心底部对准 cell 底部中心
-- 三路触发：`ResizeObserver`（缩放/resize）+ `watch(curLoc)`（移动）+ `watch(actors)`（初始挂载/区域切换）
+- 同时设实体 `width/height` 等于 cell 尺寸 × 跨度（`spanCols`/`spanRows`，默认 1），让 `.entity-img` 的 `height` 生效
+- GSAP `x/y/xPercent:-50/yPercent:-100` 让实体中心底部对准锚点格底部中心
+- 位置同步后立即调用 `updateEntityZIndex` 更新 z-index
 
-**z-index 切换**（class 切换）：
+**z-index 更新**（`useMapEntities.updateEntityZIndex`）：
 
-| 状态 | class | actor z-index | 视觉 |
-|------|-------|---------------|------|
-| 倒下（setDown / fall 后） | 无 `.popped` | -1 | 被 `.map-background`（z-index:0）遮挡 |
-| 站立（popUp 回弹开始） | `.popped` | 10 | 浮出所有 cell 之上 |
+| 状态 | z-index | 视觉 |
+|------|---------|------|
+| 倒下（setDown / fall 后） | -1 | 被 `.map-background`（z-index:0）遮挡 |
+| 站立（popUp 回弹开始） | 10 | 浮出所有 cell 之上 |
 
-切换时机：`popUp` 回弹 tween 的 `onStart` 加 `.popped`；`fall` 的 `timeline.onComplete` 移除 `.popped`。
+- 阶段 1：硬编码 -1/10，与现状一致
+- 阶段 2：将改用 `computeZIndex` 动态计算（Y 排序：`1000 + yZ*10 + tiebreaker`）
+- 玩家 actor 的 `isDown` 从 `playerAvatarStore.isDown` 实时读取；NPC/敌人初版无 isDown 状态（视为 false）
+- 切换时机：`popUp` 回弹 tween 的 `onStart` 设 `el.style.zIndex = 10`；`fall` 的 `timeline.onComplete` 设 `el.style.zIndex = -1`
 
 **角色投影**：
-- 由 `.actor-img` 的 CSS `filter: drop-shadow(...)` 提供，含白色描边（4 方向 1px 白色 drop-shadow）+ 黑色投影（`drop-shadow(0 4px 4px rgba(0,0,0,0.6))`）
+- 由 `.entity-img` 的 CSS `filter: drop-shadow(...)` 提供，含白色描边（4 方向 1px 白色 drop-shadow）+ 黑色投影（`drop-shadow(0 4px 4px rgba(0,0,0,0.6))`）
 - 投影跟随立绘形状，idle/popUp/fall 任何状态都自然显示，无需独立阴影元素
 - 黑线稿角色在黑底地图上靠白色描边 + 黑色投影实现视觉分离
 
-**GSAP 动画**（`useActors`）：
+**GSAP 动画**（`useMapEntities`，仅 actor）：
 - `resetTransform`：重置 scale/rotation/alpha（不动位置）
 - `setDown`：扁平倒地状态（`scaleY:0.04, rotation:-90, alpha:0.25`）
 - `startIdle`：呼吸循环（`scaleY:1.02, scaleX:0.99, yoyo, repeat:-1`）
-- `popUp`：4 段 timeline（淡入 → 蓄力 → 回弹加 `.popped` + `notifyUp` → idle 循环）
-- `fall`：2 段 timeline（蓄力 → 倒下移除 `.popped` + `notifyDown`）
+- `popUp`：4 段 timeline（淡入 → 蓄力 → 回弹设 z-index:10 + `notifyUp` → idle 循环）
+- `fall`：2 段 timeline（蓄力 → 倒下设 z-index:-1 + `notifyDown`）
 
 **意图映射**（`INTENT_HANDLERS`，11 种意图）：
 - `enter`/`popup` → `setDown + popUp`（先倒下再弹起）
@@ -878,17 +883,18 @@ DOM 层（#mapGrid > .actor × N，与 .map-cell × N 同级）
 - 当前 low-hp/normal-hp 映射 idle，未来可扩展低 HP 摇晃动画
 
 相关实现文件：
-- [src/composables/useActors.ts](src/composables/useActors.ts) — 动画层（DOM 引用 + 位置同步 + GSAP + 意图派发）
-- [src/stores/actors.ts](src/stores/actors.ts) — 数据层（actor 列表 computed 派生）
+- [src/composables/useMapEntities.ts](src/composables/useMapEntities.ts) — 动画层（DOM 引用 + 位置同步 + z-index 更新 + GSAP + 意图派发）
+- [src/stores/entities.ts](src/stores/entities.ts) — 数据层（entities 列表 computed 派生，不依赖 isDown）
 - [src/stores/player-avatar.ts](src/stores/player-avatar.ts) — 意图层（intent 状态机 + 自动恢复）
-- [src/types/actor.ts](src/types/actor.ts) — Actor/ActorKind 类型
+- [src/types/map-entity.ts](src/types/map-entity.ts) — MapEntity/EntityKind/EntityLayer/ActorKind 类型
 - [src/types/player-avatar.ts](src/types/player-avatar.ts) — PlayerAvatarIntent 类型
-- [src/components/map/MapGrid.vue](src/components/map/MapGrid.vue) — DOM 层（角色层 v-for + HP watch）
+- [src/components/map/MapGrid.vue](src/components/map/MapGrid.vue) — DOM 层（实体层 v-for + HP watch + imgStyle）
 - [src/components/map/MapContainer.vue](src/components/map/MapContainer.vue) — 调试按钮
-- [src/assets/styles/terminal.css](src/assets/styles/terminal.css) — `.actor` / `.actor.popped` / `.actor-img` 样式
+- [src/assets/styles/terminal.css](src/assets/styles/terminal.css) — `.entity` / `.entity-img` 样式 + z-index 层级变量
 - [src/stores/battle.ts](src/stores/battle.ts) — 6 处事件接入（详见 §8.9）
 
-> 设计案见 [docs/ACTORS_LAYER_REFACTOR.md](docs/ACTORS_LAYER_REFACTOR.md)（注：该设计案记录的 `.actor-shadow` 独立阴影元素已在实施后移除，角色投影改由立绘 img 的 `drop-shadow` 滤镜提供）。
+> 设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)（v2：多实体分层架构，含 Y 排序/多格实体/地面装饰层预留）。原设计案 [docs/ACTORS_LAYER_REFACTOR.md](docs/ACTORS_LAYER_REFACTOR.md) 已被取代（记录的 `.actor-shadow` 独立阴影元素已删除，角色投影改由立绘 img 的 `drop-shadow` 滤镜提供）。
+
 
 ---
 
@@ -983,10 +989,13 @@ perf.clear();
 - `BattleLogEntry` — 战斗日志（所有数值字段为 string）
 - `OblLogResponse` / `BattleLogResponse` / `EnemiesResponse` — 响应包装
 
-### 12.2 角色层类型（`types/actor.ts` + `types/player-avatar.ts`）
+### 12.2 实体层类型（`types/map-entity.ts` + `types/player-avatar.ts`）
 
-- `ActorKind` — 角色类型联合（`'player' | 'npc' | 'enemy'`）
-- `Actor` — 角色小人数据（`id` / `kind` / `pls` / `img`）
+- `EntityKind` — 地图实体类型联合（`'actor' | 'poi' | 'grass' | 'crevice' | 'worm'`）
+- `EntityLayer` — 实体层级（`'ground-deco' | 'air-occluder' | 'y-sorted'`）
+- `ActorKind` — actor 子类型联合（`'player' | 'npc' | 'enemy'`）
+- `MapEntity` — 地图实体数据（`id` / `kind` / `pls` / `img` / `spanCols?` / `spanRows?` / `imgHeightRatio?` / `actorKind?`）
+  - 注：`isDown` 不作为 MapEntity 字段，玩家 actor 的 isDown 在 `useMapEntities.updateEntityZIndex` 中实时从 `playerAvatarStore.isDown` 读取
 - `PlayerAvatarIntent` — 玩家小人动画意图（11 种：`enter`/`move`/`battle-start`/`battle-end`/`hit`/`die`/`low-hp`/`normal-hp`/`popup`/`fall`/`idle`）
 
 ### 12.3 事件类型（`types/events.ts`）
@@ -1047,4 +1056,9 @@ perf.clear();
 | `vex/css/battle.css` | `assets/styles/battle.css` |
 | `oblivions/mark_battle_log_played.php` | 零依赖接口，前端通过 `api/client.ts: markBattleLogPlayed` 调用（已从 vex/ 迁移至 oblivions/） |
 
-> 玩家立绘动画最初在 `MapGrid.vue` 内联 GSAP 实现（单 actor + StatusBar 调试按钮 + `player:popup`/`player:fall` 事件），后经两次重构：先抽离为 `usePlayerAvatar` composable + `playerAvatarStore`（单 actor 架构），再重构为 `useActors` + `actorsStore` 的多角色层架构（立绘迁出 cell，独立为 `#mapGrid` 内与 cells 同级的角色层）。`usePlayerAvatar.ts` 已删除，`player:popup`/`player:fall` 事件已从 `events.ts` 移除。
+> 玩家立绘动画最初在 `MapGrid.vue` 内联 GSAP 实现（单 actor + StatusBar 调试按钮 + `player:popup`/`player:fall` 事件），后经三次重构：
+> 1. 抽离为 `usePlayerAvatar` composable + `playerAvatarStore`（单 actor 架构）
+> 2. 重构为 `useActors` + `actorsStore` 的多角色层架构（立绘迁出 cell，独立为 `#mapGrid` 内与 cells 同级的角色层）
+> 3. 重构为 `useMapEntities` + `entitiesStore` 的多实体分层架构（泛化支持 actor/poi/grass/crevice/worm，z-index 全部由 JS 控制，删除 `.actor.popped` CSS 类，引入 z-index 层级变量与 Y 排序预留）
+>
+> `usePlayerAvatar.ts` / `useActors.ts` / `actors.ts` / `actor.ts` 均已删除，`player:popup`/`player:fall` 事件已从 `events.ts` 移除。设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)。
