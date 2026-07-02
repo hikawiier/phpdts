@@ -199,6 +199,11 @@ body::after {
         drop-shadow(0 4px 4px rgba(0, 0, 0, 0.918));
 }
 
+/* 朝右时镜像翻转立绘（scaleX(-1) 在 translateX(-50%) 之后，保持居中不被反转） */
+.entity.facing-right .entity-img {
+    transform: translateX(-50%) scaleX(-1);
+}
+
 /* player 立绘：方案 A（白色描边 + 黑色投影） */
 .entity-player .entity-img {
     filter:

@@ -50,7 +50,7 @@ export function setDown(el: HTMLElement): void {
  */
 export function startIdle(el: HTMLElement): void {
   gsap.killTweensOf(el);
-  gsap.set(el, { scaleY: 1, scaleX: 1, rotation: 0 });
+  gsap.set(el, { scaleY: 1, scaleX: 1, rotation: 0, alpha: 1 });
   gsap.to(el, {
     scaleY: 1.02,
     scaleX: 0.99,
@@ -121,6 +121,7 @@ export function moveActor(
 ): void {
   gsap.killTweensOf(el);
   updateEntityZIndex(el);
+  gsap.set(el, { alpha: 1 });
 
   const duration = 0.5;
   const swayAmp = 12;
@@ -173,6 +174,7 @@ export function jumpActor(
 ): void {
   gsap.killTweensOf(el);
   updateEntityZIndex(el);
+  gsap.set(el, { alpha: 1 });
 
   const airTime = 0.5;            // 空中阶段时长
   const jumpHeight = cellH * 0.6;
@@ -252,6 +254,7 @@ export function hitAnim(
   onComplete?: () => void,
 ): void {
   gsap.killTweensOf(el);
+  gsap.set(el, { alpha: 1 });
   const dx = direction * 6;
   const tl = gsap.timeline({ onComplete: () => onComplete?.() });
   // 段 1：深压缩 + 横向拉伸 + 朝受击方向侧倾 + 大幅偏移
@@ -303,6 +306,7 @@ export function attackAnim(
 ): void {
   gsap.killTweensOf(el);
   updateEntityZIndex(el);
+  gsap.set(el, { alpha: 1 });
 
   const startX = gsap.getProperty(el, 'x') as number;
   const startY = gsap.getProperty(el, 'y') as number;

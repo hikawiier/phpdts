@@ -308,6 +308,11 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
       if (entity.id === 'player') continue;
       if (entity.kind !== 'actor') continue;
       if (enteredEntities.has(entity.id)) continue;
+      // 跳过正在淡出的 entity：watch(entities) 的 rAF 闭包可能持有 stale entities，
+      // 其中包含已在另一轮 watch 中启动 fadeOut 的 enemy。
+      // 若不跳过，enter→setDown 会 killTweensOf 杀掉 fadeOut tween 并覆盖属性，
+      // 导致 fadeOut 立即完成、淡出动画失效（enemy 突然消失）。
+      if (fadingOutIds.has(entity.id)) continue;
       const actor = actors.get(entity.id);
       if (!actor) continue;
       enteredEntities.add(entity.id);
@@ -329,6 +334,9 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     for (const entity of entities) {
       if (entity.id === 'player') continue;
       if (entity.kind !== 'actor') continue;
+      // 跳过正在淡出的 entity：同 tryFirstEnter，防止 stale entities 触发 moveTo/enter
+      // 杀掉正在进行的 fadeOut tween
+      if (fadingOutIds.has(entity.id)) continue;
 
       const oldPls = enemyLastPls.get(entity.id);
       enemyLastPls.set(entity.id, entity.pls);

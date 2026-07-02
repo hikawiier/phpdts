@@ -32,7 +32,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         kind: 'actor',
         actorKind: 'player',
         pls: mapStore.curLoc,
-        img: '/img/4.png',
+        img: '/img/1.png',
         imgHeightRatio: 1.25,
       });
     }

@@ -48,6 +48,8 @@ export interface ActionAnimationSpec {
 export interface ActorAnimation {
   /** 命令式注入/更新 el（替代响应式 ref，避免普通 Map 无响应式问题） */
   setEl(el: HTMLElement | null): void;
+  /** 设置朝向（左/右），通过 CSS scaleX(-1) 镜像翻转立绘，不影响 wrapper 的 GSAP 形变动画 */
+  setFacing(dir: 'left' | 'right'): void;
   /** 首次入场 / 强调到达：setDown + popUp */
   enter(onUp?: () => void): void;
   /** 跨区域到达：淡入弹起（无倒下阶段） */

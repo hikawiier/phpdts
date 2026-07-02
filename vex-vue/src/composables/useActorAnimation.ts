@@ -39,6 +39,7 @@ export function useActorAnimation(): ActorAnimation {
   let el: HTMLElement | null = null;
   let isMoving = false;
   let animToken = 0;
+  let facingDirection: 'left' | 'right' = 'left';
 
   function getEl(): HTMLElement {
     if (!el) throw new Error('ActorAnimation: el not set');
@@ -47,6 +48,17 @@ export function useActorAnimation(): ActorAnimation {
 
   function setEl(nextEl: HTMLElement | null): void {
     el = nextEl;
+    if (el && facingDirection === 'right') {
+      el.classList.add('facing-right');
+    }
+  }
+
+  function setFacing(dir: 'left' | 'right'): void {
+    if (dir === facingDirection) return;
+    facingDirection = dir;
+    const e = getEl();
+    if (dir === 'right') e.classList.add('facing-right');
+    else e.classList.remove('facing-right');
   }
 
   function enter(onUp?: () => void): void {
@@ -112,6 +124,10 @@ export function useActorAnimation(): ActorAnimation {
       onDone?.();
     };
 
+    // 朝向：右移转右、左移转左、垂直保持当前
+    if (toX > fromX) setFacing('right');
+    else if (toX < fromX) setFacing('left');
+
     // moveTo 仅处理鸭子步/跳跃；长距离由调用方判断后走 enter/arrive
     if (gridDist <= DUCK_MAX_GRID) {
       const direction: 1 | -1 | 0 = toX > fromX ? 1 : toX < fromX ? -1 : 0;
@@ -124,7 +140,6 @@ export function useActorAnimation(): ActorAnimation {
 
   function playFadeOut(onDone?: () => void): void {
     const e = getEl();
-    // 先杀掉 idle/move tween，避免淡出期间被干扰
     gsap.killTweensOf(e);
     isMoving = false;
     fadeOut(e, onDone);
@@ -139,12 +154,19 @@ export function useActorAnimation(): ActorAnimation {
 
   function playAttack(targetPosition?: { x: number; y: number }, kind?: AttackKind): void {
     const e = getEl();
+    // 朝向：攻击目标在右侧则转右，左侧则转左
+    if (targetPosition) {
+      const myX = gsap.getProperty(e, 'x') as number;
+      if (targetPosition.x > myX) setFacing('right');
+      else if (targetPosition.x < myX) setFacing('left');
+    }
     // attackAnim 内部已 killTweensOf；onComplete 调 startIdle 恢复呼吸循环
     attackAnim(e, targetPosition, kind, () => startIdle(e));
   }
 
   return {
     setEl,
+    setFacing,
     enter,
     arrive,
     idle,

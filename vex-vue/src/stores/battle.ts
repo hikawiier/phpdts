@@ -439,24 +439,11 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  /** Phase 0 段：突袭攻击，无 Turn/Round 结构 */
-  async function playPhase0Segment(segment: PlaySegment, npcPid: number): Promise<void> {
-    updateEnemyNameFromSegment(segment);
-    await refreshEnemyLocation(npcPid);
-    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
-  }
-
-  /** Round 段：先攻掷骰，即使 entries 渲染为空也显示段分隔符 */
-  async function playRoundSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
-  }
-
-  /** Turn 段：单回合动作，切换 HP 条目标 */
-  async function playTurnSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    updateEnemyNameFromSegment(segment);
-    await refreshEnemyLocation(npcPid);
-
-    // 碰撞动画 + 受击意图 + 死亡主判定
+  /**
+   * 处理段内 entries 的碰撞动画 + 清场动画
+   * playPhase0Segment 和 playTurnSegment 共用，确保突袭和普通战斗都播放攻击/受击动画
+   */
+  async function processSegmentEntries(segment: PlaySegment, npcPid: number): Promise<void> {
     for (const e of segment.entries) {
       if (e.animation === 'collision') {
         dataManager.broadcast('battle:play-collision', { entry: e, npcPid });
@@ -534,6 +521,28 @@ export const useBattleStore = defineStore('battle', () => {
         await sleep(CLEARED_ANIM_DURATION);
       }
     }
+  }
+
+  /** Phase 0 段：突袭攻击，无 Turn/Round 结构 */
+  async function playPhase0Segment(segment: PlaySegment, npcPid: number): Promise<void> {
+    updateEnemyNameFromSegment(segment);
+    await refreshEnemyLocation(npcPid);
+    await processSegmentEntries(segment, npcPid);
+    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
+  }
+
+  /** Round 段：先攻掷骰，即使 entries 渲染为空也显示段分隔符 */
+  async function playRoundSegment(segment: PlaySegment, npcPid: number): Promise<void> {
+    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
+  }
+
+  /** Turn 段：单回合动作，切换 HP 条目标 */
+  async function playTurnSegment(segment: PlaySegment, npcPid: number): Promise<void> {
+    updateEnemyNameFromSegment(segment);
+    await refreshEnemyLocation(npcPid);
+
+    // 碰撞动画 + 受击意图 + 死亡主判定（与 playPhase0Segment 共用）
+    await processSegmentEntries(segment, npcPid);
 
     // 模态框播放
     await playSegmentInModal(segment, { npcPid });
