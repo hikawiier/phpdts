@@ -156,6 +156,20 @@ function handle_skill_cd_check() {
     api_response('success', array('has_cd' => $has_cd));
 }
 
+function api_equipment_slot($pdata, $id_key, $name_key, $kind_key, $effect_key, $durability_key, $sk_key, $para_key) {
+    $item_id = isset($pdata[$id_key]) ? $pdata[$id_key] : '';
+    return array(
+        'item_id' => $item_id,
+        'itmid'   => $item_id,
+        'name'    => isset($pdata[$name_key]) ? $pdata[$name_key] : '',
+        'kind'    => isset($pdata[$kind_key]) ? $pdata[$kind_key] : '',
+        'exp'     => isset($pdata[$effect_key]) ? $pdata[$effect_key] : 0,
+        'sk'      => isset($pdata[$durability_key]) ? $pdata[$durability_key] : '0',
+        'skk'     => isset($pdata[$sk_key]) ? $pdata[$sk_key] : '',
+        'para'    => isset($pdata[$para_key]) ? $pdata[$para_key] : array(),
+    );
+}
+
 function handle_player_info() {
     global $upexp, $pdata, $gamevars, $groomid;
 
@@ -241,15 +255,15 @@ function handle_player_info() {
             ? obl_battle_state_get((int)$pdata['bid'])
             : 'IDLE',
 
-        // 装备信息 / Equipment（7 槽 × 6 字段）
+        // 装备信息（7 槽 × ID + 6 运行时字段）
         'equipment' => array(
-            'wep'  => array('name' => $pdata['wep'],  'kind' => $pdata['wepk'],  'exp' => $pdata['wepe'],  'sk' => $pdata['weps'],  'skk' => $pdata['wepsk'],  'para' => $pdata['weppara']),
-            'wep2' => array('name' => $pdata['wep2'], 'kind' => $pdata['wep2k'], 'exp' => $pdata['wep2e'], 'sk' => $pdata['wep2s'], 'skk' => $pdata['wep2sk'], 'para' => $pdata['wep2para']),
-            'arb'  => array('name' => $pdata['arb'],  'kind' => $pdata['arbk'],  'exp' => $pdata['arbe'],  'sk' => $pdata['arbs'],  'skk' => $pdata['arbsk'],  'para' => $pdata['arbpara']),
-            'arh'  => array('name' => $pdata['arh'],  'kind' => $pdata['arhk'],  'exp' => $pdata['arhe'],  'sk' => $pdata['arhs'],  'skk' => $pdata['arhsk'],  'para' => $pdata['arhpara']),
-            'ara'  => array('name' => $pdata['ara'],  'kind' => $pdata['arak'],  'exp' => $pdata['arae'],  'sk' => $pdata['aras'],  'skk' => $pdata['arask'],  'para' => $pdata['arapara']),
-            'arf'  => array('name' => $pdata['arf'],  'kind' => $pdata['arfk'],  'exp' => $pdata['arfe'],  'sk' => $pdata['arfs'],  'skk' => $pdata['arfsk'],  'para' => $pdata['arfpara']),
-            'art'  => array('name' => $pdata['art'],  'kind' => $pdata['artk'],  'exp' => $pdata['arte'],  'sk' => $pdata['arts'],  'skk' => $pdata['artsk'],  'para' => $pdata['artpara']),
+            'wep'  => api_equipment_slot($pdata, 'wepid',  'wep',  'wepk',  'wepe',  'weps',  'wepsk',  'weppara'),
+            'wep2' => api_equipment_slot($pdata, 'wep2id', 'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para'),
+            'arb'  => api_equipment_slot($pdata, 'arbid',  'arb',  'arbk',  'arbe',  'arbs',  'arbsk',  'arbpara'),
+            'arh'  => api_equipment_slot($pdata, 'arhid',  'arh',  'arhk',  'arhe',  'arhs',  'arhsk',  'arhpara'),
+            'ara'  => api_equipment_slot($pdata, 'araid',  'ara',  'arak',  'arae',  'aras',  'arask',  'arapara'),
+            'arf'  => api_equipment_slot($pdata, 'arfid',  'arf',  'arfk',  'arfe',  'arfs',  'arfsk',  'arfpara'),
+            'art'  => api_equipment_slot($pdata, 'artid',  'art',  'artk',  'arte',  'arts',  'artsk',  'artpara'),
         ),
     ));
 }
@@ -271,6 +285,8 @@ function handle_player_inventory() {
         $slots[] = array(
             'slot' => $i,
             'name' => !$empty && isset($item['itm']) ? $item['itm'] : '',
+            'itmid' => !$empty && isset($item['itmid']) ? $item['itmid'] : '',
+            'item_id' => !$empty && isset($item['itmid']) ? $item['itmid'] : '',
             'kind' => !$empty && isset($item['itmk']) ? $item['itmk'] : '',
             'effect' => !$empty && isset($item['itme']) ? (int)$item['itme'] : 0,
             'durability' => !$empty && isset($item['itms']) ? $item['itms'] : '0',
@@ -283,8 +299,8 @@ function handle_player_inventory() {
         'num' => $used_count,
         'limit' => $maxslots,
         'equipment' => array(
-            'weapon' => array('name' => $pdata['wep'], 'type' => $pdata['wepk']),
-            'armor' => array('name' => $pdata['arb'], 'type' => $pdata['arbk'])
+            'weapon' => array('item_id' => isset($pdata['wepid']) ? $pdata['wepid'] : '', 'itmid' => isset($pdata['wepid']) ? $pdata['wepid'] : '', 'name' => $pdata['wep'], 'type' => $pdata['wepk']),
+            'armor' => array('item_id' => isset($pdata['arbid']) ? $pdata['arbid'] : '', 'itmid' => isset($pdata['arbid']) ? $pdata['arbid'] : '', 'name' => $pdata['arb'], 'type' => $pdata['arbk'])
         )
     ));
 }
@@ -368,7 +384,7 @@ function handle_ai_dump_save() {
  * POI 仅在迷雾清除（fog=1）后可见；道具仅在 discovered>0 时可见。
  *
  * 返回结构：
- *   pois         — POI 数组，每个 POI 含 iaid/name/desc/searchable/repeatable/searched/items...
+ *   pois         — POI 数组，每个 POI 含 iaid/poi_id/searchable/repeatable/searched/items...
  *   ground_items — 脚边散落道具（iaid=0）数组
  */
 function handle_tile_actions() {
@@ -400,8 +416,9 @@ function handle_tile_actions() {
         $poi_data = array(
             'iaid'          => (int)$poi['iaid'],
             'poi_id'        => $poi_id,
-            'name'          => $tpl['name'],
-            'desc'          => $tpl['desc'],
+            // 兼容旧消费者保留展示字段；新界面通过 poi_id + locale 渲染。
+            'name'          => isset($tpl['name']) ? $tpl['name'] : '',
+            'desc'          => isset($tpl['desc']) ? $tpl['desc'] : '',
             'searchable'    => !empty($tpl['searchable']),
             'repeatable'    => !empty($tpl['repeatable']),
             'searched'      => !empty($poi['searched']),
@@ -453,13 +470,15 @@ function handle_tile_actions() {
         // 近视道具附加信息
         if ((int)$item['discovered'] === 2) {
             $fake_id = $item['fake_item_id'];
+            $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
             if (!empty($fake_id)) {
-                $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
                 $display_name = isset($item_table[$fake_id])
                     ? $item_table[$fake_id]['itm'] . '（？）'
                     : $item['itm'] . '（？）';
             } else {
-                $display_name = $item['itm'] . '（？）';
+                $display_name = isset($item_table[$item['item_id']])
+                    ? $item_table[$item['item_id']]['itm'] . '（？）'
+                    : $item['itm'] . '（？）';
             }
             $item_data['display_name'] = $display_name;
             $item_data['fake_item_id'] = $fake_id;

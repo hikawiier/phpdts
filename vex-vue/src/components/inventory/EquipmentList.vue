@@ -16,6 +16,7 @@
 import { computed } from 'vue';
 import { useInventoryStore, EQUIPMENT_SLOTS } from '@/stores/inventory';
 import type { EquipmentSlot } from '@/types/api';
+import { getItemName } from '@/data/item-locale';
 
 const inventoryStore = useInventoryStore();
 
@@ -27,6 +28,17 @@ const equipment = computed<Record<string, EquipmentSlot | null>>(
 function getEquip(key: string): EquipmentSlot | null {
   return equipment.value[key] || null;
 }
+
+function isEquipEmpty(equip: EquipmentSlot | null): boolean {
+  return !equip || (!equip.item_id && !equip.itmid && !equip.name);
+}
+
+function equipDisplayName(equip: EquipmentSlot | null): string {
+  if (!equip) return '';
+  const customName = equip.name?.trim();
+  if (customName) return customName;
+  return getItemName(equip.item_id || equip.itmid);
+}
 </script>
 
 <template>
@@ -34,11 +46,11 @@ function getEquip(key: string): EquipmentSlot | null {
     <div
       v-for="es in EQUIPMENT_SLOTS"
       :key="es.key"
-      :class="['eq-slot', getEquip(es.key) ? '' : 'eq-empty']"
+      :class="['eq-slot', isEquipEmpty(getEquip(es.key)) ? 'eq-empty' : '']"
     >
       <span class="eq-label">{{ es.label }}</span>
-      <template v-if="getEquip(es.key)">
-        <span class="eq-name">{{ getEquip(es.key)?.name }}</span>
+      <template v-if="!isEquipEmpty(getEquip(es.key))">
+        <span class="eq-name">{{ equipDisplayName(getEquip(es.key)) }}</span>
         <span class="eq-meta">ATK:{{ getEquip(es.key)?.exp || 0 }}</span>
       </template>
       <template v-else>

@@ -39,14 +39,14 @@ CREATE TABLE bra_oblplayers (
   exp          smallint unsigned NOT NULL default '0',
   state        tinyint unsigned NOT NULL default '0',  -- 含义待定，先保留
 
-  -- 装备（7 槽 × 6 字段，保留固定字段结构）
-  wep char(30) NOT NULL default '', wepk char(40) not null default '', wepe int(10) unsigned NOT NULL DEFAULT '0', weps char(10) not null default '0', wepsk char(40) not null default '', weppara text not null,
-  wep2 char(30) NOT NULL default '', wep2k char(40) not null default '', wep2e int(10) unsigned NOT NULL DEFAULT '0', wep2s char(10) not null default '0', wep2sk char(40) not null default '', wep2para text not null,
-  arb char(30) NOT NULL default '', arbk char(40) not null default '', arbe int(10) unsigned NOT NULL DEFAULT '0', arbs char(10) not null default '0', arbsk char(40) not null default '', arbpara text not null,
-  arh char(30) NOT NULL default '', arhk char(40) not null default '', arhe int(10) unsigned NOT NULL DEFAULT '0', arhs char(10) not null default '0', arhsk char(40) not null default '', arhpara text not null,
-  ara char(30) NOT NULL default '', arak char(40) not null default '', arae int(10) unsigned NOT NULL DEFAULT '0', aras char(10) not null default '0', arask char(40) not null default '', arapara text not null,
-  arf char(30) NOT NULL default '', arfk char(40) not null default '', arfe int(10) unsigned NOT NULL DEFAULT '0', arfs char(10) not null default '0', arfsk char(40) not null default '', arfpara text not null,
-  art char(30) NOT NULL default '', artk char(40) not null default '', arte int(10) unsigned NOT NULL DEFAULT '0', arts char(10) not null default '0', artsk char(40) not null default '', artpara text not null,
+  -- 装备（7 槽 × ID + 6 运行时字段）
+  wepid varchar(32) NOT NULL default '', wep char(30) NOT NULL default '', wepk char(40) not null default '', wepe int(10) unsigned NOT NULL DEFAULT '0', weps char(10) not null default '0', wepsk char(40) not null default '', weppara text not null,
+  wep2id varchar(32) NOT NULL default '', wep2 char(30) NOT NULL default '', wep2k char(40) not null default '', wep2e int(10) unsigned NOT NULL DEFAULT '0', wep2s char(10) not null default '0', wep2sk char(40) not null default '', wep2para text not null,
+  arbid varchar(32) NOT NULL default '', arb char(30) NOT NULL default '', arbk char(40) not null default '', arbe int(10) unsigned NOT NULL DEFAULT '0', arbs char(10) not null default '0', arbsk char(40) not null default '', arbpara text not null,
+  arhid varchar(32) NOT NULL default '', arh char(30) NOT NULL default '', arhk char(40) not null default '', arhe int(10) unsigned NOT NULL DEFAULT '0', arhs char(10) not null default '0', arhsk char(40) not null default '', arhpara text not null,
+  araid varchar(32) NOT NULL default '', ara char(30) NOT NULL default '', arak char(40) not null default '', arae int(10) unsigned NOT NULL DEFAULT '0', aras char(10) not null default '0', arask char(40) not null default '', arapara text not null,
+  arfid varchar(32) NOT NULL default '', arf char(30) NOT NULL default '', arfk char(40) not null default '', arfe int(10) unsigned NOT NULL DEFAULT '0', arfs char(10) not null default '0', arfsk char(40) not null default '', arfpara text not null,
+  artid varchar(32) NOT NULL default '', art char(30) NOT NULL default '', artk char(40) not null default '', arte int(10) unsigned NOT NULL DEFAULT '0', arts char(10) not null default '0', artsk char(40) not null default '', artpara text not null,
 
   -- 道具栏（JSON 大字段，替代 itm0~itm6；遵循旧字段命名 + itmid）
   itempara     mediumtext NOT NULL,    -- 道具栏数据（JSON 数组）

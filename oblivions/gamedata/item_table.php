@@ -127,6 +127,31 @@ return [
 
     // ─── 消耗品 ─────────────────────────────────────────
 
+    'bread' => [
+        'itm'      => '面包',
+        'itmk'     => 'HH',
+        'itme'     => 120,
+        'itms'     => 15,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'desc'     => '朴素的干面包，能快速补充生命。',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 5,
+    ],
+    'mineral_water' => [
+        'itm'      => '矿泉水',
+        'itmk'     => 'HS',
+        'itme'     => 140,
+        'itms'     => 15,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'desc'     => '未开封的瓶装水，能恢复体力。',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 5,
+    ],
+
     'scrap_metal' => [
         'itm'      => '废铁片',
         'itmk'     => 'MT',

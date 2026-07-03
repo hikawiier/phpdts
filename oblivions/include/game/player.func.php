@@ -220,13 +220,13 @@ function obl_save_player(&$pdata) {
 		'ap', 'max_ap',
 		'pgroup', 'pls',
 		'lvl', 'exp', 'state',
-		'wep', 'wepk', 'wepe', 'weps', 'wepsk', 'weppara',
-		'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para',
-		'arb', 'arbk', 'arbe', 'arbs', 'arbsk', 'arbpara',
-		'arh', 'arhk', 'arhe', 'arhs', 'arhsk', 'arhpara',
-		'ara', 'arak', 'arae', 'aras', 'arask', 'arapara',
-		'arf', 'arfk', 'arfe', 'arfs', 'arfsk', 'arfpara',
-		'art', 'artk', 'arte', 'arts', 'artsk', 'artpara',
+		'wepid', 'wep', 'wepk', 'wepe', 'weps', 'wepsk', 'weppara',
+		'wep2id', 'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para',
+		'arbid', 'arb', 'arbk', 'arbe', 'arbs', 'arbsk', 'arbpara',
+		'arhid', 'arh', 'arhk', 'arhe', 'arhs', 'arhsk', 'arhpara',
+		'araid', 'ara', 'arak', 'arae', 'aras', 'arask', 'arapara',
+		'arfid', 'arf', 'arfk', 'arfe', 'arfs', 'arfsk', 'arfpara',
+		'artid', 'art', 'artk', 'arte', 'arts', 'artsk', 'artpara',
 		'itempara', 'itemmaxslots',
 		'tacpara', 'skillpara', 'oblpara', 'discovered',
 	);
@@ -421,11 +421,27 @@ function obl_is_bag_full(&$pdata) {
 function obl_create_player_record($ndata) {
 	global $db, $tablepre;
 
-	// 构建 itempara：从 $ndata 的 itm1~itm6 字段转换（index 0=特殊槽，1~6=普通槽）
+	// 构建 itempara：从 $ndata 的 itmid1~itmid6 / itm1~itm6 字段转换（index 0=特殊槽，1~6=普通槽）
+	$item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
 	$itempara = array(null); // index 0 = 特殊槽
 	for ($i = 1; $i <= 6; $i++) {
 		$itm_key = 'itm' . $i;
-		if (!empty($ndata[$itm_key])) {
+		$itmid = isset($ndata['itmid' . $i]) ? (string)$ndata['itmid' . $i] : '';
+		if ($itmid !== '' && isset($item_table[$itmid])) {
+			$tpl = $item_table[$itmid];
+			$itmpara_raw = isset($ndata['itmpara' . $i]) ? $ndata['itmpara' . $i] : (string)$tpl['itmpara'];
+			$itmpara_arr = !empty($itmpara_raw) ? json_decode($itmpara_raw, true) : array();
+			if (!is_array($itmpara_arr)) $itmpara_arr = array();
+			$itempara[$i] = array(
+				'itm'     => isset($ndata[$itm_key]) ? $ndata[$itm_key] : '',
+				'itmk'    => isset($ndata['itmk' . $i]) && $ndata['itmk' . $i] !== '' ? $ndata['itmk' . $i] : (string)$tpl['itmk'],
+				'itme'    => isset($ndata['itme' . $i]) && (int)$ndata['itme' . $i] > 0 ? (int)$ndata['itme' . $i] : (int)$tpl['itme'],
+				'itms'    => isset($ndata['itms' . $i]) && $ndata['itms' . $i] !== '0' ? $ndata['itms' . $i] : (string)$tpl['itms'],
+				'itmsk'   => isset($ndata['itmsk' . $i]) && $ndata['itmsk' . $i] !== '' ? $ndata['itmsk' . $i] : (string)$tpl['itmsk'],
+				'itmpara' => $itmpara_arr,
+				'itmid'   => $itmid,
+			);
+		} elseif (!empty($ndata[$itm_key])) {
 			$itmpara_raw = isset($ndata['itmpara' . $i]) ? $ndata['itmpara' . $i] : '';
 			$itmpara_arr = !empty($itmpara_raw) ? json_decode($itmpara_raw, true) : array();
 			if (!is_array($itmpara_arr)) $itmpara_arr = array();
@@ -436,7 +452,7 @@ function obl_create_player_record($ndata) {
 				'itms'    => isset($ndata['itms' . $i]) ? $ndata['itms' . $i] : '0',
 				'itmsk'   => isset($ndata['itmsk' . $i]) ? $ndata['itmsk' . $i] : '',
 				'itmpara' => $itmpara_arr,
-				'itmid'   => '',
+				'itmid'   => $itmid,
 			);
 		} else {
 			$itempara[$i] = null;
@@ -465,43 +481,50 @@ function obl_create_player_record($ndata) {
 		'lvl'          => isset($ndata['lvl']) ? (int)$ndata['lvl'] : 0,
 		'exp'          => isset($ndata['exp']) ? (int)$ndata['exp'] : 0,
 		'state'        => isset($ndata['state']) ? (int)$ndata['state'] : 0,
-		// 装备字段（7 槽 × 6 字段）
+		// 装备字段（7 槽 × ID + 6 运行时字段）
+		'wepid'        => isset($ndata['wepid']) ? $ndata['wepid'] : '',
 		'wep'          => isset($ndata['wep']) ? $ndata['wep'] : '',
 		'wepk'         => isset($ndata['wepk']) ? $ndata['wepk'] : '',
 		'wepe'         => isset($ndata['wepe']) ? (int)$ndata['wepe'] : 0,
 		'weps'         => isset($ndata['weps']) ? $ndata['weps'] : '0',
 		'wepsk'        => isset($ndata['wepsk']) ? $ndata['wepsk'] : '',
 		'weppara'      => isset($ndata['weppara']) ? $ndata['weppara'] : '',
+		'wep2id'       => isset($ndata['wep2id']) ? $ndata['wep2id'] : '',
 		'wep2'         => isset($ndata['wep2']) ? $ndata['wep2'] : '',
 		'wep2k'        => isset($ndata['wep2k']) ? $ndata['wep2k'] : '',
 		'wep2e'        => isset($ndata['wep2e']) ? (int)$ndata['wep2e'] : 0,
 		'wep2s'        => isset($ndata['wep2s']) ? $ndata['wep2s'] : '0',
 		'wep2sk'       => isset($ndata['wep2sk']) ? $ndata['wep2sk'] : '',
 		'wep2para'     => isset($ndata['wep2para']) ? $ndata['wep2para'] : '',
+		'arbid'        => isset($ndata['arbid']) ? $ndata['arbid'] : '',
 		'arb'          => isset($ndata['arb']) ? $ndata['arb'] : '',
 		'arbk'         => isset($ndata['arbk']) ? $ndata['arbk'] : '',
 		'arbe'         => isset($ndata['arbe']) ? (int)$ndata['arbe'] : 0,
 		'arbs'         => isset($ndata['arbs']) ? $ndata['arbs'] : '0',
 		'arbsk'        => isset($ndata['arbsk']) ? $ndata['arbsk'] : '',
 		'arbpara'      => isset($ndata['arbpara']) ? $ndata['arbpara'] : '',
+		'arhid'        => isset($ndata['arhid']) ? $ndata['arhid'] : '',
 		'arh'          => isset($ndata['arh']) ? $ndata['arh'] : '',
 		'arhk'         => isset($ndata['arhk']) ? $ndata['arhk'] : '',
 		'arhe'         => isset($ndata['arhe']) ? (int)$ndata['arhe'] : 0,
 		'arhs'         => isset($ndata['arhs']) ? $ndata['arhs'] : '0',
 		'arhsk'        => isset($ndata['arhsk']) ? $ndata['arhsk'] : '',
 		'arhpara'      => isset($ndata['arhpara']) ? $ndata['arhpara'] : '',
+		'araid'        => isset($ndata['araid']) ? $ndata['araid'] : '',
 		'ara'          => isset($ndata['ara']) ? $ndata['ara'] : '',
 		'arak'         => isset($ndata['arak']) ? $ndata['arak'] : '',
 		'arae'         => isset($ndata['arae']) ? (int)$ndata['arae'] : 0,
 		'aras'         => isset($ndata['aras']) ? $ndata['aras'] : '0',
 		'arask'        => isset($ndata['arask']) ? $ndata['arask'] : '',
 		'arapara'      => isset($ndata['arapara']) ? $ndata['arapara'] : '',
+		'arfid'        => isset($ndata['arfid']) ? $ndata['arfid'] : '',
 		'arf'          => isset($ndata['arf']) ? $ndata['arf'] : '',
 		'arfk'         => isset($ndata['arfk']) ? $ndata['arfk'] : '',
 		'arfe'         => isset($ndata['arfe']) ? (int)$ndata['arfe'] : 0,
 		'arfs'         => isset($ndata['arfs']) ? $ndata['arfs'] : '0',
 		'arfsk'        => isset($ndata['arfsk']) ? $ndata['arfsk'] : '',
 		'arfpara'      => isset($ndata['arfpara']) ? $ndata['arfpara'] : '',
+		'artid'        => isset($ndata['artid']) ? $ndata['artid'] : '',
 		'art'          => isset($ndata['art']) ? $ndata['art'] : '',
 		'artk'         => isset($ndata['artk']) ? $ndata['artk'] : '',
 		'arte'         => isset($ndata['arte']) ? (int)$ndata['arte'] : 0,

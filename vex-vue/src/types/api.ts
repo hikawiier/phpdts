@@ -94,6 +94,8 @@ export interface Oblpara {
 
 /** 装备槽（player_info.equipment 的值） */
 export interface EquipmentSlot {
+  item_id?: string;
+  itmid?: string;
   name: string;
   exp?: string | number;
   [key: string]: unknown;
@@ -145,13 +147,15 @@ export interface TileActions {
  * 地格上的道具（ground_items / poi.items 共用）
  *
  * discovered 字段：
- *   - 0/1：已发现，显示 itm/itmk/itme
- *   - 2：近视发现，只显示 display_name
+ *   - 0/1：已发现，用 item_id + locale 渲染名称，itm 仅表示自定义名
+ *   - 2：近视发现，用 fake_item_id + locale 渲染伪装名称
  */
 export interface GroundItem {
   iid: string | number;
+  item_id: string;
   discovered: number;
   display_name?: string;
+  fake_item_id?: string;
   itm?: string;
   itmk?: string;
   itme?: string | number;
@@ -161,7 +165,9 @@ export interface GroundItem {
 
 export interface Poi {
   iaid: string | number;
-  name: string;
+  poi_id: string;
+  name?: string;
+  desc?: string;
   searchable: boolean | number;
   repeatable: boolean | number;
   searched: boolean | number;
@@ -185,6 +191,8 @@ export interface InventoryItem {
   slot: number;
   empty: boolean;
   name?: string;
+  itmid?: string;
+  item_id?: string;
   kind?: string;
   effect?: string | number;
   durability?: string | number;

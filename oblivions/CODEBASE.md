@@ -156,7 +156,7 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。
 | | `ap`/`max_ap` | AP 值（独立字段，便于频繁读写） |
 | **位置** | `pgroup`/`pls` | 区域ID + 格子ID |
 | **进度** | `lvl`/`exp`/`state` | 等级/经验/状态（0=存活, 1=死亡） |
-| **装备** | `wep`/`wep2`/`arb`/`arh`/`ara`/`arf`/`art` | 7 槽装备（每槽 6 字段：name/k/e/s/sk/para） |
+| **装备** | `wepid`/`wep`/`wepk`/... | 7 槽装备（每槽 1 个模板 ID + 6 个运行时字段：自定义名/k/e/s/sk/para） |
 | **道具栏** | `itempara` | JSON 数组（七字段规范，见下方 itmpara / itempara 小节） |
 | | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=特殊槽） |
 | **Oblivions专属** | `tacpara` | 策略槽（JSON） |
@@ -185,22 +185,34 @@ $oblpara['battle'] = [
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `itm` | string | 道具名 |
+| `itm` | string | 实例自定义名；空值表示用 `itmid` 查前端 locale 渲染模板名 |
 | `itmk` | string | 道具种类 |
 | `itme` | int | 效果值 |
 | `itms` | string | 耐久 |
 | `itmsk` | string | 耐久种类 |
-| `itmpara` | object | 参数（JSON 对象，含 `obl_item_id` 等） |
-| `itmid` | string | 地图道具实例ID（拾取时注入，丢弃时用于还原） |
+| `itmpara` | object | 实例附加参数（JSON 对象） |
+| `itmid` | string | 道具模板 ID（如 `rusty_pipe`）；地图实例主键为 `iid`，不写入背包 |
 
 ```json
 [
   null,
-  {"itm":"面包","itmk":"HH","itme":120,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
-  {"itm":"矿泉水","itmk":"HS","itme":140,"itms":"15","itmsk":"","itmpara":[],"itmid":""},
+  {"itm":"","itmk":"HH","itme":120,"itms":"15","itmsk":"","itmpara":[],"itmid":"bread"},
+  {"itm":"自定义水瓶","itmk":"HS","itme":140,"itms":"15","itmsk":"","itmpara":[],"itmid":"mineral_water"},
   null, null, null, null
 ]
 ```
+
+**装备字段规范**：装备槽与背包道具对象保持同样的“模板索引 + 运行时状态”分离。
+
+| 槽位 | 模板 ID 字段 | 自定义名字段 | 其他运行时字段 |
+|------|-------------|-------------|----------------|
+| 主武器 | `wepid` | `wep` | `wepk`/`wepe`/`weps`/`wepsk`/`weppara` |
+| 副武器 | `wep2id` | `wep2` | `wep2k`/`wep2e`/`wep2s`/`wep2sk`/`wep2para` |
+| 身体 | `arbid` | `arb` | `arbk`/`arbe`/`arbs`/`arbsk`/`arbpara` |
+| 头部 | `arhid` | `arh` | `arhk`/`arhe`/`arhs`/`arhsk`/`arhpara` |
+| 饰品 | `araid` | `ara` | `arak`/`arae`/`aras`/`arask`/`arapara` |
+| 足部 | `arfid` | `arf` | `arfk`/`arfe`/`arfs`/`arfsk`/`arfpara` |
+| 其他 | `artid` | `art` | `artk`/`arte`/`arts`/`artsk`/`artpara` |
 
 ### 5.2 `bra_oblmapstates` — 图格状态
 
@@ -1103,9 +1115,9 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 ### 9.4 itmpara 约定
 
-- 数据库中为 JSON 数组格式
-- 拾取时注入 `obl_item_id` 键保存原始地图道具ID
-- 丢弃时取出 `obl_item_id` 并 `unset`，还原原始 itmpara 写回地图
+- 数据库中为 JSON 对象字符串；背包 `itempara[].itmpara` 解码为对象/数组
+- 拾取时保持原始 `itmpara`，不注入地图实例主键
+- 道具模板 ID 存在 `itempara[].itmid`，丢弃时用它还原 `bra_oblmapitem.item_id`
 
 ### 9.5 战斗日志 emit 规范
 

@@ -17,6 +17,7 @@ import { useInventoryStore } from '@/stores/inventory';
 import { useMapStore } from '@/stores/map';
 import { commandQueue } from '@/stores/command-queue';
 import type { InventoryItem } from '@/types/api';
+import { getItemName } from '@/data/item-locale';
 
 const inventoryStore = useInventoryStore();
 const mapStore = useMapStore();
@@ -31,6 +32,10 @@ const limit = computed<number>(() => inventoryStore.limit);
 function onDiscard(slot: number): void {
   if (commandQueue.isLocked) return;
   inventoryStore.handleDiscard(slot);
+}
+
+function slotDisplayName(item: InventoryItem): string {
+  return getItemName(item.itmid || item.item_id, item.name);
 }
 </script>
 
@@ -47,7 +52,7 @@ function onDiscard(slot: number): void {
       >
         <span class="slot-num">[{{ s.slot }}]</span>
         <template v-if="!s.empty">
-          <span class="slot-name">{{ s.name }}</span>
+          <span class="slot-name">{{ slotDisplayName(s) }}</span>
           <span class="slot-kind">{{ s.kind }}</span>
           <span class="slot-meta">eff:{{ s.effect }} dur:{{ s.durability }}</span>
           <div v-if="isOblivions" class="discard-wrap">

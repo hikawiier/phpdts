@@ -303,7 +303,8 @@ function obl_search_poi($iaid, &$pdata) {
 
         for ($i = 0; $i < $n; $i++) {
             $tpl = $item_table[$item_id];
-            $itm     = $db->escape_string((string)$tpl['itm']);
+            // 模板名称属于前端 locale；实例 itm 只保留自定义名称。
+            $itm     = '';
             $itmk    = $db->escape_string((string)$tpl['itmk']);
             $itme    = (int)$tpl['itme'];
             $itms    = $db->escape_string((string)$tpl['itms']);
@@ -393,8 +394,8 @@ function obl_mechanic_max_hp_up($template, &$pdata) {
  * 从地图拾取道具到背包
  *
  * item_id 存储约定（统一 JSON）：
- *   拾取时将原 item_id 注入 itmpara JSON 数组的 'obl_item_id' 键，
- *   丢弃时从该键还原，原 itmpara 保持完整。
+ *   拾取时将地图表 item_id 复制到 itempara[].itmid；itmpara 保持原始附加参数。
+ *   丢弃时从 itempara[].itmid 还原 bra_oblmapitem.item_id。
  *
  * @param int   $iid    道具实例 ID（bra_oblmapitem.iid）
  * @param array &$pdata 玩家数据
@@ -428,6 +429,10 @@ function obl_pickup_item($iid, &$pdata) {
 
     // 4. 近视道具揭示
     $real_itm = $item['itm'];
+    if ($real_itm === '') {
+        $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
+        $real_itm = isset($item_table[$item['item_id']]['itm']) ? $item_table[$item['item_id']]['itm'] : $item['item_id'];
+    }
     $was_nearsighted = ((int)$item['discovered'] === 2);
 
     if ($was_nearsighted) {
@@ -455,8 +460,8 @@ function obl_pickup_item($iid, &$pdata) {
     }
 
     // 构建道具对象（遵循 itempara JSON 七字段规范：itm/itmk/itme/itms/itmsk/itmpara/itmid）
-    // itmid 为独立字段（地图道具实例 ID），丢弃时直接还原
-    // itmpara 保持原始数据，不注入 obl_item_id
+    // itmid 为模板 item_id；地图实例主键是 iid，仅用于拾取命令。
+    // itmpara 保持原始数据，不注入地图实例主键
     $itmpara = json_decode((string)$item['itmpara'], true);
     if (!is_array($itmpara)) $itmpara = [];
 
@@ -499,7 +504,7 @@ function obl_pickup_item($iid, &$pdata) {
  * 其他玩家/后续可拾取
  *
  * item_id 还原（统一 JSON）：
- *   从 itempara[].para.obl_item_id 取出还原，剩余作为原 itmpara 保留。
+ *   从 itempara[].itmid 还原 bra_oblmapitem.item_id，itmpara 原样写回。
  *
  * @param int   $slot   背包槽位号（1~6）
  * @param array &$pdata 玩家数据
@@ -528,6 +533,11 @@ function obl_discard_item($slot, &$pdata) {
     $itmsk   = isset($item['itmsk']) ? $item['itmsk'] : '';
     $itmpara = isset($item['itmpara']) && is_array($item['itmpara']) ? $item['itmpara'] : [];
     $item_id = isset($item['itmid']) ? (string)$item['itmid'] : '';
+    $log_name = $itm;
+    if ($log_name === '' && $item_id !== '') {
+        $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
+        $log_name = isset($item_table[$item_id]['itm']) ? $item_table[$item_id]['itm'] : $item_id;
+    }
 
     // 还原 itmpara 为字符串（空数组留空字符串）
     $itmpara_str = empty($itmpara) ? '' : json_encode($itmpara, JSON_UNESCAPED_UNICODE);
@@ -551,7 +561,7 @@ function obl_discard_item($slot, &$pdata) {
     obl_set_item($pdata, $slot, null);
 
     $obl_log->emit('discard.success', 'discard', [
-        'item_name' => $itm,
+        'item_name' => $log_name,
     ]);
 }
 

@@ -173,14 +173,16 @@ function obl_generate_wild_items($pgroup, $tiles, $scatter_pool, $item_table) {
                 $n = ($lo === $hi) ? $lo : rand($lo, $hi);
                 for ($i = 0; $i < $n; $i++) {
                     $template = $item_table[$item_id];
-                    $itm     = $db->escape_string((string)$template['itm']);
+                    // 模板名称属于前端 locale；实例 itm 只保留自定义名称。
+                    $itm     = '';
                     $itmk    = $db->escape_string((string)$template['itmk']);
                     $itme    = (int)$template['itme'];
                     $itms    = $db->escape_string((string)$template['itms']);
                     $itmsk   = $db->escape_string((string)$template['itmsk']);
                     $itmpara = $db->escape_string((string)$template['itmpara']);
+                    $item_id_e = $db->escape_string($item_id);
 
-                    $values[] = "($pgroup, $pls, 0, '$item_id', '$itm', '$itmk', $itme, '$itms', '$itmsk', '$itmpara', 0, '', 0)";
+                    $values[] = "($pgroup, $pls, 0, '$item_id_e', '$itm', '$itmk', $itme, '$itms', '$itmsk', '$itmpara', 0, '', 0)";
                 }
             }
         }

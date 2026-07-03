@@ -1,0 +1,45 @@
+export interface ItemLocaleEntry {
+  name: string;
+  desc: string;
+}
+
+export const ITEM_LOCALE: Record<string, ItemLocaleEntry> = {
+  rusty_pipe: { name: '生锈的水管', desc: '一根锈迹斑斑的铁管，握在手里沉甸甸的。' },
+  scrap_blade: { name: '废铁刀', desc: '用废铁片磨出的粗糙刀刃，勉强能割开东西。' },
+  nail_gun: { name: '钉枪', desc: '工地上常见的气动钉枪，近距离威力不小。' },
+  pipe_bomb: { name: '管状炸弹', desc: '用铁管和火药自制的简易爆炸物，小心别炸到自己。' },
+  swamp_spear: { name: '沼泽长矛', desc: '用沼泽硬木和骨片制成的长矛，尖端涂有毒素。' },
+  ancient_core_blade: { name: '核心刃', desc: '嵌入古代核心的武器，刃身散发微弱的光辉。' },
+  scrap_vest: { name: '废铁背心', desc: '用铁皮和铁丝拼凑的简易护甲，聊胜于无。' },
+  swamp_cloak: { name: '沼泽斗篷', desc: '用沼泽藤蔓编织的斗篷，能抵御部分攻击。' },
+  rust_circlet: { name: '锈蚀头环', desc: '锈蚀的金属头环，提供基本的头部防护。' },
+  bone_amulet: { name: '骨制护符', desc: '用不明骨骼雕刻的护符，散发着诡异的气息。' },
+  bread: { name: '面包', desc: '朴素的干面包，能快速补充生命。' },
+  mineral_water: { name: '矿泉水', desc: '未开封的瓶装水，能恢复体力。' },
+  scrap_metal: { name: '废铁片', desc: '锈迹斑斑的金属碎片，也许能派上用场。' },
+  rusty_gear: { name: '生锈齿轮', desc: '废弃机械中拆下的齿轮，也许能合成什么。' },
+  health_potion: { name: '生命药剂', desc: '注入了回复魔力的红色液体，饮用后恢复生命。' },
+  stamina_potion: { name: '体力药剂', desc: '淡绿色的液体，饮用后恢复体力。' },
+  supply_pack: { name: '补给包', desc: '简易的急救补给，可多次使用。' },
+  antidote: { name: '解毒剂', desc: '能中和常见毒素的药剂，沼泽中不可或缺。' },
+  swamp_herb: { name: '沼泽草药', desc: '沼泽中生长的草药，能恢复少量生命但有轻微毒性。' },
+  ancient_core: { name: '古代核心', desc: '散发微光的神秘核心，蕴含未知的能量。' },
+  rope_coil: { name: '绳索', desc: '一卷结实的绳索，在沼泽地带可能派上用场。' },
+  compass: { name: '指南针', desc: '老旧但还能用的指南针，在迷雾中辨别方向。' },
+  lockpick: { name: '开锁器', desc: '简易的开锁工具，也许能打开某些宝箱。' },
+  element_pocket: { name: '元素口袋', desc: '能收纳元素之力的神秘口袋，元素大师专属道具。' },
+  mystery_box: { name: '神秘礼盒', desc: '包装精美的礼盒，打开后才知道里面是什么。' },
+};
+
+export function getItemName(itemId: string | number | undefined, customName?: string): string {
+  const name = customName?.trim();
+  if (name) return name;
+  if (itemId === undefined || itemId === null || itemId === '') return '';
+  const key = String(itemId);
+  return ITEM_LOCALE[key]?.name || key;
+}
+
+export function getItemDesc(itemId: string | number | undefined): string {
+  if (itemId === undefined || itemId === null || itemId === '') return '';
+  return ITEM_LOCALE[String(itemId)]?.desc || '';
+}

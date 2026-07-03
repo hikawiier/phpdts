@@ -28,6 +28,7 @@ import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import type { TileActions, Poi, GroundItem } from '@/types/api';
+import { getPoiName } from '@/data/poi-locale';
 
 export type ModalType = 'ground' | 'poi' | null;
 
@@ -59,7 +60,9 @@ export const useTileActionStore = defineStore('tileAction', () => {
   /** 模态框标题 */
   const modalTitle = computed<string>(() => {
     if (modalType.value === 'ground') return '脚边道具';
-    if (modalType.value === 'poi' && modalPoi.value) return modalPoi.value.name;
+    if (modalType.value === 'poi' && modalPoi.value) {
+      return getPoiName(modalPoi.value.poi_id, modalPoi.value.name);
+    }
     return '';
   });
 

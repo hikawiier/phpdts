@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Oblivions UI 融合方案预览 · 选择性吸收</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<style>
+/* ══════════════════════════════════════════════════
+   融合方案：proposed 打底 + papercut 容器 + woh 点缀
+   - 不用反色 hover（视觉疲劳 + 光敏风险）
+   - 不用音效字（违反立绘弹出约束）
+   - 不用 2-3px 粗边框（压制 ASCII 细线条）
+   - 不用不规则圆角（维护成本高）
+   ══════════════════════════════════════════════════ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'IBM Plex Mono', monospace;
+  background: #000;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 24px;
+}
+:root {
+  --bg-base: #0a0a0a;
+  --bg-raised: #0c0c0c;
+  --bg-overlay: #0f0f0f;
+  --fg-dim: #555;
+  --fg: #888;
+  --fg-bright: #bbb;
+  --fg-hi: #eee;
+  --fg-white: #fff;
+  --border-thin: rgba(68,68,68,0.3);
+  --border-bright: rgba(68,68,68,0.5);
+  --border-strong: rgba(255,255,255,0.35);
+  --shadow-hard: 2px 2px 0 #2a2a2a;
+  --shadow-stack: 1px 1px 0 rgba(255,255,255,0.04), 2px 2px 0 rgba(0,0,0,0.3), 4px 4px 0 rgba(0,0,0,0.2);
+}
+
+/* ═══ 页面布局 ═══ */
+.page-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+.page-subtitle {
+  color: #555;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+.section { margin-bottom: 36px; }
+.section-title {
+  color: #eee;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(68,68,68,0.5);
+}
+.section-title .section-num { color: #555; margin-right: 8px; }
+.section-desc {
+  color: #666;
+  font-size: 10px;
+  margin-bottom: 12px;
+  letter-spacing: 0.03em;
+}
+
+/* ══════════════════════════════════════════════════
+   §1 标题方案对比（4 种并排）
+   ══════════════════════════════════════════════════ */
+.title-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.title-card {
+  border: 1px solid var(--border-thin);
+  background: var(--bg-base);
+  padding: 20px;
+  position: relative;
+}
+.title-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+}
+.title-card-header .scheme-name { color: #fff; font-weight: 700; }
+.title-card-header .scheme-tag {
+  color: #888;
+  padding: 1px 6px;
+  border: 1px solid var(--border-thin);
+}
+.title-card-body { padding: 8px 0; }
+.title-card-note {
+  color: #555;
+  font-size: 10px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-thin);
+  letter-spacing: 0.03em;
+}
+.title-card-note .label { color: #888; font-weight: 700; margin-right: 4px; }
+
+/* 方案 A：纯 ASCII（现状） */
+.title-ascii {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #444;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+}
+.title-ascii .label { color: #bbb; font-weight: 700; }
+.title-ascii .line {
+  border-bottom: 1px solid rgba(68,68,68,0.3);
+  height: 0; flex: 1;
+}
+
+/* 方案 B：ASCII + WOH 硬投影（ASCII 保留，label 加边框+投影） */
+.title-ascii-woh {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #444;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+}
+.title-ascii-woh .label {
+  color: #fff;
+  font-weight: 700;
+  background: var(--bg-base);
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-hard);
+}
+.title-ascii-woh .line {
+  border-bottom: 1px solid rgba(136,136,136,0.35);
+  height: 0; flex: 1;
+}
+
+/* 方案 C：纯文字 + WOH 边框（去掉 ASCII 框线字符） */
+.title-text-woh {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.title-text-woh .label {
+  color: #fff;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  background: var(--bg-base);
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-hard);
+}
+.title-text-woh .line {
+  flex: 1;
+  height: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+}
+
+/* 方案 D：纯文字 + papercut 撕纸下划线 */
+.title-text-papercut {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.title-text-papercut .label {
+  color: #ddd;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 1px 8px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+.title-text-papercut .line {
+  flex: 1;
+  height: 0;
+  border-bottom: 1px dashed rgba(136,136,136,0.35);
+}
+
+/* ══════════════════════════════════════════════════
+   §2-§7 融合后组件样式
+   ══════════════════════════════════════════════════ */
+
+/* 面板背景：极淡网格纹理（proposed） */
+.demo-panel {
+  background: var(--bg-base);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 14px);
+  padding: 16px;
+}
+
+/* 按钮：proposed 灰阶增强 + primary 变体（不反色） */
+.term-btn {
+  padding: 4px 14px;
+  border: 1px solid #888;
+  background: var(--bg-base);
+  color: #bbb;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+  margin-right: 6px;
+  position: relative;
+}
+.term-btn:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: #ccc;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
+.term-btn:active {
+  background: rgba(255,255,255,0.15);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+  transform: translateY(1px);
+}
+.term-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.term-btn:disabled:hover { background: var(--bg-base); border-color: #888; box-shadow: none; transform: none; }
+.term-btn.discard { padding: 2px 8px; font-size: 10px; border-color: #666; }
+.term-btn.primary {
+  border-color: #ddd;
+  color: #fff;
+  background: rgba(255,255,255,0.04);
+}
+.term-btn.primary:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: #fff;
+}
+.term-btn.primary:active {
+  background: rgba(255,255,255,0.18);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.7);
+}
+
+/* 状态栏按钮：hover 下划线 */
+.status-bar-btn {
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 2px 4px;
+  margin-right: 8px;
+  transition: color 0.12s;
+  border-bottom: 1px solid transparent;
+}
+.status-bar-btn:hover { color: #fff; border-bottom-color: #888; }
+.status-bar-btn:active { color: #fff; border-bottom-color: #fff; }
+
+/* 标签：proposed 方括号 + 背景色块（不反色） */
+.inv-tab {
+  color: #555; font-weight: 700; cursor: pointer;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  background: none;
+  font-family: inherit; font-size: 11px; letter-spacing: 0.1em;
+  margin-right: 8px;
+  position: relative;
+}
+.inv-tab:hover {
+  color: #bbb;
+  background: rgba(255,255,255,0.03);
+}
+.inv-tab.active {
+  color: #fff;
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.2);
+}
+.inv-tab.active::before { content: '['; margin-right: 2px; color: #888; }
+.inv-tab.active::after { content: ']'; margin-left: 2px; color: #888; }
+
+/* 背包格：proposed 左侧色条（不反色） */
+.inv-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.slot-card {
+  border: 1px solid var(--border-thin);
+  padding: 6px;
+  text-align: center;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  transition: border-color 0.12s, background 0.12s;
+  position: relative;
+  overflow: hidden;
+}
+.slot-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.slot-card.slot-filled:hover {
+  border-color: #ddd;
+  background: rgba(255,255,255,0.05);
+}
+.slot-card.slot-filled:hover::before { background: #fff; }
+.slot-card.slot-empty {
+  border-style: dashed;
+  border-color: rgba(68,68,68,0.2);
+  opacity: 0.25;
+}
+.slot-card.slot-empty:hover { border-color: rgba(68,68,68,0.2); background: transparent; }
+.slot-num { color: #555; font-size: 9px; }
+.slot-filled .slot-num { color: #888; }
+.slot-name { color: #eee; font-size: 11px; margin: 2px 0; }
+.slot-kind { color: #555; font-size: 9px; }
+.slot-meta { color: #666; font-size: 9px; }
+.slot-info { color: #555; font-size: 10px; margin-top: 4px; }
+
+/* 状态条：proposed 分段刻度 + HP 提亮 */
+.bar-container {
+  width: 160px;
+  height: 8px;
+  background: rgba(68,68,68,0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 4px 0;
+  position: relative;
+}
+.bar-fill { height: 100%; transition: width 0.3s ease; }
+.bar-fill.hp { background: #aaa; }
+.bar-fill.hp.danger { background: #fff; animation: blink 0.8s step-end infinite; }
+.bar-fill.sp { background: #666; }
+.bar-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(90deg, transparent calc(25% - 1px), rgba(0,0,0,0.6) calc(25% - 1px), rgba(0,0,0,0.6) calc(25% + 1px), transparent calc(25% + 1px)),
+    linear-gradient(90deg, transparent calc(50% - 1px), rgba(0,0,0,0.6) calc(50% - 1px), rgba(0,0,0,0.6) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(90deg, transparent calc(75% - 1px), rgba(0,0,0,0.6) calc(75% - 1px), rgba(0,0,0,0.6) calc(75% + 1px), transparent calc(75% + 1px));
+}
+.bar-text { color: #888; font-size: 11px; }
+.bar-text.danger { color: #fff; font-weight: 700; }
+
+/* 动作行：proposed 左侧色条（不反色） */
+.tile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border-thin);
+  margin-bottom: 2px;
+  color: #bbb;
+  cursor: default;
+  transition: border-color 0.12s, background 0.12s;
+  position: relative;
+  overflow: hidden;
+}
+.tile-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.tile-row:hover { border-color: #ddd; background: rgba(255,255,255,0.04); }
+.tile-row:hover::before { background: #fff; }
+.tile-row.is-action { cursor: pointer; }
+.tile-row.is-action::before { background: #666; }
+.tile-row.is-action:hover::before { background: #fff; }
+.tile-tag { color: #eee; font-weight: 700; flex: 0 0 auto; font-size: 11px; }
+.tile-name { flex: 1 1 auto; font-size: 12px; }
+.tile-name .dim { color: #555; font-size: 10px; }
+
+/* 信号色清理：proposed 灰阶化 */
+.map-cell-demo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px; height: 48px;
+  border: 1px solid var(--border-thin);
+  font-size: 10px;
+  font-weight: bold;
+  margin: 2px;
+  color: #888;
+  position: relative;
+}
+.map-cell-demo.blocked {
+  color: #ccc;
+  border: 3px double #888;
+}
+.map-cell-demo.blocked::after {
+  content: '╳';
+  position: absolute;
+  color: #888;
+  font-size: 20px;
+  font-weight: 400;
+  opacity: 0.4;
+}
+.map-cell-demo.safe-zone {
+  border-color: rgba(255,255,255,0.4);
+  border-style: dashed;
+}
+.map-cell-demo.safe-zone::after {
+  content: '◇';
+  position: absolute;
+  color: rgba(255,255,255,0.3);
+  font-size: 8px;
+  bottom: 1px;
+  right: 2px;
+}
+.status-npc-pending-demo {
+  color: #fff;
+  font-size: 10px;
+  animation: tick-pulse-demo 1.2s ease-in-out infinite;
+}
+
+/* 装备槽：proposed hover 色条 */
+.eq-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 10px;
+  border-bottom: 1px solid rgba(68,68,68,0.2);
+  color: #888;
+  transition: background 0.12s;
+  position: relative;
+  overflow: hidden;
+}
+.eq-slot::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.eq-slot:hover { background: rgba(255,255,255,0.04); }
+.eq-slot:hover::before { background: #888; }
+.eq-slot.eq-empty { opacity: 0.3; }
+.eq-slot.eq-empty:hover { background: transparent; }
+.eq-slot.eq-empty:hover::before { background: transparent; }
+.eq-label { color: #bbb; font-weight: 700; flex: 0 0 32px; text-align: center; font-size: 10px; }
+.eq-name { color: #eee; flex: 1; font-size: 11px; }
+.eq-empty .eq-name { color: #555; }
+.eq-meta { color: #666; font-size: 10px; flex: 0 0 auto; }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes tick-pulse-demo { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ══════════════════════════════════════════════════
+   §8 Modal / Toast / Drawer / Log（融合后）
+   - Modal: papercut 堆叠阴影 + woh 硬投影 + 方案 C 标题
+   - Toast: papercut 撕纸边缘 + woh 硬投影 + 左侧色条
+   - Drawer: papercut 堆叠阴影 + 左侧加粗色条
+   - Log: proposed 灰阶层次
+   ══════════════════════════════════════════════════ */
+
+/* Modal：papercut 堆叠阴影 + woh 硬投影 */
+.modal-demo {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  box-shadow:
+    1px 1px 0 rgba(255,255,255,0.04),
+    2px 2px 0 rgba(0,0,0,0.3),
+    4px 4px 0 rgba(0,0,0,0.2),
+    0 8px 24px rgba(0,0,0,0.6);
+  padding: 14px;
+  color: #888;
+  position: relative;
+}
+.modal-title {
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  margin-bottom: 10px;
+  padding: 2px 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-hard);
+  display: inline-block;
+}
+.modal-body { font-size: 11px; margin-bottom: 12px; color: #bbb; }
+.modal-actions { display: flex; gap: 6px; }
+
+/* Toast：papercut 撕纸边缘 + woh 硬投影 + 左侧色条 */
+.toast-demo {
+  padding: 6px 10px 6px 12px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-left: 3px solid rgba(255,255,255,0.35);
+  color: #bbb;
+  clip-path: polygon(0 0, 100% 0, 99% 100%, 1% 100%);
+  position: relative;
+}
+.toast-demo.warn {
+  border-left-color: #fff;
+  color: #fff;
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.4);
+}
+
+/* Drawer：papercut 堆叠阴影 + 左侧加粗色条 */
+.drawer-demo {
+  width: 140px;
+  height: 80px;
+  padding: 10px;
+  font-size: 10px;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-left: 4px solid rgba(255,255,255,0.35);
+  box-shadow:
+    -1px 1px 0 rgba(255,255,255,0.04),
+    -2px 2px 0 rgba(0,0,0,0.3),
+    -4px 4px 0 rgba(0,0,0,0.2);
+  color: #bbb;
+}
+
+/* Log：proposed 灰阶层次 */
+.log-demo {
+  padding: 4px 0;
+  font-size: 10px;
+  border-bottom: 1px solid rgba(68,68,68,0.15);
+  color: #888;
+}
+.log-demo.system { color: #555; }
+.log-demo.combat { color: #eee; border-left: 2px solid rgba(255,255,255,0.35); padding-left: 6px; }
+
+/* ══════════════════════════════════════════════════
+   §9 地图格矩阵（融合后）
+   - 纹理：proposed 低透明度
+   - 信号色：灰阶化
+   - 当前格：woh 硬投影（不反色）
+   ══════════════════════════════════════════════════ */
+.map-matrix {
+  display: grid;
+  grid-template-columns: repeat(8, 40px);
+  gap: 2px;
+  padding: 6px;
+  background: #000;
+  border: 1px solid var(--border-thin);
+  width: fit-content;
+}
+.map-matrix-label {
+  color: #555;
+  font-size: 9px;
+  margin-bottom: 4px;
+  letter-spacing: 0.05em;
+}
+.cell-standard { background: var(--bg-base); }
+.cell-water {
+  background: var(--bg-base);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 12px);
+}
+.cell-vegetation {
+  background: var(--bg-base);
+  background-image: radial-gradient(circle, rgba(255,255,255,0.08) 1px, transparent 1px);
+  background-size: 5px 5px;
+}
+.cell-metal {
+  background: var(--bg-base);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 8px);
+}
+.cell-magic {
+  background: var(--bg-base);
+  background-image: repeating-conic-gradient(from 0deg, rgba(255,255,255,0.02) 0deg 10deg, transparent 10deg 20deg);
+}
+.tide-shallow { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05); }
+.tide-deep { animation: deep-glitch 2s steps(1) infinite; }
+@keyframes deep-glitch {
+  0%, 100% { filter: contrast(1.1); transform: translate(0,0); }
+  25% { filter: contrast(1.2); transform: translate(0.5px, 0); }
+  50% { filter: contrast(1.15); transform: translate(-0.5px, 0.5px); }
+  75% { filter: contrast(1.25); transform: translate(0, -0.5px); }
+}
+.tide-abyss { animation: abyss-glitch 2s steps(1) infinite; }
+@keyframes abyss-glitch {
+  0%, 100% { filter: contrast(1.3) brightness(0.9); }
+  33% { filter: contrast(1.4) brightness(0.85); transform: scale(1.005); }
+  66% { filter: contrast(1.35) brightness(0.9); transform: scale(1); }
+}
+/* 当前格：woh 硬投影（不反色） */
+.map-matrix .cell-current {
+  border-color: #fff !important;
+  box-shadow: 2px 2px 0 #333, 0 0 8px rgba(255,255,255,0.15);
+  z-index: 1;
+}
+.cell-reachable {
+  border-style: dashed;
+  border-color: rgba(255,255,255,0.3);
+}
+.cell-fogged { opacity: 0.35; filter: grayscale(1); }
+.cell-explored { border-color: rgba(68,68,68,0.3); }
+
+/* ══════════════════════════════════════════════════
+   §10 GSAP 动画舞台（无音效字）
+   - 舞台背景：papercut 堆叠阴影
+   - 立绘 popUp（不变）
+   ══════════════════════════════════════════════════ */
+.actor-stage {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.actor-canvas {
+  position: relative;
+  width: 180px;
+  height: 150px;
+  background: var(--bg-raised);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 14px);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow:
+    1px 1px 0 rgba(255,255,255,0.03),
+    2px 2px 0 rgba(0,0,0,0.3),
+    4px 4px 0 rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+.actor-ground {
+  position: absolute;
+  left: 20px; right: 20px; bottom: 20px;
+  height: 1px;
+  background: rgba(255,255,255,0.15);
+}
+.actor-img {
+  position: absolute;
+  width: 75px;
+  height: 110px;
+  object-fit: contain;
+  bottom: 20px;
+  left: 50%;
+  margin-left: -37.5px;
+  opacity: 0;
+  transform-origin: center bottom;
+  filter: drop-shadow(2px 2px 0 rgba(255,255,255,0.08)) drop-shadow(0 2px 2px rgba(0,0,0,0.5));
+}
+.actor-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.actor-controls button {
+  padding: 4px 8px;
+  border: 1px solid #666;
+  background: var(--bg-base);
+  color: #bbb;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.actor-controls button:hover { background: rgba(255,255,255,0.08); }
+.actor-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 标注说明 */
+.note {
+  color: #555;
+  font-size: 10px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-thin);
+  letter-spacing: 0.03em;
+}
+.note .label { color: #888; font-weight: 700; margin-right: 4px; }
+
+.demo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.demo-block { margin-bottom: 12px; }
+.demo-label {
+  color: #666;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.map-cells-demo {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+/* ══════════════════════════════════════════════════
+   §11 吸收来源总结
+   ══════════════════════════════════════════════════ */
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.summary-table th, .summary-table td {
+  border: 1px solid var(--border-thin);
+  padding: 8px 12px;
+  text-align: left;
+}
+.summary-table th {
+  background: var(--bg-overlay);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+}
+.summary-table td { color: #888; }
+.summary-table .source-proposed { color: #bbb; }
+.summary-table .source-papercut { color: #ddd; }
+.summary-table .source-woh { color: #fff; }
+.summary-table .source-none { color: #555; }
+</style>
+</head>
+<body>
+
+<h1 class="page-title">OBLIVIONS — UI 融合方案预览</h1>
+<p class="page-subtitle">
+  选择性吸收：proposed 打底（灰阶层次）+ papercut 容器（堆叠阴影）+ woh 点缀（硬投影/分镜框）<br>
+  不用：反色 hover / 音效字 / 2-3px 粗边框 / 不规则圆角 / 网点填充
+</p>
+
+<!-- ═══ §1 标题方案对比 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">01</span>标题方案对比 TITLE SCHEMES</div>
+  <div class="section-desc">4 种标题方案并排对比，用于决定 ASCII 框线字符是否保留</div>
+  <div class="title-comparison">
+
+    <!-- 方案 A：纯 ASCII -->
+    <div class="title-card">
+      <div class="title-card-header">
+        <span class="scheme-name">A · 纯 ASCII</span>
+        <span class="scheme-tag">现状</span>
+      </div>
+      <div class="title-card-body">
+        <div class="title-ascii">
+          <span>┌─</span>
+          <span class="label">ARMAMENT</span>
+          <span>─</span>
+          <span class="line"></span>
+          <span>┐</span>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="eq-slot">
+            <span class="eq-label">[手]</span>
+            <span class="eq-name">生锈铁管</span>
+            <span class="eq-meta">atk:3</span>
+          </div>
+          <div class="eq-slot">
+            <span class="eq-label">[身]</span>
+            <span class="eq-name">破布外套</span>
+            <span class="eq-meta">def:1</span>
+          </div>
+        </div>
+      </div>
+      <div class="title-card-note"><span class="label">特征：</span>┌─┐│└┘ 框线字符 + 细线条 + 灰阶标签</div>
+    </div>
+
+    <!-- 方案 B：ASCII + WOH 硬投影 -->
+    <div class="title-card">
+      <div class="title-card-header">
+        <span class="scheme-name">B · ASCII + WOH 投影</span>
+        <span class="scheme-tag">混合</span>
+      </div>
+      <div class="title-card-body">
+        <div class="title-ascii-woh">
+          <span>┌─</span>
+          <span class="label">ARMAMENT</span>
+          <span>─</span>
+          <span class="line"></span>
+          <span>┐</span>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="eq-slot">
+            <span class="eq-label">[手]</span>
+            <span class="eq-name">生锈铁管</span>
+            <span class="eq-meta">atk:3</span>
+          </div>
+          <div class="eq-slot">
+            <span class="eq-label">[身]</span>
+            <span class="eq-name">破布外套</span>
+            <span class="eq-meta">def:1</span>
+          </div>
+        </div>
+      </div>
+      <div class="title-card-note"><span class="label">特征：</span>ASCII 框线保留 + label 加 1px 白边框 + 2px 硬投影</div>
+    </div>
+
+    <!-- 方案 C：纯文字 + WOH 边框 -->
+    <div class="title-card">
+      <div class="title-card-header">
+        <span class="scheme-name">C · 纯文字 + WOH 边框</span>
+        <span class="scheme-tag">推荐</span>
+      </div>
+      <div class="title-card-body">
+        <div class="title-text-woh">
+          <span class="label">ARMAMENT</span>
+          <span class="line"></span>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="eq-slot">
+            <span class="eq-label">[手]</span>
+            <span class="eq-name">生锈铁管</span>
+            <span class="eq-meta">atk:3</span>
+          </div>
+          <div class="eq-slot">
+            <span class="eq-label">[身]</span>
+            <span class="eq-name">破布外套</span>
+            <span class="eq-meta">def:1</span>
+          </div>
+        </div>
+      </div>
+      <div class="title-card-note"><span class="label">特征：</span>去掉 ┌─┐ 字符 + 纯文字 + 1px 白边框 + 2px 硬投影 + 细线延伸</div>
+    </div>
+
+    <!-- 方案 D：纯文字 + papercut 撕纸下划线 -->
+    <div class="title-card">
+      <div class="title-card-header">
+        <span class="scheme-name">D · 纯文字 + 撕纸下划线</span>
+        <span class="scheme-tag">剪纸</span>
+      </div>
+      <div class="title-card-body">
+        <div class="title-text-papercut">
+          <span class="label">ARMAMENT</span>
+          <span class="line"></span>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="eq-slot">
+            <span class="eq-label">[手]</span>
+            <span class="eq-name">生锈铁管</span>
+            <span class="eq-meta">atk:3</span>
+          </div>
+          <div class="eq-slot">
+            <span class="eq-label">[身]</span>
+            <span class="eq-name">破布外套</span>
+            <span class="eq-meta">def:1</span>
+          </div>
+        </div>
+      </div>
+      <div class="title-card-note"><span class="label">特征：</span>去掉 ┌─┐ 字符 + 纯文字 + 底部白色实线 + 虚线延伸</div>
+    </div>
+
+  </div>
+  <div class="note" style="margin-top:16px;">
+    <span class="label">对比要点：</span>
+    A vs B：ASCII 框线是否需要 woh 投影强化？<br>
+    A vs C：ASCII 框线字符（┌─┐）是否保留？去掉后是否更干净？<br>
+    C vs D：纯文字标题用 woh 边框（硬投影）还是 papercut 下划线（柔和）？<br>
+    <span class="label" style="color:#bbb;">推荐：</span>C 方案 —— 去掉 ASCII 框线字符避免风格过载，用 woh 边框承载漫画感，细线延伸保持终端骨架
+  </div>
+</section>
+
+<!-- ═══ §2 按钮 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">02</span>按钮 BUTTONS</div>
+  <div class="section-desc">来源：proposed（灰阶增强 + primary 变体）。不用 woh 反色 hover</div>
+  <div class="demo-panel">
+    <div class="demo-block">
+      <div class="demo-label">主按钮（primary 变体）</div>
+      <div class="demo-row">
+        <button class="term-btn primary">探索</button>
+        <button class="term-btn primary">移动</button>
+        <button class="term-btn primary" disabled>禁用</button>
+      </div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">次按钮 / 丢弃</div>
+      <div class="demo-row">
+        <button class="term-btn">取消</button>
+        <button class="term-btn discard">[丢弃]</button>
+      </div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">状态栏按钮（hover 下划线）</div>
+      <div class="demo-row">
+        <button class="status-bar-btn">[属性]</button>
+        <button class="status-bar-btn">[战斗]</button>
+        <button class="status-bar-btn">[背包]</button>
+      </div>
+    </div>
+    <div class="note"><span class="label">特征：</span>+hover 背景微变 +active inset shadow 按压感 +primary 变体（更亮边框，不反色）</div>
+  </div>
+</section>
+
+<!-- ═══ §3 标签 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">03</span>标签 TABS</div>
+  <div class="section-desc">来源：proposed（方括号 + 背景色块）。不用 woh 不规则圆角 / 反色</div>
+  <div class="demo-panel">
+    <div class="demo-block">
+      <div class="demo-label">背包抽屉标签</div>
+      <div class="demo-row" style="border-bottom:1px solid var(--border-thin); padding-bottom:4px;">
+        <button class="inv-tab active">INVENTORY</button>
+        <button class="inv-tab">ARMAMENT</button>
+      </div>
+    </div>
+    <div class="note"><span class="label">特征：</span>+active 方括号包裹 +背景色块 +边框（不反色，不 irregular radius）</div>
+  </div>
+</section>
+
+<!-- ═══ §4 背包格子 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">04</span>背包格子 INVENTORY SLOTS</div>
+  <div class="section-desc">来源：proposed（左侧色条）。不用 woh 反色 / 网点</div>
+  <div class="demo-panel">
+    <div class="inv-grid">
+      <div class="slot-card slot-filled">
+        <span class="slot-num">[1]</span>
+        <span class="slot-name">锈水</span>
+        <span class="slot-kind">水</span>
+        <span class="slot-meta">eff:5 dur:3</span>
+      </div>
+      <div class="slot-card slot-filled">
+        <span class="slot-num">[2]</span>
+        <span class="slot-name">罐头</span>
+        <span class="slot-kind">食物</span>
+        <span class="slot-meta">eff:8 dur:1</span>
+      </div>
+      <div class="slot-card slot-empty">
+        <span class="slot-num">[3]</span>
+        <span class="slot-kind">···</span>
+      </div>
+    </div>
+    <div class="slot-info">items: 2/8</div>
+    <div class="note"><span class="label">特征：</span>+hover 左侧 2px 白色色条 +hover 背景微亮（不反色，不网点）</div>
+  </div>
+</section>
+
+<!-- ═══ §5 状态条 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">05</span>状态条 STATUS BARS</div>
+  <div class="section-desc">来源：proposed（分段刻度 + HP 提亮）。不用 woh 粗边框 / 网点填充</div>
+  <div class="demo-panel">
+    <div class="demo-block">
+      <div class="demo-label">HP 正常 (75%)</div>
+      <div class="bar-container"><div class="bar-fill hp" style="width:75%"></div></div>
+      <span class="bar-text">HP 30/40</span>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">HP 危险 (20%)</div>
+      <div class="bar-container"><div class="bar-fill hp danger" style="width:20%"></div></div>
+      <span class="bar-text danger">HP 8/40</span>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">SP (60%)</div>
+      <div class="bar-container"><div class="bar-fill sp" style="width:60%"></div></div>
+      <span class="bar-text">SP 12/20</span>
+    </div>
+    <div class="note"><span class="label">特征：</span>+25%/50%/75% 分段刻度 +HP 提亮到 #aaa（不粗边框，不网点填充）</div>
+  </div>
+</section>
+
+<!-- ═══ §6 动作行 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">06</span>动作行 ACTION ROWS</div>
+  <div class="section-desc">来源：proposed（左侧色条）。不用 woh 反色 / 粗边框</div>
+  <div class="demo-panel">
+    <div class="demo-label">POI / 动作列表</div>
+    <div class="tile-row is-action">
+      <span class="tile-tag">[探索]</span>
+      <span class="tile-name">废旧集装箱 <span class="dim">· 可能含有物资</span></span>
+    </div>
+    <div class="tile-row is-action">
+      <span class="tile-tag">[拾取]</span>
+      <span class="tile-name">金属碎片 <span class="dim">· 材料</span></span>
+    </div>
+    <div class="tile-row">
+      <span class="tile-tag">[空]</span>
+      <span class="tile-name">无可用动作</span>
+    </div>
+    <div class="note"><span class="label">特征：</span>+hover 白色色条 +is-action 默认灰色色条（不反色，不粗边框）</div>
+  </div>
+</section>
+
+<!-- ═══ §7 信号色清理 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">07</span>信号色清理 SIGNAL COLOR CLEANUP</div>
+  <div class="section-desc">来源：proposed（灰阶 + 形状编码）。必须修复的 6 处信号色泄漏</div>
+  <div class="demo-panel">
+    <div class="demo-block">
+      <div class="demo-label">地图格 — blocked（双线灰 + ╳）</div>
+      <div class="map-cells-demo">
+        <div class="map-cell-demo blocked">墙</div>
+        <div class="map-cell-demo blocked">岩</div>
+      </div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">地图格 — safe-zone（虚线白 + ◇）</div>
+      <div class="map-cells-demo">
+        <div class="map-cell-demo safe-zone">营</div>
+      </div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">NPC 待结算提示（白色脉冲 ≤3Hz）</div>
+      <span class="status-npc-pending-demo">处理中…</span>
+    </div>
+    <div class="note"><span class="label">特征：</span>blocked 红→双线灰+╳ | safe-zone 绿→虚线白+◇ | npc-pending 暗黄→白色脉冲</div>
+  </div>
+</section>
+
+<!-- ═══ §8 Modal / Toast / Drawer / Log ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">08</span>容器组件 CONTAINERS</div>
+  <div class="section-desc">Modal/Toast = papercut 堆叠阴影 + woh 硬投影 · Drawer = papercut 堆叠 · Log = proposed 灰阶</div>
+  <div class="demo-panel">
+    <div class="demo-block">
+      <div class="demo-label">Modal（堆叠阴影 + 硬投影 + 方案 C 标题）</div>
+      <div class="modal-demo">
+        <div class="modal-title">确认丢弃</div>
+        <div class="modal-body">丢弃后无法恢复。该操作不可撤销。</div>
+        <div class="modal-actions">
+          <button class="term-btn primary">确认</button>
+          <button class="term-btn discard">取消</button>
+        </div>
+      </div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">Toast（撕纸边缘 + 左侧色条）</div>
+      <div class="toast-demo">获得 金属碎片 ×1</div>
+      <div class="toast-demo warn">背包已满</div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">Drawer（堆叠阴影 + 左侧加粗色条）</div>
+      <div class="drawer-demo">背包抽屉<br>侧滑进入</div>
+    </div>
+    <div class="demo-block">
+      <div class="demo-label">Log（灰阶层次 + combat 色条）</div>
+      <div class="log-demo system">[系统] 天气阴沉</div>
+      <div class="log-demo combat">[战斗] 兔子张开血盆大口</div>
+      <div class="log-demo">你拾取了金属碎片。</div>
+    </div>
+    <div class="note"><span class="label">特征：</span>Modal 标题用方案 C（纯文字+woh 边框）· Toast 用 papercut clip-path 撕纸 · 不用音效字</div>
+  </div>
+</section>
+
+<!-- ═══ §9 地图格矩阵 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">09</span>地图格矩阵 MAP MATRIX</div>
+  <div class="section-desc">纹理=proposed 低透明度 · 当前格=woh 硬投影（不反色）· 信号色灰阶化</div>
+  <div class="demo-panel">
+    <div class="map-matrix-label">FLOOR + TIDE + STATE</div>
+    <div class="map-matrix">
+      <div class="map-cell-demo cell-standard">标</div>
+      <div class="map-cell-demo cell-water">水</div>
+      <div class="map-cell-demo cell-vegetation">植</div>
+      <div class="map-cell-demo cell-metal">金</div>
+      <div class="map-cell-demo cell-magic">魔</div>
+      <div class="map-cell-demo cell-standard tide-shallow">浅</div>
+      <div class="map-cell-demo cell-water tide-deep">深</div>
+      <div class="map-cell-demo cell-metal tide-abyss">渊</div>
+      <div class="map-cell-demo cell-standard cell-fogged">雾</div>
+      <div class="map-cell-demo cell-vegetation cell-explored">探</div>
+      <div class="map-cell-demo cell-metal cell-current">当</div>
+      <div class="map-cell-demo cell-water cell-reachable">达</div>
+      <div class="map-cell-demo blocked">墙</div>
+      <div class="map-cell-demo safe-zone">营</div>
+      <div class="map-cell-demo cell-standard">·</div>
+      <div class="map-cell-demo cell-standard">·</div>
+    </div>
+    <div class="note"><span class="label">特征：</span>当前格 = woh 硬投影（2px 2px 0 #333）+ 白边框，不反色 · 不用 2px 粗边框（保持 1px 细线条）</div>
+  </div>
+</section>
+
+<!-- ═══ §10 GSAP 动画舞台 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">10</span>GSAP 动画小人 ACTOR STAGE</div>
+  <div class="section-desc">舞台=papercut 堆叠阴影 · 立绘 popUp 不变 · 无音效字</div>
+  <div class="demo-panel">
+    <div class="actor-stage">
+      <div class="actor-canvas" id="actorCanvas1">
+        <div class="actor-ground"></div>
+        <img class="actor-img" id="actor1" src="../../../vex-vue/public/img/3.png" alt="alice">
+      </div>
+      <div class="actor-controls">
+        <button onclick="playEnter('actor1')">入场 popUp</button>
+        <button onclick="playHit('actor1')">受击 hit</button>
+        <button onclick="playAttack('actor1')">攻击 attack</button>
+        <button onclick="playMove('actor1')">移动 move</button>
+        <button onclick="playFade('actor1')">淡出 fade</button>
+      </div>
+    </div>
+    <div class="note"><span class="label">特征：</span>舞台 = papercut 堆叠阴影 + 淡网格 · 立绘 = drop-shadow 白色边缘 · 无音效字（遵循立绘弹出约束）</div>
+  </div>
+</section>
+
+<!-- ═══ §11 吸收来源总结 ═══ -->
+<section class="section">
+  <div class="section-title"><span class="section-num">∑</span>吸收来源总结 SOURCE MAP</div>
+  <div class="demo-panel">
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th>组件 / 层级</th>
+          <th>吸收来源</th>
+          <th>具体元素</th>
+          <th>弃用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>基底（按钮/标签/格子/行）</td>
+          <td class="source-proposed">proposed</td>
+          <td>灰阶层次、左侧色条、方括号 active、分段刻度</td>
+          <td class="source-none">—</td>
+        </tr>
+        <tr>
+          <td>面板背景纹理</td>
+          <td class="source-proposed">proposed</td>
+          <td>极淡网格（rgba 0.015）</td>
+          <td class="source-woh">woh 网点（性能开销）</td>
+        </tr>
+        <tr>
+          <td>Modal / Drawer / Toast 容器</td>
+          <td class="source-papercut">papercut</td>
+          <td>纸张堆叠阴影、撕纸 clip-path</td>
+          <td class="source-woh">woh 3px 粗边框</td>
+        </tr>
+        <tr>
+          <td>Modal 标题</td>
+          <td class="source-woh">woh</td>
+          <td>1px 白边框 + 2px 硬投影（方案 C）</td>
+          <td class="source-none">woh 反色 / 不规则圆角</td>
+        </tr>
+        <tr>
+          <td>地图格当前格</td>
+          <td class="source-woh">woh</td>
+          <td>2px 硬投影 + 白边框（不反色）</td>
+          <td class="source-woh">woh 反色 / 2px 粗边框</td>
+        </tr>
+        <tr>
+          <td>立绘舞台背景</td>
+          <td class="source-papercut">papercut</td>
+          <td>堆叠阴影 + 淡网格</td>
+          <td class="source-woh">woh 网点 / PANEL 角标</td>
+        </tr>
+        <tr>
+          <td>信号色清理</td>
+          <td class="source-proposed">proposed</td>
+          <td>blocked 双线灰+╳ / safe-zone 虚线白+◇ / npc 白色脉冲</td>
+          <td class="source-none">—（必须修复）</td>
+        </tr>
+        <tr>
+          <td>视觉反馈</td>
+          <td class="source-none">不变</td>
+          <td>立绘 popUp（唯一反馈机制）</td>
+          <td class="source-woh">woh 音效字（违反约束）</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note" style="margin-top:16px;">
+      <span class="label">核心原则：</span>
+      proposed 提供灰阶层次骨架 · papercut 提供容器物理质感 · woh 仅在"需要强调"处点缀（Modal 标题/当前格）· 立绘 popUp 保持唯一反馈机制
+    </div>
+  </div>
+</section>
+
+<script>
+function getActor(id) { return document.getElementById(id); }
+
+function resetActor(id) {
+  const el = getActor(id);
+  gsap.killTweensOf(el);
+  gsap.set(el, { clearProps: 'all' });
+  el.style.opacity = 0;
+}
+
+function playEnter(id) {
+  resetActor(id);
+  const el = getActor(id);
+  gsap.fromTo(el,
+    { opacity: 0, scale: 0.6, y: 40 },
+    { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: 'back.out(1.7)' }
+  );
+}
+
+function playHit(id) {
+  const el = getActor(id);
+  if (el.style.opacity === '0') playEnter(id);
+  const dir = Math.random() > 0.5 ? 1 : -1;
+  gsap.timeline()
+    .to(el, { scaleX: 0.75, scaleY: 0.9, x: 10 * dir, rotation: 4 * dir, duration: 0.14, ease: 'power2.out' })
+    .to(el, { scaleX: 1.05, scaleY: 0.95, x: -8 * dir, rotation: -3 * dir, duration: 0.12, ease: 'power2.out' })
+    .to(el, { scaleX: 1, scaleY: 1, x: 0, rotation: 0, duration: 0.16, ease: 'elastic.out(1, 0.4)' });
+}
+
+function playAttack(id) {
+  const el = getActor(id);
+  if (el.style.opacity === '0') playEnter(id);
+  gsap.timeline()
+    .to(el, { x: 25, scaleX: 0.9, scaleY: 1.05, duration: 0.18, ease: 'power2.out' })
+    .to(el, { x: -10, scaleX: 1.1, scaleY: 0.95, duration: 0.12, ease: 'power4.in' })
+    .to(el, { x: 0, scaleX: 1, scaleY: 1, duration: 0.2, ease: 'elastic.out(1, 0.5)' });
+}
+
+function playMove(id) {
+  const el = getActor(id);
+  if (el.style.opacity === '0') playEnter(id);
+  const jumpHeight = 35;
+  gsap.timeline()
+    .to(el, { y: -jumpHeight, scaleY: 1.08, scaleX: 0.92, duration: 0.25, ease: 'power2.out' })
+    .to(el, { y: 0, scaleY: 0.88, scaleX: 1.05, duration: 0.18, ease: 'power2.in' })
+    .to(el, { scaleY: 1, scaleX: 1, duration: 0.32, ease: 'elastic.out(1, 0.45)' });
+}
+
+function playFade(id) {
+  const el = getActor(id);
+  gsap.to(el, { opacity: 0, y: -20, scale: 0.9, duration: 0.45, ease: 'power2.in' });
+}
+
+window.addEventListener('load', () => {
+  setTimeout(() => playEnter('actor1'), 300);
+});
+</script>
+
+</body>
+</html>

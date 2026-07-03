@@ -65,13 +65,14 @@
 ### 1.6 itmpara 与 itempara
 
 **itmpara**（地图道具实例的 JSON 附加参数，`bra_oblmapitem.itmpara`）：
-- 拾取时将 `item_id`（地图道具实例ID）注入 `itmpara` 的 `obl_item_id` 键
-- 丢弃时从 `itmpara` 读取 `obl_item_id`，还原为地图道具实例
-- 格式：JSON 对象，如 `{"obl_item_id": "42"}`
+- 拾取时保持原始附加参数，不注入地图实例主键
+- 道具模板 ID 由背包对象的 `itmid` 保存，丢弃时还原到 `bra_oblmapitem.item_id`
+- 格式：JSON 对象，如 `{}` 或 `{ "charge": 3 }`
 
 **itempara**（玩家道具栏 JSON 大字段，`bra_oblplayers.itempara`）：
 - JSON 数组，长度 = `itemmaxslots + 1`（index 0=特殊槽，1~itemmaxslots=普通槽）
 - 每个元素是一个道具对象或 `null`（空槽）
+- 道具对象的 `itmid` 是模板 ID（如 `rusty_pipe`），地图实例主键是 `bra_oblmapitem.iid`
 
 > 道具对象七字段规范与 JSON 示例见 [CODEBASE.md §3.1](./CODEBASE.md#31-bra_oblplayers-玩家敌人统一数据表)。
 
@@ -464,6 +465,30 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 **调试便利**：`direct()` 运行时自动挂载 `window.__battleScript` 和 `window.__battleRawEntries`，浏览器控制台直接检查编排结果。`exportScriptToJson()` 可将脚本导出为 JSON 文件下载，方便离线分析。
 
 **旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPid`+`buildSegments` 替代）、`playBattleLogGroup`（由 `playScript` 替代）、`buildPlayContext`（后端 pre emit 已带名称/HP）、`BATTLE_TEMPLATES` 按 action_id 索引（由 `KIND_TEMPLATES` 按 directedKind 分发替代）。
+
+### 2.19 道具数据三层分离
+
+道具/POI 的"游戏逻辑初始值"、"运行时实例状态"、"展示文案"分属三层，不可混存：
+
+| 层 | 位置 | 内容 | 权威方 |
+|----|------|------|--------|
+| 前端文案层 | `vex-vue/src/data/*-locale.ts` | name/desc | 前端 |
+| 后端模板层 | `gamedata/item_table.php` 等 | itmk/itme/itms/itmsk/itmpara/use_effect 等初始值 | 后端 |
+| 后端实例层 | `itempara` / `bra_oblmapitem` / 装备槽字段 | 运行时状态（模板 ID + 运行时字段完整保留） | 后端 |
+
+**七字段全部是实例状态**：`itmid`（模板索引，不变）除外，`itm`/`itmk`/`itme`/`itms`/`itmsk`/`itmpara` 均可能在游戏进程中偏离模板初始值（改名/改造/强化/涂毒/腐蚀/附魔等），持久化层必须完整保留。
+
+**itm 字段语义调整**：从"模板名称"改为"自定义名称"。拾取时留空，前端渲染时空值查 locale、非空值直接用。这样改名机制可后续启用而不破坏现有数据。
+
+**装备字段同步调整**：装备槽独立保存模板 ID（`wepid`/`wep2id`/`arbid`/`arhid`/`araid`/`arfid`/`artid`），原 `wep`/`arb` 等名称字段同样改为自定义名语义，空值由前端通过模板 ID 查 locale。
+
+**设计理由**：
+- 与 §2.2（后端只输出事件结构）理念对齐——文案是展示职责，归前端
+- 日志系统已示范此模式（`log_id + params` → `log-templates.ts` 渲染），道具/POI 对齐
+- 支持本地化（多语言只需替换 locale 文件）
+- 前端可独立迭代文案，无需后端发版
+
+> 详细迁移方案与影响范围见 [道具数据三层分离-设计案](./docs/道具数据三层分离-设计案.md)。
 
 ---
 

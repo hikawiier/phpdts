@@ -23,6 +23,8 @@ import { useTileActionStore } from '@/stores/tileAction';
 import { useMapStore } from '@/stores/map';
 import { commandQueue } from '@/stores/command-queue';
 import type { GroundItem, Poi } from '@/types/api';
+import { getItemName } from '@/data/item-locale';
+import { getPoiName } from '@/data/poi-locale';
 import ExploreButton from './ExploreButton.vue';
 
 const tileActionStore = useTileActionStore();
@@ -169,9 +171,20 @@ function onOverlayClick(e: MouseEvent): void {
   }
 }
 
-/** 道具显示名（discovered===2 时用 display_name，否则用 itm） */
+/** 道具显示名：实例自定义名优先，普通模板名由前端 locale 渲染 */
 function itemDisplayName(item: GroundItem): string {
-  return item.discovered === 2 ? (item.display_name || '') : (item.itm || item.name || '');
+  if (item.discovered === 2) {
+    const displayId = item.fake_item_id || item.item_id;
+    const maskedName = displayId ? getItemName(displayId) : (item.display_name?.replace(/（？）$/, '') || '');
+    return maskedName ? maskedName + '（？）' : '未知物品（？）';
+  }
+  const customName = item.itm?.trim();
+  if (customName) return customName;
+  return getItemName(item.item_id) || item.name || '';
+}
+
+function poiDisplayName(poi: Poi): string {
+  return getPoiName(poi.poi_id, poi.name);
 }
 
 /** 道具是否显示 meta（discovered!==2 时显示 itmk + itme） */
@@ -238,7 +251,7 @@ function poiCountLabel(poi: Poi): string {
         >
           <span class="tile-tag">[S]</span>
           <span class="tile-name">
-            {{ poi.name }}
+            {{ poiDisplayName(poi) }}
             <span v-if="poiSubLabel(poi)" class="dim">{{ poiSubLabel(poi) }}</span>
             <span v-if="poiCountLabel(poi)" class="dim">{{ poiCountLabel(poi) }}</span>
           </span>
