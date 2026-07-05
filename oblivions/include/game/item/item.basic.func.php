@@ -17,6 +17,23 @@ if (!defined('IN_GAME')) {
 // ================================================================
 
 // ----------------------------------------------------------------
+// itms 属性查询
+// ----------------------------------------------------------------
+
+/**
+ * 判断 itms 是否为无限标识
+ *
+ * 无限标识统一为字符串 '∞'（对齐旧模式 $nosta = '∞'）。
+ * 数量模型表示无限数量，耐久模型表示无限耐久。
+ *
+ * @param mixed $itms  道具的 itms 字段值
+ * @return bool  true=无限
+ */
+function item_is_infinite($itms): bool {
+    return (string)$itms === '∞';
+}
+
+// ----------------------------------------------------------------
 // 堆叠属性查询（带静态缓存）
 // ----------------------------------------------------------------
 
@@ -197,14 +214,11 @@ function obl_find_mergeable_slot(&$pdata, $item_id, $itmpara = null) {
         if (!$item || !is_array($item) || empty($item['itmid'])) continue;
         if ($item['itmid'] !== $item_id) continue;
 
-        // §12.3 防御性检查：itms='0'/空 视为无效数据跳过（理论不应存在）
         $s = (string)$item['itms'];
-        if ($s === '0' || $s === '') continue;
-
         $slot_para_key = _item_para_key(isset($item['itmpara']) ? $item['itmpara'] : null);
         if ($slot_para_key !== $para_key) continue;
 
-        if ($s === '∞' || $s === '999') return $i;
+        if (item_is_infinite($s)) return $i;
         $cur = (int)$s;
         if ($cur < $stack_limit) return $i;
     }
@@ -233,7 +247,7 @@ function obl_add_item_to_inventory(&$pdata, $item) {
     $para_key = _item_para_key($item_itmpara);
 
     $is_stack = ($item_id !== '') && item_get_stack($item_id);
-    if ($add_itms === '∞' || $add_itms === '999' || !$is_stack) {
+    if (item_is_infinite($add_itms) || !$is_stack) {
         $slot = obl_find_empty_slot($pdata);
         if ($slot === false) return false;
         $pdata['itempara'][$slot] = $item;
@@ -250,14 +264,11 @@ function obl_add_item_to_inventory(&$pdata, $item) {
         if ($slot_item === null) {
             $available_space += $stack_limit;
         } elseif (is_array($slot_item) && isset($slot_item['itmid']) && $slot_item['itmid'] === $item_id) {
-            // §12.3 防御性检查：itms='0'/空 视为无效数据跳过（不计入可用空间）
             $s = (string)$slot_item['itms'];
-            if ($s === '0' || $s === '') continue;
-
             $slot_para_key = _item_para_key(isset($slot_item['itmpara']) ? $slot_item['itmpara'] : null);
             if ($slot_para_key !== $para_key) continue;
 
-            if ($s === '∞' || $s === '999') {
+            if (item_is_infinite($s)) {
                 $available_space = PHP_INT_MAX;
                 break;
             }
@@ -277,7 +288,7 @@ function obl_add_item_to_inventory(&$pdata, $item) {
         if ($first_slot === false) $first_slot = $slot;
 
         $cur = (string)$pdata['itempara'][$slot]['itms'];
-        if ($cur === '∞' || $cur === '999') {
+        if (item_is_infinite($cur)) {
             return $slot;
         }
         $cur = (int)$cur;
@@ -336,7 +347,7 @@ function obl_merge_stacks_in_inventory(&$pdata) {
         $infinite_slot = null;
         foreach ($slots as $slot) {
             $s = (string)$pdata['itempara'][$slot]['itms'];
-            if ($s === '∞' || $s === '999') {
+            if (item_is_infinite($s)) {
                 $infinite_slot = $slot;
                 break;
             }

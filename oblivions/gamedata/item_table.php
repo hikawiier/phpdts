@@ -341,7 +341,7 @@ return [
         'itm'      => '指南针',
         'itmk'     => 'TK',
         'itme'     => 1,
-        'itms'     => 999,
+        'itms'     => '∞',
         'itmsk'    => '',
         'itmpara'  => '',
         'desc'     => '老旧但还能用的指南针，在迷雾中辨别方向。',
@@ -593,7 +593,7 @@ return [
     'forge_t1' => [
         'itmk'     => 'TK',
         'itme'     => 1,
-        'itms'     => 999,
+        'itms'     => '∞',
         'itmsk'    => '',
         'itmpara'  => '',
         'tier'     => 'rare',
@@ -605,7 +605,7 @@ return [
     'stove_t1' => [
         'itmk'     => 'TK',
         'itme'     => 1,
-        'itms'     => 999,
+        'itms'     => '∞',
         'itmsk'    => '',
         'itmpara'  => '',
         'tier'     => 'uncommon',
@@ -617,7 +617,7 @@ return [
     'stove_t2' => [
         'itmk'     => 'TK',
         'itme'     => 1,
-        'itms'     => 999,
+        'itms'     => '∞',
         'itmsk'    => '',
         'itmpara'  => '',
         'tier'     => 'rare',

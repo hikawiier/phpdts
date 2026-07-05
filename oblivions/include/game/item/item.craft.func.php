@@ -117,7 +117,7 @@ function _item_build_placed_items(&$pdata, $slot_counts, $workbench_materials = 
 
         // 校验投入数量不超过实际堆叠数量（无限标识不限）
         $s = (string)$item['itms'];
-        if ($s === '∞' || $s === '999') {
+        if (item_is_infinite($s)) {
             $actual_count = $count;
         } else {
             $actual_count = min($count, max(0, (int)$s));
@@ -378,7 +378,7 @@ function item_count_material_in_inventory(&$pdata, $item_id) {
         if ($slot == 0) continue;  // 跳过 itm0
         if (is_array($item) && isset($item['itmid']) && $item['itmid'] === $item_id) {
             $s = (string)$item['itms'];
-            if ($s === '∞' || $s === '999') return PHP_INT_MAX;  // 无限
+            if (item_is_infinite($s)) return PHP_INT_MAX;  // 无限
             $count += max(0, (int)$s);
         }
     }
@@ -417,7 +417,7 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
 
     $mapping = item_resolve_material_mapping($materials, $placed_items);
     if ($mapping === null) {
-        return false;  // 理论上不会走到这里（item_craft 流程已确认匹配）
+        return false;
     }
 
     // 按槽位汇总 consume='all' 和 consume='durability' 的数量
@@ -448,7 +448,7 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
 
         // 数量模型（stack=true）：扣 itms-N，归零由 item_destroy_if_depleted 销毁
         $s = (string)$item['itms'];
-        if ($s === '∞' || $s === '999') continue;  // 无限不扣
+        if (item_is_infinite($s)) continue;  // 无限不扣
         $cur = max(0, (int)$s - $cnt);
         $item['itms'] = (string)$cur;
         item_destroy_if_depleted($pdata, $slot);
@@ -462,7 +462,7 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
         // 数量模型（stack=true）：扣 cnt 个数量，归零由 item_destroy_if_depleted 销毁
         if (item_get_stack($item_id)) {
             $s = (string)$item['itms'];
-            if ($s === '∞' || $s === '999') continue;  // 无限不扣
+            if (item_is_infinite($s)) continue;  // 无限不扣
             $cur = max(0, (int)$s - $cnt);
             $item['itms'] = (string)$cur;
             item_destroy_if_depleted($pdata, $slot);
@@ -630,7 +630,7 @@ function item_analyze_craft_failure($placed_items) {
         // 2. 调用 item_resolve_material_mapping 判断是否匹配
         $mapping = item_resolve_material_mapping($materials, $placed_items);
         if ($mapping !== null) {
-            // 此配方能匹配，跳过（match_count=0 时不应走到这里，防御性 continue）
+            // 此配方能匹配，无需分析失败原因，跳过
             continue;
         }
 
@@ -840,7 +840,6 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
     // 步骤 6：空间检查（§8.4 适配，区分模型，含 consume='all' 和 consume='durability'）
     $mapping = item_resolve_material_mapping($recipe['materials'], $placed_items);
     if ($mapping === null) {
-        // 理论上不会走到这里（步骤 3 已确认匹配）
         $obl_log->emit('craft.fail_no_match', 'system');
         return;
     }
@@ -874,7 +873,7 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
 
         // 数量模型（stack=true）：消耗后 itms 归零才空出
         $s = (string)$item['itms'];
-        if ($s === '∞' || $s === '999') continue;  // 无限不空出
+        if (item_is_infinite($s)) continue;  // 无限不空出
         if ((int)$s - $cnt <= 0) $freed_slots++;
     }
 
@@ -886,14 +885,14 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
         // 数量模型（stack=true）：扣 cnt 个数量，归零才空出
         if (item_get_stack($item['itmid'])) {
             $s = (string)$item['itms'];
-            if ($s === '∞' || $s === '999') continue;
+            if (item_is_infinite($s)) continue;
             if ((int)$s - $cnt <= 0) $freed_slots++;
             continue;
         }
 
         // 耐久模型（stack=false）：扣 cnt 点耐久，归零才空出
         $s = (string)$item['itms'];
-        if ($s === '∞' || $s === '999') continue;
+        if (item_is_infinite($s)) continue;
         if ((int)$s - $cnt <= 0) $freed_slots++;
     }
 

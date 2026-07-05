@@ -19,7 +19,8 @@ import { useInventoryStore } from '@/stores/inventory';
 import { useMapStore } from '@/stores/map';
 import { commandQueue } from '@/stores/command-queue';
 import type { InventoryItem } from '@/types/api';
-import { getItemName } from '@/data/item-locale';
+import { getItemName, isInfinite } from '@/data/item-locale';
+import { getItmkName } from '@/data/itmk-locale';
 
 const inventoryStore = useInventoryStore();
 const mapStore = useMapStore();
@@ -46,15 +47,14 @@ function slotDisplayName(item: InventoryItem): string {
 }
 
 /**
- * 数量/耐久语义区分显示
- * stack=true 显示 ×N（堆叠数量），stack=false 显示 耐久 N（耐久度）
+ * 道具元信息显示：效/耐 分数格式（如 5/10、30/∞）
+ * 统一格式，不区分数量模型与耐久模型
  */
 function slotMeta(item: InventoryItem): string {
+  const eff = String(item.effect ?? '0');
   const dur = String(item.durability ?? '0');
-  if (dur === '∞' || dur === '999') {
-    return item.stack ? '×∞' : '耐久 ∞';
-  }
-  return item.stack ? `×${dur}` : `耐久 ${dur}`;
+  const durLabel = (isInfinite(dur)) ? '∞' : dur;
+  return `${eff}/${durLabel}`;
 }
 </script>
 
@@ -72,7 +72,7 @@ function slotMeta(item: InventoryItem): string {
         <span class="slot-num">[{{ s.slot }}]</span>
         <template v-if="!s.empty">
           <span class="slot-name">{{ slotDisplayName(s) }}</span>
-          <span class="slot-kind">{{ s.kind }}</span>
+          <span class="slot-kind">{{ getItmkName(s.kind) }}</span>
           <span class="slot-meta">{{ slotMeta(s) }}</span>
           <div v-if="isOblivions" class="slot-actions">
             <button
@@ -93,7 +93,7 @@ function slotMeta(item: InventoryItem): string {
         </template>
       </div>
     </div>
-    <div class="slot-info">items: {{ num }}/{{ limit }}</div>
+    <div class="slot-info">物品: {{ num }}/{{ limit }}</div>
   </template>
   <div v-else class="loading">loading...</div>
 </template>

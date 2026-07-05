@@ -23,7 +23,8 @@ import { useTileActionStore } from '@/stores/tileAction';
 import { useMapStore } from '@/stores/map';
 import { commandQueue } from '@/stores/command-queue';
 import type { GroundItem, Poi } from '@/types/api';
-import { getItemName } from '@/data/item-locale';
+import { getItemName, isInfinite } from '@/data/item-locale';
+import { getItmkName } from '@/data/itmk-locale';
 import { getPoiName } from '@/data/poi-locale';
 import ExploreButton from './ExploreButton.vue';
 
@@ -192,6 +193,14 @@ function showItemMeta(item: GroundItem): boolean {
   return item.discovered !== 2;
 }
 
+/** 道具元信息显示：效/耐 分数格式（如 5/10、30/∞） */
+function itemMeta(item: GroundItem): string {
+  const eff = String(item.itme ?? '0');
+  const rawDur = String(item.itms ?? '');
+  const dur = (isInfinite(rawDur)) ? '∞' : rawDur;
+  return `${eff}/${dur}`;
+}
+
 /** POI 行的副标签（已搜索/可搜索/搜索次数） */
 function poiSubLabel(poi: Poi): string {
   if (poi.searched) return '(已搜索)';
@@ -305,7 +314,7 @@ function poiCountLabel(poi: Poi): string {
                 <span class="item-tag">[P]</span>
                 <span class="item-name">{{ itemDisplayName(item) }}</span>
                 <span v-if="showItemMeta(item)" class="item-meta">
-                  {{ item.itmk }} eff:{{ item.itme }}
+                  {{ getItmkName(item.itmk) }} {{ itemMeta(item) }}
                 </span>
               </div>
               <div class="modal-footer">

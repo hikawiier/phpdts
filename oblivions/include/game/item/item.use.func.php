@@ -111,7 +111,7 @@ function item_execute_use_effect($item, &$pdata) {
  *
  * itms 字段语义（对数量模型表示数量，对耐久模型表示耐久，两者互斥）：
  * - 纯数字字符串 → 有限值，每次扣 $amount
- * - "999" 或 "∞" → 无限值，不扣减
+ * - "∞" → 无限值，不扣减（item_is_infinite() 判断）
  * - 扣到 0 → emit durability.broken（道具耗尽/破坏）
  *
  * 注意：本函数只负责扣减 itms 和 emit 事件，不销毁道具实例。
@@ -127,7 +127,7 @@ function item_consume_itms(&$item, $amount = 1) {
     if (!isset($item['itms'])) return;
 
     $s = (string)$item['itms'];
-    if ($s === '' || $s === '0' || $s === '∞' || $s === '999') return;
+    if (item_is_infinite($s)) return;
 
     $cur = (int)$s;
     $cur = max(0, $cur - $amount);

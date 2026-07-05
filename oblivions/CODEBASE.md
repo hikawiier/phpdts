@@ -192,9 +192,9 @@ $oblpara['battle'] = [
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `itm` | string | 实例自定义名；空值表示用 `itmid` 查前端 locale 渲染模板名 |
-| `itmk` | string | 道具种类 |
+| `itmk` | string | 道具种类（如 WP/WK/HH）；前端通过 `itmk-locale.ts` 渲染中文名 |
 | `itme` | int | 效果值 |
-| `itms` | string | 耐久 |
+| `itms` | string | 数量（可堆叠）或耐久（不可堆叠）；`'∞'`=无限（`item_is_infinite()` 判断） |
 | `itmsk` | string | 耐久种类 |
 | `itmpara` | object | 实例附加参数（JSON 对象） |
 | `itmid` | string | 道具模板 ID（如 `rusty_pipe`）；地图实例主键为 `iid`，不写入背包 |
@@ -1215,6 +1215,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
+| `item_is_infinite` | `($itms): bool` | 判断 itms 是否为无限标识（`'∞'`）。数量模型=无限数量，耐久模型=无限耐久 |
 | `item_get_stack` | `($item_id): bool` | 读取道具是否可堆叠（带静态缓存） |
 | `item_get_stack_limit` | `($item_id): int` | 读取道具的 stack_limit（带静态缓存） |
 | `item_destroy_if_depleted` | `(array &$pdata, $slot): bool` | 检查 itms 归零并销毁道具实例（unset 槽位）。**"销毁道具"的统一入口**，所有 itms 扣减后的销毁逻辑都经过此函数。返回 true=已销毁，false=未归零 |
@@ -1227,7 +1228,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `obl_find_mergeable_slot` | `(array &$pdata, $item_id, $itmpara = null): int\|false` | 查找可合并堆叠的槽位（仅查 1~itemmaxslots，不含 itm0）。合并条件：item_id 相同 + itmpara 相等 + 未达 stack_limit |
 | `obl_add_item_to_inventory` | `(array &$pdata, $item): int\|false` | 添加道具到背包（自动合并，原子性）。预检查空间不足时返回 false，不修改任何数据。**只操作背包槽位 1~itemmaxslots，不操作 itm0** |
 | `obl_merge_stacks_in_inventory` | `(array &$pdata): void` | 合并背包内同类堆叠（腾出空槽）。仅合并，不转移 itm0，不排序 |
-| `obl_put_item_to_itm0` | `(array &$pdata, $item): bool` | 放入道具到 itm0 缓存槽。itm0 已被占用时返回 false（防御性检查，router 门控已拦截） |
+| `obl_put_item_to_itm0` | `(array &$pdata, $item): bool` | 放入道具到 itm0 缓存槽。itm0 已被占用时返回 false（返回错误码让调用方 emit 上报，router 门控已拦截） |
 | `obl_organize_inventory` | `(array &$pdata): bool` | 整理背包：合并同类堆叠 + 转移 itm0 → 背包。**纯逻辑函数（不内部 emit）**。返回 true=整理成功（itm0 已清空），false=背包满（itm0 保留）。由调用方根据返回值 emit `organize.success` / `organize.fail` 事件 |
 | `obl_pickup_item` | `($iid, array &$pdata): void` | 拾取道具（10 步流程：读取实例 + itms='0' 检查 + 位置/发现状态检查 + 近视揭示 + 构建实例 + 放入 itm0 + 原子删除地图实例 + 自动整理 + emit pickup.success + emit organize.fail 解耦） |
 | `obl_discard_item` | `($slot, array &$pdata): void` | 丢弃道具。slot=0 丢弃 itm0 缓存槽内容（直接抛弃，不写回地图）；1~itemmaxslots 丢弃普通槽位道具（写回 `bra_oblmapitem` 表） |
@@ -1254,7 +1255,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 |------|------|------|
 | `item_use` | `($slot, &$pdata): void` | 命令入口：读取槽位 → 检查 tag_usable → 耐久检查 → use_effect 分发 → itms 扣减 → item_destroy_if_depleted → emit use_item.success |
 | `item_execute_use_effect` | `($item, &$pdata): void` | use_effect 分发框架（纯分发器，调 `item_use_effect_{name}()`，不预定义任何效果） |
-| `item_consume_itms` | `(&$item, $amount = 1): void` | itms 扣减（"999"/"∞"/"0" 特殊处理，归零 emit durability.broken）。注意：只扣减不销毁，销毁由 item_destroy_if_depleted 统一处理 |
+| `item_consume_itms` | `(&$item, $amount = 1): void` | itms 扣减（"∞"/"0" 特殊处理，归零 emit durability.broken）。注意：只扣减不销毁，销毁由 item_destroy_if_depleted 统一处理 |
 
 **use_effect 注册约定**：具体效果函数由归属系统实现，框架只负责分发。当前预定义的 use_effect 名称：
 - `restore_sp` → 食物经验系统注册（恢复 SP）
@@ -1332,6 +1333,12 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 - **actor_type 约定**：`0`=玩家，`>0`=敌人类型 ID（与 `bra_oblplayers.type` 一致）
 - **段边界自动填充**：emit 输出的 `bl_turn_num`/`bl_round_num`/`bl_segment_flag` 由 `BattleLogCollector` 内部自动计算，各调用点无需关心
 - **phase 由 setPhase 标记**：各函数内部调 `setPhase('initiative_roll'|'once_execute_pre'|'once_execute_post'|'flee'|'combatant_cleared'|'battle_end'|'ambush_battle_end'|...)`，emit 时自动附加当前 phase
+
+### 9.6 防御性代码约束
+
+防御代码必须有对策，禁止"纯跳过"式死防御（return / continue 不处理异常）。允许的对策：执行修复 / emit 错误日志 / 返回错误码让调用方处理 / 去除检查让正常逻辑自然覆盖。
+
+详见 [DESIGN.md §2.25](./DESIGN.md#225-防御性代码约束)。
 
 ---
 
@@ -1450,6 +1457,7 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **道具可见性**: 仅 `discovered>0` 的道具返回（由API过滤）
 - **近视道具**: `discovered=2` 时显示 `display_name`（带"？"），拾取后揭示真实身份
 - **道具分组**: POI关联道具在 `pois[].items`，散落道具在 `ground_items`
+- **道具类别渲染**: 前端按 `itmk` 查 `vex-vue/src/data/itmk-locale.ts` 渲染中文类别名（如 WP→钝器、HH→生命恢复），未注册的 itmk 原样显示
 - **背包槽位**: `itempara` JSON 数组（index 0=itm0 缓存槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots（slot=0 用于 `obl_discard` 丢弃 itm0 内容）
 - **itm0 锁定处理**: `itempara[0]` 非空时后端拒绝除 `obl_organize` / `obl_discard` 外的所有命令（emit `system.itm0_pending`）；前端需检测 itm0 状态，提示玩家整理或丢弃 itm0 内容
 - **整理失败事件**: 收到 `organize.fail`（携带 `item_id`）时，提示"背包已满，XX暂存到待整理区"；与 `pickup.success` / `craft.success` 是独立事件，可同时收到

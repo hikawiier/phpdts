@@ -72,3 +72,13 @@ export function getItemDesc(itemId: string | number | undefined): string {
   if (itemId === undefined || itemId === null || itemId === '') return '';
   return ITEM_LOCALE[String(itemId)]?.desc || '';
 }
+
+/**
+ * 判断 itms 是否为无限标识
+ *
+ * 无限标识统一为字符串 '∞'。
+ * 数量模型表示无限数量，耐久模型表示无限耐久。
+ */
+export function isInfinite(itms: string | number | undefined | null): boolean {
+  return String(itms ?? '') === '∞';
+}

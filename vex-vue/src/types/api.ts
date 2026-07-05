@@ -159,6 +159,7 @@ export interface GroundItem {
   itm?: string;
   itmk?: string;
   itme?: string | number;
+  itms?: string | number;
   name?: string;
   [key: string]: unknown;
 }

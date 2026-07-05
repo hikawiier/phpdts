@@ -18,7 +18,8 @@ import { computed } from 'vue';
 import { useInventoryStore } from '@/stores/inventory';
 import { commandQueue } from '@/stores/command-queue';
 import type { InventoryItem } from '@/types/api';
-import { getItemName } from '@/data/item-locale';
+import { getItemName, isInfinite } from '@/data/item-locale';
+import { getItmkName } from '@/data/itmk-locale';
 
 const inventoryStore = useInventoryStore();
 
@@ -44,11 +45,10 @@ function slotDisplayName(item: InventoryItem): string {
 }
 
 function slotMeta(item: InventoryItem): string {
+  const eff = String(item.effect ?? '0');
   const dur = String(item.durability ?? '0');
-  if (dur === '∞' || dur === '999') {
-    return item.stack ? '×∞' : '耐久 ∞';
-  }
-  return item.stack ? `×${dur}` : `耐久 ${dur}`;
+  const durLabel = isInfinite(dur) ? '∞' : dur;
+  return `${eff}/${durLabel}`;
 }
 </script>
 
@@ -69,6 +69,7 @@ function slotMeta(item: InventoryItem): string {
         <div class="itm0-item">
           <span class="slot-num">[0]</span>
           <span class="slot-name">{{ slotDisplayName(itm0) }}</span>
+          <span class="slot-kind">{{ getItmkName(itm0.kind) }}</span>
           <span class="slot-meta">{{ slotMeta(itm0) }}</span>
         </div>
       </div>
