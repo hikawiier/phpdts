@@ -6,6 +6,17 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // 唯一 ID 索引 → 道具模板属性
 // 其他文件引用道具时只需引用 ID，运行时从此表读取模板实例化
 // 字段与现有物品系统对齐：itm/itmk/itme/itms/itmsk/itmpara
+//
+// 字段说明：
+// - itm/desc：deprecated，文案已迁移至前端 vex-vue/src/data/item-locale.ts
+// - tags：Tag ID 数组（性质描述 Tag + 系统钩子 Tag，共存于同一字段）
+// - use_effect：使用效果函数名（非空时 tags 必须含 tag_usable，由数据校验保证）
+// - tool_level：工具等级（仅工作台/工具类道具有效），0=无等级要求；高级兼容低级
+//
+// 数据校验规则（见《道具-系统钩子Tag设计案.md》§6.3）：
+// - itmk ∈ {WP,WK,WG,WD,WF,AR,AH,AF,AA} ⟹ tags 含 tag_equippable
+// - use_effect 非空 ⟺ tags 含 tag_usable
+// - itmk ∈ {MT,HH,HS,DX} ⟹ tags 不含 tag_equippable
 // ================================================================
 
 return [
@@ -21,6 +32,9 @@ return [
         'desc'     => '一根锈迹斑斑的铁管，握在手里沉甸甸的。',
         'tier'     => 'common',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'scrap_blade' => [
         'itm'      => '废铁刀',
@@ -32,6 +46,9 @@ return [
         'desc'     => '用废铁片磨出的粗糙刀刃，勉强能割开东西。',
         'tier'     => 'common',
         'stack'    => false,
+        'tags'     => ['tag_equippable', 'tag_sharp'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'nail_gun' => [
         'itm'      => '钉枪',
@@ -43,6 +60,9 @@ return [
         'desc'     => '工地上常见的气动钉枪，近距离威力不小。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'pipe_bomb' => [
         'itm'      => '管状炸弹',
@@ -54,6 +74,9 @@ return [
         'desc'     => '用铁管和火药自制的简易爆炸物，小心别炸到自己。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'swamp_spear' => [
         'itm'      => '沼泽长矛',
@@ -65,6 +88,9 @@ return [
         'desc'     => '用沼泽硬木和骨片制成的长矛，尖端涂有毒素。',
         'tier'     => 'rare',
         'stack'    => false,
+        'tags'     => ['tag_equippable', 'tag_sharp'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'ancient_core_blade' => [
         'itm'      => '核心刃',
@@ -76,6 +102,9 @@ return [
         'desc'     => '嵌入古代核心的武器，刃身散发微弱的光辉。',
         'tier'     => 'epic',
         'stack'    => false,
+        'tags'     => ['tag_equippable', 'tag_sharp'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
 
     // ─── 防具 ───────────────────────────────────────────
@@ -90,6 +119,9 @@ return [
         'desc'     => '用铁皮和铁丝拼凑的简易护甲，聊胜于无。',
         'tier'     => 'common',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'swamp_cloak' => [
         'itm'      => '沼泽斗篷',
@@ -101,6 +133,9 @@ return [
         'desc'     => '用沼泽藤蔓编织的斗篷，能抵御部分攻击。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'rust_circlet' => [
         'itm'      => '锈蚀头环',
@@ -112,6 +147,9 @@ return [
         'desc'     => '锈蚀的金属头环，提供基本的头部防护。',
         'tier'     => 'common',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'bone_amulet' => [
         'itm'      => '骨制护符',
@@ -123,9 +161,14 @@ return [
         'desc'     => '用不明骨骼雕刻的护符，散发着诡异的气息。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
 
     // ─── 消耗品 ─────────────────────────────────────────
+    // 现有消耗品（bread/mineral_water/health_potion 等）已接入 use_effect 框架，
+    // 具体效果函数由归属系统（食物经验/健康系统）注册。注册前使用会 emit use_item.effect_not_registered。
 
     'bread' => [
         'itm'      => '面包',
@@ -138,6 +181,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_hp',
+        'tool_level' => 0,
     ],
     'mineral_water' => [
         'itm'      => '矿泉水',
@@ -150,6 +196,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_sp',
+        'tool_level' => 0,
     ],
 
     'scrap_metal' => [
@@ -163,6 +212,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'rusty_gear' => [
         'itm'      => '生锈齿轮',
@@ -175,6 +227,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'health_potion' => [
         'itm'      => '生命药剂',
@@ -187,6 +242,9 @@ return [
         'tier'     => 'uncommon',
         'stack'    => true,
         'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_hp',
+        'tool_level' => 0,
     ],
     'stamina_potion' => [
         'itm'      => '体力药剂',
@@ -199,6 +257,9 @@ return [
         'tier'     => 'uncommon',
         'stack'    => true,
         'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_sp',
+        'tool_level' => 0,
     ],
     'supply_pack' => [
         'itm'      => '补给包',
@@ -211,6 +272,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 3,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_hp',
+        'tool_level' => 0,
     ],
     'antidote' => [
         'itm'      => '解毒剂',
@@ -223,6 +287,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'cure_bs',
+        'tool_level' => 0,
     ],
     'swamp_herb' => [
         'itm'      => '沼泽草药',
@@ -235,6 +302,9 @@ return [
         'tier'     => 'common',
         'stack'    => true,
         'stack_limit' => 8,
+        'tags'     => ['tag_raw_food'],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'ancient_core' => [
         'itm'      => '古代核心',
@@ -246,6 +316,9 @@ return [
         'desc'     => '散发微光的神秘核心，蕴含未知的能量。',
         'tier'     => 'rare',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
 
     // ─── 工具 ───────────────────────────────────────────
@@ -260,6 +333,9 @@ return [
         'desc'     => '一卷结实的绳索，在沼泽地带可能派上用场。',
         'tier'     => 'common',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'compass' => [
         'itm'      => '指南针',
@@ -271,6 +347,9 @@ return [
         'desc'     => '老旧但还能用的指南针，在迷雾中辨别方向。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'lockpick' => [
         'itm'      => '开锁器',
@@ -282,6 +361,9 @@ return [
         'desc'     => '简易的开锁工具，也许能打开某些宝箱。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
 
     // ─── 特殊 ───────────────────────────────────────────
@@ -296,6 +378,9 @@ return [
         'desc'     => '能收纳元素之力的神秘口袋，元素大师专属道具。',
         'tier'     => 'rare',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
     'mystery_box' => [
         'itm'      => '神秘礼盒',
@@ -307,5 +392,253 @@ return [
         'desc'     => '包装精美的礼盒，打开后才知道里面是什么。',
         'tier'     => 'uncommon',
         'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+
+    // ================================================================
+    // ─── 道具系统扩展（主设计案 v6.2 §3.2）──────────────────────────
+    // ================================================================
+
+    // ─── 基础素材（性质描述 Tag）──────────────────────────
+
+    'cloth' => [
+        'itmk'     => 'MT',
+        'itme'     => 1,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => ['tag_combustible'],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'blade_shard' => [
+        'itmk'     => 'MT',
+        'itme'     => 2,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => ['tag_sharp'],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'circuit_board' => [
+        'itmk'     => 'MT',
+        'itme'     => 5,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'uncommon',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'crushed_can' => [
+        'itmk'     => 'MT',
+        'itme'     => 2,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'scrap_wire' => [
+        'itmk'     => 'MT',
+        'itme'     => 1,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'cabin_sponge' => [
+        'itmk'     => 'MT',
+        'itme'     => 1,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 10,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+
+    // ─── 食物（可使用，use_effect 由归属系统注册）──────────
+
+    'rabbit_meat_raw' => [
+        'itmk'     => 'HH',
+        'itme'     => 20,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 5,
+        'tags'     => ['tag_raw_food', 'tag_usable'],
+        'use_effect' => 'gain_resistance',
+        'tool_level' => 0,
+    ],
+    'roasted_rabbit' => [
+        'itmk'     => 'HH',
+        'itme'     => 80,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 5,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_sp',
+        'tool_level' => 0,
+    ],
+    'bandage' => [
+        'itmk'     => 'HH',
+        'itme'     => 0,
+        'itms'     => 3,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 3,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'cure_bs',
+        'tool_level' => 0,
+    ],
+    'simple_stew' => [
+        'itmk'     => 'HH',
+        'itme'     => 150,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'uncommon',
+        'stack'    => true,
+        'stack_limit' => 3,
+        'tags'     => ['tag_usable'],
+        'use_effect' => 'restore_sp',
+        'tool_level' => 0,
+    ],
+
+    // ─── 装备产物（可装备）──────────────────────────────
+
+    'thick_shoes' => [
+        'itmk'     => 'AF',
+        'itme'     => 3,
+        'itms'     => 20,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => false,
+        'tags'     => ['tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'blade_wrapped' => [
+        'itmk'     => 'WK',
+        'itme'     => 10,
+        'itms'     => 15,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => false,
+        'tags'     => ['tag_sharp', 'tag_equippable'],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+
+    // ─── 工具/工作台道具（性质描述 Tag + tool_level）──────
+
+    'frying_pan' => [
+        'itmk'     => 'TK',
+        'itme'     => 1,
+        'itms'     => 30,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'uncommon',
+        'stack'    => false,
+        'tags'     => ['tag_tool_cooking'],
+        'use_effect' => '',
+        'tool_level' => 1,
+    ],
+    'precision_stove' => [
+        'itmk'     => 'TK',
+        'itme'     => 1,
+        'itms'     => 50,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'rare',
+        'stack'    => false,
+        'tags'     => ['tag_tool_cooking'],
+        'use_effect' => '',
+        'tool_level' => 2,
+    ],
+    'forge_t1' => [
+        'itmk'     => 'TK',
+        'itme'     => 1,
+        'itms'     => 999,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'rare',
+        'stack'    => false,
+        'tags'     => ['tag_forge'],
+        'use_effect' => '',
+        'tool_level' => 1,
+    ],
+    'stove_t1' => [
+        'itmk'     => 'TK',
+        'itme'     => 1,
+        'itms'     => 999,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'uncommon',
+        'stack'    => false,
+        'tags'     => ['tag_tool_cooking'],
+        'use_effect' => '',
+        'tool_level' => 1,
+    ],
+    'stove_t2' => [
+        'itmk'     => 'TK',
+        'itme'     => 1,
+        'itms'     => 999,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'rare',
+        'stack'    => false,
+        'tags'     => ['tag_tool_cooking'],
+        'use_effect' => '',
+        'tool_level' => 2,
+    ],
+
+    // ─── 虚拟素材（被动技能来源，不参与 itmk 匹配）─────────
+
+    'innate_craft_t0' => [
+        'itmk'     => '',
+        'itme'     => 0,
+        'itms'     => 0,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'tier'     => 'common',
+        'stack'    => false,
+        'tags'     => [],
+        'use_effect' => '',
+        'tool_level' => 0,
     ],
 ];

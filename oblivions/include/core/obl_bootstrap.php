@@ -46,6 +46,11 @@ require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.main.php'
 require_once GAME_ROOT . './oblivions/include/game/explore.func.php';
 require_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
 
+// 第 5.5 层：道具系统（依赖 log + player + explore，无循环依赖）
+require_once GAME_ROOT . './oblivions/include/game/item/item.tag.func.php';
+require_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
+require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+
 // 第 6 层：依赖最广，末尾注册 tick 监听器
 require_once GAME_ROOT . './oblivions/include/game/tick.func.php';
 

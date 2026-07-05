@@ -7,6 +7,7 @@
 
 import { generateTerrainDesc } from './terrain-desc';
 import { escapeHtml } from '@/utils/format';
+import { ITEM_LOCALE } from './item-locale';
 import type { LogEntry } from '@/types/api';
 
 /** 日志参数类型 */
@@ -290,6 +291,66 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
           return `战斗结束。`;
       }
     },
+  },
+
+  // ─── use_item / durability ─────────────────────
+  'use_item.empty_slot': {
+    text: '该槽位没有道具。',
+  },
+  'use_item.not_usable': {
+    text: '这个道具无法使用。',
+  },
+  'use_item.broken': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}已损坏，无法使用。</span>`;
+    },
+  },
+  'use_item.effect_not_registered': {
+    render: (params) => {
+      return `<span class="grey">[系统] 使用效果「${escapeHtml(params.effect as string)}」尚未实现。</span>`;
+    },
+  },
+  'use_item.success': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `你使用了<span class="yellow">${escapeHtml(name)}</span>。`;
+    },
+  },
+  'durability.broken': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}已损坏。</span>`;
+    },
+  },
+
+  // ─── craft ─────────────────────────────────────
+  'craft.success': {
+    render: (params) => {
+      const results = params.results as Array<{ item_id: string; count: number }> | undefined;
+      if (!results || !results.length) return `合成成功。`;
+      const parts = results.map((r) => {
+        const name = ITEM_LOCALE[r.item_id]?.name ?? r.item_id;
+        return `${escapeHtml(name)}×${r.count}`;
+      });
+      return `合成成功，获得 ${parts.join('、')}。`;
+    },
+  },
+  'craft.new_recipe_discovered': {
+    text: '发现新配方！',
+    highlightClass: 'yellow',
+  },
+  'craft.fail_no_match': {
+    text: '这些素材无法合成任何东西。',
+  },
+  'craft.fail_ambiguous': {
+    render: (params) => {
+      const count = params.match_count as number;
+      return `素材指向不明确（匹配 ${count} 个配方），需要放更多素材。`;
+    },
+  },
+  'craft.fail_bag_full': {
+    text: '背包空间不足，无法放入合成产物。',
   },
 };
 

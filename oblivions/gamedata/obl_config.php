@@ -25,4 +25,11 @@ return [
 
     // ─── 战斗 / Battle ──────────────────────────────────
     'battle_log_old_max'    => 10,   // 战斗日志历史归档最大批次（超过后丢弃最旧的）
+
+    // ─── 道具系统 / Item ───────────────────────────────
+    // 注意：以下两项为预留配置，当前 obl_command_advances_tick() 使用硬编码白名单（不读取此配置）。
+    // obl_use_item / obl_craft 不在白名单内，已满足"不推进 tick"的要求。
+    // 未来若改为配置驱动可直接启用。
+    'use_item_advances_tick' => false,
+    'craft_advances_tick'    => false,
 ];

@@ -73,4 +73,27 @@ return [
         'mechanic'        => 'learn_skill',
         'mechanic_params' => ['passive', 'strategy', 'damage'],
     ],
+
+    // ─── 工作台 POI（mechanic='craft_source'）──────────────
+    // mechanic_value 存储 item_id，指向 item_table 中的工作台道具
+    // 玩家站在该 POI 上时，工作台素材加入可用列表（详见设计案 §3.5 / §5.5.3）
+
+    'forge_anvil_poi' => [
+        'searchable'      => false,
+        'repeatable'      => false,
+        'mechanic'        => 'craft_source',
+        'mechanic_value'  => 'forge_t1',
+    ],
+    'vent_stove' => [
+        'searchable'      => false,
+        'repeatable'      => false,
+        'mechanic'        => 'craft_source',
+        'mechanic_value'  => 'stove_t1',
+    ],
+    'precision_stove_poi' => [
+        'searchable'      => false,
+        'repeatable'      => false,
+        'mechanic'        => 'craft_source',
+        'mechanic_value'  => 'stove_t2',
+    ],
 ];

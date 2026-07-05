@@ -121,6 +121,15 @@ switch ($action) {
     case 'skill_cd_check':
         handle_skill_cd_check();
         break;
+    case 'craft_preview':
+        handle_craft_preview();
+        break;
+    case 'craft_workbench_materials':
+        handle_craft_workbench_materials();
+        break;
+    case 'craft_recipes':
+        handle_craft_recipes();
+        break;
     case 'heartbeat':
         api_response('success');
         break;
@@ -154,6 +163,86 @@ function handle_skill_cd_check() {
     $has_cd = skill_has_cd($skill_id);
 
     api_response('success', array('has_cd' => $has_cd));
+}
+
+/**
+ * craft_preview — 预判素材池能否合成
+ *
+ * GET / POST 参数：
+ *   slots               string  逗号分隔的背包槽位号
+ *   workbench_materials string  可选，逗号分隔的工作台素材 ID
+ *
+ * 返回：
+ *   match_count   int     匹配的配方数量（0=不亮，1=亮，2+=不亮）
+ *   craftable     bool    是否可合成（match_count===1）
+ *   is_new_recipe bool    匹配的配方是否未发现过
+ */
+function handle_craft_preview() {
+    global $pdata;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    $slots = isset($_REQUEST['slots']) ? $_REQUEST['slots'] : '';
+    $workbench_materials = isset($_REQUEST['workbench_materials']) ? $_REQUEST['workbench_materials'] : '';
+
+    if ($slots === '' && $workbench_materials === '') {
+        api_error('缺少 slots 参数', 'MISSING_PARAM');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+
+    $slots_arr = $slots === '' ? [] : explode(',', $slots);
+    $wb_arr = $workbench_materials === '' ? [] : explode(',', $workbench_materials);
+
+    $result = item_craft_preview($slots_arr, $pdata, $wb_arr);
+
+    api_response('success', $result);
+}
+
+/**
+ * craft_workbench_materials — 查询可用工作台素材
+ *
+ * 无参数。
+ *
+ * 返回：
+ *   workbench_materials  array  [{source, id, item_id, tool_level}]
+ */
+function handle_craft_workbench_materials() {
+    global $pdata;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+
+    $materials = item_get_available_workbench_materials($pdata);
+
+    api_response('success', array('workbench_materials' => $materials));
+}
+
+/**
+ * craft_recipes — 查询已发现配方列表（按可见性过滤）
+ *
+ * 无参数。
+ *
+ * 返回：
+ *   recipes  array  [{recipe_id, category, materials, results}]
+ */
+function handle_craft_recipes() {
+    global $pdata;
+
+    if (!oblivions_is_active()) {
+        api_error('仅在 Oblivions 模式下可用', 'NOT_OBLIVIONS');
+    }
+
+    include_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+
+    $recipes = item_get_discovered_recipes($pdata);
+
+    api_response('success', array('recipes' => $recipes));
 }
 
 function api_equipment_slot($pdata, $id_key, $name_key, $kind_key, $effect_key, $durability_key, $sk_key, $para_key) {
@@ -278,18 +367,23 @@ function handle_player_inventory() {
     $used_count = 0;
 
     // 普通槽位 1~maxslots（index 0 为特殊槽，不在此展示）
+    $has_tag_funcs = function_exists('item_has_tag') && function_exists('item_get_tags');
     for ($i = 1; $i <= $maxslots; $i++) {
         $item = isset($itempara[$i]) ? $itempara[$i] : null;
         $empty = empty($item) || !is_array($item);
         if (!$empty) $used_count++;
+        $item_id = !$empty && isset($item['itmid']) ? $item['itmid'] : '';
         $slots[] = array(
             'slot' => $i,
             'name' => !$empty && isset($item['itm']) ? $item['itm'] : '',
-            'itmid' => !$empty && isset($item['itmid']) ? $item['itmid'] : '',
-            'item_id' => !$empty && isset($item['itmid']) ? $item['itmid'] : '',
+            'itmid' => $item_id,
+            'item_id' => $item_id,
             'kind' => !$empty && isset($item['itmk']) ? $item['itmk'] : '',
+            'itmk' => !$empty && isset($item['itmk']) ? $item['itmk'] : '',
             'effect' => !$empty && isset($item['itme']) ? (int)$item['itme'] : 0,
             'durability' => !$empty && isset($item['itms']) ? $item['itms'] : '0',
+            'usable' => !$empty && $item_id !== '' && $has_tag_funcs ? item_has_tag($item_id, 'tag_usable') : false,
+            'tags' => !$empty && $item_id !== '' && $has_tag_funcs ? item_get_tags($item_id) : array(),
             'empty' => $empty
         );
     }

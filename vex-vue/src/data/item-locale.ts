@@ -29,6 +29,35 @@ export const ITEM_LOCALE: Record<string, ItemLocaleEntry> = {
   lockpick: { name: '开锁器', desc: '简易的开锁工具，也许能打开某些宝箱。' },
   element_pocket: { name: '元素口袋', desc: '能收纳元素之力的神秘口袋，元素大师专属道具。' },
   mystery_box: { name: '神秘礼盒', desc: '包装精美的礼盒，打开后才知道里面是什么。' },
+
+  // ─── 道具系统扩展（主设计案 v6.2 §3.2）──────────────────
+  // 基础素材
+  cloth: { name: '布料', desc: '破损的织物碎片，易燃，也可用于包扎。' },
+  blade_shard: { name: '刀片碎片', desc: '锋利的金属碎片，可以切割东西。' },
+  circuit_board: { name: '电路板', desc: '从废弃电子设备上拆下的电路板，蕴含未知价值。' },
+  crushed_can: { name: '踩瘪的铝罐', desc: '被踩扁的铝制易拉罐，敲平后可作金属外底。' },
+  scrap_wire: { name: '废弃电线', desc: '一截绝缘层破损的电线，适合缠绕固定。' },
+  cabin_sponge: { name: '废舱海绵', desc: '从废弃舱室拆下的海绵块，可作鞋内垫。' },
+
+  // 食物（可使用）
+  rabbit_meat_raw: { name: '生兔肉', desc: '刚猎获的兔肉，生吃可能获得抗性，但有风险。' },
+  roasted_rabbit: { name: '烤兔肉', desc: '用火烤过的兔肉，香气四溢，恢复体力。' },
+  bandage: { name: '绷带', desc: '干净的布条绷带，能包扎伤口解除不良状态。' },
+  simple_stew: { name: '简易炖菜', desc: '用锅炖煮的杂烩汤，营养丰富。' },
+
+  // 装备产物
+  thick_shoes: { name: '流浪汉厚底鞋', desc: '用废料拼凑的厚底鞋，保护双脚免受沼泽侵蚀。' },
+  blade_wrapped: { name: '布包刀刃', desc: '用布条缠绕刀片制成的简易刀具，握感更稳。' },
+
+  // 工具/工作台道具
+  frying_pan: { name: '煎锅', desc: '铁匠锻造的平底锅，可以用来烹饪食物。' },
+  precision_stove: { name: '精密炉灶', desc: '精密制造的炉灶，控温精准，能烹饪高级料理。' },
+  forge_t1: { name: '铁砧', desc: '废弃的锻造铁砧，可以用来锻打金属。' },
+  stove_t1: { name: '排风口火炉', desc: '废弃排风口改造成的火炉，能提供基础烹饪火源。' },
+  stove_t2: { name: '精密炉灶', desc: '工厂级的精密炉灶，控温精准。' },
+
+  // 虚拟素材（被动技能）
+  innate_craft_t0: { name: '徒手合成', desc: '玩家自带的基础合成能力，无需任何工具。' },
 };
 
 export function getItemName(itemId: string | number | undefined, customName?: string): string {

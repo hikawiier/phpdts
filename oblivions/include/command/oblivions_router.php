@@ -55,6 +55,18 @@ function oblivions_cmd_dispatch($command, &$pdata, $post) {
             cmd_handle_obl_battle_action($pdata, $actions);
             return 'command';
 
+        case 'obl_use_item':
+            cmd_handle_obl_use_item(isset($post['slot']) ? $post['slot'] : 0, $pdata);
+            return 'command';
+
+        case 'obl_craft':
+            cmd_handle_obl_craft(
+                isset($post['slots']) ? $post['slots'] : '',
+                isset($post['workbench_materials']) ? $post['workbench_materials'] : '',
+                $pdata
+            );
+            return 'command';
+
         default:
             // 未知命令：返回 command mode，由上层兜底处理
             return 'command';

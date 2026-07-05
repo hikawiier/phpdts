@@ -569,3 +569,36 @@ function obl_discard_item($slot, &$pdata) {
 // 4.9 / 4.10 / 4.11 移动体力检查 + 移动后钩子
 //   定义在 move.func.php（与 obl_move() 同文件，保持移动逻辑内聚）
 // ----------------------------------------------------------------
+
+// ----------------------------------------------------------------
+// 4.12 POI 位置查询（道具系统工作台素材查询用）
+// ----------------------------------------------------------------
+
+/**
+ * 查询当前格子上的所有 POI 实例
+ *
+ * 用于 item_get_available_workbench_materials() 查询玩家所在格子的工作台 POI。
+ * 一个格子可能有多个 POI 实例（如同时有 forge_anvil_poi 和 vent_stove），
+ * 因此返回数组，由调用方遍历过滤 mechanic='craft_source'。
+ *
+ * @param int $pgroup 当前区域
+ * @param int $pls    当前格
+ * @return array POI 实例数组，每个元素是 bra_oblmappoi 的一行
+ *               （含 iaid/pgroup/pls/poi_id/mechanic/mechanic_value 等字段）
+ */
+function obl_get_poi_at_position($pgroup, $pls) {
+    global $db, $tablepre;
+
+    $pgroup_i = (int)$pgroup;
+    $pls_i = (int)$pls;
+
+    $result = $db->query("SELECT * FROM {$tablepre}oblmappoi
+                           WHERE pgroup='$pgroup_i' AND pls='$pls_i'");
+
+    $pois = [];
+    while ($row = $db->fetch_array($result)) {
+        $pois[] = $row;
+    }
+
+    return $pois;
+}

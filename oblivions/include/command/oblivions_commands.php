@@ -54,6 +54,29 @@ function cmd_handle_obl_discard($slot, &$pdata) {
     obl_discard_item((int)$slot, $pdata);
 }
 
+/**
+ * Oblivions 使用道具
+ * @param int   $slot   背包槽位号
+ * @param array &$pdata 玩家数据
+ */
+function cmd_handle_obl_use_item($slot, &$pdata) {
+    if (!oblivions_is_active()) return;
+    include_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
+    item_use((int)$slot, $pdata);
+}
+
+/**
+ * Oblivions 合成道具
+ * @param mixed $slots               背包槽位号（逗号分隔字符串）
+ * @param mixed $workbench_materials 工作台素材 ID（逗号分隔字符串）
+ * @param array &$pdata              玩家数据
+ */
+function cmd_handle_obl_craft($slots, $workbench_materials, &$pdata) {
+    if (!oblivions_is_active()) return;
+    include_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+    item_craft($slots, $pdata, $workbench_materials);
+}
+
 // ================================================================
 // Oblivions 战斗指令处理 / Oblivions battle command handlers
 // ================================================================
