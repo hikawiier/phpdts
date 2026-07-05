@@ -78,13 +78,24 @@ function cmd_handle_obl_organize(&$pdata) {
 
 /**
  * Oblivions 使用道具
- * @param int   $slot   背包槽位号
+ *
+ * itm0 非空时只允许使用 itm0（slot=0），其他槽位被阻塞（路由门控已放行 obl_use_item，
+ * 此处二次校验 slot）。这与旧 phpdts 的"手持道具可直接使用"语义一致。
+ *
+ * @param int   $slot   背包槽位号（0=itm0，1~maxslots=普通槽位）
  * @param array &$pdata 玩家数据
  */
 function cmd_handle_obl_use_item($slot, &$pdata) {
     if (!oblivions_is_active()) return;
+    $slot = (int)$slot;
+    $itm0_pending = isset($pdata['itempara'][0]) && is_array($pdata['itempara'][0]) && !empty($pdata['itempara'][0]['itmid']);
+    if ($itm0_pending && $slot !== 0) {
+        global $obl_log;
+        $obl_log->emit('system.itm0_pending', 'system');
+        return;
+    }
     include_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
-    item_use((int)$slot, $pdata);
+    item_use($slot, $pdata);
 }
 
 /**

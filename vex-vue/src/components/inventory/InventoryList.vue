@@ -6,8 +6,10 @@
 //
 // 布局（与现有 index.html #invDrawerContent 一致）：
 //   3 列网格，每个槽位显示 [slot] name kind eff:dur
-//   非空槽位显示 [丢弃] 按钮
+//   非空槽位显示 [使用]/[丢弃] 按钮
 //   底部显示 items: N/M
+//
+// 注意：itm0 待整理提醒已迁移至独立的 Itm0Modal.vue（App.vue 全局挂载）。
 //
 // 渲染策略（M4）：v-for 响应式渲染，无 innerHTML 依赖。
 // ══════════════════════════════════════════════════
@@ -34,8 +36,25 @@ function onDiscard(slot: number): void {
   inventoryStore.handleDiscard(slot);
 }
 
+function onUse(slot: number): void {
+  if (commandQueue.isLocked) return;
+  inventoryStore.handleUseItem(slot);
+}
+
 function slotDisplayName(item: InventoryItem): string {
   return getItemName(item.itmid || item.item_id, item.name);
+}
+
+/**
+ * 数量/耐久语义区分显示
+ * stack=true 显示 ×N（堆叠数量），stack=false 显示 耐久 N（耐久度）
+ */
+function slotMeta(item: InventoryItem): string {
+  const dur = String(item.durability ?? '0');
+  if (dur === '∞' || dur === '999') {
+    return item.stack ? '×∞' : '耐久 ∞';
+  }
+  return item.stack ? `×${dur}` : `耐久 ${dur}`;
 }
 </script>
 
@@ -54,8 +73,14 @@ function slotDisplayName(item: InventoryItem): string {
         <template v-if="!s.empty">
           <span class="slot-name">{{ slotDisplayName(s) }}</span>
           <span class="slot-kind">{{ s.kind }}</span>
-          <span class="slot-meta">eff:{{ s.effect }} dur:{{ s.durability }}</span>
-          <div v-if="isOblivions" class="discard-wrap">
+          <span class="slot-meta">{{ slotMeta(s) }}</span>
+          <div v-if="isOblivions" class="slot-actions">
+            <button
+              v-if="s.usable"
+              class="term-btn"
+              :disabled="commandQueue.isLocked"
+              @click="onUse(s.slot)"
+            >[使用]</button>
             <button
               class="term-btn discard"
               :disabled="commandQueue.isLocked"

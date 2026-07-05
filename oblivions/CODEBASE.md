@@ -1217,6 +1217,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 |------|------|------|
 | `item_get_stack` | `($item_id): bool` | 读取道具是否可堆叠（带静态缓存） |
 | `item_get_stack_limit` | `($item_id): int` | 读取道具的 stack_limit（带静态缓存） |
+| `item_destroy_if_depleted` | `(array &$pdata, $slot): bool` | 检查 itms 归零并销毁道具实例（unset 槽位）。**"销毁道具"的统一入口**，所有 itms 扣减后的销毁逻辑都经过此函数。返回 true=已销毁，false=未归零 |
 | `_item_para_key` | `($itmpara): string` | 将 itmpara 标准化为字符串键，用于堆叠合并时的相等性比较 |
 | `obl_get_items` | `(array &$pdata): array` | 获取道具栏数组（index 0=itm0，1~itemmaxslots=普通） |
 | `obl_get_item` | `(array &$pdata, $slot): array\|null` | 获取指定槽位道具 |
@@ -1251,9 +1252,9 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `item_use` | `($slot, &$pdata): void` | 命令入口：读取槽位 → 检查 tag_usable → 耐久检查 → use_effect 分发 → 耐久扣减 → emit use_item.success |
+| `item_use` | `($slot, &$pdata): void` | 命令入口：读取槽位 → 检查 tag_usable → 耐久检查 → use_effect 分发 → itms 扣减 → item_destroy_if_depleted → emit use_item.success |
 | `item_execute_use_effect` | `($item, &$pdata): void` | use_effect 分发框架（纯分发器，调 `item_use_effect_{name}()`，不预定义任何效果） |
-| `item_consume_durability` | `(&$item, $amount = 1): void` | 耐久扣减（"999"/"∞"/"0" 特殊处理，归零 emit durability.broken） |
+| `item_consume_itms` | `(&$item, $amount = 1): void` | itms 扣减（"999"/"∞"/"0" 特殊处理，归零 emit durability.broken）。注意：只扣减不销毁，销毁由 item_destroy_if_depleted 统一处理 |
 
 **use_effect 注册约定**：具体效果函数由归属系统实现，框架只负责分发。当前预定义的 use_effect 名称：
 - `restore_sp` → 食物经验系统注册（恢复 SP）

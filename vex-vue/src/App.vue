@@ -12,6 +12,7 @@
 //         └── RightPanel (日志+动作 / 战斗动作)
 //   浮动组件（Teleport to body 或固定定位）：
 //     ├── Modal
+//     ├── Itm0Modal（itm0 非空时弹出提醒）
 //     ├── PlayerDrawer
 //     ├── InventoryDrawer
 //     └── ToastContainer
@@ -40,6 +41,7 @@ import RightPanel from '@/components/layout/RightPanel.vue';
 import PlayerDrawer from '@/components/layout/PlayerDrawer.vue';
 import InventoryDrawer from '@/components/layout/InventoryDrawer.vue';
 import Modal from '@/components/layout/Modal.vue';
+import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
 
 const playerStore = usePlayerStore();
@@ -155,6 +157,7 @@ onUnmounted(() => {
 
     <!-- ═══ 浮动组件 ═══ -->
     <Modal />
+    <Itm0Modal />
     <PlayerDrawer />
     <InventoryDrawer />
     <ToastContainer />

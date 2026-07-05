@@ -1,0 +1,97 @@
+<script setup lang="ts">
+// ══════════════════════════════════════════════════
+// itm0 待整理提醒模态框 / Itm0 Modal
+//
+// 显示条件：inventoryStore.itm0 非空。
+//
+// 设计理由：
+//   itm0 状态下玩家无法进行其他操作（前后端均有拦截），因此模态框
+//   不可"关闭"——只有 [使用] / [整理背包] / [丢弃暂存] 动作能真正消除它
+//   （通过清空 itm0）。这避免了"假关闭"的误导，强制玩家正面处理。
+//   itm0 的道具可被直接使用（与旧 phpdts "手持道具可直接使用"语义一致），
+//   使用后若道具被消耗（数量/耐久归零），itm0 自动清空，模态框消失。
+//
+//   无 [X] 按钮、无遮罩点击关闭、无 closed 状态。
+// ══════════════════════════════════════════════════
+
+import { computed } from 'vue';
+import { useInventoryStore } from '@/stores/inventory';
+import { commandQueue } from '@/stores/command-queue';
+import type { InventoryItem } from '@/types/api';
+import { getItemName } from '@/data/item-locale';
+
+const inventoryStore = useInventoryStore();
+
+const itm0 = computed<InventoryItem | null>(() => inventoryStore.itm0);
+
+function onOrganize(): void {
+  if (commandQueue.isLocked) return;
+  inventoryStore.handleOrganize();
+}
+
+function onUseItm0(): void {
+  if (commandQueue.isLocked) return;
+  inventoryStore.handleUseItem(0);
+}
+
+function onDiscardItm0(): void {
+  if (commandQueue.isLocked) return;
+  inventoryStore.handleDiscardItm0();
+}
+
+function slotDisplayName(item: InventoryItem): string {
+  return getItemName(item.itmid || item.item_id, item.name);
+}
+
+function slotMeta(item: InventoryItem): string {
+  const dur = String(item.durability ?? '0');
+  if (dur === '∞' || dur === '999') {
+    return item.stack ? '×∞' : '耐久 ∞';
+  }
+  return item.stack ? `×${dur}` : `耐久 ${dur}`;
+}
+</script>
+
+<template>
+  <div
+    v-if="itm0"
+    class="modal-overlay open"
+  >
+    <div class="modal itm0-modal">
+      <div class="modal-header">
+        <span class="modal-title">
+          <span class="itm0-warn">⚠</span>
+          待整理道具
+        </span>
+      </div>
+      <div class="modal-body">
+        <p class="itm0-desc">背包中有待整理的道具，需先处理才能进行其他操作。</p>
+        <div class="itm0-item">
+          <span class="slot-num">[0]</span>
+          <span class="slot-name">{{ slotDisplayName(itm0) }}</span>
+          <span class="slot-meta">{{ slotMeta(itm0) }}</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="itm0-modal-actions">
+          <button
+            v-if="itm0.usable"
+            class="term-btn"
+            :disabled="commandQueue.isLocked"
+            @click="onUseItm0"
+          >[使用]</button>
+          <button
+            class="term-btn"
+            :disabled="commandQueue.isLocked"
+            @click="onOrganize"
+          >[整理背包]</button>
+          <button
+            class="term-btn"
+            :disabled="commandQueue.isLocked"
+            @click="onDiscardItm0"
+          >[丢弃暂存]</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

@@ -21,11 +21,11 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
  * 2. 检查 tag_usable，不含 → emit use_item.not_usable
  * 2.5 检查耐久，itms='0' → emit use_item.broken（已损坏道具不可使用）
  * 3. 调用 item_execute_use_effect 分发到具体效果函数
- * 4. 调用 item_consume_durability 扣减耐久
- * 4.5 耐久归零 → 从背包移除（unset 槽位，遵循 §5.4.3 文字描述）
+ * 4. 调用 item_consume_itms 扣减 itms
+ * 4.5 itms 归零 → item_destroy_if_depleted 销毁道具实例
  * 5. emit use_item.success（供对话系统订阅触发猫提醒）
  *
- * @param int   $slot   背包槽位号
+ * @param int   $slot   背包槽位号（0=itm0，1~maxslots=普通槽位）
  * @param array &$pdata 玩家数据
  * @return void
  */
@@ -62,13 +62,11 @@ function item_use($slot, &$pdata) {
     // 3. 应用使用效果（use_effect 分发框架）
     item_execute_use_effect($item, $pdata);
 
-    // 4. 扣减耐久（内部检查归零 emit durability.broken）
-    item_consume_durability($item, 1);
+    // 4. 扣减 itms（内部检查归零 emit durability.broken）
+    item_consume_itms($item, 1);
 
-    // 4.5 耐久归零 → 从背包移除（遵循 §5.4.3 文字描述）
-    if (isset($item['itms']) && (string)$item['itms'] === '0') {
-        unset($pdata['itempara'][$slot]);
-    }
+    // 4.5 itms 归零 → 销毁道具实例（遵循 §5.4.3 文字描述）
+    item_destroy_if_depleted($pdata, $slot);
 
     // 5. emit 成功事件（介入点：供对话系统订阅触发猫提醒）
     $obl_log->emit('use_item.success', 'system', ['item_id' => $item_id, 'slot' => $slot]);
@@ -109,21 +107,21 @@ function item_execute_use_effect($item, &$pdata) {
 }
 
 /**
- * 耐久扣减
+ * itms 扣减
  *
- * 耐久字段 itms 约定：
- * - 纯数字字符串 → 有限耐久，每次扣 $amount
- * - "999" 或 "∞" → 无限耐久，不扣减
- * - 耐久扣到 0 → emit durability.broken（道具破坏）
+ * itms 字段语义（对数量模型表示数量，对耐久模型表示耐久，两者互斥）：
+ * - 纯数字字符串 → 有限值，每次扣 $amount
+ * - "999" 或 "∞" → 无限值，不扣减
+ * - 扣到 0 → emit durability.broken（道具耗尽/破坏）
  *
- * 注意：本函数只负责扣减耐久和 emit 事件，不从背包移除道具。
- * "从背包移除"的逻辑由调用方按需处理。
+ * 注意：本函数只负责扣减 itms 和 emit 事件，不销毁道具实例。
+ * 销毁逻辑由 item_destroy_if_depleted 统一处理。
  *
  * @param array &$item  道具实例（引用，修改直接生效）
  * @param int   $amount 扣减量（默认 1）
  * @return void
  */
-function item_consume_durability(&$item, $amount = 1) {
+function item_consume_itms(&$item, $amount = 1) {
     global $obl_log;
 
     if (!isset($item['itms'])) return;
@@ -135,7 +133,7 @@ function item_consume_durability(&$item, $amount = 1) {
     $cur = max(0, $cur - $amount);
     $item['itms'] = (string)$cur;
 
-    // 耐久归零 → 道具破坏
+    // itms 归零 → 道具耗尽/破坏
     if ($cur === 0) {
         $item_id = isset($item['itmid']) ? $item['itmid'] : '';
         $obl_log->emit('durability.broken', 'system', ['item_id' => $item_id]);

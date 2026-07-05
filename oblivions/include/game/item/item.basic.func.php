@@ -12,7 +12,7 @@ if (!defined('IN_GAME')) {
 //   衍生层：item.use.func.php / item.craft.func.php / item.tag.func.php
 //
 // 依赖：item.tag.func.php（item_load_table，数据加载）
-//       item.use.func.php（item_consume_durability，由 obl_discard_item 间接调用）
+//       item.use.func.php（item_consume_itms，由 obl_discard_item 间接调用）
 //       以上由 obl_bootstrap.php 统一加载
 // ================================================================
 
@@ -57,6 +57,32 @@ function item_get_stack_limit($item_id) {
         }
     }
     return isset($cache[$item_id]) ? $cache[$item_id] : 1;
+}
+
+// ----------------------------------------------------------------
+// 道具销毁
+// ----------------------------------------------------------------
+
+/**
+ * 检查道具 itms 归零并销毁
+ *
+ * itms 归零代表道具耗尽（数量模型）或损坏（耐久模型）。
+ * 检查 itms 是否为 '0'，是则从 itempara 移除该槽位（道具实例彻底销毁）。
+ *
+ * 这是"销毁道具"的统一入口，所有 itms 扣减后的销毁逻辑都应经过此函数。
+ * 未来若销毁流程需要扩展（如销毁前清理、emit 销毁事件），只需改此一处。
+ *
+ * @param array &$pdata 玩家数据
+ * @param int   $slot   槽位号（0=itm0，1~maxslots=普通槽位）
+ * @return bool 是否触发了销毁（true=道具已销毁，false=道具未归零）
+ */
+function item_destroy_if_depleted(&$pdata, $slot): bool {
+    $item = &$pdata['itempara'][$slot];
+    if (isset($item['itms']) && (string)$item['itms'] === '0') {
+        unset($pdata['itempara'][$slot]);
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -551,9 +577,9 @@ function obl_pickup_item($iid, &$pdata) {
  * 道具从背包槽位删除，写入 bra_oblmapitem（iaid=0, discovered=1）
  * 其他玩家/后续可拾取
  *
- * slot=0 特殊处理（设计案 §11.4）：丢弃 itm0 缓存槽内容。
- * itm0 是新增道具的中转槽，丢弃语义=直接抛弃（unset），不写回地图道具表。
- * itm0 清空后门控立即解锁。
+ * slot=0（itm0 缓存槽）与普通槽位走同一逻辑：写回地图 + 清槽 + emit discard.success。
+ * itm0 中的道具是真实存在的（来自拾取/合成），丢弃语义=放回地图，与普通丢弃一致。
+ * itm0 清空后门控立即解锁（§4.2）。
  *
  * item_id 还原（统一 JSON）：
  *   从 itempara[].itmid 还原 bra_oblmapitem.item_id，itmpara 原样写回。
@@ -567,21 +593,8 @@ function obl_discard_item($slot, &$pdata) {
     $slot = (int)$slot;
     $maxslots = isset($pdata['itemmaxslots']) ? (int)$pdata['itemmaxslots'] : 6;
 
-    // slot=0：丢弃 itm0 缓存槽内容（设计案 §11.4）
-    // itm0 是新增道具的中转槽，丢弃语义=直接抛弃，不写回地图道具表
-    // itm0 清空后门控立即解锁（§4.2 门控解锁时机）
-    if ($slot === 0) {
-        if (!isset($pdata['itempara'][0]) || !is_array($pdata['itempara'][0]) || empty($pdata['itempara'][0]['itmid'])) {
-            $obl_log->emit('discard.empty', 'system');
-            return;
-        }
-        $itm0_item_id = (string)$pdata['itempara'][0]['itmid'];
-        unset($pdata['itempara'][0]);
-        $obl_log->emit('discard.itm0_success', 'system', ['item_id' => $itm0_item_id]);
-        return;
-    }
-
-    if ($slot < 1 || $slot > $maxslots) {
+    // slot 合法性：0=itm0 缓存槽，1~maxslots=普通槽
+    if ($slot < 0 || $slot > $maxslots) {
         $obl_log->emit('discard.invalid_slot', 'discard', ['slot' => $slot]);
         return;
     }
@@ -624,8 +637,13 @@ function obl_discard_item($slot, &$pdata) {
                 (pgroup, pls, iaid, item_id, itm, itmk, itme, itms, itmsk, itmpara, discovered, fake_item_id, is_trap)
                 VALUES ('$cur_pgroup', '$cur_pls', 0, '$item_id_e', '$itm_e', '$itmk_e', $itme, '$itms_e', '$itmsk_e', '$itmpara_e', 1, '', 0)");
 
-    // 清空背包槽位
-    obl_set_item($pdata, $slot, null);
+    // 清空槽位：slot=0 用 unset（保持 itm0 清空约定，与 item_consume_materials 一致），
+    // 普通槽用 obl_set_item null
+    if ($slot === 0) {
+        unset($pdata['itempara'][0]);
+    } else {
+        obl_set_item($pdata, $slot, null);
+    }
 
     $obl_log->emit('discard.success', 'discard', [
         'item_name' => $log_name,

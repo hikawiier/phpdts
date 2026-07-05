@@ -207,7 +207,7 @@ function handle_craft_preview() {
  * 无参数。
  *
  * 返回：
- *   workbench_materials  array  [{source, id, item_id, tool_level}]
+ *   workbench_materials  array  [{source, id, item_id, tool_level, tags, itmk}]
  */
 function handle_craft_workbench_materials() {
     global $pdata;

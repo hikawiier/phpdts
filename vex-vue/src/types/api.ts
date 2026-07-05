@@ -184,6 +184,8 @@ export interface PlayerInventory {
   slots: InventoryItem[];
   num: number;
   limit: number;
+  /** itm0 缓存槽内容（null 表示无待整理道具） */
+  itm0?: InventoryItem | null;
 }
 
 /** 背包槽位（player_inventory.slots 的元素） */
@@ -197,6 +199,14 @@ export interface InventoryItem {
   effect?: string | number;
   durability?: string | number;
   iid?: string | number;
+  /** 是否可使用（tag_usable） */
+  usable?: boolean;
+  /** 道具 tags 数组（供合成系统匹配） */
+  tags?: string[];
+  /** 道具类别（供合成系统匹配） */
+  itmk?: string;
+  /** 是否可堆叠（true=数量模型，false=耐久模型） */
+  stack?: boolean;
   [key: string]: unknown;
 }
 

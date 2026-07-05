@@ -229,15 +229,6 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     highlight: ['item_name'],
     highlightClass: 'yellow',
   },
-  'discard.itm0_success': {
-    render: (params) => {
-      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
-      return `已丢弃<span class="yellow">${escapeHtml(name)}</span>。`;
-    },
-  },
-  'discard.empty': {
-    text: '待整理区没有道具。',
-  },
 
   // ─── organize ───────────────────────────────────
   'organize.success': {
@@ -356,7 +347,6 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   },
   'craft.new_recipe_discovered': {
     text: '发现新配方！',
-    highlightClass: 'yellow',
   },
   'craft.fail_no_match': {
     text: '这些素材无法合成任何东西。',
@@ -369,6 +359,26 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   },
   'craft.fail_bag_full': {
     text: '背包空间不足，无法放入合成产物。',
+  },
+
+  // ─── craft preview（预判反馈，非真实日志） ──────
+  'craft.empty_pool': {
+    text: '放入素材才能合成。',
+  },
+  'craft.tool_missing': {
+    text: '需要合适的工具（如烹饪器具/锻造工具）。',
+  },
+  'craft.extra_material': {
+    text: '有些素材用不上，试试移除部分素材。',
+  },
+  'craft.insufficient': {
+    text: '素材不足，试试放入更多同类素材。',
+  },
+  'craft.ready': {
+    text: '可合成。',
+  },
+  'craft.new_recipe': {
+    text: '发现新配方！',
   },
 };
 

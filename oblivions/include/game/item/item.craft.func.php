@@ -10,7 +10,8 @@ if (!defined('IN_GAME')) {
 // 命令入口（item_craft）和 API 函数（craft_preview 等）在 U5 追加。
 //
 // 依赖：item.tag.func.php（item_get_tags / item_get_itmk / item_get_tool_level）
-//       item.use.func.php（item_consume_durability）
+//       item.use.func.php（item_consume_itms）
+//       item.basic.func.php（item_destroy_if_depleted）
 //       explore.func.php（obl_get_poi_at_position）
 //       以上由 obl_bootstrap.php 统一加载
 // ================================================================
@@ -189,6 +190,8 @@ function item_get_available_workbench_materials(&$pdata) {
         'id'         => 'passive:innate_t0',
         'item_id'    => 'innate_craft_t0',
         'tool_level' => 0,
+        'tags'       => item_get_tags('innate_craft_t0'),
+        'itmk'       => item_get_itmk('innate_craft_t0'),
     ];
 
     // 2. 猫身上来源（猫在身边时可用）
@@ -206,6 +209,8 @@ function item_get_available_workbench_materials(&$pdata) {
                 'id'         => 'poi:' . $poi['iaid'],
                 'item_id'    => $item_id,
                 'tool_level' => item_get_tool_level($item_id),
+                'tags'       => item_get_tags($item_id),
+                'itmk'       => item_get_itmk($item_id),
             ];
         }
     }
@@ -391,10 +396,10 @@ function item_count_material_in_inventory(&$pdata, $item_id) {
  * 获取映射，按 consume 模式分别处理。
  *
  * 消耗逻辑（设计案 §8.3，区分模型）：
- * - consume='all' 数量模型（stack=true）：扣 itms-N，归零才 unset
- * - consume='all' 耐久模型（stack=false）：直接 unset 整槽
- * - consume='durability' 数量模型：扣1个数量，归零 unset
- * - consume='durability' 耐久模型：扣1点耐久（item_consume_durability），归零 unset
+ * - consume='all' 数量模型（stack=true）：扣 itms-N，归零由 item_destroy_if_depleted 销毁
+ * - consume='all' 耐久模型（stack=false）：直接 unset 整槽（合成消耗整槽素材）
+ * - consume='durability' 数量模型：扣 cnt 个数量，归零由 item_destroy_if_depleted 销毁
+ * - consume='durability' 耐久模型：扣 cnt 点耐久（item_consume_itms），归零由 item_destroy_if_depleted 销毁
  * - consume='none'：不操作（工作台素材）
  *
  * @param array &$pdata     玩家数据
@@ -441,15 +446,12 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
             continue;
         }
 
-        // 数量模型（stack=true）：扣 itms-N，归零才 unset
+        // 数量模型（stack=true）：扣 itms-N，归零由 item_destroy_if_depleted 销毁
         $s = (string)$item['itms'];
         if ($s === '∞' || $s === '999') continue;  // 无限不扣
         $cur = max(0, (int)$s - $cnt);
-        if ($cur <= 0) {
-            unset($pdata['itempara'][$slot]);
-        } else {
-            $item['itms'] = (string)$cur;
-        }
+        $item['itms'] = (string)$cur;
+        item_destroy_if_depleted($pdata, $slot);
     }
 
     // 批量扣减 consume='durability'（区分模型，见 §8.3）
@@ -457,24 +459,19 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
         $item = &$pdata['itempara'][$slot];
         $item_id = $item['itmid'];
 
-        // 数量模型（stack=true）：扣 cnt 个数量，归零 unset
+        // 数量模型（stack=true）：扣 cnt 个数量，归零由 item_destroy_if_depleted 销毁
         if (item_get_stack($item_id)) {
             $s = (string)$item['itms'];
             if ($s === '∞' || $s === '999') continue;  // 无限不扣
             $cur = max(0, (int)$s - $cnt);
-            if ($cur <= 0) {
-                unset($pdata['itempara'][$slot]);
-            } else {
-                $item['itms'] = (string)$cur;
-            }
+            $item['itms'] = (string)$cur;
+            item_destroy_if_depleted($pdata, $slot);
             continue;
         }
 
-        // 耐久模型（stack=false）：扣 cnt 点耐久，归零 unset
-        item_consume_durability($item, $cnt);
-        if (isset($item['itms']) && (string)$item['itms'] === '0') {
-            unset($pdata['itempara'][$slot]);
-        }
+        // 耐久模型（stack=false）：扣 cnt 点耐久，归零由 item_destroy_if_depleted 销毁
+        item_consume_itms($item, $cnt);
+        item_destroy_if_depleted($pdata, $slot);
     }
 
     return true;
@@ -584,15 +581,171 @@ function item_discover_recipe(&$pdata, $recipe_id) {
 // ----------------------------------------------------------------
 
 /**
+ * 分析素材池无法合成的原因（match_count=0 时调用）
+ *
+ * 策略：
+ *   1. 遍历所有配方，对每个配方调用 item_resolve_material_mapping 判断是否匹配
+ *   2. 对匹配失败的配方，分析失败原因（tool_missing / extra_material / insufficient）
+ *   3. 返回出现次数最多的原因（并列时按优先级 tool_missing > extra_material > insufficient）
+ *
+ * 失败原因判定：
+ *   - tool_missing：配方需要 consume='none' 工作台素材，但 placed_items 中无工作台素材
+ *   - extra_material：所有 material 需求都能满足，但 placed_items 有多余素材未被消耗
+ *   - insufficient：有 material 需求无法满足（数量/类别不足）
+ *
+ * 注意：失败原因分析使用独立的 available 副本模拟三阶段匹配，
+ *       仅用于诊断失败原因，不影响实际合成逻辑。
+ *
+ * @param array $placed_items  _item_build_placed_items 返回的 placed_items
+ * @return string  失败原因 ID（'craft.tool_missing' / 'craft.extra_material' / 'craft.insufficient' / 'craft.fail_no_match'）
+ */
+function item_analyze_craft_failure($placed_items) {
+    // 检查 placed_items 是否包含工作台素材
+    $has_workbench = false;
+    foreach ($placed_items as $p) {
+        if (isset($p['source']) && $p['source'] === 'workbench') {
+            $has_workbench = true;
+            break;
+        }
+    }
+
+    $reasons = ['tool_missing' => 0, 'extra_material' => 0, 'insufficient' => 0];
+
+    foreach (item_get_all_recipes() as $recipe) {
+        $materials = $recipe['materials'];
+
+        // 1. 检查是否需要工作台素材（consume='none'）
+        $needs_workbench = false;
+        foreach ($materials as $mat) {
+            if (($mat['consume'] ?? 'all') === 'none') {
+                $needs_workbench = true;
+                break;
+            }
+        }
+        if ($needs_workbench && !$has_workbench) {
+            $reasons['tool_missing']++;
+            continue;
+        }
+
+        // 2. 调用 item_resolve_material_mapping 判断是否匹配
+        $mapping = item_resolve_material_mapping($materials, $placed_items);
+        if ($mapping !== null) {
+            // 此配方能匹配，跳过（match_count=0 时不应走到这里，防御性 continue）
+            continue;
+        }
+
+        // 3. 匹配失败，分析原因：构建 available 副本模拟三阶段匹配
+        //    item_resolve_material_mapping 返回 null 时无法区分"素材不足"和"多余素材"，
+        //    此处独立模拟以获取 used 状态
+        $available = [];
+        foreach ($placed_items as $i => $p) {
+            $available[] = [
+                'index'      => $i,
+                'item_id'    => $p['item_id'] ?? '',
+                'itmk'       => $p['itmk'] ?? '',
+                'tags'       => $p['tags'] ?? [],
+                'tool_level' => $p['tool_level'] ?? 0,
+                'source'     => $p['source'] ?? 'bag',
+                'used'       => false,
+            ];
+        }
+
+        $unmet_need = false;
+        foreach (['item_id', 'itmk', 'tag'] as $match_key) {
+            foreach ($materials as $mat) {
+                if (!isset($mat[$match_key])) continue;
+                $need = (int)($mat['count'] ?? 1);
+                $consume = $mat['consume'] ?? 'all';
+                $min_level = (int)($mat['min_level'] ?? 0);
+                $n = count($available);
+                for ($i = 0; $i < $n && $need > 0; $i++) {
+                    if ($available[$i]['used']) continue;
+                    $matched = false;
+                    if ($match_key === 'item_id') {
+                        $matched = ($available[$i]['item_id'] === $mat['item_id']);
+                    } elseif ($match_key === 'itmk') {
+                        $matched = ($available[$i]['itmk'] === $mat['itmk']);
+                    } else {
+                        $matched = in_array($mat['tag'], $available[$i]['tags'], true);
+                    }
+                    if ($matched && $available[$i]['tool_level'] >= $min_level && item_can_consume($available[$i], $consume)) {
+                        $available[$i]['used'] = true;
+                        $need--;
+                    }
+                }
+                if ($need > 0) $unmet_need = true;
+            }
+        }
+
+        if ($unmet_need) {
+            $reasons['insufficient']++;
+        } else {
+            $reasons['extra_material']++;
+        }
+    }
+
+    // 返回出现次数最多的原因（并列时按优先级 tool_missing > extra_material > insufficient）
+    $max_count = max($reasons['tool_missing'], $reasons['extra_material'], $reasons['insufficient']);
+    if ($max_count === 0) return 'craft.fail_no_match';
+    if ($reasons['tool_missing'] === $max_count) return 'craft.tool_missing';
+    if ($reasons['extra_material'] === $max_count) return 'craft.extra_material';
+    return 'craft.insufficient';
+}
+
+/**
+ * 构建 preview_log 单对象
+ *
+ * @param array $slot_counts        item_parse_slots 结果
+ * @param array $workbench_materials 工作台素材 ID 列表
+ * @param array $placed_items        _item_build_placed_items 返回的 placed_items
+ * @param int   $match_count         匹配配方数
+ * @param bool  $is_new_recipe       是否新配方（仅 match_count=1 时有意义）
+ * @return array  {id: string, params: array}
+ */
+function _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count, $is_new_recipe) {
+    // 1. 素材池实际为空（基于 placed_items 判断，而非输入参数）
+    //    场景：玩家只选了无效工作台素材（slot_counts 空 + workbench_materials 非空），
+    //    但 placed_items 实际为空时，应返回 empty_pool 而非走失败原因分析
+    if (empty($placed_items)) {
+        return ['id' => 'craft.empty_pool', 'params' => []];
+    }
+
+    // 2. match_count >= 2：指向不明确
+    if ($match_count >= 2) {
+        return ['id' => 'craft.fail_ambiguous', 'params' => ['match_count' => $match_count]];
+    }
+
+    // 3. match_count = 1：可合成
+    if ($match_count === 1) {
+        return $is_new_recipe
+            ? ['id' => 'craft.new_recipe', 'params' => []]
+            : ['id' => 'craft.ready', 'params' => []];
+    }
+
+    // 4. match_count = 0：分析失败原因
+    $reason_id = item_analyze_craft_failure($placed_items);
+    return ['id' => $reason_id, 'params' => []];
+}
+
+/**
  * 前端预判：素材池能否合成
  *
  * @param array $slots               背包槽位号列表
  * @param array &$pdata
  * @param array $workbench_materials 工作台素材 ID 列表
- * @return array {match_count, craftable, is_new_recipe}
+ * @return array {match_count, craftable, is_new_recipe, preview_log}
  */
 function item_craft_preview($slots, &$pdata, $workbench_materials = []) {
-    $matched = item_match_recipes_by_slots($pdata, $slots, $workbench_materials);
+    $slot_counts = item_parse_slots($slots);
+    $built = _item_build_placed_items($pdata, $slot_counts, $workbench_materials);
+    $placed_items = $built['placed_items'];
+
+    $matched = [];
+    foreach (item_get_all_recipes() as $recipe_id => $recipe) {
+        if (item_materials_match($recipe['materials'], $placed_items)) {
+            $matched[] = $recipe_id;
+        }
+    }
     $match_count = count($matched);
     $craftable = ($match_count === 1);
 
@@ -604,10 +757,14 @@ function item_craft_preview($slots, &$pdata, $workbench_materials = []) {
         $is_new_recipe = !in_array($recipe_id, $discovered, true);
     }
 
+    // 生成 preview_log（单对象）
+    $preview_log = _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count, $is_new_recipe);
+
     return [
         'match_count'   => $match_count,
         'craftable'     => $craftable,
         'is_new_recipe' => $is_new_recipe,
+        'preview_log'   => $preview_log,
     ];
 }
 

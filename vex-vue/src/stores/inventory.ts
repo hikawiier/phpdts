@@ -55,6 +55,16 @@ export const useInventoryStore = defineStore('inventory', () => {
     return playerStore.playerInfo?.equipment || {};
   });
 
+  /** itm0 缓存槽内容（null 表示无待整理道具） */
+  const itm0 = computed<InventoryItem | null>(() => inventoryData.value?.itm0 ?? null);
+
+  /**
+   * itm0 锁定状态（全局门控）
+   * true = itm0 非空，后端拒绝所有非整理/丢弃命令
+   * CraftModal 等其他组件只读引用此状态
+   */
+  const itm0Locked = computed<boolean>(() => !!itm0.value);
+
   // ═══ 数据加载 ═══
 
   /**
@@ -118,6 +128,87 @@ export const useInventoryStore = defineStore('inventory', () => {
     }
   }
 
+  /**
+   * 使用道具（obl_use_item 命令）
+   *
+   * 后端流程：状态过滤 → 应用 use_effect → 数量模型扣 itms-1 / 耐久模型不消耗 → emit use_item.success
+   *
+   * P0 修正：前端不依赖 result.success 感知业务失败（后端命令处理无 return，HTTP 响应恒为 {}，
+   * result.success 仅反映 HTTP 错误/并发锁）。业务结果通过 log/error_log 系统感知：
+   *   - broadcast('game:action-completed') → logStore.refreshLog → LogPanel 渲染日志
+   *
+   * @param slot 背包槽位号（1~maxslots）
+   */
+  async function handleUseItem(slot: number): Promise<void> {
+    debugBus.emit('action', 'useItem:trigger', { slot });
+    try {
+      await commandQueue.execute({
+        command: 'obl_use_item',
+        slot: String(slot),
+      });
+      dataManager.invalidate('player_inventory');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'useItem:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '使用失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  /**
+   * 整理背包（obl_organize 命令）
+   *
+   * 后端流程：将 itm0 中的道具转移至背包空槽（不排序，仅合并同类）
+   * 成功后 itm0 清空，itm0Locked 自动变 false（computed 响应式）
+   */
+  async function handleOrganize(): Promise<void> {
+    debugBus.emit('action', 'organize:trigger', {});
+    try {
+      await commandQueue.execute({
+        command: 'obl_organize',
+      });
+      dataManager.invalidate('player_inventory');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'organize:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '整理失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  /**
+   * 丢弃 itm0 暂存道具（obl_discard slot=0 命令）
+   *
+   * 后端复用 obl_discard_item(slot=0) 分支。成功后 itm0 清空，itm0Locked 自动变 false。
+   */
+  async function handleDiscardItm0(): Promise<void> {
+    debugBus.emit('action', 'discardItm0:trigger', {});
+    try {
+      await commandQueue.execute({
+        command: 'obl_discard',
+        slot: '0',
+      });
+      dataManager.invalidate('player_inventory');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'discardItm0:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '丢弃失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
   // ═══ 事件监听（与现有 inventory.js 一致） ═══
 
   let _listenersRegistered = false;
@@ -144,10 +235,15 @@ export const useInventoryStore = defineStore('inventory', () => {
     num,
     limit,
     equipment,
+    itm0,
+    itm0Locked,
     // 数据加载
     loadInventory,
     // 命令处理
     handleDiscard,
+    handleUseItem,
+    handleOrganize,
+    handleDiscardItm0,
     // 事件监听
     registerListeners,
   };
