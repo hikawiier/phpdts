@@ -20,6 +20,15 @@ if (!defined('IN_GAME')) {
  */
 function oblivions_cmd_dispatch($command, &$pdata, $post) {
     include_once GAME_ROOT . './oblivions/include/command/oblivions_commands.php';
+    global $obl_log;
+
+    // 全局门控：itm0 不为空时，只放行整理和丢弃命令
+    // 设计案 §4.2：itm0 中的道具处于"待整理"状态，玩家必须先处理才能继续其他游戏行为
+    $itm0_pending = isset($pdata['itempara'][0]) && is_array($pdata['itempara'][0]) && !empty($pdata['itempara'][0]['itmid']);
+    if ($itm0_pending && !in_array($command, ['obl_organize', 'obl_discard'], true)) {
+        $obl_log->emit('system.itm0_pending', 'system');
+        return 'command';
+    }
 
     switch ($command) {
         case 'move':
@@ -43,6 +52,10 @@ function oblivions_cmd_dispatch($command, &$pdata, $post) {
 
         case 'obl_discard':
             cmd_handle_obl_discard(isset($post['slot']) ? $post['slot'] : 0, $pdata);
+            return 'command';
+
+        case 'obl_organize':
+            cmd_handle_obl_organize($pdata);
             return 'command';
 
         case 'obl_battle_start':

@@ -70,8 +70,9 @@
 - 格式：JSON 对象，如 `{}` 或 `{ "charge": 3 }`
 
 **itempara**（玩家道具栏 JSON 大字段，`bra_oblplayers.itempara`）：
-- JSON 数组，长度 = `itemmaxslots + 1`（index 0=特殊槽，1~itemmaxslots=普通槽）
+- JSON 数组，长度 = `itemmaxslots + 1`（index 0=itm0 缓存槽，1~itemmaxslots=普通槽）
 - 每个元素是一个道具对象或 `null`（空槽）
+- itm0 是新增道具（拾取/合成产物/未来卸装备）的中转槽，所有新增道具先入 itm0 再整理入背包；itm0 非空时玩家被锁定，仅 `obl_organize` / `obl_discard` 命令可用（详见 §2.24）
 - 道具对象的 `itmid` 是模板 ID（如 `rusty_pipe`），地图实例主键是 `bra_oblmapitem.iid`
 
 > 道具对象七字段规范与 JSON 示例见 [CODEBASE.md §3.1](./CODEBASE.md#31-bra_oblplayers-玩家敌人统一数据表)。
@@ -370,7 +371,7 @@ Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php`
 - PHP 是动态语言，函数未定义只在运行时报错，编译期无提示
 - 集中注册使依赖关系可见，避免散落的条件 include 导致漏加载
 
-> 当前 8 层加载清单见 [CODEBASE.md](./CODEBASE.md#引导加载bootstrap)。
+> 当前加载层序见 [CODEBASE.md](./CODEBASE.md#三引导加载bootstrap)。
 
 ### 2.15 后端日志 ID 必须有前端模板对应
 
@@ -466,7 +467,76 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 
 **旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPid`+`buildSegments` 替代）、`playBattleLogGroup`（由 `playScript` 替代）、`buildPlayContext`（后端 pre emit 已带名称/HP）、`BATTLE_TEMPLATES` 按 action_id 索引（由 `KIND_TEMPLATES` 按 directedKind 分发替代）。
 
-### 2.19 道具数据三层分离
+### 2.19 道具 Tag 系统（性质描述 Tag + 系统钩子 Tag）
+
+道具通过 `item_table.tags` 字段持有两类 Tag，存储在同一数组中：
+
+| Tag 类别 | 服务系统 | 示例 |
+|---------|--------|------|
+| 性质描述 Tag | 合成系统：配方的大类素材匹配 | `tag_sharp`, `tag_combustible`, `tag_raw_food`, `tag_tool_cooking`, `tag_forge` |
+| 系统钩子 Tag | 装备/使用/地图交互系统入口判断 | `tag_equippable`, `tag_usable`, `tag_poi_interactive` |
+
+**关键设计原则**：
+- `itmk` 回归"物理分类 + 装备槽位类型"职责，不再承担"是否可装备/可使用"的判断
+- 各系统入口统一查 Tag，不查 itmk——装备系统只看 `tag_equippable`，使用系统只看 `tag_usable`，POI 交互只看 `tag_poi_interactive`
+- `tag_usable`（属性层）与 `use_effect`（实现层）分层：前者标识"可使用"，后者记录具体效果函数
+- 所有装备类道具 **显式标注** `tag_equippable`，不依赖 itmk 隐式判断（包括 TK 类可装备道具如撬棍）
+
+### 2.20 合成确认函机制
+
+合成采用"确认函"交互模式，不是"搜索引擎"：
+
+核心规则：
+- 不放素材在素材池里，什么都看不到
+- 没有完整配方清单——不主动展示所有可合成配方（`discovered_recipes` 由软锁控制分批显示）
+- 指向性判断：遍历所有配方，找 `materials` 完全匹配当前素材池的
+  - 0 匹配 → 不亮
+  - 1 匹配 → 亮灯（可合成）
+  - 2+ 匹配 → 不亮（指向不明确）
+- 所有放置的素材必须都被配方消耗，多放也算不匹配
+- 工作台是素材，不是独立过滤维度
+
+**素材匹配三维度**（优先级 `item_id` > `itmk` > `tag`）：
+
+| 维度 | 语义 | 适用场景 |
+|------|------|---------|
+| `item_id` | 精确匹配指定道具 | 配方需要特定道具（`cloth × 3`） |
+| `itmk` | 匹配道具大类 | "任何金属类素材都行"（`itmk='MT'`） |
+| `tag` | 匹配物理性质 | 跨类别性质匹配（`tag_sharp` 匹配锐器） |
+
+**软锁的本质**：控制"已发现配方列表"的显示范围，不拦截合成本身。玩家随时可以"放素材试组合"合成任意配方（即使未在列表中显示），合成成功后自动加入 `discovered_recipes`。
+
+### 2.21 工作台即素材模型
+
+合成系统的所有输入都是素材，没有"工作台选择"独立步骤。工作台/工具就是 `materials` 里 `consume='none'` 的素材：
+
+| 来源 | 标识 | 可用条件 |
+|------|------|---------|
+| 被动技能 | `passive:innate_t0` | 永久可用（P0 硬编码 `tool_level=0`） |
+| 猫身上 | `cat:{id}` | 猫在身边时可用（P0 未实现） |
+| 地图格 POI | `poi:{iaid}` | 玩家站在 `mechanic='craft_source'` 的 POI 上 |
+
+**工作台素材的实时计算**：每次合成时实时计算，不存储在 oblpara。POI 工作台通过 `mechanic='craft_source'` + `mechanic_value`（指向 item_id）映射，通过 item_table 的 tags/itmk/tool_level 参与匹配。
+
+### 2.22 use_effect 分发框架
+
+道具"使用"行为通过效果函数分发，模式与 POI 的 `obl_mechanic_*` 对齐：
+
+```
+item_table.use_effect = 'restore_sp'
+                         ↓
+item_use_effect_restore_sp($item, &$pdata)  ← 框架自动分发
+```
+
+**框架本身是纯分发器，不预定义任何具体效果**。效果函数由归属系统自行注册：
+
+| use_effect | 归属系统 |
+|-----------|---------|
+| `restore_sp` / `restore_hp` | 食物经验系统 |
+| `cure_bs` | 健康系统 |
+| `gain_resistance` | 被动技能系统 |
+
+### 2.23 道具数据三层分离
 
 道具/POI 的"游戏逻辑初始值"、"运行时实例状态"、"展示文案"分属三层，不可混存：
 
@@ -489,6 +559,39 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 - 前端可独立迭代文案，无需后端发版
 
 > 详细迁移方案与影响范围见 [道具数据三层分离-设计案](./docs/道具数据三层分离-设计案.md)。
+
+### 2.24 itm0 缓存槽与事件解耦
+
+`itempara[0]` 作为新增道具（拾取 / 合成产物 / 未来卸装备）的中转缓存槽（itm0）。所有新增道具**先入 itm0，再整理入背包**，由此确立两个设计约束。
+
+**函数独立性**：新增道具的"放入 itm0"与"整理入背包"是两个独立流程，对应两个独立函数，互不内嵌：
+
+| 流程 | 函数 | 复用场景 |
+|------|------|---------|
+| 放入 itm0 | `obl_put_item_to_itm0` | 拾取 / 合成 / 卸装备 |
+| 整理入背包 | `obl_organize_inventory` | 拾取 / 合成 / 手动整理 |
+
+整理函数只承担"合并堆叠 + 转移 itm0 → 背包"的逻辑，不输出日志；调用方根据返回值决定 emit 哪些事件。这样同一个整理函数可被多种场景复用，且与日志系统解耦。
+
+**事件解耦**：操作成功与整理失败是两个独立事件，前端可同时收到分别处理：
+
+| 事件类别 | 语义 | 前端处理 |
+|---------|------|---------|
+| 操作成功 | 道具已从地图删除 / 素材已扣减 + 已存入 itm0 或背包 | 日志区显示成功 |
+| 整理失败 | 背包满，道具卡在 itm0，携带 item_id | Toast 提示 + 高亮 itm0 道具 |
+
+操作成功不隐含整理成功，整理失败也不否定操作成功。前端可同时收到两个事件，分别在日志区和 Toast 各自呈现。
+
+**itm0 门控**：itm0 非空时玩家被锁定，后端只放行整理与丢弃命令。处理 itm0 是最高优先级——断线重连后 itm0 可能有遗留道具，必须先处理才能继续游戏行为。这避免道具数据在玩家未察觉时丢失。
+
+**合成成功事件只携带 recipe_id**：合成产物是固定配置，前端通过 `recipe_id` 查 locale 即可获知产物。与 §2.2（后端只输出事件结构）和 §2.23（三层分离）一致——产物名称是展示职责，归前端。
+
+**设计理由**：
+- 函数独立性让每个流程可单独测试和复用，未来新增"卸装备"流程时只需复用放入 itm0 的函数
+- 事件解耦让前端能在日志区宣告成功的同时，通过 Toast 提示整理失败，两者不互相覆盖
+- itm0 门控强制玩家显式处理遗留道具，避免数据丢失风险
+
+> 详细实现方案见 [堆叠功能与合成系统P2重构-设计案](./docs/堆叠功能与合成系统P2重构-设计案.md)。
 
 ---
 

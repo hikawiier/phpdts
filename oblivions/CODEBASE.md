@@ -58,15 +58,20 @@ oblivions/
 │       ├── log.func.php          # 结构化日志收集器 + 持久化/读取（详见 §8.6）
 │       ├── battle_log.func.php   # 战斗日志收集器 + played 标记机制（详见 §8.10）
 │       ├── sql.func.php          # SQL 操作封装（队列/状态机查询）
-│       ├── player.func.php       # 玩家数据层：认证/抓取/格式化/保存 + 道具栏 + 命令状态过滤（详见 §8.1）
+│       ├── player.func.php       # 玩家数据层：认证/抓取/格式化/保存 + 命令状态过滤（详见 §8.1）
 │       ├── move.func.php         # 移动/地图数据加载/BFS距离计算（详见 §8.4）
 │       ├── generate.func.php     # 区域资源生成（道具/POI/野生道具，详见 §8.5）
 │       ├── vision.func.php       # 视野/迷雾/发现系统（BFS视野 + 迷雾点亮 + 敌人发现/discovered 管理）
-│       ├── explore.func.php      # 探索/搜索/拾取/丢弃核心逻辑（详见 §8.3）
+│       ├── explore.func.php      # 探索/搜索核心逻辑（详见 §8.3）
 │       ├── enemy_ai.func.php     # NPC 敌人 AI 行为（10 函数：tick 监听器/决策/移动，详见 §8.7）
 │       ├── tick.func.php         # 游戏刻核心（推进控制/监听器注册/事件调度，详见 §8.2）
-│       ├── battle_state_machine.func.php  # 战斗状态机（PLAYER_TURN/PROCESSING 状态转换）
-│       └── battle/
+│           ├── battle_state_machine.func.php  # 战斗状态机（PLAYER_TURN/PROCESSING 状态转换）
+│           ├── item/
+│           │   ├── item.tag.func.php       # 道具 Tag 系统（tags/itmk/tool_level 查询，详见 §8.14.1）
+│           │   ├── item.basic.func.php     # 道具库存基础操作（堆叠/itm0/拾取/丢弃/整理，详见 §8.14.0）
+│           │   ├── item.use.func.php       # 道具使用系统（use_effect 分发框架，详见 §8.14.2）
+│           │   └── item.craft.func.php     # 合成系统（匹配算法/素材消耗/已发现配方，详见 §8.14.3）
+│           └── battle/
 │           ├── battle.func.php       # 战斗功能函数（Tag/规则/状态管理，详见 §8.8）
 │           ├── battle.calc.php       # 伤害计算
 │           ├── battle.main.php       # 战斗执行（verify→sort→execute→end，详见 §8.9）
@@ -109,7 +114,7 @@ oblivions/
 | `include/core/global.func.php` | `oblivions_is_active()` 定义 + `save_gameinfo()` Oblivions 分支 |
 | `include/core/common.inc.php` | 全局入口：初始化 `$obl_log` + `$obl_battle_log` + tick 事件触发 |
 | `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支（Oblivions 模式由 oblivions_router.php 直接调用 obl_move） |
-| `api_v2.php` | 12 个 API 端点（player_info/player_inventory/game_map/tile_actions/obl_log/obl_error/battle_log/enemies/skill_list/skill_cd_check/ai_dump_save/heartbeat） |
+| `api_v2.php` | 15 个 API 端点（player_info/player_inventory/game_map/tile_actions/obl_log/obl_error/battle_log/enemies/skill_list/skill_cd_check/ai_dump_save/heartbeat + 合成三件套：craft_preview/craft_workbench_materials/craft_recipes） |
 | `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
 | `include/gamectl/system.func.php` | `rs_init_areas()` 在 Oblivions 模式下跳过禁区系统初始化 |
 | `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
@@ -131,6 +136,7 @@ Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php`
 | 3 | `battle.func` | 依赖第 1-2 层 |
 | 4 | `battle.main` / `battle.entry` / `battle.queue` | 依赖第 1-3 层 |
 | 5 | `explore` / `enemy_ai` | 依赖 vision + battle |
+| 5.5 | `item.tag` / `item.basic` / `item.use` / `item.craft` | 道具系统（依赖 log + player + explore，无循环依赖；加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）） |
 | 6 | `tick` | 依赖最广，末尾注册监听器 |
 | 7 | `gamectl/init.func.php` | 游戏初始化 |
 | 8 | `gamectl/state.func.php` | 游戏状态机 |
@@ -158,7 +164,7 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。
 | **进度** | `lvl`/`exp`/`state` | 等级/经验/状态（0=存活, 1=死亡） |
 | **装备** | `wepid`/`wep`/`wepk`/... | 7 槽装备（每槽 1 个模板 ID + 6 个运行时字段：自定义名/k/e/s/sk/para） |
 | **道具栏** | `itempara` | JSON 数组（七字段规范，见下方 itmpara / itempara 小节） |
-| | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=特殊槽） |
+| | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=itm0 缓存槽，1~itemmaxslots=普通槽） |
 | **Oblivions专属** | `tacpara` | 策略槽（JSON） |
 | | `skillpara` | 技能数据（JSON） |
 | | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range`/`battle`/`escape_skip_tick` 等） |
@@ -201,6 +207,8 @@ $oblpara['battle'] = [
   null, null, null, null
 ]
 ```
+
+> index 0 = itm0 缓存槽（新增道具中转槽，详见 [DESIGN.md §2.24](./DESIGN.md#224-itm0-缓存槽与事件解耦)）；1~itemmaxslots = 普通槽位
 
 **装备字段规范**：装备槽与背包道具对象保持同样的“模板索引 + 运行时状态”分离。
 
@@ -430,7 +438,7 @@ $oblpara['battle'] = [
 - `entries`：日志条目数组，按时间正序（旧→新）
 - `total`：当前存储的条目总数（正式日志 200 条 + debug 日志 50 条，分开计数）
 
-**ID 命名规则**：`{logcategory}.{subevent}`，如 `move.success`、`pickup.bag_full`、`search.result`。完整 ID 清单见前端 `vex-vue/src/data/log-templates.ts`。
+**ID 命名规则**：`{logcategory}.{subevent}`，如 `move.success`、`organize.fail`、`search.result`。完整 ID 清单见前端 `vex-vue/src/data/log-templates.ts`。
 
 **debug 分类**：`OblivionsLogger::DEBUG_IDS` 常量声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）。这些日志持久化保留但前端默认不渲染，debug 模式下显示并加 `[DBG]` 前缀。
 
@@ -520,7 +528,67 @@ api_response('success', array(
 ));
 ```
 
-### 5.8 `mark_battle_log_played.php` — 零依赖标记接口
+### 5.9 `craft_preview` — 合成预判（前端用）
+
+- **请求**: `GET api_v2.php?action=craft_preview&slots=1,3,5&workbench_materials=poi:123`
+- **前置条件**: 必须在 Oblivions 模式下
+- **参数**:
+  - `slots` (string) — 逗号分隔的背包槽位号，数量不限
+  - `workbench_materials` (string, 可选) — 逗号分隔的工作台素材 ID
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "match_count": 1,
+    "craftable": true,
+    "is_new_recipe": false
+  }
+}
+```
+- `match_count = 0` → 不亮（无匹配）
+- `match_count = 1` → 亮灯（可合成）
+- `match_count >= 2` → 不亮（指向不明确）
+- `is_new_recipe` → 匹配的配方玩家未发现过
+
+### 5.10 `craft_workbench_materials` — 可用工作台素材
+
+- **请求**: `GET api_v2.php?action=craft_workbench_materials`
+- **前置条件**: 必须在 Oblivions 模式下
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "workbench_materials": [
+      {"source": "passive", "id": "passive:innate_t0", "item_id": "innate_craft_t0", "tool_level": 0},
+      {"source": "poi",     "id": "poi:123",           "item_id": "forge_t1",        "tool_level": 1}
+    ]
+  }
+}
+```
+- `source` 来源：`passive`（永久可用）/ `cat`（猫身边，P0 未实现）/ `poi`（需站在该 POI 上）
+- `id` 传给 `obl_craft` / `craft_preview` 的 `workbench_materials` 参数
+
+### 5.11 `craft_recipes` — 已发现配方列表
+
+- **请求**: `GET api_v2.php?action=craft_recipes`
+- **前置条件**: 必须在 Oblivions 模式下
+- **响应**:
+```json
+{
+  "status": "success",
+  "data": {
+    "recipes": [
+      {"recipe_id": "craft_bandage", "category": "tool", "materials": [...], "results": [{"item_id": "bandage", "count": 1}]}
+    ]
+  }
+}
+```
+- 过滤逻辑：从 `oblpara.discovered_recipes` 读取 → 调 `item_recipe_visibility_filter` 判断可见性 → 只返回可见配方
+- P0 阶段所有已发现配方均可见（`item_recipe_visibility_filter` 返回 true）
+
+### 5.12 `mark_battle_log_played.php` — 零依赖标记接口
 
 **独立文件**（不走 `api_v2.php`），位于 `oblivions/mark_battle_log_played.php`。
 
@@ -559,9 +627,12 @@ api_response('success', array(
 | `obl_explore` | 无 | `obl_explore($pdata)` | 探索（点亮迷雾+发现道具） |
 | `obl_search` | `iaid` (int) | `obl_search_poi($iaid, $pdata)` | 搜索POI |
 | `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
-| `obl_discard` | `slot` (int 1~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃背包道具 |
+| `obl_discard` | `slot` (int 0~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃道具（slot=0 丢弃 itm0 缓存槽；1~itemmaxslots 丢弃普通槽位道具，写回地图道具表） |
 | `obl_battle_start` | `actions` (JSON) | `cmd_handle_obl_battle_start($pdata, $actions)` | 玩家突袭：通过 `battle_entry_dispatch('ambush')` 执行 |
 | `obl_battle_action` | `actions` (JSON) | `cmd_handle_obl_battle_action($pdata, $actions)` | 玩家回合：通过 `battle_entry_dispatch('player_turn')` 执行 |
+| `obl_use_item` | `slot` (int 1~itemmaxslots) | `cmd_handle_obl_use_item($slot, $pdata)` → `item_use($slot, $pdata)` | 使用背包道具（检查 tag_usable + use_effect 分发） |
+| `obl_craft` | `slots` (string 逗号分隔槽位号), `workbench_materials` (string 可选) | `cmd_handle_obl_craft($slots, $wb, $pdata)` → `item_craft($slots, $pdata, $wb)` | 合成道具（指向性判断 + 素材消耗 + 产物生成） |
+| `obl_organize` | 无 | `cmd_handle_obl_organize($pdata)` → `obl_organize_inventory($pdata)` | 整理背包（合并同类堆叠 + 转移 itm0 → 背包；itm0 锁定时唯一可用命令之一） |
 
 ### 6.3 通用命令的 Oblivions 分支
 
@@ -590,6 +661,8 @@ obl_command.php 内部流程：
        → action='battle' 时只允许 obl_battle_action
        → 非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许）
        → 被拒绝的命令 emit 'command.rejected' 日志，不推进 tick
+   [C2a] itm0 门控（oblivions_router.php）：itempara[0] 非空时只允许 obl_organize / obl_discard
+        → 被拒绝的命令 emit 'system.itm0_pending' 日志，处理 itm0 是最高优先级
    [C2b] obl_tick_has_busy_battle() → 委托 obl_battle_state_has_busy_battle()
         → 战场 PROCESSING 时拒绝推进 tick 的命令，emit 'command.rejected' (reason=battle_busy)
   [D]  if (!$command_rejected && $pdata['hp'] > 0):
@@ -659,20 +732,26 @@ return [
 
 ```php
 'item_id' => [
-    'itm'         => string,  // 道具名
+    'itm'         => string,  // 道具名（deprecated: 文案将移至前端 item-locale.ts）
     'itmk'        => string,  // 种类代码 (WP/WK/WG/WD/WF/AR/AH/AA/MT/HH/HS/DX/TK/SP)
     'itme'        => int,     // 效果值
     'itms'        => string,  // 耐久
     'itmsk'       => string,  // 耐久种类
     'itmpara'     => string,  // 参数(JSON)
-    'desc'        => string,  // 描述
+    'desc'        => string,  // 描述（deprecated: 文案将移至前端 locale）
     'tier'        => string,  // 稀有度: common/uncommon/rare/epic
     'stack'       => bool,    // 是否可堆叠
     'stack_limit' => int,     // 堆叠上限（仅stack=true时）
+    // ─── 道具系统扩展字段（《道具使用与合成系统-设计案》）───
+    'tags'        => array,   // 性质描述 Tag + 系统钩子 Tag ID 数组
+    'use_effect'  => string,  // 使用效果名（非空时 tags 必须含 tag_usable）
+    'tool_level'  => int,     // 工具等级（仅工作台/工具类道具有效，0=无等级）
 ]
 ```
 
 **种类代码**: WP=钝器 WK=刃器 WG=枪械 WD=投掷 WF=灵符 AR=身体防具 AH=头部防具 AA=饰品 MT=材料 HH=恢复 HS=食物 DX=药物 TK=工具 SP=特殊
+
+**Tag 相关函数**: `item_get_tags()` / `item_has_tag()` / `item_get_itmk()` / `item_get_tool_level()` / `item_get_items_by_tag()` 定义于 `item.tag.func.php`，带静态缓存。
 
 ### 7.3 `poi_table.php` — POI模板
 
@@ -684,11 +763,13 @@ return [
     'repeatable'      => bool,    // 是否可重复搜索
     'repeat_limit'    => int,     // 最大搜索次数(0=无限)
     'repeat_cooldown' => int,     // 冷却回合数
-    'mechanic'        => string,  // 机制名(如 max_hp_up/learn_skill)
+    'mechanic'        => string,  // 机制名(如 max_hp_up/learn_skill/craft_source)
     'mechanic_value'  => mixed,   // 机制值
     'mechanic_params' => array,   // 机制参数
 ]
 ```
+
+**`mechanic='craft_source'`**：工作台 POI，`mechanic_value` 存储 `item_id` 指向工作台道具。玩家站在该 POI 上时，由 `item_get_available_workbench_materials()` 将其作为工作台素材加入可用列表。（详见《道具使用与合成系统-设计案》§3.5）
 
 ### 7.4 `poi_loot.php` — POI掉落表
 
@@ -757,7 +838,44 @@ return [
 ]
 ```
 
-### 7.8 `enemies_config.php` — NPC 敌人类型定义
+### 7.8 `recipe_table.php` — 合成配方表
+
+合成配方定义文件 `oblivions/gamedata/recipe_table.php`。**仅含游戏逻辑，不含文案**（文案由前端 `recipe-locale.ts` 提供）。
+
+```php
+return [
+    'craft_bandage' => [
+        'category'  => 'tool',                     // 分类标识（tool/armor/food/weapon），用于前端显示过滤
+        'materials' => [
+            ['item_id' => 'cloth', 'count' => 3, 'consume' => 'all'],          // 精确匹配指定道具
+        ],
+        'results'   => [
+            ['item_id' => 'bandage', 'count' => 1],
+        ],
+    ],
+    'craft_frying_pan' => [
+        'category'  => 'tool',
+        'materials' => [
+            ['tag' => 'tag_forge', 'min_level' => 1, 'count' => 1, 'consume' => 'none'],  // 性质 Tag + 工具等级
+            ['itmk' => 'MT', 'count' => 4, 'consume' => 'all'],                            // 大类匹配
+        ],
+        'results'   => [
+            ['item_id' => 'frying_pan', 'count' => 1],
+        ],
+    ],
+];
+```
+
+**匹配规则**（由 `item_resolve_material_mapping` 实现）：
+- 匹配优先级：`item_id` > `itmk` > `tag`
+- `consume`：`'all'`=消耗 / `'durability'`=扣耐久 / `'none'`=返还（工作台素材只能匹配 `'none'`）
+- `min_level`：要求素材 `tool_level >= min_level`（高级工具兼容低级）
+- 所有放置的素材必须都被消耗，多放算不匹配
+- 同一素材不能同时满足多个槽位
+
+读取函数：`item_get_recipe()` / `item_get_all_recipes()`（带静态缓存）。
+
+### 7.9 `enemies_config.php` — NPC 敌人类型定义
 
 定义每种敌人的静态属性。与 `item_table.php` / `poi_table.php` 同层，只定义属性，不关心分布（分布由 `enemy_pool.php` 按潮汐区控制）。NPC 与玩家共用 `bra_oblplayers` 表，通过 `type` 字段区分（`type>0` 为敌人类型 ID）。
 
@@ -825,19 +943,17 @@ return [
 |------|------|------|
 | `obl_auth_player` | `($username, $password): int\|false` | user 表双重校验，返回 oblplayers.pid |
 | `obl_fetch_playerdata_by_pid` | `($pid): array\|false` | 按 pid 抓取原始数据（JSON 未解码） |
+| `obl_fetch_playerdata_batch` | `(array $pids): array` | 批量抓取多 pid 玩家数据 |
 | `obl_fetch_playerdata_by_name` | `($name): array\|false` | 按 name 抓取并格式化（type=0 玩家） |
 | `obl_fetch_enemies_by_region` | `($pgroup): array` | 批量获取区域内敌人（type>0，已格式化） |
 | `obl_format_playerdata` | `(array &$pdata): void` | 解码所有 JSON 字段，保证结构合法（itempara/tacpara/skillpara/oblpara/装备 para） |
 | `obl_save_player` | `(array &$pdata): void` | 编码 JSON 字段并 UPDATE 到 oblplayers（不同步 bra_players） |
 | `obl_game_entrypoint` | `($entry_type = 'game'): array` | 入口封装：cookie 校验 → 抓取 → 格式化 |
 | `obl_entrypoint_handle_failure` | `($status, $entry_type): void` | 认证失败处理（command 返回 JSON，game 跳转登录） |
-| `obl_get_items` | `(array &$pdata): array` | 获取道具栏数组（index 0=特殊槽，1~itemmaxslots=普通） |
-| `obl_get_item` | `(array &$pdata, $slot): array\|null` | 获取指定槽位道具 |
-| `obl_set_item` | `(array &$pdata, $slot, $item): void` | 设置指定槽位道具（null=清空） |
-| `obl_find_empty_slot` | `(array &$pdata): int\|false` | 找空普通槽（1~itemmaxslots），无空位返回 false |
-| `obl_is_bag_full` | `(array &$pdata): bool` | 背包是否已满 |
 | `obl_create_player_record` | `($ndata): int\|false` | valid.php 激活时创建 oblplayers 记录（从 $ndata itm1~itm6 构建 itempara） |
 | `obl_command_allowed_by_state` | `($command, $action): bool` | 命令状态过滤：action='battle' 只允许 obl_battle_action；非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许） |
+
+> 道具栏槽位读写函数（`obl_get_items` / `obl_get_item` / `obl_set_item` / `obl_find_empty_slot` / `obl_is_bag_full`）已迁至 [§8.14.0 item.basic.func.php](#8140-itembasicfuncphp--道具库存基础操作)。
 
 ### 8.2 tick.func.php
 
@@ -874,8 +990,9 @@ return [
 | `obl_search_poi` | `(int $iaid, array &$pdata): void` | 搜索POI：掉落表+机制触发 |
 | `obl_execute_mechanic` | `(array $template, array &$pdata): void` | 机制分发（→ `obl_mechanic_{name}`） |
 | `obl_mechanic_max_hp_up` | `(array $template, array &$pdata): void` | 机制：增加最大HP |
-| `obl_pickup_item` | `(int $iid, array &$pdata): void` | 拾取道具（含近视揭示/陷阱/并发保护） |
-| `obl_discard_item` | `(int $slot, array &$pdata): void` | 丢弃道具（含item_id还原到地图） |
+| `obl_get_poi_at_position` | `($pgroup, $pls): array` | 查询指定地图格上的所有 POI 实例（被 item.craft.func.php 的工作台素材查询调用） |
+
+> 拾取/丢弃函数（`obl_pickup_item` / `obl_discard_item`）已迁至 [§8.14.0 item.basic.func.php](#8140-itembasicfuncphp--道具库存基础操作)。
 
 ### 8.4 move.func.php
 
@@ -1080,6 +1197,90 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `battle_queue_try_end` | `(...): void` | 战斗结束检测 |
 | `battle_queue_prepare_next_round` | `(&$actor_data, &$obl_battle_log, &$battle_cache): void` | 准备下一轮：AP 恢复 + 重置全员 done + 更新 last_acted |
 
+### 8.14 item/ 子文件夹 — 道具系统
+
+**文件**：`item.tag.func.php` + `item.basic.func.php` + `item.use.func.php` + `item.craft.func.php`
+
+**依赖**：`item.tag.func.php` 依赖 `item_table.php`（数据文件）；`item.basic.func.php` 依赖 `item.tag.func.php`；`item.use.func.php` 依赖 `item.tag.func.php`；`item.craft.func.php` 依赖 `item.tag.func.php` + `item.use.func.php` + `item.basic.func.php`（`obl_put_item_to_itm0` / `obl_organize_inventory`）+ `explore.func.php`（`obl_get_poi_at_position`）
+
+#### 8.14.0 `item.basic.func.php` — 道具库存基础操作
+
+道具系统的"基础操作层"——槽位读写、堆叠、itm0 缓存槽、拾取、丢弃、整理。被 `item.use.func.php` / `item.craft.func.php` / `oblivions_commands.php` 等衍生层调用。
+
+**itm0 缓存槽约定**（详见 [DESIGN.md §2.24](./DESIGN.md#224-itm0-缓存槽与事件解耦)）：
+- `itempara[0]` 是新增道具的中转槽，所有新增道具（拾取/合成产物/未来卸装备）先入 itm0 再整理入背包
+- itm0 非空时 router 层拒绝除 `obl_organize` / `obl_discard` 外的所有命令
+- `obl_put_item_to_itm0`（检查 itm0 为空 + 放入）和 `obl_organize_inventory`（合并堆叠 + 转移 itm0 → 背包）是独立函数，由调用方分别调用
+- `obl_organize_inventory` 是纯逻辑函数（不内部 emit），由调用方根据返回值 emit `organize.success` / `organize.fail` 事件
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `item_get_stack` | `($item_id): bool` | 读取道具是否可堆叠（带静态缓存） |
+| `item_get_stack_limit` | `($item_id): int` | 读取道具的 stack_limit（带静态缓存） |
+| `_item_para_key` | `($itmpara): string` | 将 itmpara 标准化为字符串键，用于堆叠合并时的相等性比较 |
+| `obl_get_items` | `(array &$pdata): array` | 获取道具栏数组（index 0=itm0，1~itemmaxslots=普通） |
+| `obl_get_item` | `(array &$pdata, $slot): array\|null` | 获取指定槽位道具 |
+| `obl_set_item` | `(array &$pdata, $slot, $item): void` | 设置指定槽位道具（null=清空） |
+| `obl_find_empty_slot` | `(array &$pdata): int\|false` | 找空普通槽（1~itemmaxslots），无空位返回 false |
+| `obl_is_bag_full` | `(array &$pdata): bool` | 背包是否已满 |
+| `obl_find_mergeable_slot` | `(array &$pdata, $item_id, $itmpara = null): int\|false` | 查找可合并堆叠的槽位（仅查 1~itemmaxslots，不含 itm0）。合并条件：item_id 相同 + itmpara 相等 + 未达 stack_limit |
+| `obl_add_item_to_inventory` | `(array &$pdata, $item): int\|false` | 添加道具到背包（自动合并，原子性）。预检查空间不足时返回 false，不修改任何数据。**只操作背包槽位 1~itemmaxslots，不操作 itm0** |
+| `obl_merge_stacks_in_inventory` | `(array &$pdata): void` | 合并背包内同类堆叠（腾出空槽）。仅合并，不转移 itm0，不排序 |
+| `obl_put_item_to_itm0` | `(array &$pdata, $item): bool` | 放入道具到 itm0 缓存槽。itm0 已被占用时返回 false（防御性检查，router 门控已拦截） |
+| `obl_organize_inventory` | `(array &$pdata): bool` | 整理背包：合并同类堆叠 + 转移 itm0 → 背包。**纯逻辑函数（不内部 emit）**。返回 true=整理成功（itm0 已清空），false=背包满（itm0 保留）。由调用方根据返回值 emit `organize.success` / `organize.fail` 事件 |
+| `obl_pickup_item` | `($iid, array &$pdata): void` | 拾取道具（10 步流程：读取实例 + itms='0' 检查 + 位置/发现状态检查 + 近视揭示 + 构建实例 + 放入 itm0 + 原子删除地图实例 + 自动整理 + emit pickup.success + emit organize.fail 解耦） |
+| `obl_discard_item` | `($slot, array &$pdata): void` | 丢弃道具。slot=0 丢弃 itm0 缓存槽内容（直接抛弃，不写回地图）；1~itemmaxslots 丢弃普通槽位道具（写回 `bra_oblmapitem` 表） |
+
+**事件解耦原则**（详见 [DESIGN.md §2.24](./DESIGN.md#224-itm0-缓存槽与事件解耦)）：
+- `pickup.success`（拾取成功）与 `organize.fail`（整理失败）是独立事件，前端可同时收到分别处理
+- `craft.success`（合成成功）与 `organize.fail` 同理解耦
+- `organize.fail` 替代旧的 `pickup.bag_full_itm0` / `craft.bag_full_itm0` / `organize.bag_full` 三个事件，统一携带 `item_id`
+
+#### 8.14.1 `item.tag.func.php` — 道具 Tag 系统
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `item_load_table` | `(): array` | 读取 item_table（带静态缓存） |
+| `item_get_tags` | `($item_id): array` | 读取道具的 Tag 列表（性质描述 Tag + 系统钩子 Tag 统一返回，各系统按需过滤） |
+| `item_has_tag` | `($item_id, $tag_id): bool` | 判断道具是否拥有某 Tag |
+| `item_get_itmk` | `($item_id): string` | 读取道具的 itmk 类别 |
+| `item_get_tool_level` | `($item_id): int` | 读取道具的工具等级（非工具返回 0） |
+| `item_get_items_by_tag` | `($tag_id): array` | 反向查询：拥有某 Tag 的所有道具 |
+
+#### 8.14.2 `item.use.func.php` — 道具使用系统
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `item_use` | `($slot, &$pdata): void` | 命令入口：读取槽位 → 检查 tag_usable → 耐久检查 → use_effect 分发 → 耐久扣减 → emit use_item.success |
+| `item_execute_use_effect` | `($item, &$pdata): void` | use_effect 分发框架（纯分发器，调 `item_use_effect_{name}()`，不预定义任何效果） |
+| `item_consume_durability` | `(&$item, $amount = 1): void` | 耐久扣减（"999"/"∞"/"0" 特殊处理，归零 emit durability.broken） |
+
+**use_effect 注册约定**：具体效果函数由归属系统实现，框架只负责分发。当前预定义的 use_effect 名称：
+- `restore_sp` → 食物经验系统注册（恢复 SP）
+- `restore_hp` → 食物经验系统注册（恢复 HP）
+- `cure_bs` → 健康系统注册（解除 Body Status）
+- `gain_resistance` → 被动技能系统注册（抗性跃迁）
+
+#### 8.14.3 `item.craft.func.php` — 合成系统
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `item_get_recipe` | `($recipe_id): array\|null` | 读取单个配方（带静态缓存） |
+| `item_get_all_recipes` | `(): array` | 读取全部配方 |
+| `item_get_available_workbench_materials` | `(&$pdata): array` | 查询可用工作台素材（被动技能 + POI craft_source；cat 来源 P0 未实现） |
+| `item_can_consume` | `($item, $consume): bool` | 检查素材是否可匹配指定 consume 模式（工作台素材只能 'none'） |
+| `item_resolve_material_mapping` | `($materials, $placed_items): array\|null` | 核心匹配算法：按 item_id→itmk→tag 优先级映射素材槽位 |
+| `item_materials_match` | `($materials, $placed_items): bool` | 布尔包装（调 `item_resolve_material_mapping`） |
+| `item_count_material_in_inventory` | `(&$pdata, $item_id): int` | 统计背包中指定 item_id 的素材数量 |
+| `item_consume_materials` | `(&$pdata, $materials, $slots, $workbench_materials): bool` | 按 consume 模式扣除素材（'all'=移除, 'durability'=扣耐久, 'none'=保留） |
+| `item_match_recipes_by_slots` | `(&$pdata, $slots, $workbench_materials): array` | 指向性判断：返回匹配的 recipe_id 列表 |
+| `item_recipe_visibility_filter` | `($recipe, &$pdata): bool` | 配方可见性过滤接口（P0 返回 true，后续由剧情/全局事件驱动） |
+| `item_get_discovered_recipes` | `(&$pdata): array` | 查询已发现配方（按可见性过滤后返回） |
+| `item_discover_recipe` | `(&$pdata, $recipe_id): void` | 标记配方为已发现（写入 `oblpara.discovered_recipes`） |
+| `item_craft_preview` | `($slots, &$pdata, $workbench_materials): array` | 前端预判 API 逻辑：返回 `{match_count, craftable, is_new_recipe}` |
+| `item_craft` | `($slots, &$pdata, $workbench_materials): void` | 合成入口（12 步流程：解析素材 → 指向性判断 → 空间检查 → 扣素材 → 产物入 itm0（`obl_put_item_to_itm0`）+ 自动整理（`obl_organize_inventory`）→ 新配方发现 → emit `craft.success`（仅 recipe_id）+ 整理失败 emit `organize.fail` 解耦） |
+| `obl_mechanic_craft_source` | `($template, &$pdata): void` | POI 机制占位（工作台素材的 POI 交互由 `item_get_available_workbench_materials` 接管，P0 不实现） |
+
 ---
 
 ## 九、代码规范
@@ -1088,12 +1289,14 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
-| 函数 | `obl_` 前缀 + 蛇形命名 | `obl_update_vision`, `obl_search_poi` |
-| 机制函数 | `obl_mechanic_{name}` | `obl_mechanic_max_hp_up` |
-| 命令处理器 | `cmd_handle_obl_{command}` | `cmd_handle_obl_explore` |
+| 函数（通用） | `obl_` 前缀 + 蛇形命名 | `obl_update_vision`, `obl_search_poi` |
+| 道具系统内部函数 | `item_` 前缀 + 蛇形命名 | `item_get_tags`, `item_craft`, `item_materials_match` |
+| use_effect 注册函数 | `item_use_effect_` 前缀 | `item_use_effect_restore_sp`, `item_use_effect_cure_bs` |
+| 机制函数 | `obl_mechanic_{name}` | `obl_mechanic_max_hp_up`, `obl_mechanic_craft_source` |
+| 命令处理器 | `cmd_handle_obl_{command}` | `cmd_handle_obl_explore`, `cmd_handle_obl_craft` |
 | 数据库表 | `{$tablepre}obl{entity}`（无下划线连写） | `bra_oblplayers`, `bra_oblmapstates`, `bra_oblmappoi`, `bra_oblmapitem` |
 | 配置键 | 蛇形命名 | `explore_sp_cost`, `vision_range` |
-| 日志 ID | `{logcategory}.{subevent}` | `move.success`, `pickup.bag_full`, `search.result` |
+| 日志 ID | `{logcategory}.{subevent}` | `move.success`, `organize.fail`, `search.result` |
 | 战斗日志 action_id | 蛇形命名 | `unarmed_strike`, `escape`, `battle.start`, `initiative.roll`, `battle.end` |
 
 ### 9.2 数据传递规范
@@ -1178,9 +1381,13 @@ Oblivions 模式下 `game.php` 重定向到 `vex-vue/dist/index.html`（生产�
 | 地图网格+连通性 | `game_map` | `links.tiles[pgroup][pls].neighbors`, `links.grids[pgroup]` |
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
 | 玩家位置 + 房间ID | `player_info` | `pgroup`(区域), `pls`(格子), `groomid`(房间ID, 供 mark 接口用) |
+| 玩家背包详情 | `player_inventory` | `items[]`（含 usable/tags/itmk 字段，供前端判断可使用/可装备道具） |
 | 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
 | 战斗日志（未播放） | `battle_log` | `entries[]`（BattleLogEntry 数组，played=0）, `total` |
 | 当前区域敌人 | `enemies` | `enemies[]`（已发现敌人列表） |
+| 合成预判 | `craft_preview` | `match_count`, `craftable`, `is_new_recipe` |
+| 可用工作台素材 | `craft_workbench_materials` | `workbench_materials[]`（含 source/id/item_id/tool_level） |
+| 已发现配方列表 | `craft_recipes` | `recipes[]`（含 recipe_id/category/materials/results） |
 
 ### 11.3 命令提交
 
@@ -1197,7 +1404,10 @@ commandQueue.execute({ command: 'obl_search', iaid: String(poiIaid) });
 commandQueue.execute({ command: 'obl_pickup', iid: String(itemIid) });
 
 // 丢弃道具
-commandQueue.execute({ command: 'obl_discard', slot: String(slotNumber) }); // slot: 1-6
+commandQueue.execute({ command: 'obl_discard', slot: String(slotNumber) }); // slot: 0=itm0 缓存槽, 1-6=普通槽位
+
+// 整理背包（合并同类堆叠 + 转移 itm0 → 背包；itm0 锁定时唯一可用命令之一）
+commandQueue.execute({ command: 'obl_organize' });
 
 // 移动
 commandQueue.execute({ command: 'move', moveto: String(targetPls) });
@@ -1207,6 +1417,12 @@ commandQueue.execute({ command: 'obl_battle_start', actions: JSON.stringify([{ a
 
 // 战斗动作（玩家回合，预装填动作数组，JSON 字符串）
 commandQueue.execute({ command: 'obl_battle_action', actions: JSON.stringify([{ act_id: 'unarmed_strike', target: enemyPid }]) });
+
+// 使用道具
+commandQueue.execute({ command: 'obl_use_item', slot: String(slotNumber) });
+
+// 合成道具
+commandQueue.execute({ command: 'obl_craft', slots: '1,3,5', workbench_materials: 'poi:123,passive:innate_t0' });
 ```
 
 ### 11.4 战斗日志标记
@@ -1233,7 +1449,9 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **道具可见性**: 仅 `discovered>0` 的道具返回（由API过滤）
 - **近视道具**: `discovered=2` 时显示 `display_name`（带"？"），拾取后揭示真实身份
 - **道具分组**: POI关联道具在 `pois[].items`，散落道具在 `ground_items`
-- **背包槽位**: `itempara` JSON 数组（index 0=特殊槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots
+- **背包槽位**: `itempara` JSON 数组（index 0=itm0 缓存槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots（slot=0 用于 `obl_discard` 丢弃 itm0 内容）
+- **itm0 锁定处理**: `itempara[0]` 非空时后端拒绝除 `obl_organize` / `obl_discard` 外的所有命令（emit `system.itm0_pending`）；前端需检测 itm0 状态，提示玩家整理或丢弃 itm0 内容
+- **整理失败事件**: 收到 `organize.fail`（携带 `item_id`）时，提示"背包已满，XX暂存到待整理区"；与 `pickup.success` / `craft.success` 是独立事件，可同时收到
 - **结构化日志渲染**: 前端按 `entry.id` 查 `vex-vue/src/data/log-templates.ts` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `vex-vue/src/data/terrain-desc.ts` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除

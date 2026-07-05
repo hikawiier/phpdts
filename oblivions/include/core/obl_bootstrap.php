@@ -47,7 +47,9 @@ require_once GAME_ROOT . './oblivions/include/game/explore.func.php';
 require_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
 
 // 第 5.5 层：道具系统（依赖 log + player + explore，无循环依赖）
+// 加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）
 require_once GAME_ROOT . './oblivions/include/game/item/item.tag.func.php';
+require_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
 

@@ -113,3 +113,4 @@ function item_get_items_by_tag($tag_id) {
     $cache[$tag_id] = $result;
     return $result;
 }
+

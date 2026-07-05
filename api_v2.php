@@ -368,6 +368,7 @@ function handle_player_inventory() {
 
     // 普通槽位 1~maxslots（index 0 为特殊槽，不在此展示）
     $has_tag_funcs = function_exists('item_has_tag') && function_exists('item_get_tags');
+    $has_stack_func = function_exists('item_get_stack');
     for ($i = 1; $i <= $maxslots; $i++) {
         $item = isset($itempara[$i]) ? $itempara[$i] : null;
         $empty = empty($item) || !is_array($item);
@@ -384,7 +385,29 @@ function handle_player_inventory() {
             'durability' => !$empty && isset($item['itms']) ? $item['itms'] : '0',
             'usable' => !$empty && $item_id !== '' && $has_tag_funcs ? item_has_tag($item_id, 'tag_usable') : false,
             'tags' => !$empty && $item_id !== '' && $has_tag_funcs ? item_get_tags($item_id) : array(),
+            'stack' => !$empty && $item_id !== '' && $has_stack_func ? (bool)item_get_stack($item_id) : false,
             'empty' => $empty
+        );
+    }
+
+    // itm0 缓存槽（index 0，与 slots 结构对齐，前端可复用渲染逻辑）
+    $itm0 = null;
+    if (isset($itempara[0]) && is_array($itempara[0]) && !empty($itempara[0]['itmid'])) {
+        $itm0_item = $itempara[0];
+        $itm0_item_id = $itm0_item['itmid'];
+        $itm0 = array(
+            'slot' => 0,
+            'name' => isset($itm0_item['itm']) ? $itm0_item['itm'] : '',
+            'itmid' => $itm0_item_id,
+            'item_id' => $itm0_item_id,
+            'kind' => isset($itm0_item['itmk']) ? $itm0_item['itmk'] : '',
+            'itmk' => isset($itm0_item['itmk']) ? $itm0_item['itmk'] : '',
+            'effect' => isset($itm0_item['itme']) ? (int)$itm0_item['itme'] : 0,
+            'durability' => isset($itm0_item['itms']) ? $itm0_item['itms'] : '0',
+            'usable' => $has_tag_funcs ? item_has_tag($itm0_item_id, 'tag_usable') : false,
+            'tags' => $has_tag_funcs ? item_get_tags($itm0_item_id) : array(),
+            'stack' => $has_stack_func ? (bool)item_get_stack($itm0_item_id) : false,
+            'empty' => false,
         );
     }
 
@@ -392,6 +415,7 @@ function handle_player_inventory() {
         'slots' => $slots,
         'num' => $used_count,
         'limit' => $maxslots,
+        'itm0' => $itm0,
         'equipment' => array(
             'weapon' => array('item_id' => isset($pdata['wepid']) ? $pdata['wepid'] : '', 'itmid' => isset($pdata['wepid']) ? $pdata['wepid'] : '', 'name' => $pdata['wep'], 'type' => $pdata['wepk']),
             'armor' => array('item_id' => isset($pdata['arbid']) ? $pdata['arbid'] : '', 'itmid' => isset($pdata['arbid']) ? $pdata['arbid'] : '', 'name' => $pdata['arb'], 'type' => $pdata['arbk'])

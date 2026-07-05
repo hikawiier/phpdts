@@ -39,7 +39,7 @@ function cmd_handle_obl_search($iaid, &$pdata) {
  */
 function cmd_handle_obl_pickup($iid, &$pdata) {
     if (!oblivions_is_active()) return;
-    include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
+    include_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
     obl_pickup_item((int)$iid, $pdata);
 }
 
@@ -50,8 +50,30 @@ function cmd_handle_obl_pickup($iid, &$pdata) {
  */
 function cmd_handle_obl_discard($slot, &$pdata) {
     if (!oblivions_is_active()) return;
-    include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
+    include_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
     obl_discard_item((int)$slot, $pdata);
+}
+
+/**
+ * Oblivions 整理背包
+ *
+ * 触发 obl_organize_inventory：合并背包内同类堆叠 + 转移 itm0 → 背包。
+ * 用于 itm0 被锁定时玩家主动整理，或日常整理背包。
+ *
+ * @param array &$pdata 玩家数据
+ */
+function cmd_handle_obl_organize(&$pdata) {
+    if (!oblivions_is_active()) return;
+    include_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
+    global $obl_log;
+    $success = obl_organize_inventory($pdata);
+    if ($success) {
+        $obl_log->emit('organize.success', 'system');
+    } else {
+        // 整理失败：itm0 有道具卡住，带 item_id
+        $item_id = isset($pdata['itempara'][0]['itmid']) ? (string)$pdata['itempara'][0]['itmid'] : '';
+        $obl_log->emit('organize.fail', 'system', ['item_id' => $item_id]);
+    }
 }
 
 /**

@@ -65,16 +65,24 @@ App.vue
                          └→ 设置 craftModalOpen=true
 
 点击背包素材槽位 ──────→ craftStore.toggleBackpackSlot(slot)
+                              └→ 读取 inventoryStore 获取该槽 itms（堆叠数量）
+                              └→ backpackSlots 追加 {slot, count: itms}
 点击工作台素材 ────────→ craftStore.toggleWbMaterial(id)
                          └→ craftStore.refreshPreview()
                               └── debounce 200ms
+                                   └── 组装 slots="1:3,2:1"（槽位:数量）
                                    └── gameApiWithParams('craft_preview', {slots, workbench_materials})
                                         └→ 更新 previewResult + previewLogs
 
 点击 [合成] 按钮 ─────→ craftStore.doCraft()
+                         └── 组装 slots 为 "槽位:数量" 格式
                          └── commandQueue.execute()
                               └── POST obl_craft
-                              └→ 成功: invalidate(inventory) + broadcast + close/toast
+                              └→ 成功:
+                                   失效 inventory + 广播
+                                   检查日志是否有 organize.fail:
+                                     ├→ 无 → 关闭模态框（正常完成）
+                                     └→ 有 → 保持打开，④ 显示"背包已满，XX暂存到待整理区"
 
 点击配方行 ────────────→ craftStore.quickCraft(recipeId)
                          └→ 自动计算所需素材
@@ -110,7 +118,7 @@ App.vue
 │  ┌──────────────┐ ┌──────────────────┐ ┌──────────────────────┐ │
 │  │ ⑤ 已发现配方│ │ ① 素材池        │ │ ② 背包素材          │ │
 │  │ ▼ 食物(2)   │ │ [槽3] 布料×3    │ │ [1] 布料×5  ✓       │ │
-│  │  烤兔肉      │ │     消耗 3/5    │ │ [2] 废铁片×3        │ │
+│  │  烤兔肉      │ │     投入 3 (剩2)│ │ [2] 废铁片×3        │ │
 │  │  简易炖菜    │ │ [⚒] 铁砧        │ │ [3] 生兔肉×1 ✓      │ │
 │  │ ▼ 工具(1)   │ │     (tool:1)     │ │ [4] 刀片碎片×1      │ │
 │  │  绷带        │ │ 合计 2 件素材   │ │                     │ │
@@ -122,6 +130,17 @@ App.vue
 │  │              │ │               │ │ │  [合成]（高亮） │  │ │
 │  │              │ │               │ │ └────────────────┘  │ │
 │  └──────────────┘ └──────────────────┘ └──────────────────────┘ │
+│                                                                  │
+│  ── 锁定态（itm0Locked=true 时替换右列内容） ────────────────  │
+│                          ┌──────────────────┐ ┌──────────────┐ │
+│                          │ ⚠ 合成部分成功， │ │ ② 选材已禁用 │ │
+│                          │ 请整理背包       │ │ ③ 工作台已禁用│ │
+│                          │ "产物已暂存，整理 │ │             │ │
+│                          │ 后可继续操作"   │ │ ┌──────────┐ │ │
+│                          │                  │ │ │[整理背包] │ │ │
+│                          │                  │ │ │[丢弃暂存] │ │ │
+│                          │                  │ │ └──────────┘ │ │
+│                          └──────────────────┘ └──────────────┘ │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -158,18 +177,21 @@ App.vue
 - **② 背包素材列表**（上部）：
   - 从 inventory store 读取 slots[]，过滤空槽位
   - 每行：`[槽位号] 名称 ×数量` + ✓ 选中指示
-  - 点击切换选中/取消（再次点击已选中的槽位取消选中，替代 ① 中的 [×] 移除按钮）
-  - **数量处理**：前端以整个槽位为单位选择，不提供数量选择器。后端从 `itms` 读取堆叠数量参与匹配与消耗。例如槽1 布料×5 被选中 → 后端读到 `itms=5` → 配方需 3 块 → 消耗后槽1 剩余 2 块。同种素材跨多个槽位时，后端汇总 `itms` 后统一匹配。
+  - 点击切换选中/取消（再次点击已选中的槽位取消选中）
+  - **堆叠投量**：选中时按整格 itms 投入，`backpackSlots` 记录 `{slot, count: itms}`。后端 `slots` 参数格式为 `"1:5,3:2"`（槽位:数量），对数量模型按 `itms-cnt` 扣减而非 unset 整槽。
 - **③ 工作台候选**（中部）：
   - 从 `craft_workbench_materials` API 返回的列表渲染
   - 每行：`checkbox + 名称 + (来源·tool:N)`
   - 默认选中规则：**仅** `source='passive'` 的被动技能默认选中
   - POI 来源不默认选中（避免"多放素材导致 0 匹配"）
   - 再次点击已选中的工作台取消选中
-- **合成按钮**（底部）：
+- **合成按钮**（底部，正常态）：
   - 根据 `previewResult.craftable` 决定启用/禁用
   - 按钮文字固定为"合成"，通过 ④ 的文案传达具体状态
-  - 置于右列底部，与中列④的反馈文字对齐在相同视觉高度
+  - 置于右列底部，与中列④的反馈文字对齐
+- **itm0 锁定态**（`itm0Locked=true` 时）：
+  - ② ③ 全部禁用（灰色遮罩），提示"请先整理或丢弃暂存道具"
+  - 合成按钮替换为两个按钮：`[整理背包]`（主）+ `[丢弃暂存]`（次）
 
 ### 3.3 动效/反馈
 
@@ -205,15 +227,21 @@ App.vue
 ### 4.1 `stores/craft.ts` 接口
 
 ```typescript
+export interface CraftBackpackSlot {
+  slot: number
+  count: number       // 该格投入数量（默认=itms 整格，可由玩家调整或 quickCraft 指定）
+}
+
 export const useCraftStore = defineStore('craft', () => {
   // ── 状态 ──
   const craftModalOpen = ref(false)
-  const backpackSlots = ref<number[]>([])        // 已选背包槽位
-  const wbMaterialIds = ref<string[]>([])        // 已选工作台素材 ID
+  const backpackSlots = ref<CraftBackpackSlot[]>([])    // 已选背包槽位+投入数量
+  const wbMaterialIds = ref<string[]>([])                // 已选工作台素材 ID
   const availableWbMaterials = ref<WorkbenchMaterial[]>([])
   const previewResult = ref<CraftPreviewResult | null>(null)
-  const previewLogs = ref<LogEntry[]>([])        // 预判反馈日志（供区④渲染）
+  const previewLogs = ref<LogEntry[]>([])                // 预判反馈日志（供区④渲染）
   const discoveredRecipes = ref<CraftRecipe[]>([])
+  const itm0Locked = ref(false)                          // itm0 锁定状态（合成部分成功）
   const loading = ref(false)
   // 细分 loading 状态
   const loadingWb = ref(false)
@@ -233,25 +261,36 @@ export const useCraftStore = defineStore('craft', () => {
   function toggleWbMaterial(id: string): void
   function removeBackpackSlot(slot: number): void
   function removeWbMaterial(id: string): void
-  async function refreshPreview(): Promise<void>    // debounced 300ms
+  async function refreshPreview(): Promise<void>    // debounced 200ms
   async function doCraft(): Promise<void>
   async function quickCraft(recipeId: string): Promise<void>
+  async function doOrganize(): Promise<void>        // 整理背包（obl_organize）
+  async function doDiscardItm0(): Promise<void>      // 丢弃 itm0（obl_discard slot=0）
 })
 ```
 
 ### 4.2 状态变更流程
 
 ```
-toggleBackpackSlot / toggleWbMaterial
-  → 更新 backpackSlots / wbMaterialIds
-  → refreshPreview (debounced 200ms)
-       → loadingPreview = true
-       → 拼接 slots=backpackSlots.join(',')
-       → 拼接 workbench_materials=wbMaterialIds.join(',')
-       → gameApiWithParams('craft_preview', {slots, workbench_materials})
-       → 更新 previewResult + previewLogs
-       → loadingPreview = false
-       → 响应式触发 ④ 状态更新
+toggleBackpackSlot(slot)
+  → 从 inventoryStore 读取该槽 itms（堆叠数量）
+  → 已在 backpackSlots 中？→ 移除（取消选中）
+  → 不在？→ 追加 {slot, count: itms}（整格投入）
+  → refreshPreview()
+
+toggleWbMaterial(id)
+  → 已在 wbMaterialIds 中？→ 移除
+  → 不在？→ 追加
+  → refreshPreview()
+
+refreshPreview (debounced 200ms)
+  → loadingPreview = true
+  → 拼接 slots: backpackSlots.map(s => `${s.slot}:${s.count}`).join(',')
+  → 拼接 workbench_materials: wbMaterialIds.join(',')
+  → gameApiWithParams('craft_preview', {slots, workbench_materials})
+  → 更新 previewResult + previewLogs
+  → loadingPreview = false
+  → 响应式触发 ④ 状态更新
 
 openModal
   → 并行加载:
@@ -260,28 +299,52 @@ openModal
        dataManager.fetch('craft_recipes')
   → inventory 数据复用 inventoryStore（已在打开前加载）
   → 设置默认值：被动技能（source='passive'）默认选中
+  → itm0Locked = false
   → loadingWb = false, loadingRecipes = false
   → craftModalOpen = true
 
 closeModal
   → 清除 _debounceTimer（防止卸载后触发 preview）
-  → 重置 backpackSlots, wbMaterialIds, previewResult, previewLogs = null
+  → 重置 backpackSlots, wbMaterialIds, previewResult, previewLogs, itm0Locked = 默认值
   → craftModalOpen = false
 
 doCraft
+  → const slots_str = backpackSlots.value
+       .map(s => `${s.slot}:${s.count}`)
+       .join(',')
   → const params = {
        command: 'obl_craft',
-       slots: backpackSlots.value.join(','),
+       slots: slots_str,
        workbench_materials: wbMaterialIds.value.join(','),
      }
   → commandQueue.execute(params)
   → 成功:
        dataManager.invalidate('player_inventory')
        dataManager.broadcast('game:action-completed')
-       closeModal()
-       // 后端已 emit craft.success，前端 log 自动刷新
+       检查后端是否触发了 organize.fail:
+         ├→ 无 → closeModal()（正常完成）
+         └→ 有 → itm0Locked = true（保持打开，④ 显示锁定提示）
+                   右列选材禁用，底部显示 [整理背包] 按钮
   → 失败:
        broadcast('ui:toast', { type: 'error', msg })
+
+doOrganize
+  → commandQueue.execute({ command: 'obl_organize' })
+  → 成功:
+       dataManager.invalidate('player_inventory')
+       dataManager.broadcast('game:action-completed')
+       itm0Locked = false
+       // 刷新日志后玩家可继续操作
+  → 失败:
+       broadcast('ui:toast', { type: 'error', msg: '整理失败' })
+
+doDiscardItm0
+  → commandQueue.execute({ command: 'obl_discard', slot: '0' })
+  → 成功:
+       dataManager.invalidate('player_inventory')
+       itm0Locked = false
+  → 失败:
+       broadcast('ui:toast', { type: 'error', msg: '丢弃失败' })
 ```
 
 ---
@@ -424,12 +487,13 @@ export interface CraftRecipesResponse {
      - 匹配条件：`tags` 包含 material 的 `tag`（或 `itmk` 匹配）+ `tool_level >= min_level`
      - 选中第一个匹配的工作台素材
    - **`consume='all'` 或 `consume='durability'`**（背包素材）：
-     - `item_id` 类型：从背包找到该 item_id 的第一个非空槽位，选中
-     - `itmk` 类型：从背包找到 itmk 匹配的第一个非空槽位，选中
-     - `tag` 类型：从背包找到 tags 含该 tag 的第一个非空槽位，选中
-   - **匹配优先级**：`item_id` > `itmk` > `tag`（与后端一致，避免同一素材被误匹配到多个槽位）
-3. 不足的素材（未找到匹配）→ 提示"素材不足"，不做填充，停止 quick craft
-4. 全部匹配 → 自动填充 backpackSlots + wbMaterialIds → 触发 refreshPreview
+     - 先按匹配优先级扫槽：`item_id` > `itmk` > `tag`
+     - 对每个匹配到的槽位，读取 `itms`（堆叠数量）
+     - **堆叠适配**：投入数量 = `min(配方需求count, 该格itms)`，即只消耗需要数量
+     - 如果单格 `itms` 不足以满足 `count`，继续从下一个匹配槽位补足
+     - 记录为 `{slot, count: 实际投入数量}`
+3. 不足的素材（未找到匹配或总量不够）→ 提示"素材不足"，停止 quick craft
+4. 全部匹配 → 自动填充 `backpackSlots`（`CraftBackpackSlot[]`）+ `wbMaterialIds` → 触发 refreshPreview
 5. 同一背包槽位不能同时匹配多个 material 槽位（由步骤 2 的顺序保证）
 
 > **注意**：`consume='durability'` 的素材（如布包刀刃配方中的锐器，扣耐久不消耗）走背包匹配，不从工作台匹配。
@@ -456,13 +520,20 @@ CraftModal 优先级最高（它是当前聚焦的交互界面），不应关闭
 
 ### 7.6 素材消耗提示
 
-中列 ① 中每个已选背包素材显示消耗情况：
+中列 ① 中每个已选背包素材显示消耗情况，按 itms 模型区分：
 
-- 对于 `consume='all'` 素材：`[槽3] 布料×5  消耗 3/5`
-- 对于 `consume='durability'` 素材：`[槽4] 刀片碎片×1  扣 1 耐久`
-- 对于 `consume='none'` 素材（工作台）：`[⚒] 铁砧  (tool:1) 不消耗`
+- **数量模型**（可堆叠，consume='all'）：
+  `[槽3] 布料×5  投入 3（剩余 2）`
+  显示"投入 X"，表示消耗后 itms 减少 X，剩余 Y。
+- **耐久模型**（不可堆叠，consume='all'）：
+  `[槽4] 废铁刀  耐久 20  整槽消耗`
+  整槽删除，显示"整槽消耗"。
+- **耐久模型**（consume='durability'）：
+  `[槽4] 刀片碎片  扣 1 耐久`
+- **工作台素材**（consume='none'）：
+  `[⚒] 铁砧  (tool:1) 不消耗`
 
-消耗数量从匹配到的配方的 `materials[].count` 获取。当 `match_count=1` 时，前端读取该配方对应的 material count 显示消耗量。
+消耗数量从匹配到的配方的 `materials[].count` 获取。当 `match_count=1` 时，前端读取该配方对应的 material count 显示消耗量。后端对数量模型按 `itms - count` 扣减，归零才 unset。
 
 **无匹配时**（match_count ≠ 1）：不显示消耗数，只显示素材当前总量。
 
@@ -474,7 +545,26 @@ CraftModal 优先级最高（它是当前聚焦的交互界面），不应关闭
 - 选中时默认优先选择背包素材（消耗需遵循 `consume` 模式）
 - 快速合成 `quickCraft` 对 `consume='none'` 槽位优先匹配合适的工作台素材，背包中的同类型工具自动不选
 
-### 7.8 软锁的界面体现
+### 7.8 itm0 锁定状态的处理
+
+当合成部分成功、产物保留在 itm0 时，玩家被全局门控锁定：
+
+**中列 ④ 反馈区**：
+- 显示 `⚠ 合成部分成功，请整理背包`
+- 说明文案："产物已暂存，整理后可继续操作"
+
+**右列 ② 背包素材列表**：
+- 全部禁用（禁止点选），显示灰色遮罩
+- 提示"请先整理或丢弃暂存道具"
+
+**右列 合成按钮位置**：
+- 替换为两个按钮：
+  - `[整理背包]`（主操作，调用 `doOrganize`）
+  - `[丢弃暂存]`（次要，调用 `doDiscardItm0`）
+
+**解锁后**：`itm0Locked = false` → 恢复选材功能 → 模态框保持打开，玩家可继续合成
+
+### 7.9 软锁的界面体现
 
 - ⑤ 已发现配方列表中的条目已经过后端 `item_recipe_visibility_filter` 过滤
 - 前端不感知过滤逻辑，只展示 API 返回的数据
@@ -507,7 +597,7 @@ CraftModal 优先级最高（它是当前聚焦的交互界面），不应关闭
 | `vex-vue/src/api/client.ts` | 修改—新增 gameApiWithParams 方法 |
 | `vex-vue/src/components/actions/TileActionBar.vue` | 修改—ACTIONS 区加 `[C] 合成` 按钮（与 `[E] 探索` 同级） |
 | `vex-vue/src/App.vue` | 修改—加 C 键快捷键 + ESC 级联扩展 |
-| `vex-vue/src/data/log-templates.ts` | 修改—新增 `craft.empty_pool` / `craft.tool_missing` / `craft.extra_material` / `craft.insufficient` / `craft.ready` / `craft.new_recipe` 模板 |
+| `vex-vue/src/data/log-templates.ts` | 修改—新增 `craft.empty_pool` / `craft.tool_missing` / `craft.extra_material` / `craft.insufficient` / `craft.ready` / `craft.new_recipe` / `organize.fail` / `system.itm0_pending` 模板 |
 
 ---
 
@@ -549,4 +639,4 @@ CraftModal 优先级最高（它是当前聚焦的交互界面），不应关闭
 
 ---
 
-*文档版本：v1.2 | 2026-07-06*
+*文档版本：v1.3 | 2026-07-07*

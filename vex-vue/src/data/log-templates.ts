@@ -208,6 +208,9 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   'pickup.bag_full': {
     text: '背包已满，无法拾取。',
   },
+  'pickup.empty_item': {
+    text: '道具无效，无法拾取。',
+  },
   'pickup.success': {
     text: '你拾取了{item_name}。',
     highlight: ['item_name'],
@@ -226,6 +229,26 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     highlight: ['item_name'],
     highlightClass: 'yellow',
   },
+  'discard.itm0_success': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `已丢弃<span class="yellow">${escapeHtml(name)}</span>。`;
+    },
+  },
+  'discard.empty': {
+    text: '待整理区没有道具。',
+  },
+
+  // ─── organize ───────────────────────────────────
+  'organize.success': {
+    text: '背包已整理。',
+  },
+  'organize.fail': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `背包已满，<span class="yellow">${escapeHtml(name)}</span>暂存到待整理区。`;
+    },
+  },
 
   // ─── system ─────────────────────────────────────
   'system.mechanic_max_hp_up': {
@@ -235,6 +258,9 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   },
   'system.pickup_concurrent_loss': {
     text: '那个道具已经不在那里了。',
+  },
+  'system.itm0_pending': {
+    text: '背包有待整理的道具，请先整理或丢弃。',
   },
 
   // ─── enemy ──────────────────────────────────────
@@ -326,15 +352,7 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
 
   // ─── craft ─────────────────────────────────────
   'craft.success': {
-    render: (params) => {
-      const results = params.results as Array<{ item_id: string; count: number }> | undefined;
-      if (!results || !results.length) return `合成成功。`;
-      const parts = results.map((r) => {
-        const name = ITEM_LOCALE[r.item_id]?.name ?? r.item_id;
-        return `${escapeHtml(name)}×${r.count}`;
-      });
-      return `合成成功，获得 ${parts.join('、')}。`;
-    },
+    text: '合成成功。',
   },
   'craft.new_recipe_discovered': {
     text: '发现新配方！',

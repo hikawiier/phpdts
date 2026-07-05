@@ -339,69 +339,6 @@ function obl_entrypoint_handle_failure($status, $entry_type) {
 }
 
 #=============================================================================
-# 道具栏辅助函数（itempara JSON 读写）
-#=============================================================================
-
-/**
- * 获取道具栏数组
- *
- * @param array &$pdata 已格式化的玩家数据
- * @return array 道具栏数组（index 0=特殊槽，1~itemmaxslots=普通槽）
- */
-function obl_get_items(&$pdata) {
-	return $pdata['itempara'];
-}
-
-/**
- * 获取指定槽位的道具
- *
- * @param array &$pdata
- * @param int $slot 槽位索引（0=特殊，1~itemmaxslots=普通）
- * @return array|null 道具对象数组，空槽返回 null
- */
-function obl_get_item(&$pdata, $slot) {
-	return isset($pdata['itempara'][$slot]) ? $pdata['itempara'][$slot] : null;
-}
-
-/**
- * 设置指定槽位的道具
- *
- * @param array &$pdata
- * @param int $slot
- * @param array|null $item 道具对象数组，或 null（清空）
- * @return void
- */
-function obl_set_item(&$pdata, $slot, $item) {
-	$pdata['itempara'][$slot] = $item;
-}
-
-/**
- * 找空槽位（仅普通槽 1~itemmaxslots，不含特殊槽 0）
- *
- * @param array &$pdata
- * @return int|false 空槽位索引，无空位返回 false
- */
-function obl_find_empty_slot(&$pdata) {
-	$maxslots = isset($pdata['itemmaxslots']) ? (int)$pdata['itemmaxslots'] : 6;
-	for ($i = 1; $i <= $maxslots; $i++) {
-		if (!isset($pdata['itempara'][$i]) || $pdata['itempara'][$i] === null) {
-			return $i;
-		}
-	}
-	return false;
-}
-
-/**
- * 检查背包是否已满
- *
- * @param array &$pdata
- * @return bool
- */
-function obl_is_bag_full(&$pdata) {
-	return obl_find_empty_slot($pdata) === false;
-}
-
-#=============================================================================
 # 玩家记录创建（valid.php 激活时调用）
 #=============================================================================
 
