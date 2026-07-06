@@ -450,17 +450,18 @@ function obl_organize_inventory(&$pdata) {
 /**
  * 从地图拾取道具到背包
  *
- * 流程（堆叠功能与合成系统P2重构-设计案 §7.1）：
+ * 流程（堆叠功能与合成系统P2重构-设计案 §7.1；itm0拾取语义拆分-设计案 §3.1）：
  *   1. 读取道具实例 + itms='0'/空 检查
  *   2. 位置检查
  *   3. 发现状态检查
  *   4. 近视道具揭示（陷阱处理 + $real_itm 定义）
  *   5. 构建道具实例
  *   6. 放入 itm0（obl_put_item_to_itm0，不直接放背包）
- *   7. 原子删除地图实例（失败回滚 itm0）
+ *   7. 原子删除地图实例（失败回滚 itm0 + emit system.pickup_concurrent_loss）
+ *   7.5 拾起成功 emit（pickup.success，传 item_id；近视道具跳过，避免与 reveal 重复）
  *   8. 自动整理（obl_organize_inventory，转移 itm0 → 背包）
- *   9. 拾取成功 emit（pickup.success）
- *  10. 整理失败 emit（organize.fail，与步骤9解耦）
+ *   8.5 整理成功 emit（item.to_bag，传 item_id）
+ *   8.6 整理失败 emit（organize.fail，传 item_id；与 7.5 解耦）
  *
  * item_id 存储约定（统一 JSON）：
  *   拾取时将地图表 item_id 复制到 itempara[].itmid；itmpara 保持原始附加参数。
@@ -559,20 +560,26 @@ function obl_pickup_item($iid, &$pdata) {
         return;
     }
 
-    // 8. 自动整理（转移 itm0 → 背包）
-    $organized = obl_organize_inventory($pdata);
-
-    // 9. 拾取成功（道具已从地图删除，已存入 itm0 或背包）
-    //    近视道具已在步骤4 emit reveal，不重复 emit success
+    // 7.5 拾起成功（道具已从地图删除，已存入 itm0，即"拿在手上"）
+    //     近视道具已在步骤4 emit reveal（含"拿起"语义），不重复 emit success
+    //     即使后续整理失败，玩家也已看到"捡起了 xxx"，与 organize.fail 语义自洽
     if (!$was_nearsighted) {
         $obl_log->emit('pickup.success', 'pickup', [
-            'item_name' => $real_itm,
+            'item_id' => (string)$item['item_id'],
         ]);
     }
 
-    // 10. 整理失败提示（道具卡在 itm0，玩家被门控锁定）
-    //     与步骤9解耦：拾取成功是独立事件，整理失败是独立事件
-    if (!$organized) {
+    // 8. 自动整理（转移 itm0 → 背包）
+    $organized = obl_organize_inventory($pdata);
+
+    // 8.5 / 8.6 整理结果 emit（与 7.5 解耦：拾起成功是独立事件，整理结果是独立事件）
+    if ($organized) {
+        // 8.5 整理成功：道具从 itm0 进入背包
+        $obl_log->emit('item.to_bag', 'system', [
+            'item_id' => (string)$item['item_id'],
+        ]);
+    } else {
+        // 8.6 整理失败：道具卡在 itm0，玩家被门控锁定
         $obl_log->emit('organize.fail', 'system', [
             'item_id' => (string)$item['item_id'],
         ]);

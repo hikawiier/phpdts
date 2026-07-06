@@ -34,6 +34,7 @@ import { useInventoryStore } from '@/stores/inventory';
 import { useToastStore } from '@/stores/toast';
 import { useLogStore } from '@/stores/log';
 import { useErrorLogStore } from '@/stores/error-log';
+import { useCraftStore } from '@/stores/craft';
 import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
 import LeftPanel from '@/components/layout/LeftPanel.vue';
@@ -42,6 +43,7 @@ import PlayerDrawer from '@/components/layout/PlayerDrawer.vue';
 import InventoryDrawer from '@/components/layout/InventoryDrawer.vue';
 import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
+import CraftModal from '@/components/craft/CraftModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
 
 const playerStore = usePlayerStore();
@@ -53,6 +55,7 @@ const inventoryStore = useInventoryStore();
 const toastStore = useToastStore();
 const logStore = useLogStore();
 const errorLogStore = useErrorLogStore();
+const craftStore = useCraftStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
 const isBattleActive = computed(() => battleStore.currentMode === 'battle');
@@ -64,7 +67,7 @@ const isDebugAi = computed(() => {
 });
 
 // ── 全局键盘快捷键（与现有 app.js 一致） ──
-// ESC: 模态框 > 右抽屉 > 左抽屉（优先级）
+// ESC: 合成模态框 > 通用模态框 > 右抽屉 > 左抽屉（优先级，合成模态框最优先）
 // i/I: 切换右抽屉
 // p/P: 打开左抽屉
 function onKeydown(e: KeyboardEvent): void {
@@ -73,7 +76,9 @@ function onKeydown(e: KeyboardEvent): void {
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
   if (e.key === 'Escape') {
-    if (uiStore.modalOpen) {
+    if (craftStore.craftModalOpen) {
+      craftStore.closeModal();
+    } else if (uiStore.modalOpen) {
       uiStore.closeModal();
     } else if (uiStore.inventoryDrawerOpen) {
       uiStore.closeInventoryDrawer();
@@ -158,6 +163,7 @@ onUnmounted(() => {
     <!-- ═══ 浮动组件 ═══ -->
     <Modal />
     <Itm0Modal />
+    <CraftModal />
     <PlayerDrawer />
     <InventoryDrawer />
     <ToastContainer />

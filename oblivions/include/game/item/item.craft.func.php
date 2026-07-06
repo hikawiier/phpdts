@@ -169,13 +169,14 @@ function _item_build_placed_items(&$pdata, $slot_counts, $workbench_materials = 
  * 查询玩家当前可用的工作台素材列表
  *
  * 来源：
- * 1. 被动技能（永久可用，P0 硬编码 innate_craft_t0）
- * 2. 猫身上（P0 阶段未实现）
- * 3. 地图格 POI（玩家必须站在工作台 POI 上）
+ * 1. 猫身上（P0 阶段未实现）
+ * 2. 地图格 POI（玩家必须站在工作台 POI 上）
+ *
+ * 徒手合成不需要工作台素材——配方 materials 无 consume='none' 槽位即为徒手可合成。
  *
  * @param array &$pdata 玩家数据
  * @return array  [{source, id, item_id, tool_level}]
- *   - source：来源类型（'passive' / 'cat' / 'poi'）
+ *   - source：来源类型（'cat' / 'poi'）
  *   - id：工作台素材唯一标识（用于 obl_craft 和 craft_preview 的 workbench_materials 参数）
  *   - item_id：关联的 item_table 道具 ID
  *   - tool_level：工具等级
@@ -183,21 +184,10 @@ function _item_build_placed_items(&$pdata, $slot_counts, $workbench_materials = 
 function item_get_available_workbench_materials(&$pdata) {
     $materials = [];
 
-    // 1. 被动技能来源（永久可用）
-    //    P0 阶段硬编码：玩家自带 innate_t0
-    $materials[] = [
-        'source'     => 'passive',
-        'id'         => 'passive:innate_t0',
-        'item_id'    => 'innate_craft_t0',
-        'tool_level' => 0,
-        'tags'       => item_get_tags('innate_craft_t0'),
-        'itmk'       => item_get_itmk('innate_craft_t0'),
-    ];
-
-    // 2. 猫身上来源（猫在身边时可用）
+    // 1. 猫身上来源（猫在身边时可用）
     //    P0 阶段：猫未升级，无便携工作站
 
-    // 3. 地图格 POI 来源（玩家必须站在工作台 POI 上）
+    // 2. 地图格 POI 来源（玩家必须站在工作台 POI 上）
     //    查询玩家当前格子上的所有 POI 实例，遍历过滤 mechanic='craft_source'
     $pois = obl_get_poi_at_position($pdata['pgroup'], $pdata['pls']);
     foreach ($pois as $poi) {
@@ -478,7 +468,7 @@ function item_consume_materials(&$pdata, $materials, $slots, $workbench_material
 }
 
 // ================================================================
-// U5：合成命令入口 + API 函数 + 已发现配方管理
+// U5：合成命令入口 + API 函数 + 配方列表查询
 // ================================================================
 
 // ----------------------------------------------------------------
@@ -511,13 +501,13 @@ function item_match_recipes_by_slots(&$pdata, $slots, $workbench_materials = [])
 }
 
 // ----------------------------------------------------------------
-// 5.5.4 已发现配方查询 + 可见性过滤接口
+// 5.5.4 配方列表查询 + 可见性过滤接口
 // ----------------------------------------------------------------
 
 /**
  * 配方可见性过滤接口（可替换）
  *
- * P0 默认返回 true（所有已发现配方都可见）。
+ * P0 默认返回 true（所有配方都可见，取消"已发现/未发现"机制后配方列表全部揭示）。
  * 后续设计案确定过滤依据（全局事件/剧情节点/玩家进度等）后，替换此实现（见 §2.5.3）。
  *
  * @param array $recipe  配方数据
@@ -529,20 +519,18 @@ function item_recipe_visibility_filter($recipe, &$pdata) {
 }
 
 /**
- * 查询已发现配方列表（按可见性过滤）
+ * 查询配方列表（全部揭示，仅按 visibility_filter 过滤）
+ *
+ * 取消"已发现/未发现"机制后，所有配方对玩家可见。
+ * 软锁通过资源可达性自然限制（玩家不到 POI → 工作台素材不可用 → 配方实际无法合成）。
+ * visibility_filter 作为未来剧情/事件门控的扩展钩子保留（默认返回 true）。
  *
  * @param array &$pdata
  * @return array [{recipe_id, category, materials, results}]
  */
-function item_get_discovered_recipes(&$pdata) {
-    $discovered = isset($pdata['oblpara']['discovered_recipes']) ? $pdata['oblpara']['discovered_recipes'] : [];
-    if (!is_array($discovered)) $discovered = [];
-
+function item_get_visible_recipes(&$pdata) {
     $result = [];
-    foreach ($discovered as $recipe_id) {
-        $recipe = item_get_recipe($recipe_id);
-        if (!$recipe) continue;
-
+    foreach (item_get_all_recipes() as $recipe_id => $recipe) {
         if (!item_recipe_visibility_filter($recipe, $pdata)) {
             continue;
         }
@@ -556,24 +544,6 @@ function item_get_discovered_recipes(&$pdata) {
     }
 
     return $result;
-}
-
-/**
- * 标记配方为已发现
- *
- * @param array  &$pdata
- * @param string $recipe_id
- */
-function item_discover_recipe(&$pdata, $recipe_id) {
-    if (!isset($pdata['oblpara']) || !is_array($pdata['oblpara'])) {
-        $pdata['oblpara'] = [];
-    }
-    if (!isset($pdata['oblpara']['discovered_recipes']) || !is_array($pdata['oblpara']['discovered_recipes'])) {
-        $pdata['oblpara']['discovered_recipes'] = [];
-    }
-    if (!in_array($recipe_id, $pdata['oblpara']['discovered_recipes'], true)) {
-        $pdata['oblpara']['discovered_recipes'][] = $recipe_id;
-    }
 }
 
 // ----------------------------------------------------------------
@@ -699,10 +669,9 @@ function item_analyze_craft_failure($placed_items) {
  * @param array $workbench_materials 工作台素材 ID 列表
  * @param array $placed_items        _item_build_placed_items 返回的 placed_items
  * @param int   $match_count         匹配配方数
- * @param bool  $is_new_recipe       是否新配方（仅 match_count=1 时有意义）
  * @return array  {id: string, params: array}
  */
-function _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count, $is_new_recipe) {
+function _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count) {
     // 1. 素材池实际为空（基于 placed_items 判断，而非输入参数）
     //    场景：玩家只选了无效工作台素材（slot_counts 空 + workbench_materials 非空），
     //    但 placed_items 实际为空时，应返回 empty_pool 而非走失败原因分析
@@ -717,9 +686,7 @@ function _item_build_preview_log($slot_counts, $workbench_materials, $placed_ite
 
     // 3. match_count = 1：可合成
     if ($match_count === 1) {
-        return $is_new_recipe
-            ? ['id' => 'craft.new_recipe', 'params' => []]
-            : ['id' => 'craft.ready', 'params' => []];
+        return ['id' => 'craft.ready', 'params' => []];
     }
 
     // 4. match_count = 0：分析失败原因
@@ -733,7 +700,8 @@ function _item_build_preview_log($slot_counts, $workbench_materials, $placed_ite
  * @param array $slots               背包槽位号列表
  * @param array &$pdata
  * @param array $workbench_materials 工作台素材 ID 列表
- * @return array {match_count, craftable, is_new_recipe, preview_log}
+ * @return array {match_count, craftable, recipe_id, preview_log}
+ *   - recipe_id: match_count=1 时为匹配配方 ID，否则 null（供前端查 recipes 显示消耗）
  */
 function item_craft_preview($slots, &$pdata, $workbench_materials = []) {
     $slot_counts = item_parse_slots($slots);
@@ -748,28 +716,21 @@ function item_craft_preview($slots, &$pdata, $workbench_materials = []) {
     }
     $match_count = count($matched);
     $craftable = ($match_count === 1);
-
-    $is_new_recipe = false;
-    if ($craftable) {
-        $recipe_id = $matched[0];
-        $discovered = isset($pdata['oblpara']['discovered_recipes']) ? $pdata['oblpara']['discovered_recipes'] : [];
-        if (!is_array($discovered)) $discovered = [];
-        $is_new_recipe = !in_array($recipe_id, $discovered, true);
-    }
+    $recipe_id = $craftable ? $matched[0] : null;
 
     // 生成 preview_log（单对象）
-    $preview_log = _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count, $is_new_recipe);
+    $preview_log = _item_build_preview_log($slot_counts, $workbench_materials, $placed_items, $match_count);
 
     return [
-        'match_count'   => $match_count,
-        'craftable'     => $craftable,
-        'is_new_recipe' => $is_new_recipe,
-        'preview_log'   => $preview_log,
+        'match_count' => $match_count,
+        'craftable'   => $craftable,
+        'recipe_id'   => $recipe_id,
+        'preview_log' => $preview_log,
     ];
 }
 
 // ----------------------------------------------------------------
-// 5.5.1 合成入口（12 步流程）
+// 5.5.1 合成入口（11 步流程）
 // ----------------------------------------------------------------
 
 /**
@@ -781,13 +742,12 @@ function item_craft_preview($slots, &$pdata, $workbench_materials = []) {
  *   3. 调用 item_match_recipes_by_slots → $matched
  *   4. 根据 count($matched) 分支（0=不匹配，2+=指向不明确，1=继续）
  *   5. 取唯一匹配的 $recipe
- *   6. 检查背包剩余空间（§8.4 区分模型，含 consume='all' 和 consume='durability'）
+ *   6. 检查 itm0 可用性（§8.6 产物暂存通道，itm0 被占用则失败）
  *   7. 介入点 1：合成失败检查（P0 预留，跳过）
  *   8. 调用 item_consume_materials（素材扣减）
  *   9. 添加产物（§8.6 逐个产物 → itm0 → 自动整理）
- *  10. 检查是否新发现配方 → item_discover_recipe + emit craft.new_recipe_discovered
- *  11. emit craft.success
- *  12. 保存 $pdata（由上层调用方负责）
+ *  10. emit craft.success
+ *  11. 保存 $pdata（由上层调用方负责）
  *
  * @param mixed $slots               背包槽位号（"1:3,2:1" 字符串或数组）
  * @param array &$pdata
@@ -837,81 +797,26 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
     $recipe_id = $matched[0];
     $recipe = item_get_recipe($recipe_id);
 
-    // 步骤 6：空间检查（§8.4 适配，区分模型，含 consume='all' 和 consume='durability'）
+    // 步骤 6： itm0 可用性检查（§8.6 产物暂存通道）
+    //
+    // 产物必须先入 itm0 再自动整理（步骤 9）。背包空间不再预检查：
+    //   - 背包有空位 → obl_organize_inventory 转移成功 → 产物入背包 → 正常完成
+    //   - 背包满    → obl_organize_inventory 失败 → 产物卡 itm0 → organize.fail
+    //                 → 前端检测 itm0Locked=true → 保持模态框显示锁定提示
+    //
+    // 仅当 itm0 已被占用时无法合成（避免素材扣减后产物丢失）。
     $mapping = item_resolve_material_mapping($recipe['materials'], $placed_items);
     if ($mapping === null) {
         $obl_log->emit('craft.fail_no_match', 'system');
         return;
     }
 
-    // 统计每个槽位的消耗数量
-    $slot_consume_all = [];   // [slot => count]
-    $slot_consume_dur = [];   // [slot => count]
-    foreach ($mapping as $m) {
-        if ($m['placed_index'] >= $bag_count) continue;
-        $slot = $slot_map[$m['placed_index']];
-        if ($m['consume'] === 'all') {
-            $slot_consume_all[$slot] = ($slot_consume_all[$slot] ?? 0) + 1;
-        } elseif ($m['consume'] === 'durability') {
-            $slot_consume_dur[$slot] = ($slot_consume_dur[$slot] ?? 0) + 1;
-        }
-    }
-
-    // 计算空出的槽位数（区分模型）
-    $freed_slots = 0;
-
-    // consume='all' 空出的槽位
-    foreach ($slot_consume_all as $slot => $cnt) {
-        $item = isset($pdata['itempara'][$slot]) ? $pdata['itempara'][$slot] : null;
-        if (!$item) continue;
-
-        // 耐久模型（stack=false）：consume='all' 必空出槽位
-        if (!item_get_stack($item['itmid'])) {
-            $freed_slots++;
-            continue;
-        }
-
-        // 数量模型（stack=true）：消耗后 itms 归零才空出
-        $s = (string)$item['itms'];
-        if (item_is_infinite($s)) continue;  // 无限不空出
-        if ((int)$s - $cnt <= 0) $freed_slots++;
-    }
-
-    // consume='durability' 空出的槽位（§2.3 统一语义，按模型区分）
-    foreach ($slot_consume_dur as $slot => $cnt) {
-        $item = isset($pdata['itempara'][$slot]) ? $pdata['itempara'][$slot] : null;
-        if (!$item) continue;
-
-        // 数量模型（stack=true）：扣 cnt 个数量，归零才空出
-        if (item_get_stack($item['itmid'])) {
-            $s = (string)$item['itms'];
-            if (item_is_infinite($s)) continue;
-            if ((int)$s - $cnt <= 0) $freed_slots++;
-            continue;
-        }
-
-        // 耐久模型（stack=false）：扣 cnt 点耐久，归零才空出
-        $s = (string)$item['itms'];
-        if (item_is_infinite($s)) continue;
-        if ((int)$s - $cnt <= 0) $freed_slots++;
-    }
-
-    $results_count = 0;
-    foreach ($recipe['results'] as $r) {
-        $results_count += (int)($r['count'] ?? 1);
-    }
-
-    $empty_count = 0;
-    $maxslots = isset($pdata['itemmaxslots']) ? (int)$pdata['itemmaxslots'] : 6;
-    for ($i = 1; $i <= $maxslots; $i++) {
-        // 与 obl_find_empty_slot 一致：只查 null，不查 itmid
-        if (!isset($pdata['itempara'][$i]) || $pdata['itempara'][$i] === null) {
-            $empty_count++;
-        }
-    }
-
-    if ($empty_count + $freed_slots < $results_count) {
-        $obl_log->emit('craft.fail_bag_full', 'system');
+    $has_results = !empty($recipe['results']);
+    $itm0_occupied = isset($pdata['itempara'][0])
+        && is_array($pdata['itempara'][0])
+        && !empty($pdata['itempara'][0]['itmid']);
+    if ($has_results && $itm0_occupied) {
+        $obl_log->emit('craft.fail_itm0_occupied', 'system');
         return;
     }
 
@@ -922,8 +827,10 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
     item_consume_materials($pdata, $recipe['materials'], $slots, $workbench_materials);
 
     // 步骤 9：添加产物（按 §8.6，产物 → itm0 → 自动整理）
-    // 事件解耦：合成成功由步骤11 craft.success 统一 emit（仅传 recipe_id，前端查配方表）
-    //          整理失败由 obl_organize_inventory 返回值判断，emit organize.fail
+    // 事件解耦（itm0拾取语义拆分-设计案 §3.4）：
+    //   - 每个产物整理成功 emit item.to_bag（传 item_id，前端查 ITEM_LOCALE 渲染）
+    //   - 整理失败 emit organize.fail（传 item_id），break 出循环
+    //   - 合成总事件 craft.success 由步骤 10 emit（仅传 recipe_id，前端查配方表）
     $table = item_load_table();
     foreach ($recipe['results'] as $r) {
         $item_id = $r['item_id'];
@@ -962,23 +869,18 @@ function item_craft($slots, &$pdata, $workbench_materials = []) {
             $obl_log->emit('organize.fail', 'system', ['item_id' => $item_id]);
             break;
         }
+
+        // 产物入背包事件（多产物场景 N 条 item.to_bag，前端日志面板自然累积，不合并）
+        $obl_log->emit('item.to_bag', 'system', ['item_id' => $item_id]);
     }
 
-    // 步骤 10：检查是否新发现配方
-    $discovered = isset($pdata['oblpara']['discovered_recipes']) ? $pdata['oblpara']['discovered_recipes'] : [];
-    if (!is_array($discovered)) $discovered = [];
-    if (!in_array($recipe_id, $discovered, true)) {
-        item_discover_recipe($pdata, $recipe_id);
-        $obl_log->emit('craft.new_recipe_discovered', 'system', ['recipe_id' => $recipe_id]);
-    }
-
-    // 步骤 11：emit craft.success（只传 recipe_id，前端从配置查产物）
+    // 步骤 10：emit craft.success（只传 recipe_id，前端从配置查产物）
     // 介入点 3：对话系统订阅 craft.success 触发猫提醒
     $obl_log->emit('craft.success', 'system', [
         'recipe_id' => $recipe_id,
     ]);
 
-    // 步骤 12：保存 $pdata（由上层调用方负责）
+    // 步骤 11：保存 $pdata（由上层调用方负责）
 }
 
 // ----------------------------------------------------------------

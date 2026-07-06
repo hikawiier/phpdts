@@ -24,9 +24,8 @@
 | -------------------- | ----------------------------------------------- |
 | 玩家能进入合成界面，查看可用素材     | ACTIONS 区 `[合成]` 按钮 → CraftModal                |
 | "确认函"模式：放素材→系统判断→亮/灭 | 素材池选择 → `craft_preview` 实时预判 → 合成按钮状态反馈         |
-| 工作台素材可选用             | 实时计算可用工作台列表（被动技能 + POI），与背包素材统一进池               |
-| 已发现配方可浏览、可快速合成       | 可折叠列表，点击配方自动选材填充素材池                             |
-| 未发现配方可"试出来"          | 放素材→匹配到未发现配方→合成成功→"发现新配方！"                      |
+| 工作台素材可选用             | 实时计算可用工作台列表（POI），与背包素材统一进池                        |
+| 配方可浏览、可快速合成           | 可折叠列表，点击配方自动选材填充素材池                             |
 | 精细反馈"为什么不能合成"        | `preview_log` 8 种 ID 反馈（缺工具/多余素材/素材不足等）         |
 | itm0 锁定态正确处理         | 读取 `inventoryStore.itm0Locked`，锁定时禁用选材 + 提供整理入口 |
 
@@ -36,7 +35,7 @@
 
 * CraftModal 组件（核心合成交互界面，三列布局）
 
-* CraftRecipeList 子组件（已发现配方列表）
+* CraftRecipeList 子组件（配方列表）
 
 * craft Store（合成临时状态管理）
 
@@ -72,7 +71,7 @@ App.vue
 │       ├── [合成] 按钮 ← 新增入口（内联在 TileActionBar.vue，与 [E] 同级）
 │       └── (POI/ground 内联模态)
 └── CraftModal.vue ← 新增：Teleport to body 浮动模态框
-    └── CraftRecipeList.vue ← 新增：已发现配方列表子组件
+    └── CraftRecipeList.vue ← 新增：配方列表子组件
 ```
 
 ### 2.2 数据流
@@ -144,17 +143,15 @@ refreshPreview (debounced 200ms, leading+trailing)
 │                                                                  │
 │  左（参考）25%      中（状态/反馈）30%    右（操作）45%        │
 │  ┌──────────────┐ ┌──────────────────┐ ┌──────────────────────┐ │
-│  │ ⑤ 已发现配方│ │ ① 素材池        │ │ ② 背包素材          │ │
-│  │ ▼ 食物(2)   │ │ [槽3] 布料×5    │ │ [1] 布料×5  ✓       │ │
-│  │  烤兔肉      │ │   投入 5 [-][+] │ │ [2] 废铁片×3        │ │
-│  │  简易炖菜    │ │ [T] 铁砧        │ │ [3] 生兔肉×1 ✓      │ │
-│  │ ▼ 工具(1)   │ │   (tool:1)     │ │ [4] 刀片碎片 耐久20  │ │
-│  │  绷带        │ │ 合计 2 件素材   │ │                     │ │
-│  │ ▼ 武器(1)   │ │                  │ │ ③ 工作台候选        │ │
-│  │  布包刀刃    │ │ ④ 反馈         │ │ ─ 被动技能 ─        │ │
-│  │              │ │ ✓ 可合成        │ │ ☑ 徒手合成(t:0)    │ │
-│  │              │ │               │ │ ─ POI 工作台 ─      │ │
-│  │              │ │               │ │ ☐ 铁砧(t:1)        │ │
+│  │ ⑤ 配方列表  │ │ ① 素材池        │ │ ② 背包素材          │ │
+│  │ ▼ 可合成(3) │ │ [槽3] 布料×5    │ │ [1] 布料×5  ✓       │ │
+│  │  ▼ 食物(2) │ │   投入 5 [-][+] │ │ [2] 废铁片×3        │ │
+│  │   烤兔肉 ▸  │ │ [T] 铁砧        │ │ [3] 生兔肉×1 ✓      │ │
+│  │   简易炖菜  │ │   (tool:1)     │ │ [4] 刀片碎片 耐久20  │ │
+│  │  ▼ 工具(1) │ │ 合计 2 件素材   │ │                     │ │
+│  │   绷带 ▸   │ │                  │ │ ③ 工作台候选        │ │
+│  │ ▶ 不可合成  │ │ ④ 反馈         │ │ ─ POI 工作台 ─      │ │
+│  │              │ │ ✓ 可合成        │ │ ☐ 铁砧(t:1)        │ │
 │  │              │ │               │ │                     │ │
 │  │              │ │               │ │ ┌────────────────┐  │ │
 │  │              │ │               │ │ │  [合成]（高亮） │  │ │
@@ -180,21 +177,32 @@ refreshPreview (debounced 200ms, leading+trailing)
 
 | 列     | 类比游戏界面          | 职责           | 交互形式                            |
 | ----- | --------------- | ------------ | ------------------------------- |
-| 左（参考） | 地图区（信息展示）       | 已发现配方浏览      | 只读，点击配方行触发快速合成                  |
+| 左（参考） | 地图区（信息展示）       | 配方浏览（两级分组）  | 可合成组点击配方触发快速合成；不可合成组只读查看        |
 | 中（状态） | StatusBar（实时反馈） | 素材池 + 预判反馈   | **纯展示，无交互元素**（数量调整 \[-]\[+] 除外） |
 | 右（操作） | ACTIONS 区（交互入口） | 选材 + 移除 + 合成 | **所有选材交互集中在此**                  |
 
 ### 3.2 各列设计要点
 
-**左列（参考）— ⑤ 已发现配方**：
+**左列（参考）— ⑤ 配方列表**：
 
-* 通过 `craft_recipes` API 加载（2s 白名单缓存）
+* 通过 `craft_recipes` API 加载所有配方（2s 白名单缓存，不再区分已发现/未发现）
 
-* 默认折叠，按 `category` 分组（`food` / `tool` / `armor` / `weapon`），每组可独立折叠展开
+* **两级分组**：
+  * 第一级：**可合成** / **素材不全** / **无关联素材**（三组分类，关联匹配规则见下文）
+  * 第二级：`category`（`food` / `tool` / `armor` / `weapon`）
 
-* 每组显示：`▼ 食物(2)` → 展开后列出 `配方名称`
+* 可合成组默认展开，素材不全组与无关联素材组默认折叠（玩家想看可展开）
 
-* 点击配方行任意位置触发快速合成（整个行都是热区）
+* 每组显示：`▼ 可合成(3)` → 展开后 `▼ 食物(2)` → 配方名称
+
+* **三组分类规则**（按"关联匹配"判定，不检查数量，数量是否足够由后端 craft_preview 判断）：
+  * **可合成**= 该配方的**每个 material** 都能在背包或工作台中找到匹配项（关联全匹配）。点击后 `fillRecipeMaterials` 能填入所有素材，预判通常返回 `craftable=true`。精确可合成（match_count=1）的配方条目加 `▸` 标记 + bright class 高亮
+  * **素材不全**= 背包素材能匹配该配方的**至少一个 material**，但不是所有 material 都有匹配（通常缺工作台或部分素材）。点击后 `fillRecipeMaterials` 填入已关联素材，玩家通过 ④ 反馈看到缺失项
+  * **无关联素材**= 背包素材**完全不能匹配**任何 material（工作台匹配与否不影响此组判定）。只读查看（展开显示 materials，了解需要什么）
+
+* **判定优先级**：先检查"可合成"（全匹配），不满足再检查"素材不全"（背包有关联），都不满足归入"无关联素材"
+
+* 可合成组内精确可合成的配方点击触发快速合成；可合成组内非精确匹配与素材不全组配方点击后跳转手动选材并自动填入已关联素材；无关联素材组内配方只读查看
 
 * 此列是纯参考区，不参与选材或状态显示
 
@@ -220,7 +228,7 @@ refreshPreview (debounced 200ms, leading+trailing)
 
   * 仅显示状态文字，不含交互按钮
 
-  * 根据反馈 ID 显示不同颜色（绿色=可合成，黄色=新配方/指向不明确，灰色=无法合成）
+  * 统一灰阶渲染，通过 `bright` / `dim` class 区分强调（详见 §3.4 与前端美学风格设计案 §6.3）
 
 * **中列交互元素仅限 \[-]\[+] 数量调整按钮**（用于减少多放素材），无其他按钮/复选框/输入框
 
@@ -242,13 +250,11 @@ refreshPreview (debounced 200ms, leading+trailing)
 
   * 从 `craft_workbench_materials` API 返回的列表渲染
 
-  * **按来源分组**：`─ 被动技能 ─` / `─ POI 工作台 ─` / `─ 猫身上 ─`（未来）
+  * **按来源分组**：`─ POI 工作台 ─` / `─ 猫身上 ─`（未来）
 
   * 每行：`checkbox + 名称 + (tool:N)`
 
-  * 默认选中规则：**仅** `source='passive'` 的被动技能默认选中
-
-  * POI 来源不默认选中（避免"多放素材导致 0 匹配"）
+  * 默认不选中任何工作台素材（玩家根据配方需求手动勾选；徒手合成的语义已由"配方 materials 无 `consume='none'` 槽位"表达，不再需要被动技能素材）
 
   * 再次点击已选中的工作台取消选中
 
@@ -273,8 +279,6 @@ refreshPreview (debounced 200ms, leading+trailing)
 * 素材选择/取消时：简单的高亮过渡（CSS transition）
 
 * 合成成功时：模态框关闭（让玩家看到日志变化和背包更新），log 中渲染 `craft.success`
-
-* 新配方发现：`craft_preview` 返回 `is_new_recipe=true` 时，④ 显示"发现新配方！"（灰阶高亮），合成成功后日志显示 `craft.new_recipe_discovered`
 
 * 所有动效提供 `@media (prefers-reduced-motion: reduce)` 兜底，禁用 transition（详见前端美学风格设计案 §1.4）
 
@@ -305,7 +309,6 @@ const feedbackHtml = renderLogEntry(fakeEntry)
 | `craft.fail_no_match`  | "这些素材无法合成任何东西。"              |
 | `craft.fail_ambiguous` | "素材指向不明确（匹配 N 个配方），需要放更多素材。" |
 | `craft.ready`          | "可合成。"                       |
-| `craft.new_recipe`     | "发现新配方！"                     |
 
 **渲染说明**：所有反馈统一走 `terminal.css` 灰阶渲染，不引入彩色信号色（详见前端美学风格设计案 §6.3）。
 
@@ -343,7 +346,7 @@ export const useCraftStore = defineStore('craft', () => {
   const wbMaterialIds = ref<string[]>([])                // 已选工作台素材 ID
   const availableWbMaterials = ref<WorkbenchMaterial[]>([])
   const previewResult = ref<CraftPreviewResult | null>(null)
-  const discoveredRecipes = ref<CraftRecipe[]>([])
+  const recipes = ref<CraftRecipe[]>([])
 
   // ── loading 状态（简化为两个） ──
   const loading = ref(false)              // openModal 时加载 wb + recipes
@@ -352,7 +355,6 @@ export const useCraftStore = defineStore('craft', () => {
   // ── 计算属性 ──
   const isCraftable = computed(() => previewResult.value?.craftable ?? false)
   const matchCount = computed(() => previewResult.value?.match_count ?? 0)
-  const isNewRecipe = computed(() => previewResult.value?.is_new_recipe ?? false)
   const previewLog = computed<PreviewLog | null>(() => previewResult.value?.preview_log ?? null)
   const hasSelection = computed(() => backpackSlots.value.length > 0 || wbMaterialIds.value.length > 0)
 
@@ -384,16 +386,15 @@ openModal
   → 并行加载（任一失败不阻塞其他）:
        dataManager.fetch('craft_workbench_materials') → availableWbMaterials
          └→ 失败：availableWbMaterials = []（右列③显示"工作台素材加载失败"）
-       dataManager.fetch('craft_recipes') → discoveredRecipes
-         └→ 失败：discoveredRecipes = []（左列⑤显示"配方列表加载失败"，不影响手动合成）
+       dataManager.fetch('craft_recipes') → recipes
+         └→ 失败：recipes = []（左列⑤显示"配方列表加载失败"，不影响手动合成）
   → inventory 数据复用 inventoryStore（已在打开前加载）
-  → 设置默认值：被动技能（source='passive'）默认选中
-       wbMaterialIds = availableWbMaterials.filter(m => m.source === 'passive').map(m => m.id)
+  → wbMaterialIds = []（不默认选中任何工作台素材）
   → backpackSlots = []（清空选材）
   → previewResult = null
   → loading = false
   → craftModalOpen = true
-  → refreshPreview()（触发初始 empty_pool 反馈）
+  → refreshPreview()（placed_items 为空 → 触发初始 craft.empty_pool 反馈）
 ```
 
 #### toggleBackpackSlot
@@ -461,7 +462,7 @@ closeModal
   → 清除 _debounceTimer（防止卸载后触发 preview）
   → 重置 backpackSlots, wbMaterialIds, previewResult = 默认值
   → craftModalOpen = false
-  → 不重置 availableWbMaterials / discoveredRecipes（缓存，下次打开复用）
+  → 不重置 availableWbMaterials / recipes（缓存，下次打开复用）
 ```
 
 #### doCraft（O7 修正：不依赖日志事件，直接检查 itm0Locked）
@@ -616,7 +617,7 @@ export async function gameApiWithParams(
 
 | API                         | 请求参数                                                  | 响应 data                                                | 缓存策略                             |
 | --------------------------- | ----------------------------------------------------- | ------------------------------------------------------ | -------------------------------- |
-| `craft_preview`             | `slots=1:3,2:1` + `workbench_materials=poi:123`       | `{match_count, craftable, is_new_recipe, preview_log}` | 不缓存，每次刷新                         |
+| `craft_preview`             | `slots=1:3,2:1` + `workbench_materials=poi:123`       | `{match_count, craftable, recipe_id, preview_log}` | 不缓存，每次刷新                         |
 | `craft_workbench_materials` | 无                                                     | `{workbench_materials: [...]}`                         | 不缓存（POI 位置变化）                    |
 | `craft_recipes`             | 无                                                     | `{recipes: [...]}`                                     | 2s 白名单缓存（与 player\_inventory 一致） |
 | `obl_craft` (POST)          | `command=obl_craft` + `slots` + `workbench_materials` | `{}`（标准命令响应）                                           | -                                |
@@ -626,7 +627,12 @@ export async function gameApiWithParams(
 `craft_recipes` 使用 2s 白名单缓存，需在 `vex-vue/src/stores/data-manager.ts` 的 `_cacheable` Map 中新增：
 
 ```typescript
-_cacheable.set(API_ACTIONS.CRAFT_RECIPES, 2000);  // 2s 缓存
+private _cacheable = new Map<ApiAction, number>([
+  ['game_map', 5000],
+  ['tile_actions', 3000],
+  ['player_inventory', 2000],
+  ['craft_recipes', 2000],   // 新增：2s 白名单缓存
+]);
 ```
 
 `craft_workbench_materials` 和 `craft_preview` 不加入白名单（前者因 POI 位置变化不缓存，后者走 `gameApiWithParams` 不经 `dataManager.fetch`）。
@@ -642,19 +648,19 @@ _cacheable.set(API_ACTIONS.CRAFT_RECIPES, 2000);  // 2s 缓存
 export interface CraftPreviewResult {
   match_count: number
   craftable: boolean
-  is_new_recipe: boolean
+  recipe_id: string | null  // match_count=1 时为匹配配方 ID，否则 null（供前端查 recipes 显示消耗）
   preview_log: PreviewLog  // 单对象（非数组）
 }
 
 // 预判日志条目（与 LogEntry 结构一致，复用 renderLogEntry）
 export interface PreviewLog {
-  id: string  // 'craft.empty_pool' | 'craft.tool_missing' | 'craft.extra_material' | 'craft.insufficient' | 'craft.fail_no_match' | 'craft.fail_ambiguous' | 'craft.ready' | 'craft.new_recipe'
+  id: string  // 'craft.empty_pool' | 'craft.tool_missing' | 'craft.extra_material' | 'craft.insufficient' | 'craft.fail_no_match' | 'craft.fail_ambiguous' | 'craft.ready'
   params: Record<string, string | number | boolean>
 }
 
 // workbench_materials 的元素（依赖契约补丁 C2）
 export interface WorkbenchMaterial {
-  source: 'passive' | 'cat' | 'poi'
+  source: 'cat' | 'poi'
   id: string
   item_id: string
   tool_level: number
@@ -729,21 +735,17 @@ export interface CraftRecipesResponse {
 
 * 范围：`1 ≤ count ≤ itms`
 
-* 无限标识（itms='∞' 或 '999'）：count 固定为配方需求数量（quickCraft 时），手动选材时 count=1
+* 无限标识（`itms='∞'`，由后端 `item_is_infinite()` 判断）：count 固定为配方需求数量（quickCraft 时），手动选材时 count=1
 
 ### 8.3 模态框关闭策略（O4 修正）
 
 * 点击右上角 \[X] 或 ESC → 关闭，重置素材选择状态
 
-* 合成成功且 itm0Locked=false → 关闭模态框（让玩家看到日志和背包变化）
+* 合成成功（产物入背包）→ **保持打开**，自动清空素材池，支持连续合成
 
-* 合成成功但 itm0Locked=true → **保持打开**，显示 itm0 锁定提示
+* 合成成功（产物卡 itm0，背包满）→ 关闭模态框，由背包界面处理 itm0（见 §8.6）
 
-  * 玩家可点击 \[X] 强制关闭 → 回到背包界面（背包界面也显示 itm0 区域）
-
-  * 关闭后 itm0 仍锁定，玩家在背包界面整理
-
-* 合成失败（如背包满但 itm0 未占用）→ 保持打开，④ 显示失败原因
+* 合成失败（如 itm0 已被占用，无法暂存产物）→ 保持打开，④ 显示失败原因（`craft.fail_itm0_occupied`）
 
 ### 8.4 ESC 键处理
 
@@ -801,7 +803,7 @@ function onKeydown(e: KeyboardEvent): void {
 * **工作台素材**（consume='none'）：
   `[T] 铁砧 (tool:1)  不消耗`
 
-消耗数量从匹配到的配方的 `materials[].count` 获取。当 `match_count=1` 时，前端读取该配方对应的 material count 显示消耗量。
+消耗数量从匹配到的配方的 `materials[].count` 获取。当 `match_count=1` 时，前端用 `previewResult.recipe_id` 在 `recipes` 中查到配方，读取对应 material count 显示消耗量。
 
 **无匹配时**：
 
@@ -809,9 +811,13 @@ function onKeydown(e: KeyboardEvent): void {
 
 * `match_count≥2`（多个配方候选）：显示素材当前总量 + 中列 ④ 提示"素材指向不明确，放入更多素材以确定配方"
 
-### 8.6 itm0 锁定状态的处理（移交背包设计案的只读引用）
+### 8.6 itm0 锁定状态的处理（兜底，正常流程不触达）
 
-当 `inventoryStore.itm0Locked === true` 时（合成部分成功、产物保留在 itm0）：
+**正常流程**：合成成功后根据产物去向区分：
+- 产物入背包（`itm0Locked=false`）→ 保持打开，清空素材池，支持连续合成
+- 产物卡 itm0（`itm0Locked=true`，背包满）→ `closeModal()`，交背包界面处理
+
+**兜底 UI**（保留但不期望触达）：当 `inventoryStore.itm0Locked === true` 时 CraftModal 显示以下 UI，作为防御性兜底（如 itm0 在打开模态框前已被占用）：
 
 **中列 ④ 反馈区**：
 
@@ -841,7 +847,7 @@ function onKeydown(e: KeyboardEvent): void {
 
 * 整理/丢弃的业务逻辑在 `inventoryStore`（背包设计案定义），CraftModal 只调用
 
-* 玩家可关闭 CraftModal 到背包界面处理 itm0，再返回合成
+* 合成成功后总是关闭 CraftModal，itm0 处理移交背包界面（避免职责重叠）
 
 **与背包界面 itm0 锁定态策略的差异**：
 
@@ -849,25 +855,24 @@ function onKeydown(e: KeyboardEvent): void {
 
 ### 8.7 软锁的界面体现
 
-* ⑤ 已发现配方列表中的条目已经过后端 `item_recipe_visibility_filter` 过滤
+* 配方列表揭示所有配方，不再有"已发现/未发现"机制（取消 discovered_recipes 状态）
 
-* 前端不感知过滤逻辑，只展示 API 返回的数据
+* 软锁通过资源可达性自然限制：玩家不到铁砧 POI → 工作台素材不可用 → 需要铁砧的配方实际无法合成（但配方仍可见，玩家可查看 materials 了解需求）
 
-* 玩家放素材试出未发现配方 → 合成成功 → 日志显示 `craft.new_recipe_discovered`
+* 前端用关联匹配将配方分为"可合成"/"素材不全"/"无关联素材"三组（视觉过滤，非机制隐藏）
 
-* 配方自动加入 discovered\_recipes，但可能仍然被软锁隐藏（前端下次打开时列表不显示）
+* 玩家想看任何配方都能看到，符合"信息透明"原则
 
 ***
 
 ## 九、合成按钮状态矩阵
 
-| match\_count | craftable | is\_new\_recipe | 按钮状态                | preview\_log 文案                                                                                      |
-| :----------: | :-------: | :-------------: | ------------------- | ---------------------------------------------------------------------------------------------------- |
-|       —      |     —     |        —        | disabled            | `craft.empty_pool` — "放入素材才能合成。"                                                                     |
-|       0      |   false   |        —        | disabled            | `craft.tool_missing` / `craft.extra_material` / `craft.insufficient` / `craft.fail_no_match`（后端分析决定） |
-|       1      |    true   |      false      | enabled             | `craft.ready` — "可合成。"                                                                               |
-|       1      |    true   |       true      | enabled (highlight) | `craft.new_recipe` — "发现新配方！"                                                                    |
-|      ≥2      |   false   |        —        | disabled            | `craft.fail_ambiguous` — "素材指向不明确（匹配 N 个配方）"                                                     |
+| match\_count | craftable | 按钮状态                | preview\_log 文案                                                                                      |
+| :----------: | :-------: | ------------------- | ---------------------------------------------------------------------------------------------------- |
+|       —      |     —     | disabled            | `craft.empty_pool` — "放入素材才能合成。"                                                                     |
+|       0      |   false   | disabled            | `craft.tool_missing` / `craft.extra_material` / `craft.insufficient` / `craft.fail_no_match`（后端分析决定） |
+|       1      |    true   | enabled (highlight) | `craft.ready` — "可合成。"                                                                               |
+|      ≥2      |   false   | disabled            | `craft.fail_ambiguous` — "素材指向不明确（匹配 N 个配方）"                                                     |
 
 ***
 
@@ -876,7 +881,7 @@ function onKeydown(e: KeyboardEvent): void {
 | 文件                                                 | 操作 | 说明                                                                                                     |
 | -------------------------------------------------- | -- | ------------------------------------------------------------------------------------------------------ |
 | `vex-vue/src/components/craft/CraftModal.vue`      | 新建 | 三列布局合成模态框                                                                                              |
-| `vex-vue/src/components/craft/CraftRecipeList.vue` | 新建 | 已发现配方列表子组件（按 category 分组折叠）                                                                            |
+| `vex-vue/src/components/craft/CraftRecipeList.vue` | 新建 | 配方列表子组件（两级分组：可合成/素材不全/无关联素材 × category）                                                                      |
 | `vex-vue/src/stores/craft.ts`                      | 新建 | craftStore + 防抖 preview + doCraft + quickCraft                                                         |
 | `vex-vue/src/types/api.ts`                         | 修改 | 新增 CraftPreviewResult / PreviewLog / WorkbenchMaterial / CraftRecipe / CraftMaterial / CraftResult 等接口 |
 | `vex-vue/src/api/endpoints.ts`                     | 修改 | 新增 3 个 action 常量（CRAFT\_PREVIEW / CRAFT\_WORKBENCH\_MATERIALS / CRAFT\_RECIPES）                        |
@@ -884,6 +889,8 @@ function onKeydown(e: KeyboardEvent): void {
 | `vex-vue/src/stores/data-manager.ts`               | 修改 | `_cacheable` 白名单新增 `CRAFT_RECIPES`（2s 缓存）                                                              |
 | `vex-vue/src/components/actions/TileActionBar.vue` | 修改 | ACTIONS 区加 `[合成]` 按钮（内联实现，与 `[E] 探索` 同级）                                                               |
 | `vex-vue/src/App.vue`                              | 修改 | 渲染 `<CraftModal>` + import craftStore + ESC 级联扩展（CraftModal 最优先）                                       |
+| `oblivions/include/game/item/item.craft.func.php`  | 修改 | `item_craft_preview` 返回值新增 `recipe_id`、移除 `is_new_recipe`；`item_get_discovered_recipes` 重命名为 `item_get_visible_recipes` 并改为返回所有配方；删除 `item_discover_recipe` |
+| `vex-vue/src/data/log-templates.ts`               | 修改 | 删除 `craft.new_recipe` / `craft.new_recipe_discovered` 模板（不再触发）                                          |
 
 **依赖文档**：
 
@@ -901,10 +908,10 @@ function onKeydown(e: KeyboardEvent): void {
     ▼
 打开 CraftModal — 三列同时加载
     │
-    ├──→ 左列（参考）加载 ⑤ discovered_recipes
+    ├──→ 左列（参考）加载 ⑤ recipes
     ├──→ 中列（状态）加载 ① 素材池（空）+ ④ 等待反馈
     └──→ 右列（操作）加载 ② inventory + ③ workbench_materials
-              ③ 默认选中 source='passive' 工作台素材
+              ③ 默认不选中任何工作台素材
     │
     ▼
 玩家在右列 ②/③ 中点击选择素材
@@ -920,7 +927,6 @@ function onKeydown(e: KeyboardEvent): void {
     │       │       ├→ craft.insufficient → "素材不足"
     │       │       └→ craft.fail_no_match → "无法合成任何东西"
     │       ├→ match_count=1 → 中列 ④: "可合成" + ① 显示消耗提示 + 右列底部 [合成] 亮
-    │       │       └→ is_new_recipe=true → ④: "发现新配方！"（黄色）
     │       └→ match_count≥2 → 中列 ④: "指向不明确" + 右列底部 [合成] 灰
     │
     ▼
@@ -931,7 +937,6 @@ obl_craft POST
     │
     ├→ 成功 + itm0Locked=false → invalidate inventory → closeModal
     │         → log 显示 craft.success
-    │         → 如果是新配方 → log 显示 craft.new_recipe_discovered
     │
     ├→ 成功 + itm0Locked=true → 保持打开，显示 itm0 锁定提示
     │         → 右列底部替换为 [整理背包] + [丢弃暂存]
@@ -958,7 +963,7 @@ obl_craft POST
 | 双源去重                     | 未明确                           | 手动选材不去重（依赖 preview 反馈），quickCraft 优先工作台 | O5/C2 冲突修正 |
 | preview\_log logcategory | 未定义                           | 复用 'system'                             | O6 遗漏修正    |
 | doCraft 检测 organize.fail | 路径未定义                         | 直接检查 inventoryStore.itm0Locked          | O7 遗漏修正    |
-| craft.new\_recipe 混淆     | 与 new\_recipe\_discovered 未区分 | 明确区分（preview 用 vs 命令日志用）                | E5 命名混淆修正  |
+| craft.new\_recipe         | 取消发现机制，new\_recipe/new\_recipe\_discovered 全部移除 | 配方全部揭示，不再有"已发现/未发现"区分 | 设计简化      |
 | loading 状态               | 三个独立 ref（wb/recipes/preview）  | 简化为 loading + previewLoading            | P1 过度拆分修正  |
 | 防抖策略                     | 仅 trailing                    | leading + trailing                      | P4 体验优化    |
 | 工作台候选区                   | 平铺                            | 按 source 分组                             | P5 可读性优化   |

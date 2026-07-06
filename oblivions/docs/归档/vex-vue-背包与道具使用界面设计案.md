@@ -83,7 +83,7 @@ InventoryDrawer.vue
                          └→ 统一成功路径（业务结果通过日志反馈）:
                               invalidate('player_inventory')
                               broadcast('game:action-completed')
-                              （itm0 清空 → itm0Locked 自动变 false；日志显示 organize.success）
+                              （itm0 清空 → itm0Locked 自动变 false；日志显示 item.to_bag）
                               （或日志显示 organize.fail，玩家从日志感知失败）
 
 点击 itm0 [丢弃暂存] ─────→ inventoryStore.handleDiscardItm0()
@@ -466,13 +466,12 @@ export interface PlayerInventory {
 | `use_item.effect_not_registered` | use_effect 未注册 | ✅ 已注册（L335） |
 | `use_item.success` | 使用成功 | ✅ 已注册（L340） |
 | `durability.broken` | 耐久归零损坏 | ✅ 已注册（L346） |
-| `organize.success` | 整理成功 | ✅ 已注册（L243） |
+| `item.to_bag` | 道具入背包（整理成功） | ✅ 已注册 |
 | `organize.fail` | 整理失败（背包满） | ✅ 已注册（L246） |
 | `craft.success` | 合成成功 | ✅ 已注册（L354） |
 | `craft.fail_no_match` | 合成无匹配 | ✅ 已注册（L361） |
 | `craft.fail_ambiguous` | 合成指向不明确 | ✅ 已注册（L364） |
 | `craft.fail_bag_full` | 背包空间不足 | ✅ 已注册（L370） |
-| `craft.new_recipe_discovered` | 发现新配方 | ✅ 已注册（L357） |
 | `system.itm0_pending` | itm0 被占用 | ✅ 已注册 |
 
 **结论**：本案涉及的日志模板均已注册，无需新增。

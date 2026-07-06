@@ -28,6 +28,34 @@ export async function gameApi(action: ApiAction): Promise<ApiResponse> {
 }
 
 /**
+ * 带参只读 API：GET api_v2.php?action=xxx&key=val&...
+ *
+ * 供 craft_preview 等需要查询参数的端点使用（gameApi 不带参数，无法覆盖）。
+ * 不走 dataManager 缓存（参数化端点每次实时拉取）。
+ *
+ * 与 gameApi() 语义一致：返回完整响应对象
+ * {status: 'success'|'error', data, ...}，调用方负责检查 status。
+ */
+export async function gameApiWithParams(
+  action: ApiAction,
+  params: Record<string, string>,
+): Promise<ApiResponse> {
+  const query = new URLSearchParams({ action, ...params }).toString();
+  const url = `${API_BASE}/api_v2.php?${query}`;
+  return perf.spanAsync(`gameApi(${action})`, 'api', async () => {
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      throw new Error('服务器返回格式错误（非 JSON）');
+    }
+    return res.json();
+  });
+}
+
+/**
  * 便捷封装：调用 gameApi() 并提取 data，失败时抛异常。
  * 适用于不需要访问 status/code 等元信息的简单场景。
  */

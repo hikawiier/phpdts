@@ -1,4 +1,4 @@
-﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
+﻿﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
 
 > 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
 > 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
@@ -758,6 +758,79 @@ Toast 位置根据 2 级页面开关状态响应式计算：
 
 `isAnyOverlayOpen()` 检查范围：`uiStore.modalOpen` + `uiStore.inventoryDrawerOpen` + `uiStore.playerDrawerOpen` + `tileActionStore.modalOpen`。
 
+### 9.5 itm0 状态管理与 Itm0Modal
+
+itm0 是后端 `itempara[0]` 缓存槽（新增道具中转槽，详见 [oblivions/DESIGN.md §2.24](../../oblivions/DESIGN.md#224-itm0-缓存槽与事件解耦)）。前端通过 `inventoryStore` + `Itm0Modal` 协同处理 itm0 状态。
+
+**数据来源**：`inventoryStore.inventoryData.itempara[0]`——后端返回的 itempara JSON 数组 index 0 即 itm0。非空表示玩家"手持"道具，必须处理（整理入背包或丢弃）才能继续游戏行为。
+
+**Itm0Modal 组件**（`components/inventory/Itm0Modal.vue`）：
+- **全局挂载**：在 `App.vue` 中 `<Itm0Modal />`，不受路由/抽屉开关影响
+- **持续显示**：itm0 非空时模态框持续显示，玩家无法关闭（无关闭按钮，点击遮罩无效）
+- **强制处理**：玩家必须点击"整理背包"或"丢弃"按钮处理 itm0 内容，模态框才会消失
+- **设计理由**：避免"假关闭"误导，强制玩家正面处理遗留道具，防止数据丢失
+
+**itm0 锁定时的命令限制**：
+- 后端 router 层拦截：itm0 非空时只放行 `obl_organize` / `obl_discard`，其他命令 emit `system.itm0_pending`
+- 前端 Itm0Modal 持续显示：玩家在模态框内只能选择整理或丢弃，无法进行其他操作
+- `inventoryStore.handleOrganize()`：调用 `obl_organize` 命令，成功后 itm0 清空 → 模态框消失
+
+### 9.6 Toast 即时反馈机制
+
+Toast 是日志事件的即时反馈层，解决 2 级页面（模态框）遮挡日志区的问题。设计约束详见 [oblivions/DESIGN.md §1.9](../../oblivions/DESIGN.md#19-结构化日志--前端-toast-强化提醒)。
+
+**触发条件**：仅当 `isAnyOverlayOpen()` 为 true（2 级页面打开，日志区被遮挡）时，`logStore.refreshLog()` 才触发 Toast。日志区可见时不触发 Toast（避免冗余反馈）。
+
+**TOAST_RULES 白名单**（`stores/log.ts`）：仅特定事件 ID 触发 Toast，不在白名单的事件仅日志区呈现：
+
+```typescript
+export const TOAST_RULES: Record<string, { style: ToastStyle }> = {
+  'pickup.bag_full': { style: 'error' },
+  'pickup.success': { style: 'success' },
+  'pickup.not_found': { style: 'error' },
+  'item.to_bag': { style: 'success' },
+  'search.result': { style: 'success' },
+  'search.already_searched': { style: 'error' },
+  'discard.success': { style: 'success' },
+};
+```
+
+**HIDDEN_LOG_IDS 黑名单**（`components/log/LogPanel.vue`）：某些事件仅触发 Toast / 模态框，不在日志面板渲染：
+
+```typescript
+const HIDDEN_LOG_IDS = new Set<string>(['pickup.success', 'organize.fail', 'system.itm0_pending']);
+```
+
+- `pickup.success`：瞬时"捡起"动作，Toast 已反馈，日志区由 `item.to_bag` 记录结果
+- `organize.fail`：背包满时 Itm0Modal 持续显示，日志区不必重复
+- `system.itm0_pending`：itm0 锁定时 router 拒绝命令的提示，Itm0Modal 已持续显示
+
+**批量合并**（`logStore.refreshLog()` 内）：多条同类事件合并为单条 Toast 避免刷屏：
+
+**拾取成功场景**（`pickup.success` + `item.to_bag` 同时存在且无 `organize.fail`）：双 Toast 几乎同时弹出，合并为单条更清晰：
+```typescript
+const shouldMergePickupToBag = hasPickupSuccess && toBagEntries.length > 0 && !hasOrganizeFail;
+if (shouldMergePickupToBag) {
+  // 单道具："捡起了 xxx，放入了背包。"  批量："捡起了 N 件道具，放入了背包。"
+  const mergedContent = renderPickupToBagMerged(itemId, toBagEntries.length);
+  toastStore.showToast(mergedContent, 'success', 2000, true, 'pickup.to_bag');
+}
+```
+
+**非拾取场景**（合成 / 手动整理 / 近视揭示）：`item.to_bag` 多条批量合并：
+```typescript
+const content = toBagEntries.length > 1
+  ? `把<span class="yellow">${toBagEntries.length}</span>件道具放进了背包。`
+  : renderLogEntry(entry);
+toastStore.showToast(content, rule.style, 2000, true, 'item.to_bag');
+```
+
+- 拾取成功合并用固定 mergeId `'pickup.to_bag'`，首个触发后续跳过
+- 非拾取场景 `item.to_bag` 用固定 mergeId `'item.to_bag'`
+- 拾取背包满场景（有 `organize.fail`）不合并，`pickup.success` 正常 Toast"捡起了 xxx"
+
+**Toast 合并机制**（`stores/toast.ts`）：相邻同 mergeId + 同 type 的 Toast 合并显示（count++，显示 ×N），避免短时间内同类 Toast 刷屏。
+
 ---
 
 ## 十、组件层
@@ -786,6 +859,7 @@ App.vue
 ├── InventoryDrawer.vue              # 右抽屉（背包 + 装备标签）
 │   ├── InventoryList.vue
 │   └── EquipmentList.vue
+├── Itm0Modal.vue                    # itm0 手持道具模态框（全局挂载，itm0 非空时持续显示）
 ├── ToastContainer.vue               # Toast 容器
 └── BattleModal.vue                  # 战斗演出模态框（Teleport to body，监听 battleModalOpen）
 

@@ -26,7 +26,7 @@ import { ref } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { useToastStore } from '@/stores/toast';
 import { isAnyOverlayOpen } from '@/composables/useToastPosition';
-import { renderLogEntry } from '@/data/log-templates';
+import { renderLogEntry, renderPickupToBagMerged } from '@/data/log-templates';
 import { debugBus } from '@/composables/useDebugBus';
 import { commandQueue } from '@/stores/command-queue';
 import type { LogEntry } from '@/types/api';
@@ -50,12 +50,17 @@ type ToastStyle = 'info' | 'success' | 'error' | 'warning';
 /**
  * Toast 白名单：仅这些日志 ID 触发即时反馈（2 级页面打开时）
  * move.* 不加入（地图变化已足够明显）
+ * item.to_bag 加入（道具入背包是状态变化，需即时反馈）；
+ *   多条 item.to_bag 由下方 Toast 触发逻辑批量合并为"把 N 件道具放进了背包"，
+ *   避免合成多产物/批量拾取场景刷屏
+ * organize.fail 不加入（Itm0Modal 持续显示已提供强反馈）
  * ID 与结构化日志系统实际实现的 ID 对齐
  */
 export const TOAST_RULES: Record<string, { style: ToastStyle }> = {
   'pickup.bag_full': { style: 'error' },
   'pickup.success': { style: 'success' },
   'pickup.not_found': { style: 'error' },
+  'item.to_bag': { style: 'success' },
   'search.result': { style: 'success' },
   'search.already_searched': { style: 'error' },
   'discard.success': { style: 'success' },
@@ -107,15 +112,56 @@ export const useLogStore = defineStore('log', () => {
       // ── Toast 触发（仅在 2 级页面打开时，避免遮罩遮挡日志区） ──
       if (isAnyOverlayOpen() && newEntries.length > 0) {
         const toastStore = useToastStore();
-        for (let i = 0; i < newEntries.length; i++) {
-          const entry = newEntries[i];
-          const rule = TOAST_RULES[entry.id];
-          if (rule) {
+
+        // 预扫描：检测拾取成功场景（pickup.success + item.to_bag 同时存在且无整理失败）
+        const toBagEntries = newEntries.filter((e) => e.id === 'item.to_bag');
+        const hasPickupSuccess = newEntries.some((e) => e.id === 'pickup.success');
+        const hasOrganizeFail = newEntries.some((e) => e.id === 'organize.fail');
+        const shouldMergePickupToBag = hasPickupSuccess && toBagEntries.length > 0 && !hasOrganizeFail;
+
+        if (shouldMergePickupToBag) {
+          // 拾取成功场景：合并 pickup.success + item.to_bag 为单条 Toast
+          // "捡起了 xxx，放入了背包。"（双 Toast 几乎同时弹出，合并更清晰）
+          const firstToBag = toBagEntries[0];
+          const itemId = (firstToBag.params as Record<string, string> | null)?.item_id ?? '';
+          const mergedContent = renderPickupToBagMerged(itemId, toBagEntries.length);
+          toastStore.showToast(mergedContent, 'success', 2000, true, 'pickup.to_bag');
+
+          // 其他事件正常 Toast（跳过已合并的 pickup.success 和 item.to_bag）
+          for (const entry of newEntries) {
+            if (entry.id === 'pickup.success' || entry.id === 'item.to_bag') continue;
+            const rule = TOAST_RULES[entry.id];
+            if (!rule) continue;
             const content = renderLogEntry(entry);
-            // content 是 HTML（含高亮 span），isHtml=true 直接渲染
-            // mergeId=entry.id 启用同类合并（避免批量操作刷屏）
             if (content) {
               toastStore.showToast(content, rule.style, 2000, true, entry.id);
+            }
+          }
+        } else {
+          // 非拾取场景：逐条处理
+          let toBagEmitted = false;
+          for (const entry of newEntries) {
+            const rule = TOAST_RULES[entry.id];
+            if (!rule) continue;
+
+            if (entry.id === 'item.to_bag') {
+              // item.to_bag 批量合并：首个触发合并 Toast，后续跳过
+              if (toBagEmitted) continue;
+              toBagEmitted = true;
+              const content =
+                toBagEntries.length > 1
+                  ? `把<span class="yellow">${toBagEntries.length}</span>件道具放进了背包。`
+                  : renderLogEntry(entry);
+              if (content) {
+                toastStore.showToast(content, rule.style, 2000, true, 'item.to_bag');
+              }
+            } else {
+              const content = renderLogEntry(entry);
+              // content 是 HTML（含高亮 span），isHtml=true 直接渲染
+              // mergeId=entry.id 启用同类合并（避免批量操作刷屏）
+              if (content) {
+                toastStore.showToast(content, rule.style, 2000, true, entry.id);
+              }
             }
           }
         }

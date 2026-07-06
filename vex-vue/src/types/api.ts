@@ -185,7 +185,7 @@ export interface PlayerInventory {
   slots: InventoryItem[];
   num: number;
   limit: number;
-  /** itm0 缓存槽内容（null 表示无待整理道具） */
+  /** itm0 手持道具（null 表示空手） */
   itm0?: InventoryItem | null;
 }
 
@@ -208,6 +208,8 @@ export interface InventoryItem {
   itmk?: string;
   /** 是否可堆叠（true=数量模型，false=耐久模型） */
   stack?: boolean;
+  /** 堆叠数量或耐久值（'∞' 表示无限，由后端 item_is_infinite() 判断） */
+  itms?: string | number;
   [key: string]: unknown;
 }
 
@@ -364,4 +366,86 @@ export interface BattleLogResponse {
 /** 敌人列表响应（api_v2.php?action=enemies） */
 export interface EnemiesResponse {
   enemies: Enemy[];
+}
+
+// ══════════════════════════════════════════════════
+// 合成系统类型（v2.2 新增，依赖契约补丁设计案 C1/C2）
+// ══════════════════════════════════════════════════
+
+/** craft_preview 响应（api_v2.php?action=craft_preview） */
+export interface CraftPreviewResult {
+  /** 匹配配方数（0=不匹配，1=可合成，≥2=指向不明确） */
+  match_count: number;
+  /** 是否可合成（match_count === 1） */
+  craftable: boolean;
+  /** match_count=1 时为匹配配方 ID，否则 null（供前端查 recipes 显示消耗） */
+  recipe_id: string | null;
+  /** 预判日志单对象（非数组） */
+  preview_log: PreviewLog;
+}
+
+/** 预判日志条目（与 LogEntry 结构兼容，复用 renderLogEntry 渲染） */
+export interface PreviewLog {
+  /** 反馈 ID：'craft.empty_pool' | 'craft.tool_missing' | 'craft.extra_material' | 'craft.insufficient' | 'craft.fail_no_match' | 'craft.fail_ambiguous' | 'craft.ready' */
+  id: string;
+  params: Record<string, string | number | boolean>;
+}
+
+/** workbench_materials 的元素（依赖契约补丁 C2：补齐 tags/itmk 字段） */
+export interface WorkbenchMaterial {
+  /** 来源类型（'cat'=猫身上 / 'poi'=地图格 POI） */
+  source: 'cat' | 'poi';
+  /** 工作台素材唯一标识（用于 obl_craft 和 craft_preview 的 workbench_materials 参数） */
+  id: string;
+  /** 关联的 item_table 道具 ID */
+  item_id: string;
+  /** 工具等级 */
+  tool_level: number;
+  /** 道具 tags 数组（供 quickCraft 匹配） */
+  tags: string[];
+  /** 道具类别（供 quickCraft 匹配） */
+  itmk: string;
+}
+
+/** craft_workbench_materials 响应 */
+export interface CraftWorkbenchMaterialsResponse {
+  workbench_materials: WorkbenchMaterial[];
+}
+
+/** craft_recipes 的元素 */
+export interface CraftRecipe {
+  recipe_id: string;
+  /** 配方分类：'food' | 'tool' | 'armor' | 'weapon' */
+  category: string;
+  materials: CraftMaterial[];
+  results: CraftResult[];
+}
+
+/** 配方素材项 */
+export interface CraftMaterial {
+  /** 精确匹配：item_id（优先级最高） */
+  item_id?: string;
+  /** 类别匹配：itmk（优先级次之） */
+  itmk?: string;
+  /** 性质匹配：tag（优先级最低） */
+  tag?: string;
+  /** 需求数量 */
+  count: number;
+  /** 消耗模式：'all'=全消耗 / 'durability'=扣耐久 / 'none'=不消耗（工作台素材） */
+  consume?: 'all' | 'durability' | 'none';
+  /** 工具等级要求（素材 tool_level 必须 ≥ min_level） */
+  min_level?: number;
+  [key: string]: unknown;
+}
+
+/** 配方产物项 */
+export interface CraftResult {
+  item_id: string;
+  count: number;
+  [key: string]: unknown;
+}
+
+/** craft_recipes 响应 */
+export interface CraftRecipesResponse {
+  recipes: CraftRecipe[];
 }

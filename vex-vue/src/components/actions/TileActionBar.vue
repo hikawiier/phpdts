@@ -21,6 +21,7 @@
 import { computed } from 'vue';
 import { useTileActionStore } from '@/stores/tileAction';
 import { useMapStore } from '@/stores/map';
+import { useCraftStore } from '@/stores/craft';
 import { commandQueue } from '@/stores/command-queue';
 import type { GroundItem, Poi } from '@/types/api';
 import { getItemName, isInfinite } from '@/data/item-locale';
@@ -30,6 +31,7 @@ import ExploreButton from './ExploreButton.vue';
 
 const tileActionStore = useTileActionStore();
 const mapStore = useMapStore();
+const craftStore = useCraftStore();
 
 // ── 区域切换按钮显示条件 ──
 const switchRegionVisible = computed<boolean>(() => {
@@ -140,6 +142,11 @@ function onSwitchRegion(): void {
   tileActionStore.handleSwitchRegion();
 }
 
+function onOpenCraft(): void {
+  if (commandQueue.isLocked) return;
+  void craftStore.openModal();
+}
+
 function onCheckGround(): void {
   tileActionStore.openGroundModal();
 }
@@ -227,6 +234,12 @@ function poiCountLabel(poi: Poi): string {
       <!-- ── 常驻按钮区 ── -->
       <div class="action-buttons" style="display:flex;gap:6px;margin-bottom:6px;">
         <ExploreButton />
+        <button
+          class="term-btn block"
+          style="flex:1;"
+          :disabled="commandQueue.isLocked"
+          @click="onOpenCraft"
+        >[合成]</button>
         <button
           v-if="switchRegionVisible"
           class="term-btn block"

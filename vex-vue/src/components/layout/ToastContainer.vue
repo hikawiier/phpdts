@@ -15,7 +15,6 @@ import { watch } from 'vue';
 import { useUiStore } from '@/stores/ui';
 import { useToastStore } from '@/stores/toast';
 import { useToastPosition } from '@/composables/useToastPosition';
-import type { ToastType } from '@/stores/toast';
 
 const uiStore = useUiStore();
 const toastStore = useToastStore();
@@ -31,14 +30,6 @@ watch(
   },
   { immediate: true },
 );
-
-/** Toast 类型对应的标签文字 */
-function toastTag(type: ToastType): string {
-  if (type === 'error') return '[ERR]';
-  if (type === 'success') return '[OK]';
-  if (type === 'warning') return '[!]';
-  return '[i]';
-}
 </script>
 
 <template>
@@ -52,7 +43,6 @@ function toastTag(type: ToastType): string {
       class="toast show"
       :class="['toast-' + toast.type]"
     >
-      <span class="toast-tag">{{ toastTag(toast.type) }}</span>
       <span v-if="toast.isHtml" v-html="toast.message"></span>
       <span v-else>{{ toast.message }}</span>
       <span v-if="toast.count > 1" class="toast-count">×{{ toast.count }}</span>

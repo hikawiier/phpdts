@@ -55,12 +55,12 @@ export const useInventoryStore = defineStore('inventory', () => {
     return playerStore.playerInfo?.equipment || {};
   });
 
-  /** itm0 缓存槽内容（null 表示无待整理道具） */
+  /** itm0 手持道具（null 表示空手） */
   const itm0 = computed<InventoryItem | null>(() => inventoryData.value?.itm0 ?? null);
 
   /**
    * itm0 锁定状态（全局门控）
-   * true = itm0 非空，后端拒绝所有非整理/丢弃命令
+   * true = 玩家手持道具，后端仅允许堆叠合并/丢弃
    * CraftModal 等其他组件只读引用此状态
    */
   const itm0Locked = computed<boolean>(() => !!itm0.value);
@@ -160,9 +160,9 @@ export const useInventoryStore = defineStore('inventory', () => {
   }
 
   /**
-   * 整理背包（obl_organize 命令）
+   * 堆叠合并（obl_organize 命令）
    *
-   * 后端流程：将 itm0 中的道具转移至背包空槽（不排序，仅合并同类）
+   * 后端流程：将 itm0 中的道具尝试与背包内同类堆叠，腾出空槽
    * 成功后 itm0 清空，itm0Locked 自动变 false（computed 响应式）
    */
   async function handleOrganize(): Promise<void> {
@@ -173,19 +173,29 @@ export const useInventoryStore = defineStore('inventory', () => {
       });
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
+      await loadInventory();
+      if (itm0.value) {
+        // 道具仍拿在手中——背包已满，无法合并也无法放入空槽
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: '背包已经塞不下了……',
+        });
+      }
+      // 成功路径（itm0 清空）不广播 toast：后端已 emit item.to_bag 日志事件，
+      // 背包视觉变化（数量+1 / 新槽位）由 game:action-completed → loadInventory 自然呈现
     } catch (e) {
       debugBus.emit('error', 'organize:error', {
         error: e instanceof Error ? e.message : String(e),
       });
       dataManager.broadcast('ui:toast', {
         type: 'error',
-        msg: '整理失败：' + (e instanceof Error ? e.message : String(e)),
+        msg: '堆叠合并失败：' + (e instanceof Error ? e.message : String(e)),
       });
     }
   }
 
   /**
-   * 丢弃 itm0 暂存道具（obl_discard slot=0 命令）
+   * 丢弃手持道具（obl_discard slot=0 命令）
    *
    * 后端复用 obl_discard_item(slot=0) 分支。成功后 itm0 清空，itm0Locked 自动变 false。
    */

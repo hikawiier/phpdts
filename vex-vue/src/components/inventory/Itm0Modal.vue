@@ -1,12 +1,12 @@
 <script setup lang="ts">
 // ══════════════════════════════════════════════════
-// itm0 待整理提醒模态框 / Itm0 Modal
+// itm0 手持道具提醒模态框 / Itm0 Modal
 //
-// 显示条件：inventoryStore.itm0 非空。
+// 显示条件：inventoryStore.itm0 非空（玩家手中持有道具）。
 //
 // 设计理由：
 //   itm0 状态下玩家无法进行其他操作（前后端均有拦截），因此模态框
-//   不可"关闭"——只有 [使用] / [整理背包] / [丢弃暂存] 动作能真正消除它
+//   不可"关闭"——只有 [使用] / [尝试堆叠合并] / [丢到地上] 动作能真正消除它
 //   （通过清空 itm0）。这避免了"假关闭"的误导，强制玩家正面处理。
 //   itm0 的道具可被直接使用（与旧 phpdts "手持道具可直接使用"语义一致），
 //   使用后若道具被消耗（数量/耐久归零），itm0 自动清空，模态框消失。
@@ -60,12 +60,12 @@ function slotMeta(item: InventoryItem): string {
     <div class="modal itm0-modal">
       <div class="modal-header">
         <span class="modal-title">
-          <span class="itm0-warn">⚠</span>
-          待整理道具
+          <span class="itm0-warn">[!]</span>
+          手持道具
         </span>
       </div>
       <div class="modal-body">
-        <p class="itm0-desc">背包中有待整理的道具，需先处理才能进行其他操作。</p>
+        <p class="itm0-desc">在做其他事前，得先处理掉手头的东西……</p>
         <div class="itm0-item">
           <span class="slot-num">[0]</span>
           <span class="slot-name">{{ slotDisplayName(itm0) }}</span>
@@ -85,12 +85,12 @@ function slotMeta(item: InventoryItem): string {
             class="term-btn"
             :disabled="commandQueue.isLocked"
             @click="onOrganize"
-          >[整理背包]</button>
+          >[尝试堆叠合并]</button>
           <button
             class="term-btn"
             :disabled="commandQueue.isLocked"
             @click="onDiscardItm0"
-          >[丢弃暂存]</button>
+          >[丢到地上]</button>
         </div>
       </div>
     </div>

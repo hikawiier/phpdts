@@ -35,7 +35,15 @@ const isDebugLogMode = (() => {
   return new URLSearchParams(window.location.search).get('debug') === 'ai';
 })();
 
-/** 过滤后的可见日志条目（过滤空内容 + debug 日志） */
+/**
+ * 日志区不渲染黑名单：这些事件仅触发 Toast / 模态框，不在日志面板留痕
+ * - pickup.success：瞬时"捡起"动作，Toast 已反馈，日志区由 item.to_bag 记录"入背包"结果
+ * - organize.fail：背包满时 Itm0Modal 持续显示提供强反馈，日志区不必重复
+ * - system.itm0_pending：itm0 锁定时 router 拒绝命令的提示，Itm0Modal 已持续显示
+ */
+const HIDDEN_LOG_IDS = new Set<string>(['pickup.success', 'organize.fail', 'system.itm0_pending']);
+
+/** 过滤后的可见日志条目（过滤空内容 + debug 日志 + 黑名单） */
 interface VisibleEntry {
   entry: LogEntryType;
   isNew: boolean; // 是否为最后一条
@@ -48,6 +56,8 @@ const visibleEntries = computed<VisibleEntry[]>(() => {
     const entry = all[i];
     // debug 日志过滤：非 debug 模式下跳过
     if (entry.debug && !isDebugLogMode) continue;
+    // 黑名单过滤：仅 Toast / 模态框反馈的事件不在日志区渲染
+    if (HIDDEN_LOG_IDS.has(entry.id)) continue;
     // 过滤空内容（如 move.tile_desc 无 desc 时返回空字符串）
     const content = renderLogEntry(entry);
     if (!content) continue;

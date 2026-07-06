@@ -19,6 +19,7 @@
 import { computed, type ComputedRef } from 'vue';
 import { useUiStore } from '@/stores/ui';
 import { useTileActionStore } from '@/stores/tileAction';
+import { useCraftStore } from '@/stores/craft';
 
 /**
  * 检测是否有 2 级页面（模态框/抽屉）打开
@@ -31,6 +32,7 @@ import { useTileActionStore } from '@/stores/tileAction';
  *   - uiStore.inventoryDrawerOpen（右抽屉）
  *   - uiStore.playerDrawerOpen（左抽屉）
  *   - tileActionStore.modalOpen（POI/ground 模态框，由 TileActionBar.vue 内部渲染）
+ *   - craftStore.craftModalOpen（合成模态框）
  *
  * 注意：此函数依赖 Pinia store，必须在 useUiStore() 可用的上下文中调用。
  */
@@ -43,9 +45,10 @@ export function isAnyOverlayOpen(): boolean {
   ) {
     return true;
   }
-  // POI/ground 模态框由 tileActionStore 管理（TileActionBar.vue 内部渲染）
   const tileActionStore = useTileActionStore();
-  return tileActionStore.modalOpen;
+  if (tileActionStore.modalOpen) return true;
+  const craftStore = useCraftStore();
+  return craftStore.craftModalOpen;
 }
 
 /**
@@ -62,6 +65,7 @@ export function useToastPosition(): {
 } {
   const uiStore = useUiStore();
   const tileActionStore = useTileActionStore();
+  const craftStore = useCraftStore();
 
   // ── 是否有 2 级页面打开（响应式） ──
   const isOverlayOpen = computed<boolean>(() => {
@@ -69,15 +73,16 @@ export function useToastPosition(): {
       uiStore.modalOpen ||
       uiStore.inventoryDrawerOpen ||
       uiStore.playerDrawerOpen ||
-      tileActionStore.modalOpen
+      tileActionStore.modalOpen ||
+      craftStore.craftModalOpen
     );
   });
 
   // ── Toast 位置类（响应式） ──
   // 优先级：模态框 > 右抽屉 > 左抽屉/默认
   const toastPositionClass = computed<string>(() => {
-    // 任何模态框（通用 / POI / ground）打开时：中上
-    if (uiStore.modalOpen || tileActionStore.modalOpen) {
+    // 任何模态框（通用 / POI / ground / 合成）打开时：中上
+    if (uiStore.modalOpen || tileActionStore.modalOpen || craftStore.craftModalOpen) {
       return 'pos-center';
     }
     if (uiStore.inventoryDrawerOpen) {

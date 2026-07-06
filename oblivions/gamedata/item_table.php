@@ -626,19 +626,4 @@ return [
         'use_effect' => '',
         'tool_level' => 2,
     ],
-
-    // ─── 虚拟素材（被动技能来源，不参与 itmk 匹配）─────────
-
-    'innate_craft_t0' => [
-        'itmk'     => '',
-        'itme'     => 0,
-        'itms'     => 0,
-        'itmsk'    => '',
-        'itmpara'  => '',
-        'tier'     => 'common',
-        'stack'    => false,
-        'tags'     => [],
-        'use_effect' => '',
-        'tool_level' => 0,
-    ],
 ];

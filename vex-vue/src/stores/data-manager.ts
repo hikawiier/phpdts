@@ -40,6 +40,7 @@ class DataManager {
     ['game_map', 5000], // 地图结构，5s（移动后 invalidate）
     ['tile_actions', 3000], // 当前格交互，3s（移动后 invalidate）
     ['player_inventory', 2000], // 背包，2s（拾取/丢弃后 invalidate）
+    ['craft_recipes', 2000], // 配方列表，2s（静态数据，openModal 时短缓存避免重复请求）
   ]);
 
   /**

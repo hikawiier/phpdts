@@ -66,12 +66,13 @@ function cmd_handle_obl_organize(&$pdata) {
     if (!oblivions_is_active()) return;
     include_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
     global $obl_log;
+    // item_id 必须在 organize 之前读取：成功后 itm0 已被 unset，无法再获取
+    $item_id = isset($pdata['itempara'][0]['itmid']) ? (string)$pdata['itempara'][0]['itmid'] : '';
     $success = obl_organize_inventory($pdata);
     if ($success) {
-        $obl_log->emit('organize.success', 'system');
+        $obl_log->emit('item.to_bag', 'system', ['item_id' => $item_id]);
     } else {
         // 整理失败：itm0 有道具卡住，带 item_id
-        $item_id = isset($pdata['itempara'][0]['itmid']) ? (string)$pdata['itempara'][0]['itmid'] : '';
         $obl_log->emit('organize.fail', 'system', ['item_id' => $item_id]);
     }
 }

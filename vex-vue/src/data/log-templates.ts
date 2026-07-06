@@ -212,9 +212,10 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     text: '道具无效，无法拾取。',
   },
   'pickup.success': {
-    text: '你拾取了{item_name}。',
-    highlight: ['item_name'],
-    highlightClass: 'yellow',
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `捡起了<span class="yellow">${escapeHtml(name)}</span>。`;
+    },
   },
 
   // ─── discard ────────────────────────────────────
@@ -231,13 +232,17 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   },
 
   // ─── organize ───────────────────────────────────
-  'organize.success': {
-    text: '背包已整理。',
+  // item.to_bag：道具从 itm0 进入背包（拾取/合成/手动整理成功均复用此事件）
+  'item.to_bag': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `把<span class="yellow">${escapeHtml(name)}</span>放进了背包。`;
+    },
   },
   'organize.fail': {
     render: (params) => {
       const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
-      return `背包已满，<span class="yellow">${escapeHtml(name)}</span>暂存到待整理区。`;
+      return `背包已满，<span class="yellow">${escapeHtml(name)}</span>仍拿在手中。`;
     },
   },
 
@@ -251,7 +256,7 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     text: '那个道具已经不在那里了。',
   },
   'system.itm0_pending': {
-    text: '背包有待整理的道具，请先整理或丢弃。',
+    text: '你正手持道具，请先处理。',
   },
 
   // ─── enemy ──────────────────────────────────────
@@ -343,10 +348,10 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
 
   // ─── craft ─────────────────────────────────────
   'craft.success': {
-    text: '合成成功。',
-  },
-  'craft.new_recipe_discovered': {
-    text: '发现新配方！',
+    render: (params) => {
+      const name = params.recipe_name as string | null | undefined;
+      return name ? `合成成功：${name}。` : '合成成功。';
+    },
   },
   'craft.fail_no_match': {
     text: '这些素材无法合成任何东西。',
@@ -360,6 +365,9 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   'craft.fail_bag_full': {
     text: '背包空间不足，无法放入合成产物。',
   },
+  'craft.fail_itm0_occupied': {
+    text: '你正手持道具，请先堆叠合并或丢弃。',
+  },
 
   // ─── craft preview（预判反馈，非真实日志） ──────
   'craft.empty_pool': {
@@ -372,15 +380,31 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     text: '有些素材用不上，试试移除部分素材。',
   },
   'craft.insufficient': {
-    text: '素材不足，试试放入更多同类素材。',
+    text: '可能缺少素材或工作台。',
   },
   'craft.ready': {
-    text: '可合成。',
-  },
-  'craft.new_recipe': {
-    text: '发现新配方！',
+    render: (params) => {
+      const name = params.recipe_name as string | undefined;
+      return name ? `可合成：${name}。` : '可合成。';
+    },
   },
 };
+
+/**
+ * 渲染拾取+入背包合并 Toast 文案
+ * - 单道具：捡起了 xxx，放入了背包。
+ * - 批量：捡起了 N 件道具，放入了背包。
+ *
+ * 用于拾取成功场景下 pickup.success + item.to_bag 双 Toast 合并，
+ * 避免两个几乎同时弹出的 Toast 造成视觉噪音。
+ */
+export function renderPickupToBagMerged(item_id: string, count: number): string {
+  if (count > 1) {
+    return `捡起了<span class="yellow">${count}</span>件道具，放入了背包。`;
+  }
+  const name = ITEM_LOCALE[item_id]?.name ?? item_id;
+  return `捡起了<span class="yellow">${escapeHtml(name)}</span>，放入了背包。`;
+}
 
 /**
  * 渲染单条日志为 HTML

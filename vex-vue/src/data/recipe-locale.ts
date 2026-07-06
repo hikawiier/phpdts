@@ -11,6 +11,7 @@ export const RECIPE_LOCALE: Record<string, RecipeLocaleEntry> = {
 
   // 需工作台素材的配方
   craft_frying_pan: { name: '煎锅', desc: '在铁砧上锻打金属废料制成煎锅。' },
+  craft_dismantle_pan: { name: '分解煎锅', desc: '将煎锅拆解回金属废料。' },
   craft_simple_stew: { name: '简易炖菜', desc: '用烹饪工具将烤兔肉和生食材炖成一锅杂烩。' },
   craft_blade_wrapped: { name: '布包刀刃', desc: '用布条缠绕锐器制成握感更稳的刀具。' },
 
@@ -27,4 +28,18 @@ export function getRecipeName(recipeId: string | number | undefined, fallbackNam
 export function getRecipeDesc(recipeId: string | number | undefined, fallbackDesc?: string): string {
   if (recipeId === undefined || recipeId === null || recipeId === '') return fallbackDesc || '';
   return RECIPE_LOCALE[String(recipeId)]?.desc || fallbackDesc || '';
+}
+
+// ── 配方分类本地化 ──────────────────────────────
+
+export const RECIPE_CATEGORY_LABELS: Record<string, string> = {
+  food: '食物',
+  tool: '工具',
+  armor: '护甲',
+  weapon: '武器',
+};
+
+export function getCategoryLabel(category: string | undefined): string {
+  if (!category) return '其他';
+  return RECIPE_CATEGORY_LABELS[category] || category;
 }

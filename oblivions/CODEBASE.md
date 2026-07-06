@@ -542,14 +542,16 @@ api_response('success', array(
   "data": {
     "match_count": 1,
     "craftable": true,
-    "is_new_recipe": false
+    "recipe_id": "craft_bandage",
+    "preview_log": {"id": "craft.ready", "params": {}}
   }
 }
 ```
-- `match_count = 0` → 不亮（无匹配）
-- `match_count = 1` → 亮灯（可合成）
-- `match_count >= 2` → 不亮（指向不明确）
-- `is_new_recipe` → 匹配的配方玩家未发现过
+- `match_count = 0` → 不亮（无匹配，preview_log 返回失败原因：tool_missing/extra_material/insufficient/fail_no_match）
+- `match_count = 1` → 亮灯（可合成，preview_log 返回 craft.ready）
+- `match_count >= 2` → 不亮（指向不明确，preview_log 返回 craft.fail_ambiguous）
+- `recipe_id` → match_count=1 时为匹配配方 ID，否则 null（供前端查 recipes 显示消耗）
+- `preview_log` → 单对象 `{id, params}`，复用 log-templates.ts 模板渲染（详见前端契约补丁设计案 §2）
 
 ### 5.10 `craft_workbench_materials` — 可用工作台素材
 
@@ -570,7 +572,7 @@ api_response('success', array(
 - `source` 来源：`passive`（永久可用）/ `cat`（猫身边，P0 未实现）/ `poi`（需站在该 POI 上）
 - `id` 传给 `obl_craft` / `craft_preview` 的 `workbench_materials` 参数
 
-### 5.11 `craft_recipes` — 已发现配方列表
+### 5.11 `craft_recipes` — 配方列表
 
 - **请求**: `GET api_v2.php?action=craft_recipes`
 - **前置条件**: 必须在 Oblivions 模式下
@@ -585,8 +587,8 @@ api_response('success', array(
   }
 }
 ```
-- 过滤逻辑：从 `oblpara.discovered_recipes` 读取 → 调 `item_recipe_visibility_filter` 判断可见性 → 只返回可见配方
-- P0 阶段所有已发现配方均可见（`item_recipe_visibility_filter` 返回 true）
+- 过滤逻辑：返回所有配方，经 `item_recipe_visibility_filter` 过滤（P0 默认全部可见）
+- 取消"已发现/未发现"机制：所有配方天然可见，软锁通过资源可达性自然限制（玩家不到 POI → 工作台素材不可用 → 配方实际无法合成，但配方仍可查看了解需求）
 
 ### 5.12 `mark_battle_log_played.php` — 零依赖标记接口
 
@@ -1211,7 +1213,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 - `itempara[0]` 是新增道具的中转槽，所有新增道具（拾取/合成产物/未来卸装备）先入 itm0 再整理入背包
 - itm0 非空时 router 层拒绝除 `obl_organize` / `obl_discard` 外的所有命令
 - `obl_put_item_to_itm0`（检查 itm0 为空 + 放入）和 `obl_organize_inventory`（合并堆叠 + 转移 itm0 → 背包）是独立函数，由调用方分别调用
-- `obl_organize_inventory` 是纯逻辑函数（不内部 emit），由调用方根据返回值 emit `organize.success` / `organize.fail` 事件
+- `obl_organize_inventory` 是纯逻辑函数（不内部 emit），由调用方根据返回值 emit `item.to_bag`（整理成功，道具入背包）/ `organize.fail`（整理失败）事件
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -1229,13 +1231,15 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `obl_add_item_to_inventory` | `(array &$pdata, $item): int\|false` | 添加道具到背包（自动合并，原子性）。预检查空间不足时返回 false，不修改任何数据。**只操作背包槽位 1~itemmaxslots，不操作 itm0** |
 | `obl_merge_stacks_in_inventory` | `(array &$pdata): void` | 合并背包内同类堆叠（腾出空槽）。仅合并，不转移 itm0，不排序 |
 | `obl_put_item_to_itm0` | `(array &$pdata, $item): bool` | 放入道具到 itm0 缓存槽。itm0 已被占用时返回 false（返回错误码让调用方 emit 上报，router 门控已拦截） |
-| `obl_organize_inventory` | `(array &$pdata): bool` | 整理背包：合并同类堆叠 + 转移 itm0 → 背包。**纯逻辑函数（不内部 emit）**。返回 true=整理成功（itm0 已清空），false=背包满（itm0 保留）。由调用方根据返回值 emit `organize.success` / `organize.fail` 事件 |
-| `obl_pickup_item` | `($iid, array &$pdata): void` | 拾取道具（10 步流程：读取实例 + itms='0' 检查 + 位置/发现状态检查 + 近视揭示 + 构建实例 + 放入 itm0 + 原子删除地图实例 + 自动整理 + emit pickup.success + emit organize.fail 解耦） |
+| `obl_organize_inventory` | `(array &$pdata): bool` | 整理背包：合并同类堆叠 + 转移 itm0 → 背包。**纯逻辑函数（不内部 emit）**。返回 true=整理成功（itm0 已清空），false=背包满（itm0 保留）。由调用方根据返回值 emit `item.to_bag`（成功）/ `organize.fail`（失败）事件 |
+| `obl_pickup_item` | `($iid, array &$pdata): void` | 拾取道具（流程：读取实例 + itms='0' 检查 + 位置/发现状态检查 + 近视揭示 + 构建实例 + 放入 itm0 + 原子删除地图实例 + emit pickup.success（捡起，传 item_id）+ 自动整理 + emit item.to_bag（成功）/ organize.fail（失败）解耦） |
 | `obl_discard_item` | `($slot, array &$pdata): void` | 丢弃道具。slot=0 丢弃 itm0 缓存槽内容（直接抛弃，不写回地图）；1~itemmaxslots 丢弃普通槽位道具（写回 `bra_oblmapitem` 表） |
 
-**事件解耦原则**（详见 [DESIGN.md §2.24](./DESIGN.md#224-itm0-缓存槽与事件解耦)）：
-- `pickup.success`（拾取成功）与 `organize.fail`（整理失败）是独立事件，前端可同时收到分别处理
-- `craft.success`（合成成功）与 `organize.fail` 同理解耦
+**事件解耦原则**（详见 [DESIGN.md §2.24](./DESIGN.md#224-itm0-缓存槽与事件解耦)；itm0拾取语义拆分-设计案 §3）：
+- `pickup.success`（捡起成功，道具进入 itm0）与 `item.to_bag`（整理成功，道具进入背包）是独立事件，前端可分别呈现"捡起"和"入背包"两个时刻
+- `pickup.success`（捡起成功）与 `organize.fail`（整理失败）是独立事件，前端可同时收到分别处理（捡起后道具卡在 itm0）
+- `craft.success`（合成总事件）与每个产物的 `item.to_bag`（入背包）/ `organize.fail`（整理失败）解耦
+- `item.to_bag` 命名不绑死拾取场景，未来卸装备流程（卸下 → itm0 → 整理入背包）可直接复用
 - `organize.fail` 替代旧的 `pickup.bag_full_itm0` / `craft.bag_full_itm0` / `organize.bag_full` 三个事件，统一携带 `item_id`
 
 #### 8.14.1 `item.tag.func.php` — 道具 Tag 系统
@@ -1276,11 +1280,10 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `item_count_material_in_inventory` | `(&$pdata, $item_id): int` | 统计背包中指定 item_id 的素材数量 |
 | `item_consume_materials` | `(&$pdata, $materials, $slots, $workbench_materials): bool` | 按 consume 模式扣除素材（'all'=移除, 'durability'=扣耐久, 'none'=保留） |
 | `item_match_recipes_by_slots` | `(&$pdata, $slots, $workbench_materials): array` | 指向性判断：返回匹配的 recipe_id 列表 |
-| `item_recipe_visibility_filter` | `($recipe, &$pdata): bool` | 配方可见性过滤接口（P0 返回 true，后续由剧情/全局事件驱动） |
-| `item_get_discovered_recipes` | `(&$pdata): array` | 查询已发现配方（按可见性过滤后返回） |
-| `item_discover_recipe` | `(&$pdata, $recipe_id): void` | 标记配方为已发现（写入 `oblpara.discovered_recipes`） |
-| `item_craft_preview` | `($slots, &$pdata, $workbench_materials): array` | 前端预判 API 逻辑：返回 `{match_count, craftable, is_new_recipe}` |
-| `item_craft` | `($slots, &$pdata, $workbench_materials): void` | 合成入口（12 步流程：解析素材 → 指向性判断 → 空间检查 → 扣素材 → 产物入 itm0（`obl_put_item_to_itm0`）+ 自动整理（`obl_organize_inventory`）→ 新配方发现 → emit `craft.success`（仅 recipe_id）+ 整理失败 emit `organize.fail` 解耦） |
+| `item_recipe_visibility_filter` | `($recipe, &$pdata): bool` | 配方可见性过滤接口（P0 返回 true，所有配方可见；取消"已发现/未发现"机制后作为未来剧情/事件门控的扩展钩子保留） |
+| `item_get_visible_recipes` | `(&$pdata): array` | 查询配方列表（返回所有配方，经 `item_recipe_visibility_filter` 过滤；取消"已发现/未发现"机制后所有配方天然可见） |
+| `item_craft_preview` | `($slots, &$pdata, $workbench_materials): array` | 前端预判 API 逻辑：返回 `{match_count, craftable, recipe_id, preview_log}`（preview_log 为单对象，复用 log-templates.ts 模板渲染） |
+| `item_craft` | `($slots, &$pdata, $workbench_materials): void` | 合成入口（11 步流程：解析素材 → 指向性判断 → 空间检查 → 扣素材 → 产物入 itm0（`obl_put_item_to_itm0`）+ 自动整理（`obl_organize_inventory`）→ emit `craft.success`（仅 recipe_id）+ 整理失败 emit `organize.fail` 解耦） |
 | `obl_mechanic_craft_source` | `($template, &$pdata): void` | POI 机制占位（工作台素材的 POI 交互由 `item_get_available_workbench_materials` 接管，P0 不实现） |
 
 ---
@@ -1460,7 +1463,8 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **道具类别渲染**: 前端按 `itmk` 查 `vex-vue/src/data/itmk-locale.ts` 渲染中文类别名（如 WP→钝器、HH→生命恢复），未注册的 itmk 原样显示
 - **背包槽位**: `itempara` JSON 数组（index 0=itm0 缓存槽，1~itemmaxslots=普通槽），对应 `slot` 参数 1~itemmaxslots（slot=0 用于 `obl_discard` 丢弃 itm0 内容）
 - **itm0 锁定处理**: `itempara[0]` 非空时后端拒绝除 `obl_organize` / `obl_discard` 外的所有命令（emit `system.itm0_pending`）；前端需检测 itm0 状态，提示玩家整理或丢弃 itm0 内容
-- **整理失败事件**: 收到 `organize.fail`（携带 `item_id`）时，提示"背包已满，XX暂存到待整理区"；与 `pickup.success` / `craft.success` 是独立事件，可同时收到
+- **整理失败事件**: 收到 `organize.fail`（携带 `item_id`）时，Itm0Modal 持续显示强制玩家处理（整理或丢弃）；不在日志区渲染（黑名单），不触发 Toast；与 `pickup.success` / `item.to_bag` / `craft.success` 是独立事件，可同时收到
+- **道具入背包事件**: 收到 `item.to_bag`（携带 `item_id`）时，日志区呈现"把 XX 放进了背包" + Toast 即时反馈；多条批量合并为"把 N 件道具放进了背包"避免刷屏；自动整理（拾取/合成内部）与手动整理成功均复用此事件。事件呈现策略详见 [DESIGN.md §1.9](./DESIGN.md#19-结构化日志--前端-toast-强化提醒)
 - **结构化日志渲染**: 前端按 `entry.id` 查 `vex-vue/src/data/log-templates.ts` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `vex-vue/src/data/terrain-desc.ts` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除

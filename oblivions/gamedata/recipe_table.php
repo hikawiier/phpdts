@@ -57,19 +57,27 @@ return [
             ['item_id' => 'roasted_rabbit', 'count' => 1],
         ],
     ],
-
-    // ─── 需要工作台素材的配方 ──────────────────────────
-
     'craft_frying_pan' => [
         'category'  => 'tool',
         'materials' => [
-            ['tag'     => 'tag_forge', 'min_level' => 1, 'count' => 1, 'consume' => 'none'],
             ['itmk'    => 'MT', 'count' => 4, 'consume' => 'all'],
         ],
         'results'   => [
             ['item_id' => 'frying_pan', 'count' => 1],
         ],
     ],
+    'craft_dismantle_pan' => [
+        'category'  => 'tool',
+        'materials' => [
+            ['item_id' => 'frying_pan', 'count' => 1, 'consume' => 'all'],
+        ],
+        'results'   => [
+            ['item_id' => 'scrap_metal', 'count' => 4],
+        ],
+    ],
+
+    // ─── 需要工作台素材的配方 ──────────────────────────
+
     'craft_simple_stew' => [
         'category'  => 'food',
         'materials' => [

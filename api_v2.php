@@ -240,7 +240,7 @@ function handle_craft_recipes() {
 
     include_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
 
-    $recipes = item_get_discovered_recipes($pdata);
+    $recipes = item_get_visible_recipes($pdata);
 
     api_response('success', array('recipes' => $recipes));
 }
