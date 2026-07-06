@@ -26,17 +26,14 @@ const inventoryStore = useInventoryStore();
 const itm0 = computed<InventoryItem | null>(() => inventoryStore.itm0);
 
 function onOrganize(): void {
-  if (commandQueue.isLocked) return;
   inventoryStore.handleOrganize();
 }
 
 function onUseItm0(): void {
-  if (commandQueue.isLocked) return;
   inventoryStore.handleUseItem(0);
 }
 
 function onDiscardItm0(): void {
-  if (commandQueue.isLocked) return;
   inventoryStore.handleDiscardItm0();
 }
 
@@ -78,17 +75,17 @@ function slotMeta(item: InventoryItem): string {
           <button
             v-if="itm0.usable"
             class="term-btn"
-            :disabled="commandQueue.isLocked"
+            :disabled="!commandQueue.canExecute('obl_use_item')"
             @click="onUseItm0"
           >[使用]</button>
           <button
             class="term-btn"
-            :disabled="commandQueue.isLocked"
+            :disabled="!commandQueue.canExecute('obl_organize')"
             @click="onOrganize"
           >[尝试堆叠合并]</button>
           <button
             class="term-btn"
-            :disabled="commandQueue.isLocked"
+            :disabled="!commandQueue.canExecute('obl_discard')"
             @click="onDiscardItm0"
           >[丢到地上]</button>
         </div>

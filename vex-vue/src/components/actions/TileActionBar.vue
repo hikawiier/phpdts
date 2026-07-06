@@ -138,12 +138,10 @@ const showEmptyContent = computed<boolean>(() => {
 
 // ── 交互处理 ──
 function onSwitchRegion(): void {
-  if (commandQueue.isLocked) return;
   tileActionStore.handleSwitchRegion();
 }
 
 function onOpenCraft(): void {
-  if (commandQueue.isLocked) return;
   void craftStore.openModal();
 }
 
@@ -237,14 +235,14 @@ function poiCountLabel(poi: Poi): string {
         <button
           class="term-btn block"
           style="flex:1;"
-          :disabled="commandQueue.isLocked"
+          :disabled="!commandQueue.canExecute('obl_craft')"
           @click="onOpenCraft"
         >[合成]</button>
         <button
           v-if="switchRegionVisible"
           class="term-btn block"
           style="flex:2;"
-          :disabled="commandQueue.isLocked"
+          :disabled="!commandQueue.canExecute('move')"
           @click="onSwitchRegion"
         >{{ switchRegionText }}</button>
       </div>
@@ -311,7 +309,7 @@ function poiCountLabel(poi: Poi): string {
             <div v-else-if="showSearchBtn" style="margin-bottom:8px;">
               <button
                 class="term-btn block"
-                :disabled="commandQueue.isLocked"
+                :disabled="!commandQueue.canExecute('obl_search')"
                 @click="onSearch"
               >{{ searchBtnText }}</button>
             </div>
@@ -333,7 +331,7 @@ function poiCountLabel(poi: Poi): string {
               <div class="modal-footer">
                 <button
                   class="term-btn"
-                  :disabled="commandQueue.isLocked"
+                  :disabled="!commandQueue.canExecute('obl_pickup')"
                   @click="onPickupAll"
                 >[全部拾取]</button>
               </div>

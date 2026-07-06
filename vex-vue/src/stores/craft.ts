@@ -330,15 +330,11 @@ export const useCraftStore = defineStore('craft', () => {
    *   - itm0Locked=true（产物卡 itm0）→ closeModal，交背包界面处理
    *   - itm0Locked=false（产物入背包）→ 清空素材池保持打开，支持连续合成
    *
-   * itm0Locked.value 检查（合成前）：itm0 已占用时禁止合成（后端会返回
-   * craft.fail_itm0_occupied，此检查作为前端门控避免无谓请求）。
+   * itm0 锁定由 execute() 内部 _checkLocks 第 3 层拦截（obl_craft itm0Allowed=false）。
    *
    * result.success 不反映业务失败（后端命令处理无 return，HTTP 响应恒为 {}）。
    */
   async function doCraft(): Promise<void> {
-    if (commandQueue.isLocked) return;
-    if (itm0Locked.value) return; // itm0 锁定时禁止合成
-
     const slotsStr = backpackSlots.value
       .map(s => `${s.slot}:${s.count}`)
       .join(',');

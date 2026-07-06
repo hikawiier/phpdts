@@ -77,11 +77,16 @@
 
 > 道具对象七字段规范与 JSON 示例见 [CODEBASE.md §3.1](./CODEBASE.md#31-bra_oblplayers-玩家敌人统一数据表)。
 
-### 1.7 游戏刻 (tick)
+### 1.7 游戏刻 (tick) 与推进驱动
 
-- 每次移动更新 1 游戏刻，存储在 `$gamevars['obl_tick']`
-- 每次 tick 增长触发 `obl_resolve_tick_events($delta)`，通过监听器机制调度 NPC 敌人行动
-- **玩家操作与 NPC 回合互斥**：由战斗状态机管辖，`PROCESSING` 状态时拒绝提交战斗命令（推进 tick 仍允许）
+- 游戏刻存储在 `$gamevars['obl_tick']`，`$gamevars['obl_pretick']` 标记已处理到的刻
+- **前端心跳是后端 tick 推进的唯一驱动力**：前端守护进程 200ms fire-and-forget 调用 `api_v2.php?action=heartbeat`，触发 common.inc.php 末尾检测 `obl_pretick < obl_tick` 并执行 `obl_resolve_tick_events($delta)` 调度 NPC 敌人行动
+- **tick 推进的两种触发源**：
+  - 玩家提交推进 tick 的命令（`move` / `obl_explore` / `obl_search` / `obl_battle_start` / `obl_battle_action`）→ `obl_command.php` [F] 段 `obl_tick_advance()`
+  - NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`，下次心跳继续处理
+- **玩家操作与 NPC 回合互斥**：由战斗状态机管辖，PROCESSING 状态时拒绝推进 tick 的命令（[C2b]，防止玩家在 NPC 行动期间重复提交）
+
+> 完整链路（heartbeat → common.inc.php → tick 推进）与 PROCESSING 实际生命周期详见 [§2.16 前端守护进程模型](#216-前端守护进程模型心跳)。
 
 ### 1.8 回合 (Turn) vs 轮 (Round)
 
@@ -259,7 +264,7 @@ $obl_log->emit('move.success', 'move', [
 - 玩家提交战斗指令并结束 → `PLAYER_TURN → PROCESSING`（[C2d] 过渡，`player_acted` 事件）
 - tick 推进 / NPC 回合处理 → 在 `PROCESSING` 状态下允许（[F-bs] 刷新时间戳）
 - 后端 [C2b] 检测 `PROCESSING` 状态 → 拒绝提交战斗命令的命令
-- 前端 `isLocked` / `pendingNpc` getter 从 `oblBattleState === 'PROCESSING'` 派生
+- 前端 `commandQueue` 第 5 层 PROCESSING 锁（`_checkLocks` 中检查 `oblBattleState === 'PROCESSING'`）仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令；`isLocked` 只含 HTTP/演出两层全局锁，`pendingNpc` 仅用于 UI 状态展示（详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
 - 下一顺位判定 → `battle_manage_queue()` 集中确定 next 并写入 `bra_oblbattle_state.next_pid`：下一位是玩家则 `player_turn` 事件 → `PLAYER_TURN`，仍是 NPC 则 `self_loop` 事件刷新时间戳
 
 **设计理由**：全局标志是单布尔值，无法区分多战场。状态机按 qid 分离，支持多战场并发，且 qid 销毁后自动清理状态。
@@ -286,15 +291,22 @@ $obl_log->emit('move.success', 'move', [
 
 **设计理由**：mark 请求的唯一目的是"修改文件中某些条目的 played 字段"，即使被伪造也无严重后果（最多让玩家少看一条 battlelog），不值得走完整的 auth + DB 流程。
 
-### 2.6 flock 并发锁 + 前端短锁
+### 2.6 flock 并发锁 + 前端 5 层锁
 
-前后端三层防护防止短时间多次请求导致重复提交/状态错乱：
+前端 `commandQueue._checkLocks(command)` 提供 5 层细粒度锁（`canExecute` 与 `execute` 共用，避免行为分叉），后端 `flock` 提供独占文件锁兜底：
 
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
-| 前端命令队列锁 | `command-queue.ts: isLocked` | 布尔标志，覆盖 HTTP 请求期间 | `try/finally` 末尾 |
-| 前端战斗处理中锁 | `command-queue.ts: pendingNpc` | 从 `oblBattleState === 'PROCESSING'` 派生（响应式） | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
+| 前端第 1 层：HTTP/冷却 | `commandQueue._locked` / `_cooldown` | HTTP 请求期间 + 后端返回 timer 设置的冷却 | `try/finally` 末尾 / 冷却计时到期 |
+| 前端第 2 层：战斗演出 | `battleStore.isPlayingBattleLog` | battlelog 播放期间阻止所有命令 | `fetchAndPlayBattleLog` 播完释放 |
+| 前端第 3 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
+| 前端第 4 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
+| 前端第 5 层：PROCESSING | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令 | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
 | 后端文件锁 | `obl_command.php: flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
+
+**`isLocked` 语义边界**：`isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制。`pendingNpc` getter 仍从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`。
+
+> 完整 5 层锁架构与 `COMMAND_REGISTRY` 三维度分类详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)。
 
 **为什么选 flock 而非 DB 锁**：
 - flock 在进程异常退出时由 OS 自动释放，不会死锁
@@ -333,6 +345,8 @@ $obl_log->emit('move.success', 'move', [
 
 ### 2.9 战斗状态机简化
 
+#### 2.9.1 玩家战斗模式（action 字段）
+
 ```
 normal（探索）←→ battle（战斗）
 ```
@@ -341,6 +355,43 @@ normal（探索）←→ battle（战斗）
 - **ended 取消**：模态框播放完自动关闭，关闭后刷新状态决定去留
 
 **设计理由**：减少中间态，降低状态机复杂度。前端确认界面承担了 prebattle 的确认职责，无需后端状态。
+
+#### 2.9.2 战场状态机三态（obl_battle_state 字段）
+
+`action` 字段只区分"是否在战斗"，但战斗内部还有三态流转，由独立的 [`bra_oblbattle_state`](../include/game/battle_state_machine.func.php) 表管理（按 qid 分离，支持多战场）：
+
+```
+IDLE ──battle_start──→ PROCESSING（队列创建即 PROCESSING）
+                          │
+                          ├── player_turn ──→ PLAYER_TURN（轮到玩家）
+                          │                      │
+                          │                      ├── player_acted ──→ PROCESSING（玩家行动后）
+                          │                      └── battle_end   ──→ IDLE
+                          │
+                          ├── self_loop ──→ PROCESSING（NPC 持续行动，刷新时间戳）
+                          │
+                          └── battle_end ──→ IDLE
+```
+
+| 状态 | 含义 | 玩家是否可操作 |
+|------|------|---------------|
+| `IDLE` | 无战斗 | 探索命令 |
+| `PLAYER_TURN` | 玩家回合 | 仅 `obl_battle_action` |
+| `PROCESSING` | 后端处理中（NPC 行动 / 玩家行动已提交未结算） | 拒绝推进 tick 的命令 |
+
+**关键转换触发点**（代码位置见 [CODEBASE.md §6.4.1](./CODEBASE.md#641-战斗状态机三态与转换触发点)）：
+- 队列创建（`battle_queue_create_and_init`）：初始为 `PROCESSING`（首顺位是 NPC 时 NPC 先行动；首顺位是玩家时立即切到 `PLAYER_TURN`）
+- 玩家提交推进 tick 命令（`obl_command.php` [C2d]）：`PLAYER_TURN → PROCESSING`
+- `battle_manage_queue` 检测下一顺位是玩家：`PROCESSING → PLAYER_TURN`
+- NPC 行动调度（`obl_tick_phase_battle_npc`）：`PROCESSING → PLAYER_TURN`
+- 队列解散（`battle.queue.main.php`）：任意 → `IDLE`
+
+**`self_loop` 转换的设计用途**：NPC 多回合连击时保持 `PROCESSING` 状态并刷新时间戳，避免被超时恢复机制误判为卡死。`obl_battle_state_find_stale` 会检测 `PROCESSING` 状态超过 30 秒的战场并降级到 `PLAYER_TURN`（兜底异常恢复）。
+
+**与 §2.10 命令状态强制过滤的协作**：
+- `action='battle'` 时 `obl_command_allowed_by_state` 仅允许 `obl_battle_action`（覆盖 `PLAYER_TURN` 与 `PROCESSING`）
+- `obl_tick_has_busy_battle()` 检查**任何**战场在 `PROCESSING`，配合 [C2b] 拒绝推进 tick 命令（防止玩家在 NPC 行动期间重复提交）
+- 二者正交：`action` 是玩家维度的战斗状态，`obl_battle_state` 是战场维度的处理状态
 
 ### 2.10 命令状态强制过滤
 
@@ -439,6 +490,58 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 **入口**：`api_v2.php?action=heartbeat`，响应仅 `{"status":"success"}`，不进业务字段组装。
 
 **实施**：`battle.ts` 新增 `startDaemonPoll/stopDaemonPoll`，`App.vue` `onMounted` 启动。
+
+#### 2.16.1 heartbeat → tick 推进完整链路
+
+heartbeat 之所以能驱动后端 tick 推进，是因为 `api_v2.php` 第 11 行 `require_once './include/core/common.inc.php'`——**所有 API 请求（含 heartbeat）都会加载 common.inc.php**，而 common.inc.php 末尾会检测并处理未消费的 tick 差值：
+
+```
+前端 _daemonBeat（200ms 周期）
+  ↓
+fetch('/api_v2.php?action=heartbeat')
+  ↓
+api_v2.php 加载 common.inc.php
+  ↓
+common.inc.php 末尾检测：obl_pretick < obl_tick ?
+  ↓ 是
+obl_tick_synchronize()      // 标记已处理（obl_pretick = obl_tick）
+  ↓
+obl_resolve_tick_events()   // 触发 NPC 行动
+  ├─ battle_npc phase → obl_tick_phase_battle_npc → NPC 行动
+  │   └─ battle_manage_queue → 状态机切换（PROCESSING → PLAYER_TURN / self_loop / IDLE）
+  ├─ idle_npc phase → 非战斗敌人 AI（patrol/aggressive/idle）
+  └─ post phase → tick 后处理（预留扩展）
+  ↓
+NPC 行动后 obl_tick_request_advance() → 末尾 obl_tick_advance()（obl_tick++）
+  ↓
+$ginfochange = true → save_gameinfo() 持久化 obl_tick/obl_pretick
+  ↓
+下次 heartbeat 检测 obl_pretick < obl_tick 仍成立 → 继续 NPC 行动循环
+```
+
+**关键设计点**：
+- 心跳请求**不携带任何业务参数**，仅触发 common.inc.php 的末尾逻辑
+- 后端通过 `obl_pretick < obl_tick` 判断是否有未处理 tick，与请求来源无关——任何请求（含 command.php 命令提交）都会触发同样的处理
+- NPC 多回合连击时，每次心跳推进一个 NPC 行动，通过 `obl_tick_request_advance` 自驱动下次心跳继续
+
+#### 2.16.2 PROCESSING 的实际生命周期
+
+由于心跳 200ms 高频驱动，PROCESSING 通常在 **200-400ms 内**（一个心跳周期）被处理完：
+
+| 场景 | PROCESSING 持续时间 | 前端感知 |
+|------|---------------------|---------|
+| 单次 NPC 行动 | 200-400ms | 1 秒轮询大概率看不到，已切回 PLAYER_TURN |
+| NPC 多回合连击（self_loop） | N × 200ms | 1 秒轮询可能看到 PROCESSING |
+| 服务器高负载 / 数据库慢 | 不定 | 1 秒轮询看到 PROCESSING，启动轮询循环 |
+
+**前端实际感知 PROCESSING 的场景**：
+1. 玩家执行 `obl_battle_action` 后 `_checkBattleState` 立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
+2. NPC 多回合连击时 1 秒轮询拉取到 PROCESSING
+
+**设计含义**：
+- 前端 PROCESSING 锁（`commandQueue` 第 5 层，仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令）实际是兜底机制，触发概率低但必要
+- 前端 1 秒轮询拉取 player_info 是"状态发现"，不是"驱动后端"——这是常见误解
+- 真正驱动后端 NPC 行动的是 200ms 心跳，而非 1 秒轮询
 
 ### 2.17 Phase 0 vs Phase 1 — 两阶段战斗执行分离
 
@@ -665,6 +768,74 @@ if ($s === '0' || $s === '') continue;
 - emit 错误日志让运维能定位异常源头，便于排查
 - 自然修复（去除检查）让异常数据被正常逻辑消化，无需额外代码
 - 业务检查与死防御外观相似但语义不同——前者是玩家操作的合法反馈，后者是数据完整性的掩盖
+
+---
+
+### 2.26 前后端战斗状态同步与窗口期
+
+前端 `currentMode`（UI 状态）与后端 `action`（逻辑状态）在不同步场景下存在**合理窗口期**——这不是 bug，而是设计选择。明确边界有助于避免误判与错误同步逻辑。
+
+#### 2.26.1 窗口期合理性边界
+
+| 场景 | 方向 | 合理性 | 说明 |
+|------|------|--------|------|
+| 玩家主动攻击时前端先切换 `currentMode='battle'` | 前端比后端**早进入** | ✅ 合理 | 玩家需要装填区才能发起 `obl_battle_start`，UI 必须先切换 |
+| 退出战斗时前端等 battlelog 播完才切 `currentMode='normal'` | 前端比后端**晚退出** | ✅ 合理 | 演出完整性优先，避免战斗突然结束的突兀感 |
+| 被动遭遇时后端先切换 `action='battle'` | 后端比前端**早进入** | ✅ 合理 | 遭遇战由后端判定触发，前端通过 `player_info` 跟随 |
+
+**反向不合理场景**（应视为 bug 修正）：
+- ❌ 前端比后端**早退出**战斗——前端处理有 bug，应修正同步逻辑
+- ❌ 玩家主动攻击时前端比后端**晚进入**战斗——`startBattle` 必须立即切换 currentMode，否则装填区无法显示
+
+#### 2.26.2 三个场景的同步时序
+
+**路径 A：玩家主动攻击**——前端比后端早进入：
+
+```
+玩家点敌人
+  ↓
+battleStore.startBattle() → currentMode='battle'（前端先切换，显示装填区）
+  ↓
+玩家装填 + 点击执行
+  ↓
+PreloadArea.onExecute → commandQueue.execute({ command: 'obl_battle_start' })
+  ↓
+后端收到命令：action='normal'（尚未切换）→ obl_command_allowed_by_state 允许
+  ↓
+后端处理 obl_battle_start → 创建队列（状态=PROCESSING）→ action='battle' → 切到 PLAYER_TURN
+  ↓
+后续 refreshBattle → enterBattleMode（currentMode 已是 battle，仅更新 isPlayerTurn）
+```
+
+**路径 B：被动遭遇**——后端先切换，前端跟随：
+
+```
+玩家执行 move/obl_explore/obl_search
+  ↓
+后端触发遭遇战 → battle_queue_create_and_init → action='battle'，状态=PROCESSING
+  ↓
+前端 _checkBattleState 拉取 player_info → 看到 action='battle'
+  ↓
+refreshBattle → enterBattleMode（currentMode 切换到 battle）
+```
+
+**路径 C：退出战斗**——前端比后端晚退出：
+
+```
+后端 battle_end → action='normal'，obl_battle_state=IDLE
+  ↓
+前端 refreshBattle 拉取 player_info → action !== 'battle'
+  ↓
+fetchAndPlayBattleLog（先播完积压的 battlelog）← 关键：演出完整性优先
+  ↓
+播完后 afterAction !== 'battle' → exitBattleMode → currentMode='normal'
+```
+
+#### 2.26.3 设计含义
+
+- `currentMode` 反映"UI 应该处于什么模式"，`action` 反映"逻辑上是否在战斗中"——二者在稳定状态下一致，仅在窗口期有合理偏差
+- 前端白名单判断应**以前端 `currentMode` 为真值源**（详见 [战斗锁定白名单-设计案](./docs/战斗锁定白名单-设计案.md) §4 决策 5），因为前端 UI 反馈需要即时性，不能等待后端 action 同步
+- `obl_battle_start` 在前端归"战斗内"（mode='battle'），在后端归"探索内"（action='normal' 时允许）——两端分类不同但语义自洽：前端按 UI 模式，后端按逻辑状态
 
 ---
 

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
 
 > 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
 > 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
@@ -108,7 +108,8 @@ vex-vue/
     │   ├── entities.ts             # 实体层数据（entities computed 派生自 mapStore，不依赖 isDown）
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
     │   ├── battle-director.ts      # 战斗导演模块（同步纯函数：编排 raw entries → 分层演出脚本 PlayScript）
-    │   ├── command-queue.ts        # 命令队列（防抖 + 锁定 + 冷却）
+    │   ├── command-registry.ts    # 命令三维度分类（mode/advancesTick/itm0Allowed）单一真值源
+    │   ├── command-queue.ts        # 命令队列（5 层锁 + canExecute + 冷却）
     │   ├── data-manager.ts         # 数据层（白名单缓存 + 去重 + 事件总线）
     │   ├── inventory.ts            # 背包 + 装备（loadInventory + handleDiscard）
     │   ├── log.ts                  # 日志（refreshLog + 增量检测 + Toast 触发）
@@ -134,16 +135,38 @@ vex-vue/
 
 > 后端概念定义见 [oblivions/CODEBASE.md 第二节](../oblivions/CODEBASE.md)。以下为前端特有概念。
 
-### 3.1 三层并发锁
+### 3.1 五层并发锁
 
-前端通过三层锁防止重复提交和状态竞争：
+前端通过 `commandQueue._checkLocks(command)` 在 `execute()` 和 `canExecute(command)` 内部依次检查 5 层锁。前两层为全局锁（写入 `isLocked`），后三层为按命令维度（依赖 `COMMAND_REGISTRY` 三维度分类）的细粒度锁：
 
-| 层 | 实现位置 | 覆盖范围 | 说明 |
-|----|---------|---------|------|
-| **HTTP 请求锁** | `commandQueue._locked` | HTTP 请求期间 | 防止快速连点导致重复 POST |
-| **全生命周期锁** | `battleStore.isProcessingBattle` | 拉取-播放-标记-刷新全流程 | 防止 refreshBattle 重入 |
-| **播放器锁** | `battleStore.isPlayingBattleLog` | battlelog 播放期间 | 防止 fetchAndPlayBattleLog 重入 |
-| **后端文件锁** | `flock(LOCK_EX\|LOCK_NB)` | 命令执行期间 | 多请求并发时拒绝后续（返回 COMMAND_IN_PROGRESS） |
+| 层 | 实现位置 | 检查内容 | 覆盖范围 |
+|----|---------|---------|---------|
+| **1. HTTP/冷却** | `commandQueue._locked` / `_cooldown` | HTTP 请求锁 + 后端返回 timer 设置的冷却 | 防止快速连点重复 POST；冷却未过期拒绝 |
+| **2. 战斗演出** | `battleStore.isPlayingBattleLog` | battlelog 播放期间 | 防止 fetchAndPlayBattleLog 重入；同时阻止所有命令（全局锁） |
+| **3. itm0** | `inventoryStore.itm0 !== null` | itm0 缓存槽非空时仅放行 `spec.itm0Allowed=true` 命令（整理/丢弃/使用手持） | 强制玩家处理遗留道具 |
+| **4. 模式** | `battleStore.currentMode` | 探索模式拒绝 `mode='battle'` 命令；战斗模式拒绝 `mode='explore'` 命令 | UI 状态与命令类型匹配 |
+| **5. PROCESSING** | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令（`obl_battle_action` 等推进 tick） | 防止玩家在 NPC 行动期间重复提交推进 tick 命令 |
+
+**关键设计**：
+
+- `isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈（状态栏指示器）；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制
+- `canExecute(command)` 与 `execute()` 共用 `_checkLocks()`，保证 UI 查询与实际执行判断完全一致——避免重蹈 `isLocked` 与 `execute` 行为分叉的隐性 bug
+- 命令三维度分类（`mode` / `advancesTick` / `itm0Allowed`）单一真值源在 `COMMAND_REGISTRY`，新增命令时需同步登记后端 `obl_command_allowed_by_state` / `obl_command_advances_tick` / `oblivions_router.php` itm0 门控
+- `obl_battle_start` 前端归 `mode='battle'`（UI 状态：startBattle 立即切换 currentMode），后端归探索内（`action='normal'` 时允许）——两端分类不同但语义自洽
+
+> 详细设计案见 [战斗锁定白名单-设计案](../oblivions/docs/战斗锁定白名单-设计案.md)。
+
+**与后端三层白名单对应**：
+
+| 前端层 | 后端对应 |
+|--------|---------|
+| 第 3 层 itm0 | `oblivions_router.php` itm0 门控（`itempara[0]` 非空时只放行 `obl_organize`/`obl_discard`） |
+| 第 4 层 模式 | `obl_command_allowed_by_state`（`action='battle'` 时只允许 `obl_battle_action`） |
+| 第 5 层 PROCESSING | `obl_tick_has_busy_battle()` + `obl_command_advances_tick()`（PROCESSING 时拒绝推进 tick 命令） |
+
+**全生命周期锁**（独立于 5 层锁）：`battleStore.isProcessingBattle` 覆盖"拉取-播放-标记-刷新"全流程，防止 `refreshBattle` 重入，由 `battleStore` 自行管理。
+
+**后端文件锁**：`flock(LOCK_EX\|LOCK_NB)` 在命令执行期间持有，多请求并发时拒绝后续（返回 `COMMAND_IN_PROGRESS`）。
 
 ### 3.2 事件总线（dataManager）
 
@@ -175,6 +198,39 @@ battle（战斗）
   ↓ 回到 normal
 ```
 
+#### 3.3.1 前端 currentMode 与后端 action 的同步路径
+
+前端 `currentMode`（UI 状态）与后端 `action`（逻辑状态）通过 `player_info` 同步。三种场景的同步方向不同：
+
+| 场景 | 同步方向 | 实现路径 |
+|------|---------|---------|
+| **玩家主动攻击** | 前端先切换 currentMode='battle' | `useMapBusiness.onEnemyClick` → `battleStore.startBattle()` 立即设 currentMode；后端 action 在 `obl_battle_start` 命令执行后才切换 |
+| **被动遭遇** | 后端先切换 action='battle'，前端跟随 | 玩家 `move`/`obl_explore`/`obl_search` 触发后端遭遇战 → `_checkBattleState` 拉取 `player_info` 看到 action='battle' → `refreshBattle` → `enterBattleMode` |
+| **退出战斗** | 后端先切换 action='normal'，前端延迟到 battlelog 播完 | `refreshBattle` 看到 action !== 'battle' → `fetchAndPlayBattleLog` 播完积压战斗日志 → `exitBattleMode` |
+
+#### 3.3.2 窗口期合理性边界
+
+`currentMode` 与 `action` 在以下窗口期不一致是**合理设计**，非 bug：
+
+| 窗口期 | 方向 | 合理性 |
+|--------|------|--------|
+| 玩家主动攻击时前端先切换 currentMode='battle' | 前端比后端**早进入** | ✅ 玩家需要装填区才能发起 obl_battle_start |
+| 退出战斗时前端等 battlelog 播完才切 currentMode='normal' | 前端比后端**晚退出** | ✅ 演出完整性优先，避免战斗突然结束的突兀感 |
+| 被动遭遇时后端先切换 action='battle' | 后端比前端**早进入** | ✅ 遭遇战由后端判定触发，前端通过 player_info 跟随 |
+
+**反向不合理场景**（应视为 bug 修正）：
+- ❌ 前端比后端**早退出**战斗——前端处理有 bug，应修正同步逻辑
+- ❌ 玩家主动攻击时前端比后端**晚进入**战斗——`startBattle` 必须立即切换 currentMode
+
+#### 3.3.3 战斗内部状态（oblBattleState）
+
+`currentMode='battle'` 时，战斗内部还有三态流转（来自后端 `player_info.obl_battle_state`）：
+- `PLAYER_TURN`：玩家可操作，提交 `obl_battle_action`
+- `PROCESSING`：后端处理中（NPC 行动 / 玩家行动已提交未结算），前端启动 1 秒轮询循环
+- `IDLE`：无战斗（不应在 currentMode='battle' 时出现）
+
+前端 `commandQueue` 第 5 层 PROCESSING 锁（仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令）用于防止玩家在 NPC 行动期间重复提交 `obl_battle_action`，与后端 [C2b] 一致。详见 [§3.1 五层并发锁](#31-五层并发锁)、[oblivions/DESIGN.md §2.9.2](../../oblivions/DESIGN.md#292-战场状态机三态obl_battle_state-字段) 与 [§2.16.2](../../oblivions/DESIGN.md#2162-processing-的实际生命周期)。
+
 ### 3.4 装填区（PreloadArea）两种模式
 
 | 模式 | 触发时机 | 执行命令 | 说明 |
@@ -192,6 +248,53 @@ battle（战斗）
 - 退出瞄准 → `broadcast('battle:aim-exit')`
 
 `uiStore.battleBtnState` 三态（`normal`/`battle`/`aim`）通过监听这些事件同步。
+
+### 3.6 心跳守护进程与 NPC 轮询
+
+[`battle.ts`](../src/stores/battle.ts) 实现两个职责分离的定时器，是后端游戏刻推进的唯一驱动力。
+
+#### 3.6.1 两个定时器
+
+| 定时器 | 间隔 | 实现 | 职责 |
+|--------|------|------|------|
+| **心跳守护进程** | **200ms** | [`_daemonBeat`](../src/stores/battle.ts#L157-L164) → `fetch('/api_v2.php?action=heartbeat')` | fire-and-forget 触发后端 tick 推进 + NPC 行动（不读响应 body） |
+| **NPC 状态轮询** | **1000ms** | [`startNpcTurnRefresh`](../src/stores/battle.ts#L130-L137) → `dataManager.fetch('player_info')` | 状态发现——查看是否切回 PLAYER_TURN |
+
+**启动方式**：`App.vue` `onMounted` 调用 `battleStore.startDaemonPoll()`，页面挂载期间持续运行；NPC 状态轮询由 `refreshBattle` 在感知到 PROCESSING 时启动，切回 PLAYER_TURN/IDLE 时停止。
+
+#### 3.6.2 完整链路
+
+```
+前端 _daemonBeat（每 200ms）
+  ↓
+fetch('/api_v2.php?action=heartbeat')  ← 不读响应 body
+  ↓
+后端 api_v2.php 加载 common.inc.php
+  ↓
+common.inc.php 末尾检测：obl_pretick < obl_tick ?
+  ↓ 是
+obl_resolve_tick_events() → 调度 NPC 行动
+  ↓
+状态机切换（PROCESSING → PLAYER_TURN / self_loop / IDLE）
+  ↓
+下次心跳继续（若 self_loop 持续 NPC 行动）
+```
+
+后端细节详见 [oblivions/DESIGN.md §2.16.1](../../oblivions/DESIGN.md#2161-heartbeat--tick-推进完整链路)。
+
+#### 3.6.3 PROCESSING 实际生命周期
+
+由于心跳 200ms 高频驱动，PROCESSING 通常在 **200-400ms 内**（一个心跳周期）被处理完：
+
+- 单次 NPC 行动：1 秒轮询大概率看不到 PROCESSING，已切回 PLAYER_TURN
+- NPC 多回合连击（self_loop）：1 秒轮询可能看到 PROCESSING
+- 服务器高负载：1 秒轮询看到 PROCESSING，启动轮询循环
+
+**前端实际感知 PROCESSING 的场景**：
+1. 玩家执行 `obl_battle_action` 后 `_checkBattleState` 立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
+2. NPC 多回合连击时 1 秒轮询拉取到 PROCESSING
+
+**常见误解**：1 秒轮询不是"驱动后端"——真正驱动后端 NPC 行动的是 200ms 心跳，1 秒轮询只是"状态发现"。
 
 ---
 
@@ -477,7 +580,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 | `battleStore` | 战斗状态机 | `currentMode`/`isPlayingBattleLog`/`isProcessingBattle`/`battleModalOpen` | `startBattle(enemyPid)`/`refreshBattle()`/`fetchAndPlayBattleLog()`/`notifyModalClosed()` |
 | `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
 | `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
-| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` | `execute(params)` |
+| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(params)` / `canExecute(command)` |
 
 ### 7.2 Store 事件监听注册模式
 
@@ -496,23 +599,35 @@ battleStore.registerListeners();
 
 ### 7.3 commandQueue（非 Pinia 单例）
 
-`src/stores/command-queue.ts` 导出的 `commandQueue` 单例（非 Pinia store），提供 HTTP 请求级锁：
+`src/stores/command-queue.ts` 导出的 `commandQueue` 单例（非 Pinia store），提供 5 层锁 + `canExecute` + `execute` 一致性查询：
 
 ```typescript
 class CommandQueue {
   private _locked = false;
   private _cooldown = 0;
-  
+
+  // UI 查询与 execute() 共用 _checkLocks
+  private _checkLocks(command: string): boolean
+  canExecute(command: string): boolean
+
   async execute(params: Record<string, string>): Promise<CommandResult>
+
+  // 全局锁（仅 HTTP/演出两层）
   get isLocked(): boolean
+  // UI 状态展示（StatusBar NPC 指示器），不参与 isLocked
+  get pendingNpc(): boolean
   get remainingCooldown(): number
 }
 ```
 
-- `_locked` 仅覆盖 HTTP 请求期间，**不覆盖**"播放 battlelog + 刷新状态"的全生命周期
-- 全生命周期锁由 `battleStore.isProcessingBattle` 负责（详见第八章）
-- 锁定时返回 `{ success: false, error: 'LOCKED', message: '操作进行中' }`
-- 冷却中返回 `{ success: false, error: 'COOLDOWN', message: '冷却中' }`
+**关键设计**：
+
+- `_checkLocks(command)` 依次检查 5 层锁（详见 [§3.1 五层并发锁](#31-五层并发锁)），`canExecute` 与 `execute` 共用同一逻辑，保证 UI 反馈与实际执行一致
+- `isLocked` getter 仅包含第 1+2 层（HTTP 锁 + 战斗演出锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制
+- `pendingNpc` getter 从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`
+- 锁定时返回 `{ success: false, error: 'LOCKED', message: '当前状态不可执行此操作' }`
+- 命令三维度分类（`mode` / `advancesTick` / `itm0Allowed`）从 `COMMAND_REGISTRY`（`src/stores/command-registry.ts`）读取，是单一真值源
+- 全生命周期锁（`battleStore.isProcessingBattle`）独立于 5 层锁，覆盖"拉取-播放-标记-刷新"全流程防止 `refreshBattle` 重入（详见第八章）
 
 ---
 

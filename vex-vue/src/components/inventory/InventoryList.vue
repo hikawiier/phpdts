@@ -33,12 +33,10 @@ const num = computed<number>(() => inventoryStore.num);
 const limit = computed<number>(() => inventoryStore.limit);
 
 function onDiscard(slot: number): void {
-  if (commandQueue.isLocked) return;
   inventoryStore.handleDiscard(slot);
 }
 
 function onUse(slot: number): void {
-  if (commandQueue.isLocked) return;
   inventoryStore.handleUseItem(slot);
 }
 
@@ -78,12 +76,12 @@ function slotMeta(item: InventoryItem): string {
             <button
               v-if="s.usable"
               class="term-btn"
-              :disabled="commandQueue.isLocked"
+              :disabled="!commandQueue.canExecute('obl_use_item')"
               @click="onUse(s.slot)"
             >[使用]</button>
             <button
               class="term-btn discard"
-              :disabled="commandQueue.isLocked"
+              :disabled="!commandQueue.canExecute('obl_discard')"
               @click="onDiscard(s.slot)"
             >[丢弃]</button>
           </div>

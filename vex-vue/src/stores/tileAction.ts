@@ -117,7 +117,6 @@ export const useTileActionStore = defineStore('tileAction', () => {
    *   - 成功后失效 tile_actions/player_inventory/game_map + loadMap + 广播
    */
   async function handleExplore(): Promise<void> {
-    if (commandQueue.isLocked) return;
     debugBus.emit('action', 'explore:trigger', {});
     try {
       const result = await commandQueue.execute({ command: 'obl_explore' });
@@ -150,7 +149,6 @@ export const useTileActionStore = defineStore('tileAction', () => {
    *   - 成功后失效 tile_actions/player_inventory + 广播 + 重新打开该 POI 模态框
    */
   async function handleSearch(iaid: string | number): Promise<void> {
-    if (commandQueue.isLocked) return;
     debugBus.emit('action', 'search:trigger', { iaid });
     try {
       const result = await commandQueue.execute({
@@ -267,7 +265,6 @@ export const useTileActionStore = defineStore('tileAction', () => {
    *   - 成功后失效缓存 + loadMap + 广播
    */
   async function handleSwitchRegion(): Promise<void> {
-    if (commandQueue.isLocked) return;
     const mapStore = useMapStore();
     if (!mapStore.links || mapStore.curRegion === null) return;
 

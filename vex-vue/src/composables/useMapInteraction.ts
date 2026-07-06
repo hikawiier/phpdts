@@ -15,7 +15,6 @@
 import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
 import { useBattleStore } from '@/stores/battle';
-import { commandQueue } from '@/stores/command-queue';
 import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP } from '@/composables/useMapRender';
 import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapReachability';
 import type { TileInfo } from '@/types/api';
@@ -41,7 +40,6 @@ export function setInteractionCallbacks(callbacks: {
 async function handleKeyMove(dx: number, dy: number): Promise<void> {
   const mapStore = useMapStore();
   if (mapStore.curLoc === null || mapStore.curRegion === null || !mapStore.links) return;
-  if (commandQueue.isLocked) return;
 
   const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as Record<string, TileInfo & { x?: number; y?: number }> | undefined;
   if (!tiles) return;

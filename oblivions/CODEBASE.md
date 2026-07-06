@@ -666,7 +666,10 @@ obl_command.php 内部流程：
    [C2a] itm0 门控（oblivions_router.php）：itempara[0] 非空时只允许 obl_organize / obl_discard
         → 被拒绝的命令 emit 'system.itm0_pending' 日志，处理 itm0 是最高优先级
    [C2b] obl_tick_has_busy_battle() → 委托 obl_battle_state_has_busy_battle()
-        → 战场 PROCESSING 时拒绝推进 tick 的命令，emit 'command.rejected' (reason=battle_busy)
+        → 检查**任何**战场在 PROCESSING 状态（不只当前玩家所在战场）
+        → 配合 obl_command_advances_tick()：PROCESSING 时拒绝推进 tick 的命令
+        → emit 'command.rejected' (reason=battle_busy)
+        → 与前端 commandQueue 第 5 层 PROCESSING 锁对应（仅拦截 `advancesTick=true` 命令，详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
   [D]  if (!$command_rejected && $pdata['hp'] > 0):
         require oblivions_router.php
         oblivions_cmd_dispatch($command, $pdata, $post)
@@ -693,6 +696,40 @@ obl_command.php 内部流程：
 - **跳过模板渲染**：SPA 前端不需要 HTML 模板，响应只返回最小确认 `{}`
 - **使用 `obl_save_player()`** 替代 `player_save()`，仅写 `bra_oblplayers`
 - **前端通过 `api_v2.php` 获取业务数据**，命令响应不再包含 `$gamedata` 或 `battlelog` 字段
+
+### 6.4.1 战斗状态机三态与转换触发点
+
+战斗状态机由 [`battle_state_machine.func.php`](../include/game/battle_state_machine.func.php) 实现，存储在 `bra_oblbattle_state` 表（按 qid 分离）。三态转换的代码触发点：
+
+| # | 转换 | 触发位置 | 触发时机 |
+|---|------|---------|---------|
+| 1 | (创建) → PROCESSING | [`battle.queue.func.php:154`](../include/game/battle/battle.queue.func.php#L154) `obl_battle_state_create($qid, OBL_BS_PROCESSING)` | `battle_queue_create_and_init` 创建先攻队列后 |
+| 2 | PLAYER_TURN → PROCESSING | [`obl_command.php:111`](../include/core/obl_command.php#L111) `obl_battle_state_transition($qid, 'player_acted')` [C2d] | 玩家提交推进 tick 命令后 |
+| 3 | PROCESSING → PLAYER_TURN | [`battle.queue.main.php:172`](../include/game/battle/battle.queue.main.php#L172) `obl_battle_state_transition($qid, 'player_turn')` | `battle_manage_queue` 检测下一顺位是玩家时 |
+| 4 | PROCESSING → PLAYER_TURN | [`enemy_ai.func.php:81`](../include/game/enemy_ai.func.php#L81) `obl_battle_state_transition($qid, 'player_turn')` | `obl_tick_phase_battle_npc` 调度 NPC 行动时，发现下一顺位是玩家 |
+| 5 | PROCESSING → PROCESSING | `obl_battle_state_refresh($qid)` | NPC 持续行动（self_loop 转换的轻量替代，仅刷新时间戳） |
+| 6 | 任意 → IDLE | [`battle.queue.main.php:141`](../include/game/battle/battle.queue.main.php#L141) `obl_battle_state_transition($qid, 'battle_end')` + `obl_battle_state_destroy($qid)` | 队列解散时 |
+| 7 | (异常恢复) PROCESSING → PLAYER_TURN | [`battle_state_machine.func.php:150`](../include/game/battle_state_machine.func.php#L150) `obl_battle_state_reset($qid, OBL_BS_PLAYER_TURN)` | `obl_battle_state_find_stale` 检测 PROCESSING 超过 30 秒未更新 |
+
+**状态转换表**（[battle_state_machine.func.php L104-117](../include/game/battle_state_machine.func.php#L104-L117)）：
+
+```
+IDLE        + battle_start → PROCESSING
+PLAYER_TURN + player_acted → PROCESSING
+PLAYER_TURN + battle_end   → IDLE
+PROCESSING  + player_turn  → PLAYER_TURN
+PROCESSING  + battle_end   → IDLE
+PROCESSING  + self_loop    → PROCESSING（仅刷新时间戳）
+```
+
+**非法转换处理**：不在转换表中的事件被记录到 `$obl_error_log`（`battle_state.illegal_transition`），保持原状态，不抛异常（避免阻塞流程）。
+
+**与命令执行流程的关系**：
+- [C2] 检查 `action` 字段（玩家维度，normal/battle）→ §2.10
+- [C2b] 检查 `obl_battle_state` 字段（战场维度，PROCESSING）→ 拒绝推进 tick 命令
+- [C2d] 触发状态机过渡（`player_acted` 事件）
+
+设计原则与概念解释详见 [DESIGN.md §2.9.2](./DESIGN.md#292-战场状态机三态obl_battle_state-字段)。
 
 ### 6.5 并发锁机制
 
@@ -977,6 +1014,9 @@ return [
 | `obl_resolve_tick_events` | `($delta): void` | tick 事件处理入口（由 common.inc.php 调用，抓取玩家+构造上下文+调度） |
 | `obl_tick_has_busy_battle` | `(): bool` | 检查是否有战场在 PROCESSING 状态（委托 obl_battle_state_has_busy_battle） |
 
+> **tick 推进驱动机制**：前端心跳 200ms fire-and-forget 调用 `api_v2.php?action=heartbeat`，触发 common.inc.php 末尾检测 `obl_pretick < obl_tick` 并调用 `obl_resolve_tick_events`。详见 [DESIGN.md §2.16](./DESIGN.md#216-前端守护进程模型心跳)。
+> **battle_npc phase 监听器**：`obl_tick_phase_battle_npc` 位于 [§8.7 enemy_ai.func.php](#87-enemy_aifuncphp--npc-敌人-ai)，负责调度 NPC 行动并触发战斗状态机转换（详见 [§6.4.1](#641-战斗状态机三态与转换触发点)）。
+
 ### 8.3 explore.func.php
 
 | 函数 | 签名 | 说明 |
@@ -1036,6 +1076,8 @@ return [
 NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
 
 > **模块迁移说明**：NPC 生成（`obl_init_enemies` / `obl_create_enemy_record` / `obl_get_occupied_positions` / `obl_pick_available_tile`）已迁至 `gamectl/init.func.php`；discovered 状态管理（`obl_discover_enemies` / `obl_update_enemy_discovered` / `obl_get_player_vision_range`）已迁至 `vision.func.php`。本文件仅保留 AI 行为逻辑。
+>
+> **与 tick 推进的关系**：`obl_tick_phase_battle_npc` 是 battle_npc phase 监听器，由 `obl_tick_dispatch` 调用（详见 [§8.2 tick.func.php](#82-tickfuncphp)）。NPC 行动后通过 `obl_tick_request_advance()` 请求推进 tick，调度器末尾 `obl_tick_advance()` 自驱动下次心跳继续（详见 [DESIGN.md §2.16.1](./DESIGN.md#2161-heartbeat--tick-推进完整链路)）。
 
 **模块 1：Tick 事件监听器**（2 函数，由 `tick.func.php` 末尾集中注册）
 
@@ -1470,7 +1512,7 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
 - **战斗日志播放**: 前端按 `enemy_pid` 分组，每组按 `log_id` 排序，三阶段播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 mark 接口
 - **战斗状态过滤**: `action='battle'` 时前端只允许提交 `obl_battle_action`；非战斗状态不允许提交 `obl_battle_action`（后端 `obl_command_allowed_by_state` 强制）
-- **战斗处理中锁**: 前端 `commandQueue.isLocked` / `pendingNpc` 从 `oblBattleState === 'PROCESSING'` 派生，拒绝推进 tick 的命令
+- **战斗处理中锁**: 前端 `commandQueue` 采用 5 层锁架构（HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING），其中 PROCESSING 层仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令，`isLocked` 仅包含 HTTP/演出两层全局锁；详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)
 - **技能渲染**: 前端按 `skill_id` 查 `vex-vue/src/data/skill-templates.ts` 渲染名称/描述/动作描述，未注册的 skill_id 回退到以 skillId 作为 name 的默认模板
 - **可用技能列表**: `player_info` API 返回 `skills` 字段（由 `skill_get_available_list()` 生成，含运行时状态 on_cd/available）
 

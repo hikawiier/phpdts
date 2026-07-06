@@ -188,12 +188,10 @@ function onAdjustCount(slot: number, delta: number): void {
 }
 
 function onCraft(): void {
-  if (commandQueue.isLocked) return;
   void craftStore.doCraft();
 }
 
 function onQuickCraft(recipeId: string): void {
-  if (itm0Locked.value || commandQueue.isLocked) return;
   void craftStore.quickCraft(recipeId);
 }
 
@@ -203,12 +201,10 @@ function onFillMaterials(recipeId: string): void {
 }
 
 function onOrganize(): void {
-  if (commandQueue.isLocked) return;
   void inventoryStore.handleOrganize();
 }
 
 function onDiscardItm0(): void {
-  if (commandQueue.isLocked) return;
   void inventoryStore.handleDiscardItm0();
 }
 
@@ -414,19 +410,19 @@ onUnmounted(() => {
                 <template v-if="itm0Locked">
                   <button
                     class="term-btn block"
-                    :disabled="commandQueue.isLocked"
+                    :disabled="!commandQueue.canExecute('obl_organize')"
                     @click="onOrganize"
                   >[尝试堆叠合并]</button>
                   <button
                     class="term-btn block"
-                    :disabled="commandQueue.isLocked"
+                    :disabled="!commandQueue.canExecute('obl_discard')"
                     @click="onDiscardItm0"
                   >[丢到地上]</button>
                 </template>
                 <template v-else>
                   <button
                     class="term-btn block craft-submit"
-                    :disabled="!craftStore.isCraftable || commandQueue.isLocked"
+                    :disabled="!craftStore.isCraftable || !commandQueue.canExecute('obl_craft')"
                     @click="onCraft"
                   >[合成]</button>
                 </template>

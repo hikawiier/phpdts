@@ -260,7 +260,6 @@ function getTargetDisplayText(targetPid: number): string {
 
 async function onExecute(): Promise<void> {
   if (queue.value.length === 0) return;
-  if (commandQueue.isLocked) return;
 
   const actions = queue.value.slice();
 
