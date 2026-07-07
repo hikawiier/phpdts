@@ -58,13 +58,15 @@ function skill_is_finisher($skill_id) {
  * 检查技能是否可用（不修改状态）
  *
  * 检查项：配置存在、actor 拥有该技能、CD 未锁定、AP 足够。
- * 供 AI 决策使用，避免选择无法通过校验的技能。
+ * 当传入 $target_data 时追加射程预判（目标非 self 才检查）。
+ * 供 AI 决策使用，避免选择无法通过校验或射程不足的技能。
  *
  * @param array &$actor_data 先攻者数据
  * @param string $skill_id 技能 ID
+ * @param array $target_data 目标数据（可选，传入时启用射程预判；非引用，可传 null）
  * @return bool 是否可用
  */
-function skill_is_usable(&$actor_data, $skill_id) {
+function skill_is_usable(&$actor_data, $skill_id, $target_data = null) {
     # 1. 查配置
     $config = skill_get_config($skill_id);
     if (!$config) return false;
@@ -82,6 +84,26 @@ function skill_is_usable(&$actor_data, $skill_id) {
     # 4. 检查 AP
     $apcost = isset($config['apcost']) ? (int)$config['apcost'] : 0;
     if ($apcost > 0 && (int)$actor_data['ap'] < $apcost) return false;
+
+    # 5. 射程预判（仅当 target_data 提供且目标非 self 时）
+    #    注意：pgroup 无效或跨区域时 return false 是保守策略——
+    #    当前唯一调用方 NPC AI 只在同区域战斗时决策，pgroup 必然 >0。
+    #    未来玩家侧复用时需重新评估此边界（战前 pgroup=0 会被误判不可用）。
+    if ($target_data !== null && (int)$actor_data['pid'] !== (int)$target_data['pid']) {
+        include_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php';
+        include_once GAME_ROOT . './oblivions/include/game/move.func.php';
+        $action_range = obl_get_action_range($actor_data, $skill_id);
+        $actor_pgroup = isset($actor_data['pgroup']) ? (int)$actor_data['pgroup'] : 0;
+        $target_pgroup = isset($target_data['pgroup']) ? (int)$target_data['pgroup'] : 0;
+        $actor_pls = isset($actor_data['pls']) ? (int)$actor_data['pls'] : 0;
+        $target_pls = isset($target_data['pls']) ? (int)$target_data['pls'] : 0;
+        if ($actor_pgroup > 0 && $actor_pgroup === $target_pgroup && $actor_pls > 0 && $target_pls > 0) {
+            $distance = obl_get_distance($actor_pgroup, $actor_pls, $target_pls);
+            if ($distance < 0 || $distance > $action_range) return false;
+        } else {
+            return false;  // 不同区域或无效位置
+        }
+    }
 
     return true;
 }
@@ -109,7 +131,8 @@ function skill_get_all_configs() {
  * 1. 确保 skillpara 是数组
  * 2. 迁移旧格式：若存在 skills key（旧格式 {"skills": []}），删除并视为空 skillpara
  * 3. 调用 skill_ensure_defaults 注入默认技能
- * 4. 注入装备临时技能（MVP 无装备技能，预留空逻辑）
+ * 4. 装备临时技能注入由调用方 obl_format_playerdata 调用 skill_inject_equipment 完成
+ *    （需要 $pdata 读取装备字段，因此不能在此处调用）
  *
  * @param array &$skillpara 玩家 skillpara 字段（引用）
  */
@@ -127,8 +150,8 @@ function skill_format_skillpara(&$skillpara) {
     # 3. 注入默认技能
     skill_ensure_defaults($skillpara);
 
-    # 4. 注入装备临时技能（MVP 无装备技能，预留）
-    # skill_inject_equipment($skillpara);
+    # 4. 装备临时技能注入由调用方 obl_format_playerdata 调用 skill_inject_equipment 完成
+    #    （需要 $pdata 读取装备字段，因此不能在此处调用）
 }
 
 /**
@@ -146,6 +169,26 @@ function skill_ensure_defaults(&$skillpara) {
             $skillpara[$skill_id] = array('lstact' => 0);
         }
         # 确保 lstact 字段存在
+        if (!isset($skillpara[$skill_id]['lstact'])) {
+            $skillpara[$skill_id]['lstact'] = 0;
+        }
+    }
+}
+
+/**
+ * 确保 NPC 专属默认技能存在（由 obl_format_playerdata 在 type>0 时调用）
+ *
+ * NPC 专属默认技能：idle（发呆兜底）
+ * 玩家 skillpara 中永远不会有这些技能。
+ *
+ * @param array &$skillpara
+ */
+function skill_ensure_npc_defaults(&$skillpara) {
+    $npc_defaults = array('idle');
+    foreach ($npc_defaults as $skill_id) {
+        if (!isset($skillpara[$skill_id]) || !is_array($skillpara[$skill_id])) {
+            $skillpara[$skill_id] = array('lstact' => 0);
+        }
         if (!isset($skillpara[$skill_id]['lstact'])) {
             $skillpara[$skill_id]['lstact'] = 0;
         }
@@ -188,7 +231,7 @@ function skill_strip_temporary(&$skillpara) {
  * 2. 检查 actor 是否拥有该技能（skillpara 中有对应 key）
  * 3. 检查 CD：current_tick - lstact >= cd，否则失败
  * 4. 检查 AP：ap >= apcost，否则失败
- * 5. 自动引用 verify/{skill_id}.verify.php，文件存在则调用 {skill_id}_verify_check()
+ * 5. 调用 {skill_id}_verify_check()（由 modules 模块加载），存在则执行扩展校验
  * 6. 校验通过：扣除 AP，更新 lstact = current_tick，返回 true
  * 7. 校验失败：返回 false
  *
@@ -226,17 +269,14 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
         return false;
     }
 
-    # 5. 自动引用 verify/{skill_id}.verify.php
-    $verify_file = GAME_ROOT . './oblivions/include/game/skill/verify/' . $act_id . '.verify.php';
-    if (file_exists($verify_file)) {
-        include_once $verify_file;
-        $verify_func = $act_id . '_verify_check';
-        if (function_exists($verify_func)) {
-            if (!$verify_func($actor_data, $obl_battle_log, $battle_cache)) {
-                return false;
-            }
+    # 5. 技能扩展校验：{skill_id}_verify_check（由 modules 模块加载）
+    $verify_func = $act_id . '_verify_check';
+    if (function_exists($verify_func)) {
+        if (!$verify_func($actor_data, $obl_battle_log, $battle_cache)) {
+            return false;
         }
     }
+
 
     # 6. 校验通过：扣除 AP，更新 lstact
     if ($apcost > 0) {
@@ -246,15 +286,33 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
     return true;
 }
 
+
+/**
+ * 注入装备临时技能。
+ *
+ * 这里只做通用 hook 调度；具体技能逻辑由 skill/modules/*.skill.php 注册。
+ *
+ * @param array &$skillpara
+ * @param array &$pdata
+ */
+function skill_inject_equipment(&$skillpara, &$pdata) {
+    if (!function_exists('skill_get_equipment_injectors')) return;
+    $injectors = skill_get_equipment_injectors();
+    foreach ($injectors as $func) {
+        if (function_exists($func)) {
+            $func($skillpara, $pdata);
+        }
+    }
+}
+
 /**
  * 技能执行（由 battle_once_execute 调用）
  *
  * 职责：
- * 1. 自动引用 calc/{skill_id}.calc.php
- * 2. 文件存在则调用 {skill_id}_calc() 执行技能的复杂处理
- * 3. 文件不存在则无额外处理（伤害已由 obl_calc_damage + battle_apply_damage 处理）
+ * 1. 调用 {skill_id}_calc() 执行技能的非伤害处理（由 modules 模块加载）
+ * 2. 无 calc 函数的技能直接跳过（伤害由 obl_calc_damage + battle_apply_damage 处理）
  *
- * 调用时机：在 obl_calc_damage() + battle_apply_damage() 之后
+ * 调用时机：在 obl_calc_damage() + battle_apply_damage() 之前
  *
  * @param array &$actor_data 先攻者数据
  * @param string $act_id 动作 ID
@@ -263,12 +321,6 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
  * @param array &$battle_cache
  */
 function skill_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache) {
-    $calc_file = GAME_ROOT . './oblivions/include/game/skill/calc/' . $act_id . '.calc.php';
-    if (!file_exists($calc_file)) {
-        return; # 无 calc 文件，伤害已由 obl_calc_damage + battle_apply_damage 处理
-    }
-
-    include_once $calc_file;
     $calc_func = $act_id . '_calc';
     if (function_exists($calc_func)) {
         $calc_func($actor_data, $target_data, $obl_battle_log, $battle_cache);
@@ -310,14 +362,23 @@ function skill_get_available_list(&$pdata) {
         $on_cd = ($cd > 0 && ($current_tick - $lstact) < $cd);
         $available = !$on_cd && $player_ap >= $apcost;
 
+        $range_mode  = isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
+        $range_max   = isset($config['range_max']) ? (int)$config['range_max'] : 1;
+        $range_bonus = isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
+        $action_range = function_exists('obl_get_action_range') ? obl_get_action_range($pdata, $skill_id) : $range_max;
+
         $skills[] = array(
             'act_id'       => $skill_id,
             'apcost'       => $apcost,
             'cd'           => $cd,
             'finisher'     => isset($config['finisher']) ? (int)$config['finisher'] : 0,
             'target'       => isset($config['target']) ? $config['target'] : 'self',
-            'range_bonus'  => isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0,
+            'range_mode'   => $range_mode,
+            'range_max'    => $range_max,
+            'range_bonus'  => $range_bonus,
+            'action_range' => $action_range,
             'category'     => isset($config['category']) ? $config['category'] : 'utility',
+            'hidden'       => !empty($config['hidden']),
             'lstact'       => $lstact,
             'current_tick' => $current_tick,
             'on_cd'        => $on_cd,

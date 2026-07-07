@@ -8,6 +8,7 @@ export const ITEM_LOCALE: Record<string, ItemLocaleEntry> = {
   scrap_blade: { name: '废铁刀', desc: '用废铁片磨出的粗糙刀刃，勉强能割开东西。' },
   nail_gun: { name: '钉枪', desc: '工地上常见的气动钉枪，近距离威力不小。' },
   pipe_bomb: { name: '管状炸弹', desc: '用铁管和火药自制的简易爆炸物，小心别炸到自己。' },
+  throwing_spear: { name: '投矛', desc: '适合投掷的短矛，能在中距离刺穿敌人。' },
   swamp_spear: { name: '沼泽长矛', desc: '用沼泽硬木和骨片制成的长矛，尖端涂有毒素。' },
   ancient_core_blade: { name: '核心刃', desc: '嵌入古代核心的武器，刃身散发微弱的光辉。' },
   scrap_vest: { name: '废铁背心', desc: '用铁皮和铁丝拼凑的简易护甲，聊胜于无。' },

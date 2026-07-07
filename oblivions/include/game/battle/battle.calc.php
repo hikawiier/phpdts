@@ -36,6 +36,86 @@ function obl_get_range_fix(&$actor_data, $basic_range)
     return $basic_range;
 }
 
+
+/**
+ * 获取本次动作的最终射程。
+ *
+ * 射程三维度：
+ * - fixed：固定最大射程 range_max
+ * - inherit：继承 actor 基础射程
+ * - additive：actor 基础射程 + range_bonus
+ * - capped_additive：min(actor 基础射程 + range_bonus, range_max)
+ *
+ * 未配置时默认 fixed 1，避免旧技能继续形成无限射程。
+ *
+ * @param array  &$actor_data 行动者数据
+ * @param string $act_id      技能/动作 ID
+ * @return int 最终射程（BFS 跳数）
+ */
+function obl_get_action_range(&$actor_data, $act_id)
+{
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+
+    $config = skill_get_config($act_id);
+    $base   = obl_get_range($actor_data);
+
+    if (!$config) {
+        # 配置缺失：emit error_log 记录，兜底返回 1 让战斗不中断
+        global $obl_error_log;
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('skill.config_missing', array(
+                'skill_id'  => $act_id,
+                'actor_pid' => isset($actor_data['pid']) ? (int)$actor_data['pid'] : 0,
+            ), 'command');
+        }
+        return 1;
+    }
+
+    $mode  = isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
+    $max   = isset($config['range_max']) ? (int)$config['range_max'] : 1;
+    $bonus = isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
+
+    switch ($mode) {
+        case 'inherit':
+            $range = $base;
+            break;
+        case 'additive':
+            $range = $base + $bonus;
+            break;
+        case 'capped_additive':
+            $range = min($base + $bonus, $max);
+            break;
+        case 'fixed':
+        default:
+            $range = $max;
+            break;
+    }
+
+    return max(0, (int)$range);
+}
+
+/**
+ * 获取动作射程配置摘要（供日志/API 展示使用）。
+ */
+function obl_get_action_range_meta(&$actor_data, $act_id)
+{
+    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+
+    $config = skill_get_config($act_id);
+    $base = obl_get_range($actor_data);
+    $mode = $config && isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
+    $max = $config && isset($config['range_max']) ? (int)$config['range_max'] : 1;
+    $bonus = $config && isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
+
+    return array(
+        'range_mode'   => $mode,
+        'range_max'    => $max,
+        'range_bonus'  => $bonus,
+        'base_range'   => (int)$base,
+        'action_range' => obl_get_action_range($actor_data, $act_id),
+    );
+}
+
 /**
  * 获取对象的先攻属性
  *

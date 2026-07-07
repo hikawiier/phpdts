@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 // ══════════════════════════════════════════════════
 // 瞄准模式 / Aim Mode
 //
@@ -17,9 +17,13 @@
 
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
+import { useMapStore } from '@/stores/map';
+import { findPath } from '@/composables/useMapReachability';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
+const aimActionRange = ref<number>(1);
+const mapStore = useMapStore();
 
 // ── SVG 路径线数据 ──
 interface AimLineData {
@@ -75,13 +79,31 @@ function getAimStartElement(): HTMLElement | null {
 // ══════════════════════════════════════════════════
 
 /** 标记所有敌人格为瞄准可选目标 + 绑定事件 */
+
+function isEnemyInActionRange(pid: number): boolean {
+  const range = Math.max(0, Number(aimActionRange.value || 1));
+  const enemy = mapStore.enemies.find(
+    (e) => Number(e.pid) === pid && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
+  );
+  if (!enemy || mapStore.curLoc === null) return false;
+  const path = findPath(mapStore.curLoc, enemy.pls);
+  if (!path) return false;
+  return Math.max(0, path.length - 1) <= range;
+}
+
 function applyAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
 
   const enemyCells = grid.querySelectorAll<HTMLElement>('[data-enemy-pid]');
   enemyCells.forEach((cell) => {
-    cell.classList.add('aim-targetable');
+    const pid = parseInt(cell.getAttribute('data-enemy-pid') || '0');
+    cell.classList.remove('aim-targetable', 'aim-out-of-range');
+    if (pid > 0 && isEnemyInActionRange(pid)) {
+      cell.classList.add('aim-targetable');
+    } else {
+      cell.classList.add('aim-out-of-range');
+    }
   });
 
   // 事件委托：在 mapGrid 上绑定 mousemove + click
@@ -100,7 +122,7 @@ function clearAimTargetable(): void {
 
   const enemyCells = grid.querySelectorAll<HTMLElement>('[data-enemy-pid]');
   enemyCells.forEach((cell) => {
-    cell.classList.remove('aim-targetable', 'aim-hover');
+    cell.classList.remove('aim-targetable', 'aim-hover', 'aim-out-of-range');
   });
 
   if (_onMouseMove) grid.removeEventListener('mousemove', _onMouseMove);
@@ -117,7 +139,7 @@ function clearAimTargetable(): void {
 
 function onAimMouseMove(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  const enemyCell = target?.closest?.('[data-enemy-pid]') as HTMLElement | null;
+  const enemyCell = target?.closest?.('[data-enemy-pid].aim-targetable') as HTMLElement | null;
 
   // 清除所有敌人格的 aim-hover，仅高亮当前
   const grid = getMapGrid();
@@ -149,7 +171,7 @@ function onAimMouseLeave(): void {
 
 function onAimClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  const enemyCell = target?.closest?.('[data-enemy-pid]') as HTMLElement | null;
+  const enemyCell = target?.closest?.('[data-enemy-pid].aim-targetable') as HTMLElement | null;
   if (!enemyCell) return;
 
   e.stopPropagation();
@@ -204,7 +226,9 @@ function exitAimMode(): void {
 // 事件监听
 // ══════════════════════════════════════════════════
 
-function onAimMode(): void {
+function onAimMode(data?: unknown): void {
+  const payload = (data || {}) as { actionRange?: number | string };
+  aimActionRange.value = Math.max(0, Number(payload.actionRange || 1));
   aimModeActive.value = true;
   applyAimTargetable();
 }
@@ -302,4 +326,20 @@ onUnmounted(() => {
   fill: #ff6b6b;
   opacity: 0.8;
 }
+
+:global(.aim-targetable) {
+  outline: 1px solid #ff6b6b;
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.65), 0 0 8px rgba(255, 107, 107, 0.35);
+  cursor: crosshair;
+}
+
+:global(.aim-hover) {
+  filter: brightness(1.25);
+}
+
+:global(.aim-out-of-range) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 </style>
+

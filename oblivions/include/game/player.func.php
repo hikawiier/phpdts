@@ -156,6 +156,13 @@ function obl_format_playerdata(&$pdata) {
 	if (!is_array($skillpara)) $skillpara = array();
 	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
 	skill_format_skillpara($skillpara);
+	if (function_exists('skill_inject_equipment')) {
+		skill_inject_equipment($skillpara, $pdata);
+	}
+	# NPC 专属默认技能注入（type>0 为敌人类型 ID）
+	if ((int)$pdata['type'] > 0) {
+		skill_ensure_npc_defaults($skillpara);
+	}
 	$pdata['skillpara'] = $skillpara;
 
 	// 杂项数据：{}
@@ -184,31 +191,27 @@ function obl_format_playerdata(&$pdata) {
 /**
  * 保存玩家数据到 oblplayers
  *
- * 编码所有 JSON 字段，执行 UPDATE。
+ * 编码所有 JSON 字段，执行 UPDATE。值传递，不修改外部数据。
  *
- * @param array &$pdata 引用传递（JSON 字段会被临时编码为字符串，但函数返回后恢复为数组）
+ * @param array $pdata 玩家数据（值拷贝，函数内编码不影响调用方）
  * @return void
  */
-function obl_save_player(&$pdata) {
+function obl_save_player($pdata) {
 	global $db, $tablepre;
 	if (!isset($pdata['pid'])) return;
 
-	// JSON 字段编码（临时替换，保存后恢复）
-	$json_keys = array('itempara', 'tacpara', 'skillpara', 'oblpara');
-	$json_backup = array();
-
-	// 剥离临时技能（equipment 类）后再编码
+	// 剥离临时技能（equipment 类）后再编码（只影响值拷贝）
 	include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
 	skill_strip_temporary($pdata['skillpara']);
 
+	// JSON 字段编码
+	$json_keys = array('itempara', 'tacpara', 'skillpara', 'oblpara');
 	foreach ($json_keys as $key) {
-		$json_backup[$key] = isset($pdata[$key]) ? $pdata[$key] : null;
 		$pdata[$key] = is_array($pdata[$key]) ? json_encode($pdata[$key], JSON_UNESCAPED_UNICODE) : (string)$pdata[$key];
 	}
 	// 装备 para 字段编码
 	$equip_para_keys = array('weppara', 'wep2para', 'arbpara', 'arhpara', 'arapara', 'arfpara', 'artpara');
 	foreach ($equip_para_keys as $key) {
-		$json_backup[$key] = isset($pdata[$key]) ? $pdata[$key] : null;
 		$pdata[$key] = is_array($pdata[$key]) ? json_encode($pdata[$key], JSON_UNESCAPED_UNICODE) : (string)$pdata[$key];
 	}
 
@@ -237,11 +240,7 @@ function obl_save_player(&$pdata) {
 	}
 
 	$db->array_update("{$tablepre}oblplayers", $ndata, "pid = " . (int)$pdata['pid']);
-
-	// 恢复 JSON 字段为数组（保持 $pdata 在内存中的格式一致）
-	foreach ($json_backup as $key => $val) {
-		$pdata[$key] = $val;
-	}
+	// 函数返回，$pdata 拷贝丢弃，外部数据不受影响
 }
 
 /**

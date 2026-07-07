@@ -34,10 +34,10 @@ function obl_fetch_queue_all_by_qid($qid)
 
 function obl_fetch_queue_pids_by_qid($qid)
 {
-    # 通过 qid 查找数据库中对应先攻队列，返回由所有参战者 pid 构成的数组
+    # 通过 qid 查找数据库中对应先攻队列，返回由所有 active=1 参战者 pid 构成的数组
     # 输入先攻队列唯一索引 qid，输出 pid 数组；如果 qid 不存在，返回空数组
     global $db, $tablepre;
-    $result = $db->query("SELECT pid FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid);
+    $result = $db->query("SELECT pid FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND active = 1");
     $pids = array();
     while ($row = $db->fetch_array($result)) {
         $pids[] = $row['pid'];
@@ -57,10 +57,10 @@ function obl_fetch_queue_by_pid($pid)
 
 function obl_fetch_queue_current_initiator($qid)
 {
-    # 获取当前顺位者：myorder 最小且 done=0 的参战者
+    # 获取当前顺位者：myorder 最小且 done=0、active=1 的参战者
     # 输入先攻队列唯一索引 qid，输出当前顺位者记录；如果队列不存在或所有人都已行动，返回 false
     global $db, $tablepre;
-    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND done = 0 ORDER BY myorder ASC LIMIT 1");
+    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND done = 0 AND active = 1 ORDER BY myorder ASC LIMIT 1");
     $row = $db->fetch_array($result);
     if (!$row) return false;
     return $row;
@@ -68,10 +68,10 @@ function obl_fetch_queue_current_initiator($qid)
 
 function obl_fetch_queue_undone_by_qid($qid)
 {
-    # 获取所有 done=0 的参战者记录，按 myorder 升序排序
+    # 获取所有 done=0 且 active=1 的参战者记录，按 myorder 升序排序
     # 输入先攻队列唯一索引 qid，输出未行动参战者记录数组；如果都行动过，返回空数组
     global $db, $tablepre;
-    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND done = 0 ORDER BY myorder ASC");
+    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND done = 0 AND active = 1 ORDER BY myorder ASC");
     $rows = array();
     while ($row = $db->fetch_array($result)) {
         $rows[] = $row;
@@ -81,18 +81,18 @@ function obl_fetch_queue_undone_by_qid($qid)
 
 function obl_fetch_queue_count_by_qid($qid)
 {
-    # 获取某 qid 的参战者数量，输入先攻队列唯一索引 qid，输出整数
+    # 获取某 qid 的 active=1 参战者数量，输入先攻队列唯一索引 qid，输出整数
     global $db, $tablepre;
-    $result = $db->query("SELECT COUNT(*) AS cnt FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid);
+    $result = $db->query("SELECT COUNT(*) AS cnt FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND active = 1");
     $row = $db->fetch_array($result);
     return $row ? (int)$row['cnt'] : 0;
 }
 
 function obl_fetch_queue_has_player($qid)
 {
-    # 查队列中是否存在 type=0（玩家）的记录
+    # 查队列中是否存在 type=0（玩家）且 active=1 的记录
     global $db, $tablepre;
-    $result = $db->query("SELECT 1 FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND type = 0 LIMIT 1");
+    $result = $db->query("SELECT 1 FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " AND type = 0 AND active = 1 LIMIT 1");
     return $db->num_rows($result) > 0;
 }
 
@@ -134,6 +134,26 @@ function obl_queue_delete_by_pid($pid)
 {
     global $db, $tablepre;
     $db->query("DELETE FROM {$tablepre}oblqueue WHERE pid = " . (int)$pid);
+}
+
+function obl_queue_set_active($pid, $qid, $active)
+{
+    # 标记某 pid 在某 qid 的 active 状态（1=可参战，0=已退出），不删行不清 bid
+    global $db, $tablepre;
+    $db->query("UPDATE {$tablepre}oblqueue SET active=" . (int)$active
+        . " WHERE pid=" . (int)$pid . " AND qid=" . (int)$qid);
+}
+
+function obl_fetch_pids_by_bid($qid)
+{
+    # 扫玩家表，返回所有 bid 指向指定 qid 的 pid（兜底分支用：队列行已不存在时清理残留 bid）
+    global $db, $tablepre;
+    $result = $db->query("SELECT pid FROM {$tablepre}oblplayers WHERE bid = " . (int)$qid);
+    $pids = array();
+    while ($row = $db->fetch_array($result)) {
+        $pids[] = (int)$row['pid'];
+    }
+    return $pids;
 }
 
 function obl_player_set_bid($pid, $qid)

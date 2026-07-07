@@ -3,6 +3,12 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// ================================================================
+// 逃跑技能模块 / Escape skill module
+//
+// 由 skill_load_modules() 自动加载。escape_calc 由 skill_execute 调用。
+// ================================================================
+
 function escape_calc(&$actor_data, &$target_data, &$obl_battle_log, &$battle_cache)
 {
     # 1. emit flee battlelog（前端渲染逃跑到目的地色）

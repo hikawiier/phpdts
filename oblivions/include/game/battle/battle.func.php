@@ -20,8 +20,8 @@ function battle_state_init(&$actor_data)
 
 function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache, $reason = 'unknown')
 {
-    # 二次调用保护：已清理则跳过
-    if (empty($actor_data['action']) && empty($actor_data['bid'])) {
+    # 二次调用保护：只检查 action（bid 保留不代表在战斗中）
+    if (empty($actor_data['action'])) {
         return;
     }
 
@@ -32,14 +32,13 @@ function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache, $rea
 
     # ── 清空战斗状态 ──
     $actor_data['action'] = '';
-    # 如果还存在关联中的战斗队列，退出队列
+    # 标记队列行 active=0（不删行、不清 bid，bid 由队列解散时统一清理）
     if(!empty($actor_data['bid']))
     {
         battle_queue_exit($actor_data,$obl_battle_log,$battle_cache);
     }
     # 恢复AP
     $actor_data['ap'] = $actor_data['max_ap'];
-    # 无论 bid 是否为空，都保存 action 的修改（避免战斗结束后卡在 battle 状态）
     obl_save_player($actor_data);
 }
 
@@ -79,11 +78,41 @@ function battle_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cac
     return skill_act_verify($actor_data, $act_id, $obl_battle_log, $battle_cache);
 }
 
-function battle_target_distance_check(&$actor_data, &$target_data, &$battle_cache)
+function battle_target_distance_check(&$actor_data, &$target_data, $act_id, &$battle_cache)
 {
-    $actor_range = obl_get_range($actor_data);
-    // 这里应该实现具体的距离检查逻辑，然后和射程比较判断目标是否合法。由于目前没有具体的距离计算逻辑，暂时默认所有目标都在射程内。
-    return true;
+    $actor_pgroup = isset($actor_data['pgroup']) ? (int)$actor_data['pgroup'] : 0;
+    $target_pgroup = isset($target_data['pgroup']) ? (int)$target_data['pgroup'] : 0;
+    $actor_pls = isset($actor_data['pls']) ? (int)$actor_data['pls'] : 0;
+    $target_pls = isset($target_data['pls']) ? (int)$target_data['pls'] : 0;
+
+    $range_meta = function_exists('obl_get_action_range_meta')
+        ? obl_get_action_range_meta($actor_data, $act_id)
+        : array('action_range' => 1, 'range_mode' => 'fixed', 'range_max' => 1, 'range_bonus' => 0, 'base_range' => 1);
+    $actor_range = (int)$range_meta['action_range'];
+
+    $distance = -1;
+    $pass = false;
+
+    if ($actor_pgroup > 0 && $target_pgroup > 0 && $actor_pgroup === $target_pgroup && $actor_pls > 0 && $target_pls > 0) {
+        $distance = obl_get_distance($actor_pgroup, $actor_pls, $target_pls);
+        $pass = ($distance >= 0 && $distance <= $actor_range);
+    }
+
+    // 记录最近一次射程检查，供 execute_verify_failed 日志补充 distance/range。
+    $battle_cache['last_range_check'] = array(
+        'actor_pid'    => isset($actor_data['pid']) ? (int)$actor_data['pid'] : 0,
+        'target_pid'   => isset($target_data['pid']) ? (int)$target_data['pid'] : 0,
+        'action_id'    => $act_id,
+        'distance'     => $distance,
+        'range'        => $actor_range,
+        'range_mode'   => isset($range_meta['range_mode']) ? $range_meta['range_mode'] : 'fixed',
+        'range_max'    => isset($range_meta['range_max']) ? (int)$range_meta['range_max'] : 1,
+        'range_bonus'  => isset($range_meta['range_bonus']) ? (int)$range_meta['range_bonus'] : 0,
+        'base_range'   => isset($range_meta['base_range']) ? (int)$range_meta['base_range'] : 1,
+        'pass'         => $pass,
+    );
+
+    return $pass;
 }
 
 function battle_apply_damage(&$actor_data, &$target_data, $damage, &$obl_battle_log, &$battle_cache)
@@ -120,8 +149,8 @@ function battle_tag_self(&$actor_data, &$target_data): bool {
 /**
  * 单 tag 派生函数：目标超出当前 actor 射程
  */
-function battle_tag_out_of_range(&$actor_data, &$target_data, &$battle_cache): bool {
-    return !battle_target_distance_check($actor_data, $target_data, $battle_cache);
+function battle_tag_out_of_range(&$actor_data, &$target_data, $act_id, &$battle_cache): bool {
+    return !battle_target_distance_check($actor_data, $target_data, $act_id, $battle_cache);
 }
 
 /**
@@ -142,8 +171,12 @@ function battle_build_target_tags(&$actor_data, &$target_data, $act_id, &$battle
     $pid = (int)$target_data['pid'];
 
     // ── Cat A：始终重算（依赖当前 actor，不可缓存）──
-    $tags['self']         = battle_tag_self($actor_data, $target_data);
-    $tags['out_of_range'] = battle_tag_out_of_range($actor_data, $target_data, $battle_cache);
+    $tags['self'] = battle_tag_self($actor_data, $target_data);
+
+    // out_of_range 前置条件：self 目标永不在射程外（复用 self 判断，避免重复 pid 比较）
+    $tags['out_of_range'] = !$tags['self']
+        ? battle_tag_out_of_range($actor_data, $target_data, $act_id, $battle_cache)
+        : false;
 
     // ── Cat B：从缓存读取可变状态 tag ──
     $cached = $battle_cache['tag_mutations'][$pid] ?? null;

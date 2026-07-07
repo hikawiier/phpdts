@@ -14,6 +14,18 @@
 import { escapeHtml } from '@/utils/format';
 import type { DirectedEntry, DirectedKind } from '@/stores/battle-director';
 
+/**
+ * idle 动作文案映射
+ *
+ * key 为 enemies_config.php 中的敌人类型 ID（actor_type）。
+ * 后端 idle_calc 只 emit actor_type，文案完全由前端控制（前后端职责分离）。
+ */
+const IDLE_FLAVOR: Record<number, string> = {
+  1: '废铁史莱姆摇晃着身体，似乎在发呆',
+  2: '锈蚀守卫的齿轮卡住了，一动不动',
+  // 未来扩展
+};
+
 /** 按 directedKind 分发的渲染模板映射 */
 const KIND_TEMPLATES: Record<DirectedKind, (e: DirectedEntry, playerPid: number) => string> = {
   action: renderAction,
@@ -55,8 +67,24 @@ function renderAction(e: DirectedEntry, _playerPid: number): string {
       `使用了空手攻击，造成 <span class="yellow">${e.effect_value}</span> 点伤害。`
     );
   }
+
+  if (actionName === 'throw') {
+    return (
+      `<span class="${actorClass}">${escapeHtml(actor)}</span>` +
+      `向<span class="red">${escapeHtml(target)}</span>` +
+      `发起投掷，造成 <span class="yellow">${e.effect_value}</span> 点伤害。`
+    );
+  }
+
+  if (actionName === 'idle') {
+    const typeId = Number(e.actor_type) || 0;
+    const flavor = IDLE_FLAVOR[typeId] || '似乎在发呆';
+    return `<span class="${actorClass}">${escapeHtml(actor)}</span>${flavor}。`;
+  }
+
   return `<span class="${actorClass}">${escapeHtml(actor)}</span>使用了${escapeHtml(actionName)}。`;
 }
+
 
 /** initiative：先攻掷骰，不渲染为模态框条目（先攻顺序面板由 BattleModal 单独渲染） */
 function renderInitiative(_e: DirectedEntry, _playerPid: number): string {
@@ -106,18 +134,20 @@ function renderAmbushBattleEnd(e: DirectedEntry, _playerPid: number): string {
 
 /** display：其他纯展示（ap_recover/verify_failed/middle_check 等） */
 function renderDisplay(e: DirectedEntry, _playerPid: number): string {
-  if (e.phase === 'ap_recover') return '';  // AP 恢复不渲染为模态框条目
+  if (e.phase === 'ap_recover') return '';
   if (e.phase === 'execute_verify_failed') {
     const actor = e.actor_name || '未知';
-    return `<span class="yellow">${escapeHtml(actor)}</span>的动作校验失败：${escapeHtml(e.reason ?? '')}`;
+    const reason = e.reason ?? '';
+    if (reason === 'forbid:out_of_range') {
+      const range = e.range !== undefined ? `（射程 ${escapeHtml(String(e.range))}）` : '';
+      return `<span class="yellow">${escapeHtml(actor)}</span>的目标距离过远，无法攻击${range}。`;
+    }
+    return `<span class="yellow">${escapeHtml(actor)}</span>的动作校验失败：${escapeHtml(reason)}`;
   }
-  if (e.phase === 'middle_check_target_dead') return '';  // 由 combatant_cleared 承载
+  if (e.phase === 'middle_check_target_dead') return '';
   return '';
 }
 
-// ─────────────────────────────────────────────────
-// 兜底人称推导（优先用 entry.actor_name / entry.target_name）
-// ─────────────────────────────────────────────────
 
 function displayActorByType(actorType: number | null): string {
   if (Number(actorType) === 0) return '你';

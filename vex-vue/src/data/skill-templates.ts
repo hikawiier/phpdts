@@ -29,6 +29,11 @@ export const SKILL_TEMPLATES: Record<string, SkillTemplate> = {
     desc: '50% 概率逃离战斗',
     action_desc: '尝试逃跑',
   },
+  throw: {
+    name: '投掷',
+    desc: '使用投掷武器攻击中距离敌人',
+    action_desc: '投掷武器',
+  },
 };
 
 /** 默认模板（未注册的 skill_id 使用） */

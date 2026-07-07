@@ -117,6 +117,12 @@ $birth_pgroup = 1;
 $birth_pls = isset($map_data['regions'][$birth_pgroup]['entrance_pls'])
     ? (int)$map_data['regions'][$birth_pgroup]['entrance_pls'] : 1;
 
+// Test starter weapon: throwing spear.
+// Read from item_table so template changes are reflected automatically.
+$item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
+$starter_weapon_id = 'throwing_spear';
+$starter_weapon = isset($item_table[$starter_weapon_id]) ? $item_table[$starter_weapon_id] : array();
+
 $ndata = array(
     'type'   => 0,
     'name'   => $cuser,
@@ -136,8 +142,14 @@ $ndata = array(
     'lvl'    => 0,
     'exp'    => 0,
     'state'  => 0,
-    // 装备初始全空（Oblivions MVP 阶段无装备系统）
-    'wepid' => '', 'wep' => '', 'wepk' => '', 'wepe' => 0, 'weps' => '0', 'wepsk' => '', 'weppara' => '',
+    // Test starter weapon: throwing spear (range / throwing skill verification).
+    'wepid' => $starter_weapon_id,
+    'wep' => isset($starter_weapon['itm']) ? (string)$starter_weapon['itm'] : $starter_weapon_id,
+    'wepk' => isset($starter_weapon['itmk']) ? (string)$starter_weapon['itmk'] : 'WC',
+    'wepe' => isset($starter_weapon['itme']) ? (int)$starter_weapon['itme'] : 12,
+    'weps' => isset($starter_weapon['itms']) ? (string)$starter_weapon['itms'] : '10',
+    'wepsk' => isset($starter_weapon['itmsk']) ? (string)$starter_weapon['itmsk'] : '',
+    'weppara' => isset($starter_weapon['itmpara']) ? (string)$starter_weapon['itmpara'] : '',
     'wep2id' => '', 'wep2' => '', 'wep2k' => '', 'wep2e' => 0, 'wep2s' => '0', 'wep2sk' => '', 'wep2para' => '',
     'arbid' => '', 'arb' => '', 'arbk' => '', 'arbe' => 0, 'arbs' => '0', 'arbsk' => '', 'arbpara' => '',
     'arhid' => '', 'arh' => '', 'arhk' => '', 'arhe' => 0, 'arhs' => '0', 'arhsk' => '', 'arhpara' => '',

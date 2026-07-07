@@ -556,13 +556,6 @@ export const useBattleStore = defineStore('battle', () => {
 
   /** Battle End 段：标准战斗终结 */
   async function playBattleEndSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    // 兜底：玩家死亡意图（万一 combatant_cleared 主判定未触发）
-    // 主判定在 playTurnSegment 循环内的 combatant_cleared 分支
-    const winnerPid = segment.meta?.winnerPid;
-    if (winnerPid != null && Number(winnerPid) !== currentPid.value) {
-      usePlayerAvatarStore().onDie();
-    }
-
     await playSegmentInModal(segment, { npcPid, isBattleEnd: true });
   }
 

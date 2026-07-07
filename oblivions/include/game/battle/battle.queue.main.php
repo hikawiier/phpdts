@@ -76,6 +76,44 @@ function battle_queue_rebuild($qid, &$actor_data, &$obl_battle_log): array
 }
 
 /**
+ * 队列解散时统一清理所有参与者
+ *
+ * 遍历队列所有行（包括 active=0 已退出的），清空 bid + action + 恢复 AP + save。
+ * actor_data 是引用传入，直接修改；其他人 fetch 后修改。
+ *
+ * @param int    $qid
+ * @param array  &$actor_data   当前 actor（引用，直接修改）
+ * @param array  &$obl_battle_log
+ */
+function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): void {
+    $queue_rows = obl_fetch_queue_all_by_qid($qid);
+    foreach ($queue_rows as $r) {
+        $pid = (int)$r['pid'];
+        if ($pid === (int)$actor_data['pid']) {
+            $actor_data['bid'] = 0;
+            $actor_data['action'] = '';
+            $actor_data['ap'] = $actor_data['max_ap'];
+            obl_save_player($actor_data);
+            continue;
+        }
+        $c_data = obl_fetch_playerdata_by_pid($pid);
+        if (!$c_data) continue;
+        $c_data['bid'] = 0;
+        $c_data['action'] = '';
+        $c_data['ap'] = $c_data['max_ap'];
+        obl_save_player($c_data);
+
+        if ($obl_battle_log) {
+            $obl_battle_log->setPhase('disband_cleanup');
+            $obl_battle_log->emit([
+                'cleared_pid'  => $pid,
+                'cleared_name' => $c_data['name'],
+            ], true);  // debug
+        }
+    }
+}
+
+/**
  * 队列管理主函数
  *
  * 优化版：一次性 SELECT 全量队列行，所有派生值从内存数组推导，
@@ -95,6 +133,7 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
     // ── 一次性读取所有队列行 ──
     $queue_rows = obl_fetch_queue_all_by_qid($qid);
     if (empty($queue_rows)) {
+        // 极端兜底：队列不存在但 actor 还有 bid（队列被意外删除）
         if ($obl_battle_log) {
             $obl_battle_log->setPhase('battle_end');
             $obl_battle_log->emit([
@@ -102,34 +141,58 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
                 'reason'     => 'queue_empty',
             ]);
         }
-        $actor_data['bid'] = 0;
-        battle_state_clear($actor_data, $obl_battle_log, $battle_cache, 'battle_end');
+        // 清理所有 bid 指向此 qid 的人（队列行已不存在，改扫玩家表）
+        $stale_pids = obl_fetch_pids_by_bid($qid);
+        foreach ($stale_pids as $pid) {
+            if ((int)$pid === (int)$actor_data['pid']) {
+                $actor_data['bid'] = 0;
+                $actor_data['action'] = '';
+                $actor_data['ap'] = $actor_data['max_ap'];
+                obl_save_player($actor_data);
+            } else {
+                $c_data = obl_fetch_playerdata_by_pid($pid);
+                if (!$c_data) continue;
+                $c_data['bid'] = 0;
+                $c_data['action'] = '';
+                $c_data['ap'] = $c_data['max_ap'];
+                obl_save_player($c_data);
+            }
+        }
+        if ($qid > 0) {
+            obl_battle_state_transition($qid, 'battle_end');
+            obl_battle_state_destroy($qid);
+        }
         $result['disbanded'] = true;
         return $result;
     }
 
-    // ── 从全量数据推导各派生值 ──
-    $count = count($queue_rows);
-    $has_player = false;
+    // ── 从全量数据推导各派生值（基于 active=1 计数）──
+    $active_count = 0;
+    $has_player   = false;
     $actor_myorder = 0;
 
     foreach ($queue_rows as $r) {
-        if ((int)$r['type'] === 0) $has_player = true;
+        if ((int)$r['active'] === 1) {
+            $active_count++;
+            if ((int)$r['type'] === 0) $has_player = true;
+        }
         if ((int)$r['pid'] === (int)$actor_data['pid']) {
             $actor_myorder = (int)$r['myorder'];
         }
     }
 
-    // ── 从内存标记 actor 为 done ──
+    // ── 从内存标记 actor 为 done（过滤 active=1）──
     $undone = array_values(array_filter($queue_rows, function($r) use ($actor_data) {
-        return (int)$r['done'] === 0 && (int)$r['pid'] !== (int)$actor_data['pid'];
+        return (int)$r['done'] === 0
+            && (int)$r['active'] === 1
+            && (int)$r['pid'] !== (int)$actor_data['pid'];
     }));
 
     // ── 1+4. 标记 done + 更新 last_acted（合并为一次 UPDATE） ──
     obl_update_queue_done_and_last_acted($actor_data['pid'], $qid, 1, $actor_myorder);
 
-    // ── 2. 解散判定 ──
-    if ($count <= 1 || !$has_player) {
+    // ── 2. 解散判定（基于 active=1 计数）──
+    if ($active_count <= 1 || !$has_player) {
         if ($obl_battle_log) {
             $obl_battle_log->setPhase('battle_end');
             $obl_battle_log->emit([
@@ -137,11 +200,10 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
                 'reason'     => 'disband',
             ]);
         }
+        battle_disband_cleanup($qid, $actor_data, $obl_battle_log);
         obl_queue_delete_by_qid($qid);
         obl_battle_state_transition($qid, 'battle_end');
         obl_battle_state_destroy($qid);
-        $actor_data['bid'] = 0;
-        battle_state_clear($actor_data, $obl_battle_log, $battle_cache, 'battle_end');
         $result['disbanded'] = true;
         return $result;
     }
@@ -151,11 +213,11 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
         battle_queue_rebuild($qid, $actor_data, $obl_battle_log);
         $result['rebuilt'] = true;
 
-        // rebuild 后 myorder 和 done 都变了，重新加载
+        // rebuild 后 myorder 和 done 都变了，重新加载（过滤 active=1）
         $queue_rows = obl_fetch_queue_all_by_qid($qid);
         $undone = [];
         foreach ($queue_rows as $r) {
-            if ((int)$r['done'] === 0) $undone[] = $r;
+            if ((int)$r['done'] === 0 && (int)$r['active'] === 1) $undone[] = $r;
         }
     }
 

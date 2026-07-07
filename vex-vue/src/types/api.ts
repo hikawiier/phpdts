@@ -97,6 +97,7 @@ export interface EquipmentSlot {
   item_id?: string;
   itmid?: string;
   name: string;
+  kind?: string;
   exp?: string | number;
   [key: string]: unknown;
 }
@@ -246,6 +247,12 @@ export interface Skill {
   available: boolean;
   /** 目标类型：'self'（自身）/ 'enemy'（敌人，需选目标） */
   target: 'self' | 'enemy';
+  range_mode?: 'fixed' | 'inherit' | 'additive' | 'capped_additive';
+  range_max?: string | number;
+  range_bonus?: string | number;
+  action_range?: string | number;
+  /** 前端不显示标记（true=隐藏，后端正常返回，前端过滤） */
+  hidden?: boolean;
   [key: string]: unknown;
 }
 
@@ -342,6 +349,11 @@ export interface BattleLogEntry {
   ambush_pid: number | null;
   combatants: RollData[] | null;
   reason: string | null;
+  distance?: number | null;
+  range?: number | null;
+  range_mode?: string | null;
+  range_max?: number | null;
+  range_bonus?: number | null;
   winner_pid: number | null;
   cleared_pid: number | null;
   cleared_name: string | null;

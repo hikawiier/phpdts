@@ -21,6 +21,7 @@ import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { useMapStore } from '@/stores/map';
 import { useToastStore } from '@/stores/toast';
+import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
 import type { Skill } from '@/types/api';
 import type { PreloadInitEventData } from '@/types/events';
@@ -28,6 +29,8 @@ import type { PreloadInitEventData } from '@/types/events';
 // ── 状态 ──
 const mode = ref<'pre-battle' | 'in-battle' | ''>('');
 const skills = ref<Skill[]>([]);
+// 前端过滤 hidden 技能（后端正常返回，前端不显示）
+const visibleSkills = computed(() => skills.value.filter(s => !s.hidden));
 const playerAp = ref<number>(0);
 const playerMaxAp = ref<number>(0);
 interface QueueItem {
@@ -117,6 +120,30 @@ const apBar = computed(() => {
 // 技能点击处理
 // ══════════════════════════════════════════════════
 
+
+function getSkillActionRange(skill: Skill | undefined): number {
+  if (!skill) return 1;
+  const n = Number(skill.action_range ?? skill.range_max ?? 1);
+  return Number.isFinite(n) ? Math.max(0, n) : 1;
+}
+
+function isEnemyInSkillRange(skill: Skill, targetPid: number): boolean {
+  if (mapStore.curLoc === null || mapStore.curRegion === null) return false;
+  const enemy = mapStore.enemies.find(
+    (e) => Number(e.pid) === Number(targetPid) && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
+  );
+  if (!enemy) return false;
+  const path = findPath(mapStore.curLoc, enemy.pls);
+  if (!path) return false;
+  const distance = Math.max(0, path.length - 1);
+  return distance <= getSkillActionRange(skill);
+}
+
+function skillRangeText(skill: Skill): string {
+  if (skill.target !== 'enemy') return '';
+  return ` R:${getSkillActionRange(skill)}`;
+}
+
 function onSkillClick(actId: string): void {
   const skill = skills.value.find((s) => s.act_id === actId);
   if (!skill || !skill.available) return;
@@ -146,6 +173,10 @@ function onSkillClick(actId: string): void {
     // enemy 目标：MVP 单敌人战斗，直接使用当前敌人 PID
     // 未来多敌人时可启用瞄准模式：enterAimMode(actId)
     if (enemyPid.value > 0) {
+      if (!isEnemyInSkillRange(skill, enemyPid.value)) {
+        useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
+        return;
+      }
       addToQueue(actId, enemyPid.value);
     } else {
       enterAimMode(actId);
@@ -177,9 +208,10 @@ function skillCdText(skill: Skill): string {
 // ══════════════════════════════════════════════════
 
 function enterAimMode(actId: string): void {
+  const skill = skills.value.find((s) => s.act_id === actId);
   aimMode.value = true;
   pendingActId.value = actId;
-  dataManager.broadcast('battle:aim-mode', { actId });
+  dataManager.broadcast('battle:aim-mode', { actId, actionRange: getSkillActionRange(skill) });
 }
 
 function exitAimMode(): void {
@@ -193,12 +225,18 @@ function onTargetSelect(data: unknown): void {
   if (!aimMode.value || !pendingActId.value) return;
   const pid = typeof data === 'number' ? data : (data as { pid?: number })?.pid;
   if (typeof pid !== 'number') return;
-  // 不再写入 enemyPid：避免污染后续技能的目标选择
-  // enemyPid 只应由 initPreloadArea 设置（来自 battleStore.currentEnemyPid）
+
+  const skill = skills.value.find((s) => s.act_id === pendingActId.value);
+  if (skill && !isEnemyInSkillRange(skill, pid)) {
+    useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
+    return;
+  }
+
   // 瞄准选中的 pid 直接传入 addToQueue，用完即弃
   addToQueue(pendingActId.value, pid);
   exitAimMode();
 }
+
 
 /** 瞄准模式退出（监听 battle:aim-exit 事件，如 ESC 退出） */
 function onAimExit(): void {
@@ -328,11 +366,11 @@ defineExpose({
   <div class="flex flex-col h-full min-h-0">
     <!-- 上半区：技能列表（动态高度，上限 60% 滚动） -->
     <div class="overflow-y-auto min-h-0 max-h-[60%]">
-      <div v-if="skills.length === 0" class="text-fg-dim text-[10px] py-2 text-center">
+      <div v-if="visibleSkills.length === 0" class="text-fg-dim text-[10px] py-2 text-center">
         无可用技能
       </div>
       <button
-        v-for="skill in skills"
+        v-for="skill in visibleSkills"
         :key="skill.act_id"
         class="obl-btn w-full text-left px-2 py-1.5 mb-1 transition-colors"
         :class="skillButtonClass(skill)"
@@ -342,7 +380,7 @@ defineExpose({
         <span class="text-fg-bright font-bold">[{{ getSkillTemplate(skill.act_id).name }}]</span>
         <span class="text-fg-dim text-[10px] ml-2">{{ getSkillTemplate(skill.act_id).desc }}</span>
         <span class="text-fg-dim text-[10px] ml-2">
-          {{ Number(skill.apcost) > 0 ? ` AP:${skill.apcost}` : '' }}{{ skillCdText(skill) }}
+          {{ Number(skill.apcost) > 0 ? ` AP:${skill.apcost}` : '' }}{{ skillRangeText(skill) }}{{ skillCdText(skill) }}
         </span>
       </button>
     </div>

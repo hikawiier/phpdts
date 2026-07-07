@@ -22,7 +22,11 @@ require_once GAME_ROOT . './oblivions/include/game/player.func.php';
 require_once GAME_ROOT . './oblivions/include/game/move.func.php';
 require_once GAME_ROOT . './oblivions/include/game/generate.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php';
+// 道具 Tag 读取层较轻量，技能模块可能依赖它进行装备性质判断。
+require_once GAME_ROOT . './oblivions/include/game/item/item.tag.func.php';
 require_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
+require_once GAME_ROOT . './oblivions/include/game/skill/skill.modules.php';
+skill_load_modules();
 
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
@@ -48,7 +52,6 @@ require_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
 
 // 第 5.5 层：道具系统（依赖 log + player + explore，无循环依赖）
 // 加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）
-require_once GAME_ROOT . './oblivions/include/game/item/item.tag.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';

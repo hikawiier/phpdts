@@ -12,7 +12,7 @@ if (!defined('IN_GAME')) {
 #     'target'        => 目标类型：self/enemy/all/tiles（默认self）
 #     'range_bonus'   => 射程补正（默认0）
 #     'lifetime'      => 生命周期：permanent/equipment/effect（默认permanent）
-#     'category'      => 分类：attack/escape/utility/passive（默认utility）
+#     'category'      => 分类：attack/unattack/utility/passive（默认utility；unattack=不进入伤害流程，如逃跑/发呆）
 #     'damage_type'   => 伤害类型：physical/magical/none（默认none）
 #     'damage_factor' => 伤害系数（att × factor，默认0）
 # ]
@@ -23,13 +23,30 @@ return [
         'apcost'        => 1,
         'cd'            => 0,
         'target'        => 'enemy',
+        'range_mode'    => 'fixed',
+        'range_max'     => 1,
         'range_bonus'   => 0,
         'lifetime'      => 'permanent',
         'category'      => 'attack',
         'damage_type'   => 'physical',
         'damage_factor' => 1.0,
         'target_rules'  => [
-            'forbid'  => ['self', 'dead'],
+            'forbid'  => ['self', 'dead', 'out_of_range'],
+        ],
+    ],
+    'throw' => [
+        'apcost'        => 1,
+        'cd'            => 0,
+        'target'        => 'enemy',
+        'range_mode'    => 'fixed',
+        'range_max'     => 4,
+        'range_bonus'   => 0,
+        'lifetime'      => 'equipment',
+        'category'      => 'attack',
+        'damage_type'   => 'physical',
+        'damage_factor' => 1.0,
+        'target_rules'  => [
+            'forbid'  => ['self', 'dead', 'out_of_range'],
         ],
     ],
     # ── 逃跑类（终结技）─────────────────────
@@ -38,12 +55,30 @@ return [
         'cd'            => 1,
         'finisher'      => 1,
         'target'        => 'self',
+        'range_mode'    => 'fixed',
+        'range_max'     => 0,
         'range_bonus'   => 0,
         'lifetime'      => 'permanent',
-        'category'      => 'escape',
+        'category'      => 'unattack',
         'target_rules'  => [
             'require' => ['self'],
             'forbid'  => ['dead'],
+        ],
+    ],
+    # ── 发呆类（NPC 专属，玩家不可见）─────────
+    'idle' => [
+        'apcost'        => 0,
+        'cd'            => 0,
+        'finisher'      => 0,
+        'target'        => 'self',
+        'range_mode'    => 'fixed',
+        'range_max'     => 0,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'unattack',
+        'hidden'        => true,
+        'target_rules'  => [
+            'require' => ['self'],
         ],
     ],
     # ── 工具类 ──────────────────────────────

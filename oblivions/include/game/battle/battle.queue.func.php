@@ -193,7 +193,9 @@ function battle_queue_set_initiative($qid, &$actor_data, &$obl_battle_log, $ambu
 
     $pids = [];
     foreach ($rows as $row) {
-        $pids[] = (int)$row['pid'];
+        if ((int)$row['active'] === 1) {  // 只对 active=1 的人重投先攻
+            $pids[] = (int)$row['pid'];
+        }
     }
 
     $player_map = obl_fetch_playerdata_batch($pids);
@@ -237,14 +239,11 @@ function battle_queue_join(&$actor_data, $qid, &$obl_battle_log)
 
 function battle_queue_exit(&$actor_data, &$obl_battle_log, &$battle_cache)
 {
-    #从数据库中的先攻队列中移除自己
+    #从先攻队列中退出（标记 active=0，不删行、不清 bid）
+    #bid 保留由队列解散时统一清理（battle_disband_cleanup）
 
     $qid = (int)$actor_data['bid'];
     if ($qid > 0) {
-        # 从先攻队列表中删除自己的记录
-        obl_queue_delete_entry($actor_data['pid'], $qid);
+        obl_queue_set_active($actor_data['pid'], $qid, 0);
     }
-
-    #清空bid
-    $actor_data['bid'] = 0;
 }

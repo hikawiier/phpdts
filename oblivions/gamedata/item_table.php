@@ -14,7 +14,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // - tool_level：工具等级（仅工作台/工具类道具有效），0=无等级要求；高级兼容低级
 //
 // 数据校验规则（见《道具-系统钩子Tag设计案.md》§6.3）：
-// - itmk ∈ {WP,WK,WG,WD,WF,AR,AH,AF,AA} ⟹ tags 含 tag_equippable
+// - itmk ∈ {WP,WK,WG,WD,WF,WC,AR,AH,AF,AA} ⟹ tags 含 tag_equippable
 // - use_effect 非空 ⟺ tags 含 tag_usable
 // - itmk ∈ {MT,HH,HS,DX} ⟹ tags 不含 tag_equippable
 // ================================================================
@@ -89,6 +89,20 @@ return [
         'tier'     => 'rare',
         'stack'    => false,
         'tags'     => ['tag_equippable', 'tag_sharp'],
+        'use_effect' => '',
+        'tool_level' => 0,
+    ],
+    'throwing_spear' => [
+        'itm'      => '投矛',
+        'itmk'     => 'WC',
+        'itme'     => 12,
+        'itms'     => 10,
+        'itmsk'    => '',
+        'itmpara'  => '',
+        'desc'     => '适合投掷的短矛，能在中距离刺穿敌人。',
+        'tier'     => 'common',
+        'stack'    => false,
+        'tags'     => ['tag_equippable', 'tag_weapon_throwing', 'tag_sharp'],
         'use_effect' => '',
         'tool_level' => 0,
     ],

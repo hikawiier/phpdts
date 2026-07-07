@@ -64,7 +64,8 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 	# battle_main 已由 obl_bootstrap.php 加载
 
 	# 载入所有活跃的先攻队列 qid（DISTINCT 去重，避免同队列多记录重复处理）
-	$result = $db->query("SELECT DISTINCT qid FROM {$tablepre}oblqueue WHERE qid > 0");
+	# 加 active=1 过滤，避免扫到全员 active=0 的幽灵队列
+	$result = $db->query("SELECT DISTINCT qid FROM {$tablepre}oblqueue WHERE qid > 0 AND active = 1");
 
 	while ($qdata = $db->fetch_array($result)) {
 		$qid = (int)$qdata['qid'];
@@ -126,7 +127,7 @@ function obl_tick_phase_idle_npc($delta, &$ctx) {
 
 	foreach ($enemies as &$enemy) {
 		# 战斗中的敌人跳过（由战斗系统接管）
-		if ($enemy['bid']) continue;
+		if ($enemy['action'] === 'battle') continue;
 		# 结算非战斗敌人 AI
 		obl_enemy_tick($enemy, $player);
 	}
@@ -182,9 +183,11 @@ function obl_enemy_tick(&$enemy, &$player)
 /**
  * AI 战斗技能选择
  *
- * 从 oblpara['combat_skills'] 中选择第一个可用技能（CD 未锁定、AP 足够）。
- * 根据技能配置的 target 字段决定目标：self → NPC 自身 pid，其他 → 传入的 target_pid。
- * 若无可用技能，回退到 unarmed_strike。
+ * 从 oblpara['combat_skills'] 中选择第一个可用攻击技能（含射程预判）。
+ * 决策链：
+ *   1. 尝试 combat_skills 中的攻击技能（传入 target_data 做射程预判）
+ *   2. 无可用攻击技能 → 尝试 escape（逃跑兜底）
+ *   3. escape 不可用 → 返回 idle（发呆兜底）
  *
  * @param array &$npc_data   NPC 数据
  * @param int   $target_pid  默认目标 pid（玩家）
@@ -199,29 +202,27 @@ function obl_ai_select_combat_action(&$npc_data, $target_pid) {
 		$combat_skills = array('unarmed_strike');
 	}
 
-	# 遍历偏好列表，选择第一个可用技能
-	$selected_skill = null;
+	# fetch target data（射程预判需要）
+	$target_data = obl_fetch_playerdata_by_pid($target_pid);
+	if (!$target_data) {
+		# target 不存在，发呆
+		return array(array('act_id' => 'idle', 'target' => (int)$npc_data['pid']));
+	}
+
+	# 1. 尝试攻击技能（含射程预判）
 	foreach ($combat_skills as $skill_id) {
-		if (skill_is_usable($npc_data, $skill_id)) {
-			$selected_skill = $skill_id;
-			break;
+		if (skill_is_usable($npc_data, $skill_id, $target_data)) {
+			return array(array('act_id' => $skill_id, 'target' => (int)$target_pid));
 		}
 	}
 
-	# 无可用技能时回退到 unarmed_strike
-	if ($selected_skill === null) {
-		$selected_skill = 'unarmed_strike';
+	# 2. 无可用攻击技能 → 逃跑兜底
+	if (skill_is_usable($npc_data, 'escape')) {
+		return array(array('act_id' => 'escape', 'target' => (int)$npc_data['pid']));
 	}
 
-	# 根据技能配置决定目标
-	$config = skill_get_config($selected_skill);
-	$target = ($config && isset($config['target']) && $config['target'] === 'self')
-		? (int)$npc_data['pid']
-		: (int)$target_pid;
-
-	return array(
-		array('act_id' => $selected_skill, 'target' => $target),
-	);
+	# 3. escape 也不可用 → 发呆
+	return array(array('act_id' => 'idle', 'target' => (int)$npc_data['pid']));
 }
 
 // ================================================================

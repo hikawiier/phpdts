@@ -108,9 +108,14 @@ function battle_once_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_
     include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
     skill_execute($actor_data, $act_id, $target_data, $obl_battle_log, $battle_cache);
 
-    //执行act_id具体的打击动作
-    $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache);
-    battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache);
+    // 伤害流程：unattack 类别技能（escape/idle 等）跳过伤害计算与应用
+    $damage = 0;
+    $config = skill_get_config($act_id);
+    $category = $config && isset($config['category']) ? $config['category'] : '';
+    if ($category !== 'unattack') {
+        $damage = obl_calc_damage($actor_data, $target_data, $act_id, $battle_cache);
+        battle_apply_damage($actor_data, $target_data, $damage, $obl_battle_log, $battle_cache);
+    }
 
     // ── 动作执行后快照 ──
     if ($obl_battle_log) {
@@ -177,12 +182,27 @@ function battle_execute_verify(&$actor_data, $act, &$obl_battle_log, &$battle_ca
         if (!$check['pass']) {
             if ($obl_battle_log) {
                 $obl_battle_log->setPhase('execute_verify_failed');
-                $obl_battle_log->emit([
-                    'actor_pid'  => (int)$actor_data['pid'],
-                    'actor_name' => $actor_data['name'],
-                    'action_id'  => $act_id,
-                    'reason'     => $check['reason'],
-                ]);
+                $payload = [
+                    'actor_pid'   => (int)$actor_data['pid'],
+                    'actor_name'  => $actor_data['name'],
+                    'target_pid'  => (int)$target_data['pid'],
+                    'target_name' => $target_data['name'],
+                    'action_id'   => $act_id,
+                    'reason'      => $check['reason'],
+                ];
+                if ($check['reason'] === 'forbid:out_of_range' && !empty($battle_cache['last_range_check'])) {
+                    $range_check = $battle_cache['last_range_check'];
+                    if ((int)$range_check['actor_pid'] === (int)$actor_data['pid']
+                        && (int)$range_check['target_pid'] === (int)$target_data['pid']
+                        && (string)$range_check['action_id'] === (string)$act_id) {
+                        $payload['distance']    = isset($range_check['distance']) ? (int)$range_check['distance'] : -1;
+                        $payload['range']       = isset($range_check['range']) ? (int)$range_check['range'] : 0;
+                        $payload['range_mode']  = isset($range_check['range_mode']) ? $range_check['range_mode'] : 'fixed';
+                        $payload['range_max']   = isset($range_check['range_max']) ? (int)$range_check['range_max'] : 0;
+                        $payload['range_bonus'] = isset($range_check['range_bonus']) ? (int)$range_check['range_bonus'] : 0;
+                    }
+                }
+                $obl_battle_log->emit($payload);
             }
             return null;
         }
@@ -267,7 +287,8 @@ function battle_main_end(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cac
     $ambusher_quit = null;
 
     // ── Turn end hook：当前 combatant 的行动已全部执行完毕（仅 Phase 1）──
-    if (!empty($actor_data['bid'])) {
+    // 双条件：bid>0 排除 Phase 0（ambush），action==='battle' 排除已退出者
+    if (!empty($actor_data['bid']) && $actor_data['action'] === 'battle') {
         battle_hook_turn_end($actor_data, $obl_battle_log, $battle_cache);
     }
 

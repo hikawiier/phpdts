@@ -112,7 +112,7 @@ export interface PlayScript {
 const nonDamageActions = ['escape'];
 
 /** 攻击类动作白名单（触发 collision 动画） */
-const attackActions = ['unarmed_strike'];
+const attackActions = ['unarmed_strike', 'throw'];
 
 // ─────────────────────────────────────────────────
 // 主函数

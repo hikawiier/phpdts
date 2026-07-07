@@ -12,6 +12,7 @@ export const TAG_LOCALE: Record<string, string> = {
   tag_forge: '锻造台',
   tag_equippable: '可装备',
   tag_usable: '可使用',
+  tag_weapon_throwing: '投掷武器',
 };
 
 /**
