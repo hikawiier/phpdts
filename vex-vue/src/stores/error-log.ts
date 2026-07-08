@@ -1,14 +1,18 @@
 // ══════════════════════════════════════════════════
 // 错误日志 store / Error log
 //
-// 检测后端 OblivionsErrorLogger 持久化的错误日志，通过 Toast 抛出。
+// 检测后端 OblivionsErrorLogger 持久化的错误日志。
 //
 // 职责：
 //   - lastTs 增量检测（记录已展示的最大 ts）
-//   - refreshErrorLog()：拉取 obl_error + 增量过滤 + Toast 触发
-//   - 事件驱动：监听 game:action-completed（POST 命令后即时检测）
+//   - refreshErrorLog()：拉取 obl_error + 增量过滤 + 诊断模式 Toast
+//   - 事件驱动：监听 game:action-completed（POST 命令后即时检测并推进 lastTs）
 //   - 独立轮询：兜底检测非命令路径产生的错误（如 tick 结算异常）
 //     默认关闭，URL 参数 ?poll_error=1 开启
+//
+// Event Log 职责重置后，普通业务拒绝由 Command API response 负责；
+// obl_error_log 是诊断流，默认不再作为普通 UI 提示通道。
+// 仅 ?debug=ai 或 ?poll_error=1 时弹出诊断 Toast。
 //
 // 设计依据：oblivions/docs/vex-vue 错误日志检测与展示设计方案.md
 // ══════════════════════════════════════════════════
@@ -22,6 +26,12 @@ import type { ApiResponse } from '@/api/client';
 
 /** 独立轮询周期（毫秒） */
 const POLLING_INTERVAL = 5000;
+
+function shouldShowDiagnosticToasts(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('debug') === 'ai' || params.get('poll_error') === '1';
+}
 
 /**
  * 错误渲染器：ID → HTML 渲染函数
@@ -81,13 +91,13 @@ export const useErrorLogStore = defineStore('error-log', () => {
   const loading = ref<boolean>(false);
 
   /**
-   * 拉取错误日志 + 增量检测 + Toast 触发
+   * 拉取错误日志 + 增量检测 + 诊断模式 Toast
    *
    * 流程：
    *   1. dataManager.fetch('obl_error', true) 拉取错误日志（强制刷新，不缓存）
    *   2. 增量过滤：只处理 ts > lastTs 的新条目
    *   3. 更新 lastTs
-   *   4. 逐条触发 Toast（error 类型，4000ms，mergeId=entry.id 同类合并）
+   *   4. 仅在诊断模式逐条触发 Toast（error 类型，4000ms，mergeId=entry.id 同类合并）
    */
   async function refreshErrorLog(): Promise<void> {
     if (loading.value) return;
@@ -110,7 +120,9 @@ export const useErrorLogStore = defineStore('error-log', () => {
       lastTs.value = allEntries[allEntries.length - 1].ts;
       localStorage.setItem(LS_KEY, String(lastTs.value));
 
-      // ── 触发 Toast ──
+      // ── 触发诊断 Toast ──
+      if (!shouldShowDiagnosticToasts()) return;
+
       const toastStore = useToastStore();
       for (const entry of newEntries) {
         const content = renderErrorEntry(entry);
@@ -125,8 +137,10 @@ export const useErrorLogStore = defineStore('error-log', () => {
       }
     } catch (e) {
       console.error('[ErrorLog] refreshErrorLog error:', e);
-      // 错误日志拉取本身失败时，后端错误通知机制失效，需 Toast 提示用户
-      useToastStore().showToast('错误日志拉取失败', 'error', 4000, false, 'error-log-fetch');
+      // 诊断流读取失败也只在诊断模式提示，避免普通 UI 被 debug 通道噪声打扰。
+      if (shouldShowDiagnosticToasts()) {
+        useToastStore().showToast('错误日志拉取失败', 'error', 4000, false, 'error-log-fetch');
+      }
     } finally {
       loading.value = false;
     }

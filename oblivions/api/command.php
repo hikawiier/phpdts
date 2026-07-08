@@ -33,30 +33,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    obl_command_response_emit(obl_command_response_error('INVALID_ENVELOPE', '只允许 POST 请求'));
+    obl_command_response_emit(obl_command_response_error('INVALID_ENVELOPE', '', array('reason' => 'method_not_allowed')));
     exit;
 }
 
 if (!obl_runtime_require_oblivions($ctx)) {
-    obl_command_response_emit(obl_command_response_error('COMMAND_NOT_ALLOWED', '当前不是 Oblivions 模式'));
+    obl_command_response_emit(obl_command_response_error('COMMAND_NOT_ALLOWED', '', array('reason' => 'not_oblivions_mode')));
     exit;
 }
 
 $read = obl_json_request_read();
 if (!$read['ok']) {
-    obl_command_response_emit(obl_command_response_error($read['code'], $read['message'], isset($read['details']) ? $read['details'] : null));
+    obl_command_response_emit(obl_command_response_error(
+        $read['code'],
+        isset($read['message']) ? $read['message'] : '',
+        isset($read['details']) ? $read['details'] : null
+    ));
     exit;
 }
 
 $envelope_check = obl_command_validate_envelope($read['body']);
 if (!$envelope_check['ok']) {
-    obl_command_response_emit(obl_command_response_error($envelope_check['code'], $envelope_check['message'], isset($envelope_check['details']) ? $envelope_check['details'] : null));
+    obl_command_response_emit(obl_command_response_error(
+        $envelope_check['code'],
+        isset($envelope_check['message']) ? $envelope_check['message'] : '',
+        isset($envelope_check['details']) ? $envelope_check['details'] : null
+    ));
     exit;
 }
 
 $lock_name = obl_runtime_acquire_room_lock(5);
 if (!$lock_name) {
-    obl_command_response_emit(obl_command_response_error('COMMAND_IN_PROGRESS', '房间正在处理中'));
+    obl_command_response_emit(obl_command_response_error('COMMAND_IN_PROGRESS', '', array('reason' => 'room_lock_busy')));
     exit;
 }
 

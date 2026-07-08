@@ -323,6 +323,16 @@ async function onExecute(): Promise<void> {
     });
   }
 
+  if (!result.success) {
+    useToastStore().showToast(
+      result.message || result.error || '战斗指令提交失败',
+      'error',
+      3000,
+      !!result.messageIsHtml,
+    );
+    return;
+  }
+
   // 清空队列和瞄准状态
   queue.value = [];
   mode.value = '';

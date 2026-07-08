@@ -109,23 +109,23 @@ function obl_command_contract($command) {
 
 function obl_command_validate_envelope($body) {
     if (!is_array($body)) {
-        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'message' => '请求必须是 JSON 对象');
+        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'details' => array('reason' => 'body_not_object'));
     }
     $command = isset($body['command']) ? (string)$body['command'] : '';
     if ($command === '') {
-        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'message' => '缺少 command');
+        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'details' => array('reason' => 'missing_command'));
     }
     if (!preg_match('/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/', $command)) {
-        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'message' => 'command 格式非法');
+        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'details' => array('reason' => 'invalid_command_format'));
     }
     $payload = isset($body['payload']) ? $body['payload'] : array();
     if ($payload === null) $payload = array();
     if (!is_array($payload)) {
-        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'message' => 'payload 必须是对象');
+        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'details' => array('reason' => 'payload_not_object'));
     }
     $request_id = isset($body['request_id']) ? (string)$body['request_id'] : '';
     if ($request_id !== '' && !preg_match('/^[a-zA-Z0-9_.:-]{1,128}$/', $request_id)) {
-        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'message' => 'request_id 格式非法');
+        return array('ok' => false, 'code' => 'INVALID_ENVELOPE', 'details' => array('reason' => 'invalid_request_id'));
     }
     $expected = isset($body['expected']) && is_array($body['expected']) ? $body['expected'] : array();
     return array('ok' => true, 'envelope' => array(
@@ -142,7 +142,7 @@ function obl_command_validate_payload($payload, $schema) {
         $required = !empty($rule['required']);
         if (!array_key_exists($field, $payload)) {
             if ($required) {
-                return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => '缺少字段：' . $field, 'details' => array('field' => $field));
+                return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'missing_field', 'field' => $field));
             }
             if (isset($rule['type']) && $rule['type'] === 'slot_counts') $normalized[$field] = array();
             if (isset($rule['type']) && $rule['type'] === 'string_list') $normalized[$field] = array();
@@ -159,13 +159,13 @@ function obl_command_validate_payload($payload, $schema) {
 
 function obl_command_normalize_value($value, $type, $field, $rule = array()) {
     if ($type === 'int') {
-        if (!is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 必须是整数');
+        if (!is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_int', 'field' => $field));
         $int = (int)$value;
-        if (isset($rule['min']) && $int < (int)$rule['min']) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 超出范围');
+        if (isset($rule['min']) && $int < (int)$rule['min']) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'below_min', 'field' => $field, 'min' => (int)$rule['min']));
         return array('ok' => true, 'value' => $int);
     }
     if ($type === 'string') {
-        if (!is_string($value) && !is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 必须是字符串');
+        if (!is_string($value) && !is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_string', 'field' => $field));
         return array('ok' => true, 'value' => (string)$value);
     }
     if ($type === 'actions') {
@@ -178,7 +178,7 @@ function obl_command_normalize_value($value, $type, $field, $rule = array()) {
         return obl_command_validate_string_list($value, $field);
     }
     if ($type === 'array') {
-        if (!is_array($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 必须是数组');
+        if (!is_array($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_array', 'field' => $field));
         return array('ok' => true, 'value' => $value);
     }
     return array('ok' => true, 'value' => $value);
@@ -186,20 +186,20 @@ function obl_command_normalize_value($value, $type, $field, $rule = array()) {
 
 function obl_command_validate_actions($actions) {
     if (!is_array($actions) || empty($actions)) {
-        return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'actions 必须是非空数组');
+        return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'actions_empty'));
     }
     $normalized = array();
     foreach ($actions as $idx => $action) {
         if (!is_array($action)) {
-            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'action 必须是对象', 'details' => array('index' => $idx));
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'action_not_object', 'index' => $idx));
         }
         $act_id = isset($action['act_id']) ? (string)$action['act_id'] : '';
         if ($act_id === '' || !preg_match('/^[a-zA-Z0-9_.:-]{1,64}$/', $act_id)) {
-            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'act_id 非法', 'details' => array('index' => $idx));
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_act_id', 'index' => $idx));
         }
         $target = isset($action['target']) ? (int)$action['target'] : 0;
         if ($target <= 0) {
-            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'target 非法', 'details' => array('index' => $idx));
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
         }
         $params = isset($action['params']) && is_array($action['params']) ? $action['params'] : array();
         $normalized[] = array('act_id' => $act_id, 'target' => $target, 'params' => $params);
@@ -209,13 +209,13 @@ function obl_command_validate_actions($actions) {
 
 function obl_command_validate_slot_counts($slots) {
     if ($slots === null) return array('ok' => true, 'value' => array());
-    if (!is_array($slots)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'slots 必须是数组');
+    if (!is_array($slots)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_array', 'field' => 'slots'));
     $normalized = array();
     foreach ($slots as $idx => $entry) {
-        if (!is_array($entry)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'slots 项必须是对象', 'details' => array('index' => $idx));
+        if (!is_array($entry)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'slot_entry_not_object', 'index' => $idx));
         $slot = isset($entry['slot']) ? (int)$entry['slot'] : 0;
         $count = isset($entry['count']) ? (int)$entry['count'] : 1;
-        if ($slot <= 0 || $count <= 0) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => 'slots 项非法', 'details' => array('index' => $idx));
+        if ($slot <= 0 || $count <= 0) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_slot_entry', 'index' => $idx));
         $normalized[] = $slot . ':' . $count;
     }
     return array('ok' => true, 'value' => $normalized);
@@ -223,13 +223,13 @@ function obl_command_validate_slot_counts($slots) {
 
 function obl_command_validate_string_list($list, $field) {
     if ($list === null) return array('ok' => true, 'value' => array());
-    if (!is_array($list)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 必须是数组');
+    if (!is_array($list)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_array', 'field' => $field));
     $normalized = array();
     foreach ($list as $idx => $value) {
-        if (!is_string($value) && !is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 项必须是字符串');
+        if (!is_string($value) && !is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_string', 'field' => $field, 'index' => $idx));
         $s = trim((string)$value);
         if ($s === '') continue;
-        if (!preg_match('/^[a-zA-Z0-9_.:-]{1,128}$/', $s)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'message' => $field . ' 项格式非法', 'details' => array('index' => $idx));
+        if (!preg_match('/^[a-zA-Z0-9_.:-]{1,128}$/', $s)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_string_format', 'field' => $field, 'index' => $idx));
         $normalized[] = $s;
     }
     return array('ok' => true, 'value' => $normalized);

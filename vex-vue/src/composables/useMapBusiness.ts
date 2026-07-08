@@ -87,10 +87,12 @@ export async function clickMove(areaId: string | number): Promise<void> {
 
       perf.report();
     } else {
-      debugBus.emit('action', 'clickMove:failed', { target: areaId, error: result.error });
+      const message = result.message || result.error || '';
+      debugBus.emit('action', 'clickMove:failed', { target: areaId, error: result.error, message });
       dataManager.broadcast('ui:toast', {
         type: 'error',
-        msg: '移动失败' + (result.error ? ': ' + result.error : ''),
+        msg: '移动失败' + (message ? ': ' + message : ''),
+        isHtml: !!result.messageIsHtml,
       });
     }
   } catch (err) {

@@ -130,7 +130,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
       } else {
         dataManager.broadcast('ui:toast', {
           type: 'error',
-          msg: result.error || '探索失败',
+          msg: result.message || result.error || '探索失败',
+          isHtml: !!result.messageIsHtml,
         });
       }
     } catch (e) {
@@ -164,7 +165,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
       } else {
         dataManager.broadcast('ui:toast', {
           type: 'error',
-          msg: result.error || '搜索失败',
+          msg: result.message || result.error || '搜索失败',
+          isHtml: !!result.messageIsHtml,
         });
       }
     } catch (e) {
@@ -197,7 +199,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
       } else {
         dataManager.broadcast('ui:toast', {
           type: 'error',
-          msg: result.error || '拾取失败',
+          msg: result.message || result.error || '拾取失败',
+          isHtml: !!result.messageIsHtml,
         });
       }
     } catch (e) {
@@ -227,10 +230,12 @@ export const useTileActionStore = defineStore('tileAction', () => {
         });
         if (!result.success) {
           failCount++;
-          if (result.error && result.error.indexOf('满') !== -1) {
+          const message = result.message || result.error || '';
+          if (message.indexOf('满') !== -1 || result.error === 'BAG_FULL' || result.error === 'ITM0_PENDING') {
             dataManager.broadcast('ui:toast', {
               type: 'error',
-              msg: result.error,
+              msg: message || '背包已满，无法继续拾取',
+              isHtml: !!result.messageIsHtml,
               mergeId: 'pickup.bag_full',
             });
             bagFull = true;
@@ -299,7 +304,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
       } else {
         dataManager.broadcast('ui:toast', {
           type: 'error',
-          msg: result.error || '切换区域失败',
+          msg: result.message || result.error || '切换区域失败',
+          isHtml: !!result.messageIsHtml,
         });
       }
     } catch (e) {

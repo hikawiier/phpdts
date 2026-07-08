@@ -154,15 +154,11 @@ function obl_move($moveto, &$pdata) {
     $occ_result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE pgroup='{$cur_pgroup}' AND pls='{$moveto}' AND state=0 AND pid != '{$pdata['pid']}' LIMIT 1");
     $occupier = $db->fetch_array($occ_result);
     if ($occupier) {
+        $obl_log->emit('move.occupied', 'move', obl_tile_log_params($target_tile));
         return;
     }
 
-    // 4. 体力检查（首格预扣，独立函数配置驱动）
-    if (!obl_check_move_sp($pdata, 1)) {
-        return;
-    }
-
-    // 5. 连通性 + 距离判定
+    // 4. 连通性 + 距离判定
     $neighbors = $tiles[$cur_pls]['neighbors'] ?? [];
     $move_range = obl_get_move_range();
 
@@ -181,19 +177,21 @@ function obl_move($moveto, &$pdata) {
         return;
     }
 
-    // 6. 跨格移动补扣差额（obl_check_move_sp 已按 distance=1 扣除首格）
+    // 5. 体力检查（距离确认后一次性扣除，避免远距离失败时先扣首格体力）
     if ($distance > 1) {
         $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
         $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
-        $extra_cost = ($distance - 1) * $base_cost;
-        if ($pdata['sp'] < $extra_cost) {
+        $cost = $distance * $base_cost;
+        if ($pdata['sp'] < $cost) {
             $obl_log->emit('move.no_sp_far', 'move');
             return;
         }
-        $pdata['sp'] -= $extra_cost;
+        $pdata['sp'] -= $cost;
+    } elseif (!obl_check_move_sp($pdata, 1)) {
+        return;
     }
 
-    // 7. 执行移动
+    // 6. 执行移动
     $from_tile = $tiles[$cur_pls];
     $pdata['pls'] = $moveto;
 

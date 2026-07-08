@@ -171,5 +171,6 @@ export interface CommandResult {
   timer?: number | null;
   error?: string | null;
   message?: string | null;
+  messageIsHtml?: boolean;
   status?: number;
 }

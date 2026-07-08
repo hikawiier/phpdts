@@ -117,7 +117,8 @@ export const useInventoryStore = defineStore('inventory', () => {
       } else {
         dataManager.broadcast('ui:toast', {
           type: 'error',
-          msg: result.error || '丢弃失败',
+          msg: result.message || result.error || '丢弃失败',
+          isHtml: !!result.messageIsHtml,
         });
       }
     } catch (e) {
@@ -133,19 +134,23 @@ export const useInventoryStore = defineStore('inventory', () => {
    *
    * 后端流程：状态过滤 → 应用 use_effect → 数量模型扣 itms-1 / 耐久模型不消耗 → emit use_item.success
    *
-   * P0 修正：前端不依赖 result.success 感知业务失败（后端命令处理无 return，HTTP 响应恒为 {}，
-   * result.success 仅反映 HTTP 错误/并发锁）。业务结果通过 log/error_log 系统感知：
-   *   - broadcast('game:action-completed') → logStore.refreshLog → LogPanel 渲染日志
-   *
    * @param slot 背包槽位号（1~maxslots）
    */
   async function handleUseItem(slot: number): Promise<void> {
     debugBus.emit('action', 'useItem:trigger', { slot });
     try {
-      await commandQueue.execute({
+      const result = await commandQueue.execute({
         command: 'item.use',
         payload: { slot: Number(slot) },
       });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '使用失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
     } catch (e) {
@@ -168,10 +173,20 @@ export const useInventoryStore = defineStore('inventory', () => {
   async function handleOrganize(): Promise<void> {
     debugBus.emit('action', 'organize:trigger', {});
     try {
-      await commandQueue.execute({
+      const result = await commandQueue.execute({
         command: 'inventory.organize',
         payload: {},
       });
+      if (!result.success) {
+        dataManager.invalidate('player_inventory');
+        await loadInventory();
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '堆叠合并失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
       await loadInventory();
@@ -203,10 +218,18 @@ export const useInventoryStore = defineStore('inventory', () => {
   async function handleDiscardItm0(): Promise<void> {
     debugBus.emit('action', 'discardItm0:trigger', {});
     try {
-      await commandQueue.execute({
+      const result = await commandQueue.execute({
         command: 'item.discard',
         payload: { slot: 0 },
       });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '丢弃失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
     } catch (e) {

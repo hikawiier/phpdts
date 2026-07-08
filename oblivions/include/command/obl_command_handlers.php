@@ -38,7 +38,7 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             battle_entry_dispatch('player_turn', $pdata, $payload['actions']);
             break;
         default:
-            return array('ok' => false, 'code' => 'UNKNOWN_COMMAND', 'message' => '未知命令');
+            return array('ok' => false, 'code' => 'UNKNOWN_COMMAND');
     }
     return array('ok' => true);
 }

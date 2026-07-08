@@ -49,6 +49,12 @@ type ToastStyle = 'info' | 'success' | 'error' | 'warning';
 
 /**
  * Toast 白名单：仅这些日志 ID 触发即时反馈（2 级页面打开时）
+ *
+ * Command API 已接管业务失败/拒绝提示，因此这里不再包含
+ * pickup.not_found / search.already_searched / ITM0_PENDING 等 command_feedback。
+ * obl_log Toast 只保留“命令成功后产生的玩家历史事件”的轻提示，
+ * 避免 response 与日志刷新双重 Toast。
+ *
  * move.* 不加入（地图变化已足够明显）
  * item.to_bag 加入（道具入背包是状态变化，需即时反馈）；
  *   多条 item.to_bag 由下方 Toast 触发逻辑批量合并为"把 N 件道具放进了背包"，
@@ -57,12 +63,9 @@ type ToastStyle = 'info' | 'success' | 'error' | 'warning';
  * ID 与结构化日志系统实际实现的 ID 对齐
  */
 export const TOAST_RULES: Record<string, { style: ToastStyle }> = {
-  'pickup.bag_full': { style: 'error' },
   'pickup.success': { style: 'success' },
-  'pickup.not_found': { style: 'error' },
   'item.to_bag': { style: 'success' },
   'search.result': { style: 'success' },
-  'search.already_searched': { style: 'error' },
   'discard.success': { style: 'success' },
 };
 

@@ -1,4 +1,5 @@
 import { API_BASE, type CommandResult } from './client';
+import { renderCommandFeedback } from '@/data/command-feedback';
 import { perf } from '@/utils/perf';
 
 export interface OblCommandEnvelope<TPayload = unknown> {
@@ -53,24 +54,37 @@ export async function sendOblCommand<TPayload = unknown>(
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
         console.error('[sendOblCommand] non-JSON response:', await res.text().catch(() => '(empty)'));
-        return { success: false, error: 'SERVER_ERROR', message: '服务器内部错误', status: res.status };
+        const feedback = renderCommandFeedback('SERVER_ERROR');
+        return {
+          success: false,
+          error: 'SERVER_ERROR',
+          message: feedback.message,
+          messageIsHtml: feedback.isHtml,
+          status: res.status,
+        };
       }
       const response = await res.json() as OblCommandResponse<Record<string, unknown>>;
       const ok = response.status === 'success';
+      const feedback = ok
+        ? { message: response.message || null, isHtml: false }
+        : renderCommandFeedback(response.code, response.data, response.message || response.code);
       return {
         success: ok,
         gamedata: response.data || {},
         redirect: null,
         timer: null,
         error: ok ? null : response.code,
-        message: response.message || (ok ? null : response.code),
+        message: feedback.message,
+        messageIsHtml: feedback.isHtml,
         status: res.status,
       };
     } catch (e) {
+      const feedback = renderCommandFeedback('NETWORK_ERROR');
       return {
         success: false,
         error: 'NETWORK_ERROR',
-        message: e instanceof Error ? e.message : String(e),
+        message: feedback.message || (e instanceof Error ? e.message : String(e)),
+        messageIsHtml: feedback.isHtml,
       };
     }
   });

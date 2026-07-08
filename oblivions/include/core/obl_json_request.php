@@ -6,14 +6,17 @@ if (!defined('IN_GAME')) {
 function obl_json_request_read() {
     $raw = file_get_contents('php://input');
     if ($raw === false) {
-        return array('ok' => false, 'code' => 'BAD_JSON', 'message' => '无法读取请求体');
+        return array('ok' => false, 'code' => 'BAD_JSON', 'details' => array('reason' => 'read_failed'));
     }
     if (trim($raw) === '') {
-        return array('ok' => false, 'code' => 'BAD_JSON', 'message' => '请求体不能为空');
+        return array('ok' => false, 'code' => 'BAD_JSON', 'details' => array('reason' => 'empty_body'));
     }
     $body = json_decode($raw, true);
     if (json_last_error() !== JSON_ERROR_NONE || !is_array($body)) {
-        return array('ok' => false, 'code' => 'BAD_JSON', 'message' => 'JSON 格式错误', 'details' => json_last_error_msg());
+        return array('ok' => false, 'code' => 'BAD_JSON', 'details' => array(
+            'reason' => 'decode_error',
+            'json_error' => json_last_error_msg(),
+        ));
     }
     return array('ok' => true, 'body' => $body);
 }

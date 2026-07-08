@@ -18,8 +18,8 @@ function obl_command_response_error($code, $message = '', $details = null, $requ
     $resp = array(
         'status' => 'error',
         'code' => $code,
-        'message' => $message !== '' ? $message : $code,
     );
+    if ($message !== '') $resp['message'] = $message;
     if ($request_id !== '') $resp['request_id'] = $request_id;
     if ($details !== null) $resp['details'] = $details;
     if ($data !== null) $resp['data'] = $data;
@@ -42,6 +42,29 @@ function obl_command_http_status_for_code($code) {
         case 'STATE_CONFLICT':
             return 409;
         case 'DOMAIN_REJECTED':
+        case 'NO_SP':
+        case 'MOVE_SAME_POSITION':
+        case 'MOVE_INVALID_TARGET':
+        case 'MOVE_BLOCKED':
+        case 'MOVE_OCCUPIED':
+        case 'MOVE_UNREACHABLE':
+        case 'MOVE_NO_PATH':
+        case 'POI_NOT_FOUND':
+        case 'POI_NOT_HERE':
+        case 'POI_NOT_SEARCHABLE':
+        case 'POI_ALREADY_SEARCHED':
+        case 'POI_DATA_ERROR':
+        case 'ITEM_NOT_FOUND':
+        case 'ITEM_EMPTY':
+        case 'ITEM_NOT_HERE':
+        case 'ITEM_NOT_DISCOVERED':
+        case 'INVALID_SLOT':
+        case 'EMPTY_SLOT':
+        case 'ITEM_NOT_USABLE':
+        case 'ITEM_BROKEN':
+        case 'BAG_FULL':
+        case 'CRAFT_NO_MATCH':
+        case 'CRAFT_AMBIGUOUS':
             return 422;
         case 'PHP_FATAL':
         case 'INTERNAL_ERROR':

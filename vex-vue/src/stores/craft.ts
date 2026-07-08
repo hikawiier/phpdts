@@ -325,14 +325,14 @@ export const useCraftStore = defineStore('craft', () => {
   /**
    * 提交 craft.execute 命令
    *
-   * 成功路径（业务结果通过日志反馈）：
+   * 成功路径：
    *   - invalidate player_inventory + 广播 + 等待背包刷新
    *   - itm0Locked=true（产物卡 itm0）→ closeModal，交背包界面处理
    *   - itm0Locked=false（产物入背包）→ 清空素材池保持打开，支持连续合成
    *
    * itm0 锁定由 execute() 内部 _checkLocks 第 3 层拦截（craft.execute itm0Allowed=false）。
    *
-   * result.success 不反映业务失败（后端命令处理无 return，HTTP 响应恒为 {}）。
+   * Command API 已接管业务失败反馈；result.success=false 时直接显示 result.message。
    */
   async function doCraft(): Promise<void> {
     const slotsStr = backpackSlots.value
@@ -366,6 +366,7 @@ export const useCraftStore = defineStore('craft', () => {
       dataManager.broadcast('ui:toast', {
         type: 'error',
         msg: result.message || result.error || '合成失败',
+        isHtml: !!result.messageIsHtml,
       });
       return;
     }

@@ -51,6 +51,18 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
       return `<span class="red">${escapeHtml(tileName)}</span>，无法通行，请绕道。`;
     },
   },
+  'move.occupied': {
+    render: (params) => {
+      const tileName =
+        (params.name as string) ||
+        generateTerrainDesc(
+          params.floor as string,
+          params.tide as string,
+          !!params.passable,
+        );
+      return `<span class="red">${escapeHtml(tileName)}</span>已被占据。`;
+    },
+  },
   'move.unreachable': {
     render: (params) => {
       const tileName =
@@ -256,6 +268,9 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     text: '那个道具已经不在那里了。',
   },
   'system.itm0_pending': {
+    text: '你正手持道具，请先处理。',
+  },
+  'system.itm0_occupied': {
     text: '你正手持道具，请先处理。',
   },
 
