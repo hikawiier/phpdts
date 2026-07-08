@@ -106,6 +106,74 @@ function obl_tile_log_params($tile) {
 }
 
 /**
+ * 获取对象的移动力（单次最大移动格数）
+ * 当前固定 3，预留扩展点：未来由装备/buff 决定
+ * 与旧 obl_get_move_range() 共存：旧函数无参返回固定 3 供旧系统使用
+ *
+ * @param array $actor_data 对象数据（当前未使用，预留扩展）
+ * @return int 移动力
+ */
+function obl_get_move_power($actor_data): int {
+    return 3;
+}
+
+/**
+ * 移动核心逻辑（无副作用原语）
+ * 从 obl_move 抽取的纯移动检查 + 执行：仅做检查并修改 $actor_data['pls']
+ * 剥离所有命令层副作用：不写 log、不写 DB、不触发探索 hook、不扣体力
+ *
+ * @param array &$actor_data  对象数据（引用，修改 pls）
+ * @param int   $to_pls       目标图格 ID
+ * @param int   $max_distance 最大移动距离，null 时调 obl_get_move_power
+ * @return array ['success' => bool, 'distance' => int, 'reason' => string]
+ */
+function obl_perform_move_core(&$actor_data, $to_pls, $max_distance = null): array {
+    $to_pls = (int)$to_pls;
+    $cur_pgroup = (int)$actor_data['pgroup'];
+    $cur_pls = (int)$actor_data['pls'];
+
+    // 1. 有效性检查：目标图格是否存在
+    $map = obl_get_map_data($cur_pgroup);
+    $tiles = $map['tiles'][$cur_pgroup] ?? [];
+    if (!isset($tiles[$to_pls])) {
+        return ['success' => false, 'distance' => 0, 'reason' => 'invalid_target'];
+    }
+
+    $target_tile = $tiles[$to_pls];
+
+    // 2. 可通行检查
+    if (empty($target_tile['passable'])) {
+        return ['success' => false, 'distance' => 0, 'reason' => 'blocked'];
+    }
+
+    // 3. 占用检查（1 格 1 单位）
+    include_once GAME_ROOT . './oblivions/include/game/player.func.php';
+    $occupiers = obl_get_pids_in_tile($cur_pgroup, $to_pls, (int)($actor_data['pid'] ?? 0));
+    if (!empty($occupiers)) {
+        return ['success' => false, 'distance' => 0, 'reason' => 'occupied'];
+    }
+
+    // 4. 距离检查
+    if ($max_distance === null) {
+        $max_distance = obl_get_move_power($actor_data);
+    }
+    $max_distance = (int)$max_distance;
+
+    $distance = obl_get_distance($cur_pgroup, $cur_pls, $to_pls);
+    if ($distance === -1) {
+        return ['success' => false, 'distance' => 0, 'reason' => 'unreachable'];
+    }
+    if ($distance > $max_distance) {
+        return ['success' => false, 'distance' => $distance, 'reason' => 'too_far'];
+    }
+
+    // 5. 执行移动（仅修改内存数据，不写 DB/log/hook）
+    $actor_data['pls'] = $to_pls;
+
+    return ['success' => true, 'distance' => $distance, 'reason' => 'success'];
+}
+
+/**
  * Oblivions 模式移动
  * @param int $moveto 目标 pls（区域内局部索引）
  * @param array $pdata 玩家数据

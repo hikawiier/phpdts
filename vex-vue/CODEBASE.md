@@ -1,7 +1,61 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# vex-vue 前端项目 — 代码库说明
+# vex-vue 前端项目 — 代码库说明
 
 > 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
 > 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
+
+---
+
+## 〇、当前架构摘要（AI 快速判断区）
+
+> 阅读以下要点后再深入各章节，可避免被历史段落误导。本节是"当前真相"，正文若与本节冲突以本节为准。完整设计理由见 [oblivions/DESIGN.md 〇、当前架构摘要](../oblivions/DESIGN.md#〇当前架构摘要ai-快速判断区)。
+
+**前后端交互唯一主路径**：
+
+| 用途 | 前端入口 | 后端入口 |
+|------|---------|---------|
+| 玩家写操作 | `commandQueue.execute(envelope)` → `src/api/obl-command.ts: sendOblCommand()` | `POST /phpdts/oblivions/api/command.php` |
+| 心跳（tick 推进） | `battleStore._daemonBeat` → `src/api/client.ts: oblHeartbeat()` | `POST /phpdts/oblivions/api/heartbeat.php` |
+| 状态读取 | `dataManager.fetch(action)` → `src/api/client.ts: gameApi()` | `GET /phpdts/oblivions/api/state.php?scope=xxx` |
+| 战斗日志标记 | `markBattleLogPlayed()` | `POST /phpdts/oblivions/mark_battle_log_played.php`（零依赖） |
+
+> 旧扁平 POST 命令（`obl_explore`/`obl_search`/`move`/...）与根目录 `command.php` 已 deprecated，前端不再调用。`submitCommand()` / `aiDumpSave()` 已从 `client.ts` 移除。
+
+**新命令名**（`COMMAND_REGISTRY` 单一真值源，详见 §3.1）：
+
+| 旧命令 | 新命令 |
+|---|---|
+| `move` | `map.move` |
+| `obl_explore` | `map.explore` |
+| `obl_search` | `poi.search` |
+| `obl_pickup` | `item.pickup` |
+| `obl_discard` | `item.discard` |
+| `obl_use_item` | `item.use` |
+| `obl_organize` | `inventory.organize` |
+| `obl_craft` | `craft.execute` |
+| `obl_battle_start` | `battle.start` |
+| `obl_battle_action` | `battle.submit_turn` |
+
+**Command API envelope**：
+
+```typescript
+interface OblCommandEnvelope {
+  command: string;          // 新命令名
+  request_id: string;       // 客户端生成的请求 ID
+  payload: Record<string, unknown>;  // 命令参数
+  expected?: { pid?, action?, bid?, battle_state? };  // 可选：状态冲突检测
+}
+```
+
+**Command API 响应契约**：`{ status, code, request_id, data: { feedback: { id, params }, refresh, server_state } }`。后端只返回结构（`code + feedback.id + params`），前端 `src/data/command-feedback.ts` 渲染文案。
+
+**5 层并发锁**（详见 §3.1）：HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING。后端 Command Bus 也有等价门控（`COMMAND_NOT_ALLOWED` / `ITM0_PENDING` / `BATTLE_BUSY` / `STATE_CONFLICT`）。
+
+**两档心跳**：PROCESSING 300ms / 其他状态 1000ms（不是三档）。
+
+**三套日志系统的前端用途**：
+- `obl_log` → 日志区 + Toast（按白名单，`src/data/log-templates.ts` 渲染）
+- `obl_battle_log` → battlelog.v2 战斗演出（`stores/battle-director-v2.ts` 编排，`BattleModal.vue` 播放）
+- `obl_error_log` → 诊断流，默认不提示；仅 `?debug=ai`/`?poll_error=1` 弹 Toast（`src/stores/error-log.ts`）
 
 ---
 
@@ -51,8 +105,9 @@ vex-vue/
     ├── main.ts             # 入口：createApp + createPinia + 挂载 #app
     ├── App.vue             # 根布局：StatusBar + LeftPanel + RightPanel + 浮动组件
     ├── api/
-    │   ├── client.ts       # API 客户端：gameApi/submitCommand/markBattleLogPlayed/aiDumpSave
-    │   └── endpoints.ts    # API action 常量（9 个只读端点）
+    │   ├── client.ts           # API 客户端：gameApi（State API）/ oblHeartbeat / markBattleLogPlayed
+    │   ├── endpoints.ts        # API action 常量（只读端点白名单）
+    │   └── obl-command.ts      # Command API 客户端：sendOblCommand(envelope) → POST oblivions/api/command.php
     ├── assets/
     │   └── styles/
     │       ├── input.css       # Tailwind 源文件（@theme 色板定义）
@@ -100,17 +155,25 @@ vex-vue/
     │   ├── useMapZoom.ts           # 地图缩放状态
     │   └── useToastPosition.ts     # Toast 位置管理（isAnyOverlayOpen + 位置类）
     ├── data/
-    │   ├── battle-templates.ts     # battle_log 渲染模板（按 act_id 索引）
+    │   ├── command-feedback.ts     # Command API 响应文案渲染（feedback.id + params → HTML）
+    │   ├── item-locale.ts          # 道具模板名 i18n（按 itmid 索引）
+    │   ├── itmk-locale.ts          # 道具种类（itmk）中文名映射
     │   ├── log-templates.ts        # 结构化日志模板（按 id 索引）+ renderLogEntry
+    │   ├── poi-locale.ts           # POI 模板名 i18n（按 poi_id 索引）
+    │   ├── recipe-locale.ts        # 合成配方 i18n
     │   ├── skill-templates.ts      # 技能模板（按 act_id 索引）+ getSkillTemplate
+    │   ├── tag-locale.ts           # 道具 Tag 中文名映射
     │   └── terrain-desc.ts         # 地形描述词库 + generateTerrainDesc
     ├── stores/
     │   ├── entities.ts             # 实体层数据（entities computed 派生自 mapStore，不依赖 isDown）
-    │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog 播放 + NPC 刷新）
-    │   ├── battle-director.ts      # 战斗导演模块（同步纯函数：编排 raw entries → 分层演出脚本 PlayScript）
-    │   ├── command-registry.ts    # 命令三维度分类（mode/advancesTick/itm0Allowed）单一真值源
+    │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog.v2 播放 + NPC 刷新）
+    │   ├── battle-director-v2.ts   # battlelog.v2 导演模块（raw events → BattlePlayScriptV2）
+    │   ├── battle-director-v2.fixture.ts # DirectorV2 回归样例
+    │   ├── command-registry.ts     # 命令三维度分类（mode/advancesTick/itm0Allowed）单一真值源
     │   ├── command-queue.ts        # 命令队列（5 层锁 + canExecute + 冷却）
+    │   ├── craft.ts                # 合成系统（配方发现 + 素材校验 + craft.execute 提交）
     │   ├── data-manager.ts         # 数据层（白名单缓存 + 去重 + 事件总线）
+    │   ├── error-log.ts            # obl_error_log 诊断流轮询（仅 ?debug=ai / ?poll_error=1 弹 Toast）
     │   ├── inventory.ts            # 背包 + 装备（loadInventory + handleDiscard）
     │   ├── log.ts                  # 日志（refreshLog + 增量检测 + Toast 触发）
     │   ├── map.ts                  # 地图（loadMap + updateMapData + enemies）
@@ -145,14 +208,14 @@ vex-vue/
 | **2. 战斗演出** | `battleStore.isPlayingBattleLog` | battlelog 播放期间 | 防止 fetchAndPlayBattleLog 重入；同时阻止所有命令（全局锁） |
 | **3. itm0** | `inventoryStore.itm0 !== null` | itm0 缓存槽非空时仅放行 `spec.itm0Allowed=true` 命令（整理/丢弃/使用手持） | 强制玩家处理遗留道具 |
 | **4. 模式** | `battleStore.currentMode` | 探索模式拒绝 `mode='battle'` 命令；战斗模式拒绝 `mode='explore'` 命令 | UI 状态与命令类型匹配 |
-| **5. PROCESSING** | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令（`obl_battle_action` 等推进 tick） | 防止玩家在 NPC 行动期间重复提交推进 tick 命令 |
+| **5. PROCESSING** | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令（`battle.submit_turn` 等推进 tick） | 防止玩家在 NPC 行动期间重复提交推进 tick 命令 |
 
 **关键设计**：
 
 - `isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈（状态栏指示器）；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制
 - `canExecute(command)` 与 `execute()` 共用 `_checkLocks()`，保证 UI 查询与实际执行判断完全一致——避免重蹈 `isLocked` 与 `execute` 行为分叉的隐性 bug
-- 命令三维度分类（`mode` / `advancesTick` / `itm0Allowed`）单一真值源在 `COMMAND_REGISTRY`，新增命令时需同步登记后端 `obl_command_allowed_by_state` / `obl_command_advances_tick` / `oblivions_router.php` itm0 门控
-- `obl_battle_start` 前端归 `mode='battle'`（UI 状态：startBattle 立即切换 currentMode），后端归探索内（`action='normal'` 时允许）——两端分类不同但语义自洽
+- 命令三维度分类（`mode` / `advancesTick` / `itm0Allowed`）单一真值源在 `COMMAND_REGISTRY`，新增命令时需同步登记后端 Command Bus contract（`obl_command_contract.php` 的 `allowed_actions` / `advances_tick` / itm0 门控）
+- `battle.start` 前端归 `mode='battle'`（UI 状态：startBattle 立即切换 currentMode），后端归探索内（`action='normal'` 时允许）——两端分类不同但语义自洽
 
 > 详细设计案见 [战斗锁定白名单-设计案](../oblivions/docs/战斗锁定白名单-设计案.md)。
 
@@ -160,9 +223,9 @@ vex-vue/
 
 | 前端层 | 后端对应 |
 |--------|---------|
-| 第 3 层 itm0 | `oblivions_router.php` itm0 门控（`itempara[0]` 非空时只放行 `obl_organize`/`obl_discard`） |
-| 第 4 层 模式 | `obl_command_allowed_by_state`（`action='battle'` 时只允许 `obl_battle_action`） |
-| 第 5 层 PROCESSING | `obl_tick_has_busy_battle()` + `obl_command_advances_tick()`（PROCESSING 时拒绝推进 tick 命令） |
+| 第 3 层 itm0 | Command Bus gate `ITM0_PENDING`（`itempara[0]` 非空时只放行 `inventory.organize` / `item.discard`） |
+| 第 4 层 模式 | Command Bus `obl_command_allowed_by_contract()`（`action='battle'` 时只允许 `battle.submit_turn`） |
+| 第 5 层 PROCESSING | Command Bus gate `BATTLE_BUSY` + contract `advances_tick`（PROCESSING 时拒绝推进 tick 命令） |
 
 **全生命周期锁**（独立于 5 层锁）：`battleStore.isProcessingBattle` 覆盖"拉取-播放-标记-刷新"全流程，防止 `refreshBattle` 重入，由 `battleStore` 自行管理。
 
@@ -178,7 +241,7 @@ vex-vue/
 事件总线用于模块间解耦通信。例如：
 - `mapStore.loadMap()` 完成后 `broadcast('map:loaded')`
 - `tileActionStore` / `inventoryStore` / `logStore` 监听 `map:loaded` 后自行刷新
-- 战斗演出时 `battleStore` `broadcast('battle:play-collision')` 触发 `CollisionAnimation` 组件
+- 战斗演出时 `battleStore` `broadcast('battle:play-action-animation')` 触发 `CollisionAnimation` 组件
 
 **对称注册模式**：每个 store 提供 `registerListeners()` 方法，在 `App.vue` 的 `onMounted` 中统一调用一次（内部用 `_listenersRegistered` 标志防重复）。
 
@@ -190,9 +253,9 @@ vex-vue/
 normal（探索）
   ↓ 玩家点击敌人 → startBattle(enemyPid)
   ↓ 切换到 battle 模式 + 初始化装填区（pre-battle）
-  ↓ 玩家装填动作 → 点击执行 → obl_battle_start
+  ↓ 玩家装填动作 → 点击执行 → battle.start
 battle（战斗）
-  ↓ 玩家回合：装填区（in-battle）→ 执行 → obl_battle_action
+  ↓ 玩家回合：装填区（in-battle）→ 执行 → battle.submit_turn
   ↓ NPC 回合：定时刷新 player_info 触发后端推进
   ↓ battlelog 播放完成 + action='' → exitBattleMode
   ↓ 回到 normal
@@ -204,8 +267,8 @@ battle（战斗）
 
 | 场景 | 同步方向 | 实现路径 |
 |------|---------|---------|
-| **玩家主动攻击** | 前端先切换 currentMode='battle' | `useMapBusiness.onEnemyClick` → `battleStore.startBattle()` 立即设 currentMode；后端 action 在 `obl_battle_start` 命令执行后才切换 |
-| **被动遭遇** | 后端先切换 action='battle'，前端跟随 | 玩家 `move`/`obl_explore`/`obl_search` 触发后端遭遇战 → `_checkBattleState` 拉取 `player_info` 看到 action='battle' → `refreshBattle` → `enterBattleMode` |
+| **玩家主动攻击** | 前端先切换 currentMode='battle' | `useMapBusiness.onEnemyClick` → `battleStore.startBattle()` 立即设 currentMode；后端 action 在 `battle.start` 命令执行后才切换 |
+| **被动遭遇** | 后端先切换 action='battle'，前端跟随 | 玩家 `map.move` / `map.explore` / `poi.search` 触发后端遭遇战 → `_checkBattleState` 拉取 `player_info` 看到 action='battle' → `refreshBattle` → `enterBattleMode` |
 | **退出战斗** | 后端先切换 action='normal'，前端延迟到 battlelog 播完 | `refreshBattle` 看到 action !== 'battle' → `fetchAndPlayBattleLog` 播完积压战斗日志 → `exitBattleMode` |
 
 #### 3.3.2 窗口期合理性边界
@@ -214,7 +277,7 @@ battle（战斗）
 
 | 窗口期 | 方向 | 合理性 |
 |--------|------|--------|
-| 玩家主动攻击时前端先切换 currentMode='battle' | 前端比后端**早进入** | ✅ 玩家需要装填区才能发起 obl_battle_start |
+| 玩家主动攻击时前端先切换 currentMode='battle' | 前端比后端**早进入** | ✅ 玩家需要装填区才能发起 `battle.start` |
 | 退出战斗时前端等 battlelog 播完才切 currentMode='normal' | 前端比后端**晚退出** | ✅ 演出完整性优先，避免战斗突然结束的突兀感 |
 | 被动遭遇时后端先切换 action='battle' | 后端比前端**早进入** | ✅ 遭遇战由后端判定触发，前端通过 player_info 跟随 |
 
@@ -225,18 +288,18 @@ battle（战斗）
 #### 3.3.3 战斗内部状态（oblBattleState）
 
 `currentMode='battle'` 时，战斗内部还有三态流转（来自后端 `player_info.obl_battle_state`）：
-- `PLAYER_TURN`：玩家可操作，提交 `obl_battle_action`
+- `PLAYER_TURN`：玩家可操作，提交 `battle.submit_turn`
 - `PROCESSING`：后端处理中（NPC 行动 / 玩家行动已提交未结算），前端启动 1 秒轮询循环
 - `IDLE`：无战斗（不应在 currentMode='battle' 时出现）
 
-前端 `commandQueue` 第 5 层 PROCESSING 锁（仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令）用于防止玩家在 NPC 行动期间重复提交 `obl_battle_action`，与后端 [C2b] 一致。详见 [§3.1 五层并发锁](#31-五层并发锁)、[oblivions/DESIGN.md §2.9.2](../../oblivions/DESIGN.md#292-战场状态机三态obl_battle_state-字段) 与 [§2.16.2](../../oblivions/DESIGN.md#2162-processing-的实际生命周期)。
+前端 `commandQueue` 第 5 层 PROCESSING 锁（仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令）用于防止玩家在 NPC 行动期间重复提交 `battle.submit_turn`，与后端 Command Bus gate `BATTLE_BUSY` 一致。详见 [§3.1 五层并发锁](#31-五层并发锁)、[oblivions/DESIGN.md §2.9.2](../../oblivions/DESIGN.md#292-战场状态机三态obl_battle_state-字段) 与 [§2.16.2](../../oblivions/DESIGN.md#2162-processing-的实际生命周期)。
 
 ### 3.4 装填区（PreloadArea）两种模式
 
 | 模式 | 触发时机 | 执行命令 | 说明 |
 |------|---------|---------|------|
-| `pre-battle` | 玩家点击敌人后、战斗开始前 | `obl_battle_start` | 玩家预装填动作序列后提交，直接进入战斗 |
-| `in-battle` | 战斗中玩家回合 | `obl_battle_action` | 玩家每回合装填动作并执行 |
+| `pre-battle` | 玩家点击敌人后、战斗开始前 | `battle.start` | 玩家预装填动作序列后提交，直接进入战斗 |
+| `in-battle` | 战斗中玩家回合 | `battle.submit_turn` | 玩家每回合装填动作并执行 |
 
 装填区通过监听 `battle:preload-init` 事件初始化，事件数据含 `mode` / `enemyPid` / `playerPid`。
 
@@ -331,9 +394,9 @@ obl_runtime_boot('heartbeat') + obl_tick_orchestrator_heartbeat()
 ├─────────────────────────────────────────────────────────────┤
 │  API Client（api/client.ts）                                 │
 │  ├─ gameApi(action)：GET oblivions/api/state.php?scope=xxx               │
-│  ├─ sendOblCommand(envelope)：POST oblivions/api/command.php                  │
+│  ├─ oblHeartbeat()：POST oblivions/api/heartbeat.php                     │
 │  ├─ markBattleLogPlayed：POST oblivions/mark_battle_log_played.php │
-│  └─ aiDumpSave：已移除（过时调试残留）          │
+│  └─ （写操作已迁出至 api/obl-command.ts: sendOblCommand） │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -362,7 +425,7 @@ App.vue onMounted
   ↓
 tileActionStore / inventoryStore / useMapBusiness.clickMove
   ↓
-commandQueue.execute(params)              // HTTP 请求锁
+commandQueue.execute(envelope)            // HTTP 请求锁
   ↓
 sendOblCommand(envelope)                  // POST oblivions/api/command.php
   ↓ 成功后：
@@ -392,8 +455,8 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 | `battle:aim-exit` | PreloadArea/AimMode | uiStore | 退出瞄准模式 |
 | `battle:aim-target-selected` | AimMode | PreloadArea | 瞄准选定目标 |
 | `battle:preload-init` | battleStore | PreloadArea | 初始化装填区 |
-| `battle:play-collision` | battleStore | CollisionAnimation | 播放碰撞动画 |
-| `battle:play-damage-numbers` | battleStore | DamageNumber | 播放残留伤害数字 |
+| `battle:play-action-animation` | battleStore | CollisionAnimation | 播放 v2 动作动画计划 |
+| `battle:play-damage-numbers` | battleStore | DamageNumber | 播放 v2 effect visual plan 残留伤害数字 |
 | `preload:executed` | PreloadArea | battleStore | 装填区执行完成，刷新战斗状态 |
 | `log:force-scroll` | logStore | useLogScroll | 强制日志滚动到底部 |
 | `log:add-unread` | logStore | useLogScroll | 累加未读日志计数 |
@@ -443,7 +506,7 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 
 ### 5.3 写入 API（POST `oblivions/api/command.php`）
 
-通过 `commandQueue.execute(params)` → `sendOblCommand(envelope)` 调用。前端不再调用根目录旧 `command.php`。
+通过 `commandQueue.execute(envelope)` → `sendOblCommand(envelope)` 调用。前端不再调用根目录旧 `command.php`。
 
 **envelope 格式**：
 
@@ -572,7 +635,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 | `battleStore` | 战斗状态机 | `currentMode`/`isPlayingBattleLog`/`isProcessingBattle`/`battleModalOpen` | `startBattle(enemyPid)`/`refreshBattle()`/`fetchAndPlayBattleLog()`/`notifyModalClosed()` |
 | `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
 | `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
-| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(params)` / `canExecute(command)` |
+| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(envelope)` / `canExecute(command)` |
 
 ### 7.2 Store 事件监听注册模式
 
@@ -602,7 +665,7 @@ class CommandQueue {
   private _checkLocks(command: string): boolean
   canExecute(command: string): boolean
 
-  async execute(params: Record<string, string>): Promise<CommandResult>
+  async execute(envelope: OblCommandEnvelope): Promise<CommandResult>
 
   // 全局锁（仅 HTTP/演出两层）
   get isLocked(): boolean
@@ -631,31 +694,30 @@ class CommandQueue {
 
 ```
 后端（原料层）              前端导演（编排层）             前端演员（执行层）
-BattleLogCollector          battle-director.ts            battle.ts / BattleModal.vue
-  emit() 12 phase             direct(entries)               playScript(script)
-  debug 标记                  ├─ pairPrePost()               ├─ playPhase0Segment
-  bl_turn_num/bl_round_num    ├─ buildSegments()             ├─ playRoundSegment
-  bl_segment_flag             └─→ PlayScript                 ├─ playTurnSegment
-  名称/HP 原料                  { segments[] }                ├─ playBattleEndSegment
-  → JSON 文件                  ├─ phase0                     └─ playAmbushBattleEndSegment
-                                ├─ round(roundNum)
-                                ├─ turn(turnNum,actorPid)
-                                ├─ battle_end
-                                └─ ambush_battle_end
+BattleLogCollector          battle-director-v2.ts         battle.ts / BattleModal.vue
+  emit() battlelog.v2          directV2(events)              playScriptV2(script)
+  channel=render/debug         ├─ group by action_uid        ├─ process action animation
+  event_type                   ├─ build effects              ├─ play BattleSegmentV2
+  payload(action/effect)       └─→ BattlePlayScriptV2        ├─ update HP from effect delta
+  → JSON 文件                    { segments[] }               └─ play effect visual plan
+                                  ├─ round_intro
+                                  ├─ turn
+                                  ├─ battle_end
+                                  └─ system
 ```
 
 **导演 vs 演员职责分离**：
-- `battle-director.ts`：同步纯函数，输入 raw entries → 输出 `PlayScript`，不做任何渲染
-- `battle.ts`：播放器，按 `PlaySegment` 逐段执行（碰撞动画 → 模态框 → 伤害数字）
-- `BattleModal.vue`：模态框演出组件，专注逐条播放 + HP 条更新
+- `battle-director-v2.ts`：同步纯函数，输入 `BattleLogV2Event[]` → 输出 `BattlePlayScriptV2`，不做 DOM 操作
+- `battle.ts`：播放器，按 `BattleSegmentV2` 逐段执行（动作动画 → 模态框 → effect visual）
+- `BattleModal.vue`：模态框演出组件，直接播放 v2 text cue，并按 effect delta 更新 HP 条
 
 ### 8.2 三类核心输出类型
 
-**DirectedKind**（7 种渲染分发标记）：`action`（pre+post 合并动作）| `initiative`（先攻掷骰）| `flee`（逃跑）| `combatant_cleared`（某人离场）| `battle_end`（标准战斗终结）| `ambush_battle_end`（突袭阶段结束）| `display`（纯展示）
+**BattleSegmentV2.kind**：`round_intro`（一轮开始）| `turn`（一回合动作）| `battle_end`（战斗终结）| `system`（系统展示）
 
-**SegmentKind**（5 种段类型）：`phase0`（Phase 0 突袭攻击，无 Turn/Round）| `round`（Phase 1 一轮）| `turn`（Phase 1 一回合）| `battle_end`（标准战斗终结段）| `ambush_battle_end`（突袭阶段结束段）
+**DirectedActionV2**：包含 `actionUid/actionId/actor/targets/effects/success/animation/text`，演员层不再读旧 phase。
 
-**SegmentMeta**：段元数据含 `roundNum` / `turnNum` / `actorPid` / `actorName` / `initiatorOrder` / `ambushPid` / `winnerPid` / `reason` / `ambusherPid`
+**DirectedEffectV2**：包含 `effectUid/type/source/target/value/delta/visual/text`，伤害数字和 HP 更新均从 effect 读取。
 
 ### 8.3 整体流程（新版）
 
@@ -664,7 +726,7 @@ BattleLogCollector          battle-director.ts            battle.ts / BattleModa
   ├─ 切换战斗模式 + 初始化装填区（pre-battle / in-battle）
   └─ broadcast('battle:started')
 
-玩家装填动作 → 点击执行 → 提交 obl_battle_start / obl_battle_action
+玩家装填动作 → 点击执行 → 提交 battle.start / battle.submit_turn
   ↓ broadcast('preload:executed')
   ↓
 battleStore.onPreloadExecuted()
@@ -675,16 +737,15 @@ battleStore.onPreloadExecuted()
        │   └─ action='' → 播放完 battlelog 后退出
        │
        └─ fetchAndPlayBattleLog()
-            ├─ 拉取 battle_log（played=0，后端已过滤 debug=true）
-            ├─ BattleDirector.direct(entries) → 编排为 PlayScript
-            ├─ extractNpcPid(script) → 替代旧 groupByEncounter
-            ├─ playScript(script, npcPid) → 逐段执行
+            ├─ 拉取 battle_log（played=0）
+            ├─ filter battlelog.v2 render events
+            ├─ directV2(events) → 编排为 BattlePlayScriptV2
+            ├─ extractNpcPidFromScriptV2(script)
+            ├─ playScriptV2(script, npcPid) → 逐段执行
             │    各段播放：
-            │      phase0     → 更新敌人名称 → 碰撞动画 → 模态框（含段分隔符 + HP 条）
-            │      round      → 碰撞动画 → 模态框（先攻面板）
-            │      turn       → 更新敌人名称 → 碰撞动画 → 模态框（含 HP 条）→ 伤害数字
+            │      round_intro → 模态框段分隔符
+            │      turn        → 更新敌人名称 → 动作动画 → 模态框（含 HP 条）→ 伤害数字
             │      battle_end → 模态框（战斗结束文字）
-            │      ambush_battle_end → 模态框（突袭结束文字）
             └─ markBattleLogPlayed() 标记所有原始 log_id
        ↓
        播放完成后根据 action 决定后续
@@ -692,7 +753,7 @@ battleStore.onPreloadExecuted()
 
 ### 8.4 fetchAndPlayBattleLog（新版）
 
-接入导演编排，`playScript` 替代旧 `playBattleLogGroup`：
+接入 v2 导演编排，历史非 v2 条目只标记 played，不进入演出：
 
 ```typescript
 async function fetchAndPlayBattleLog(): Promise<void> {
@@ -701,10 +762,12 @@ async function fetchAndPlayBattleLog(): Promise<void> {
   if (entries.length === 0) return;
   isPlayingBattleLog.value = true;
   try {
-    const script = direct(entries);           // 导演：同步编排
-    if (script.segments.length === 0) return;
-    const npcPid = extractNpcPid(script);      // 替代 groupByEncounter
-    await playScript(script, npcPid);           // 演员：逐段执行
+    const v2Events = entries.filter(isBattleLogV2Event);
+    const script = directV2(v2Events);          // 导演：同步编排
+    if (script.segments.length > 0) {
+      const npcPid = extractNpcPidFromScriptV2(script);
+      await playScriptV2(script, npcPid);       // 演员：逐段执行
+    }
     await markBattleLogPlayed(groomid, pid, collectAllLogIds(entries));
   } finally {
     isPlayingBattleLog.value = false;
@@ -712,55 +775,46 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 }
 ```
 
-`direct()` 运行时会挂载 `window.__battleScript` 和 `window.__battleRawEntries`，可在浏览器控制台直接检查导演编排结果。
+开发模式下会挂载 `window.__battleScriptV2` 和 `window.__battleRawEventsV2`，可在浏览器控制台直接检查导演编排结果。
 
-### 8.5 playScript 逐段执行
+### 8.5 playScriptV2 逐段执行
 
-`playScript` 按 `segment.kind` 分发到 5 种段播放函数。每段通过 `playSegmentInModal` 统一处理模态框流程：
+`playScriptV2` 按 `segment.kind` 分发。每段通过 `playSegmentInModal` 统一处理模态框流程：
 
-- **phase0/round 段**：`alwaysShowHeader: true` 确保段分隔符可见（即使 entries 渲染为空）
-- **turn 段**：执行碰撞动画（读 `entry.animation` 字段），播放模态框后发伤害数字事件
-- **battle_end/ambush_battle_end 段**：`isBattleEnd: true` 确保模态框打开显示结束文字
+- **round_intro 段**：`alwaysShowHeader: true` 确保段分隔符可见
+- **turn 段**：执行 action animation plan，播放模态框后发 effect visual plan 伤害数字事件
+- **battle_end 段**：`isBattleEnd: true` 确保模态框打开显示结束文字
 
-`playSegmentInModal` 通过 `renderDirectedEntryHtml(entry, playerPid)` 按 `directedKind` 分发渲染，替代旧按 `action_id` 索引的模板系统。
+`BattleModal.vue` 直接消费 `segment.notices`、`segment.actions[].text`、`segment.actions[].effects[].text`，不再通过 `renderDirectedEntryHtml()` 或旧 `DirectedEntry`。
 
-### 8.6 battle-director.ts 核心函数
+### 8.6 battle-director-v2.ts 核心函数
 
 | 函数 | 说明 |
 |------|------|
-| `direct(entries)` | 主入口：配对 pre/post → 构建 segments → 返回 PlayScript。开发模式挂载 `__battleScript`/`__battleRawEntries` 到 window |
-| `pairPrePost(entries)` | 栈配对：pre 压栈 → interleaving 条目缓冲 → post 合并 pre+post。异常处理：悬空 pre / 孤儿 post / 尾部未配对 pre 降级为 display |
-| `mergePrePost(pre, post)` | 合并为 action DirectedEntry。非伤害动作白名单（escape）→ hpSnapshot=null；攻击动作 → 计算 actorHpBefore/After + targetHpBefore/After |
-| `buildSegments(entries)` | 按 `bl_segment_flag` 驱动分段：`round_start`→round, `turn_start`→turn, `battle_end`/`ambush_battle_end`→单条段立即关闭。Phase 0 条目不携带边界信号时自动归入 phase0 段 |
-| `extractNpcPid(script)` | 从脚本中提取 NPC PID（替代旧 groupByEncounter） |
-| `collectAllLogIds(entries)` | 收集所有原始 log_id 供 markBattleLogPlayed 使用（含异常降级条目的 log_id） |
-| `exportScriptToJson(script?)` | 调试用：将当前 PlayScript 导出为 JSON 文件下载 |
+| `directV2(events)` | 主入口：按 `action_uid` 聚合 action/effects，构建 `BattlePlayScriptV2` |
+| `isBattleLogV2Event(entry)` | v2 raw event 类型守卫 |
+| `decideActionAnimation(actionId, actor, targets)` | 生成 `ActionAnimationPlan` |
+| `decideEffectVisual(type, target, value)` | 生成 `EffectVisualPlan` |
+| `buildActionText/buildEffectText` | 生成已转义的前端 text cue |
 
-### 8.7 BattleLogEntry 字段类型（新版）
+`battle-director-v2.fixture.ts` 提供最小回归样例，覆盖 `round_start/turn_start/action_start/effect_applied/action_end/action_failed/combatant_cleared/battle_end`。
 
-后端 `BattleLogCollector::emit()` 改造后，字段结构已从旧版（含 `extra`/占位符）更新为完整原料集：
+### 8.7 BattleLogV2Event 字段类型
+
+前端 `BattleLogRawEntry` 已收窄为 `BattleLogV2Event`。核心字段：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `phase` | string | 12+ 事件类型之一（`once_execute_pre`/`once_execute_post`/`initiative_roll`/`flee`/`combatant_cleared`/`battle_end`/`ambush_battle_end` 等） |
-| `action_id` | string\|null | 动作 ID（`unarmed_strike`/`escape` 等，`initiative_roll`/`battle_end` 等无动作事件为 null） |
-| `actor_pid/type/name` | number\|null | 行动者信息（含名称，无需查 API） |
-| `actor_hp/max_hp` | number\|null | 行动者 HP 快照（仅 pre/post/ap_recover 等有） |
-| `target_pid/type/name` | number\|null | 目标信息（含名称） |
-| `target_hp/max_hp` | number\|null | 目标 HP 快照 |
-| `effect_value` | number\|null | 效果值（伤害数值等） |
-| `success` | boolean\|null | 动作是否成功（flee/execute 通用） |
-| `reason` | string\|null | 原因（`death`/`escaped`/`queue_empty`/`disband`/`ambush_killed_all` 等） |
-| `winner_pid` | number\|null | 战斗赢家 PID（仅 `battle_end` 有） |
-| `cleared_pid/cleared_name` | number\|string\|null | 被清理的 combatant（仅 `combatant_cleared` 有） |
-| `ambusher_pid/ambusher_name` | number\|string\|null | 突袭者（仅 `ambush_battle_end` 有） |
-| `debug` | boolean | 调试标记（前端默认拉取的条目均为 false） |
-| `bl_turn_num` | number\|null | Turn 计数（null=Phase 0/尚未开始） |
-| `bl_round_num` | number\|null | Round 计数（null=Phase 0 无队列） |
-| `bl_segment_flag` | string\|null | 段边界信号（`round_start`/`turn_start`/`battle_end`/`ambush_battle_end`/null） |
+| `schema` | `'battlelog.v2'` | v2 schema 标记 |
+| `event_type` | string | `round_start` / `turn_start` / `action_start` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice` |
+| `channel` | string | `render` / `debug` / `diagnostic`，默认演出只消费 `render` |
+| `event_uid` | string | 单条事件唯一 ID |
+| `action_uid` / `effect_uid` | string\|null | action/effect 归属 ID |
+| `payload` | object | v2 主载荷，包含 actor/target/effect/delta/reason 等结构化事实 |
+| `bl_turn_num` / `bl_round_num` | number\|null | Turn/Round 计数 |
 | `log_id/played/ts` | number | 持久化元数据 |
 
-> **说明**：后端 `compatible_json_encode()` 对所有 int 字段返回 string 类型。TypeScript 类型中这些字段声明为 `number | null` 后由 `Number()`/`parseInt()` 转换。
+旧 `phase`、`actor_pid`、`effect_value` 等扁平字段仍可作为后端持久化冗余存在，但 native v2 演员层不再依赖这些字段决定动画或文案。
 
 ### 8.8 旧播放逻辑的清理
 
@@ -768,19 +822,19 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 
 | 函数/状态 | 替代方案 |
 |----------|---------|
-| `groupByEncounter` | `extractNpcPid` + `buildSegments` |
-| `playBattleLogGroup` | `playScript` 逐段执行 |
-| `buildPlayContext` | 后端 pre emit 已带名称/HP，导演 HpSnapshot 携带 from/to |
+| `groupByEncounter` | `extractNpcPidFromScriptV2` + `BattleSegmentV2` |
+| `playBattleLogGroup` | `playScriptV2` 逐段执行 |
+| `buildPlayContext` | `BattleSegmentV2` / `DirectedActionV2` / `DirectedEffectV2` |
 | `refreshContextFromApi` | `updateEnemyNameFromSegment` + `refreshEnemyLocation` |
-| `rebuildInitialHpFromEntries` | `initHpFromSegment`（从首条 action entry 的 hpSnapshot 读） |
+| `rebuildInitialHpFromEntries` | `initHpFromSegment`（从首个 HP effect delta 读） |
 | `playContext` ref | 不再需要 |
-| `extractEnemyPid` | `extractNpcPid` |
-| `BattlePlayContext` 接口 | 由 DirectedEntry/HpSnapshot 替代 |
-| `BATTLE_TEMPLATES` 按 action_id 索引 | `KIND_TEMPLATES` 按 directedKind 分发 |
-| `renderBattleLogEntryHtml` | `renderDirectedEntryHtml` |
+| `extractEnemyPid` | `extractNpcPidFromScriptV2` |
+| `BattlePlayContext` 接口 | 由 v2 script 结构替代 |
+| `BATTLE_TEMPLATES` / `KIND_TEMPLATES` | v2 text cue |
+| `renderBattleLogEntryHtml` / `renderDirectedEntryHtml` | `BattleModal.vue` 直接播放 text cue |
 
 **保留的组件/逻辑**：
-- `CollisionAnimation` + `DamageNumber`：动画和伤害数字组件保留，数据源改为 segment entries
+- `CollisionAnimation` + `DamageNumber`：动画和伤害数字组件保留，数据源改为 action/effect visual plan
 - `BattleModal` sleep reject + 30s 超时兜底：保留
 - NPC 回合轮询（`startNpcTurnRefresh`/`stopNpcTurnRefresh`）：保留
 - `command-queue.ts` + `isProcessingBattle` 锁：保留
@@ -878,9 +932,9 @@ itm0 是后端 `itempara[0]` 缓存槽（新增道具中转槽，详见 [oblivio
 - **设计理由**：避免"假关闭"误导，强制玩家正面处理遗留道具，防止数据丢失
 
 **itm0 锁定时的命令限制**：
-- 后端 router 层拦截：itm0 非空时只放行 `obl_organize` / `obl_discard`，其他命令 emit `system.itm0_pending`
+- 后端 Command Bus gate 拦截：itm0 非空时只放行 `inventory.organize` / `item.discard`，其他命令返回 `ITM0_PENDING`（前端 feedback id `system.itm0_pending`）
 - 前端 Itm0Modal 持续显示：玩家在模态框内只能选择整理或丢弃，无法进行其他操作
-- `inventoryStore.handleOrganize()`：调用 `obl_organize` 命令，成功后 itm0 清空 → 模态框消失
+- `inventoryStore.handleOrganize()`：调用 `inventory.organize` 命令，成功后 itm0 清空 → 模态框消失
 
 ### 9.6 Toast 即时反馈机制
 
@@ -952,7 +1006,7 @@ App.vue
 │   │   └── MapContainer.vue
 │   │       ├── MapGrid.vue          # v-for 渲染地图格 + 实体层（entities v-for）+ 迷雾
 │   │       │   └── （角色层 .actor × N 与 .map-cell × N 同级，详见 §10.3）
-│   │       ├── CollisionAnimation.vue  # 战斗碰撞动画（监听 battle:play-collision）
+│   │       ├── CollisionAnimation.vue  # 战斗动作动画（监听 battle:play-action-animation）
 │   │       ├── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
 │   │       └── 缩放控件 + 立绘调试按钮（弹/倒，直调 playerAvatarStore）
 │   └── RightPanel.vue
@@ -1182,26 +1236,23 @@ perf.clear();
 
 ### 12.3 事件类型（`types/events.ts`）
 
-- `AppEvent` — 语义事件名联合类型（17 个事件）
+- `AppEvent` — 语义事件名联合类型
 - `ToastEventData` / `MapClickCurrentEventData` / `BattleStartedEventData` 等 — 事件数据接口
 - `PreloadInitEventData` — 装填区初始化事件（`mode: 'pre-battle' | 'in-battle'`）
-- `PlayCollisionEventData` / `PlayDamageNumbersEventData` — 战斗演出事件
+- `PlayActionAnimationEventData` / `PlayDamageNumbersEventData` — battlelog.v2 战斗演出事件
 - `DebugBusEntry` / `DebugStateSnapshot` — DebugBus 调试类型
 
 > 立绘调试按钮（`player:popup` / `player:fall`）已从事件类型中移除，改为直接调用 `playerAvatarStore.debugPopUp()` / `debugFall()`。
 
-### 12.4 战斗模板分发（`data/battle-templates.ts`）
+### 12.4 Battlelog v2 演出文本
 
-按 `directedKind` 分发的 7 种渲染函数定义在 `KIND_TEMPLATES` 映射中：
-- `renderAction` — 动作条目（读 actor_name/target_name/effect_value，含 unarmed_strike 特殊渲染）
-- `renderInitiative` — 先攻掷骰（纯数据，返回空字符串不由条目渲染）
-- `renderFlee` — 逃跑成功
-- `renderCombatantCleared` — 战斗者离场（读 cleared_name + reason）
-- `renderBattleEnd` — 战斗终结（统一显示"战斗结束"，不区分胜负）
-- `renderAmbushBattleEnd` — 突袭结束（读 ambusher_name + reason）
-- `renderDisplay` — 其他事件（ap_recover/verify_failed/middle_check 等）
+旧 `data/battle-templates.ts` 已删除。当前战斗演出文本由 `battle-director-v2.ts` 生成 `TextCue`：
 
-`BattlePlayContext` 已移除——模板所需名称/HP 直接从 entry 字段（`actor_name`/`target_name`/`cleared_name`/`ambusher_name`/`hpSnapshot`）读取，不再需要查 API 构建上下文。
+- `buildActionText`：生成 action 级文本
+- `buildEffectText`：生成 damage/heal/move/escape 等 effect 文本
+- notice 文本：由 `action_failed` / `combatant_cleared` / `battle_end` 分支生成
+
+这些文本在导演层统一 HTML escape，`BattleModal.vue` 只负责逐条播放。
 
 ---
 
@@ -1224,11 +1275,10 @@ perf.clear();
 | `vex/js/log.js` | `stores/log.ts` + `components/log/*` + `composables/useLogScroll.ts` |
 | `vex/js/toast-position.js` | `composables/useToastPosition.ts` |
 | `vex/js/battle.js` | `stores/battle.ts` |
-| —（新增） | `stores/battle-director.ts` |
-| `vex/js/battle-render.js`（重构） | `data/battle-templates.ts` |
+| —（新增） | `stores/battle-director-v2.ts` |
 | `vex/js/battle-modal.js` | `components/battle/BattleModal.vue` |
 | `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` |
-| `vex/js/battle-render.js` | `data/battle-templates.ts` |
+| `vex/js/battle-render.js` | `stores/battle-director-v2.ts` text cue + `BattleModal.vue` |
 | `vex/js/battle-preload.js` | `components/battle/PreloadArea.vue` |
 | `vex/js/utils.js` | `api/client.ts` + `utils/format.ts` |
 | `vex/js/debug.js` | `composables/useDebugBus.ts` |
@@ -1244,62 +1294,4 @@ perf.clear();
 > 3. 重构为 `useMapEntities` + `entitiesStore` 的多实体分层架构（泛化支持 actor/poi/grass/crevice/worm，z-index 全部由 JS 控制，删除 `.actor.popped` CSS 类，引入 z-index 层级变量与 Y 排序预留）
 >
 > `usePlayerAvatar.ts` / `useActors.ts` / `actors.ts` / `actor.ts` 均已删除，`player:popup`/`player:fall` 事件已从 `events.ts` 移除。设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)。
-
----
-
-## 近期变更：Oblivions JSON Command API 前端接入（2026-07-08）
-
-Oblivions 写操作已切换到独立 JSON Command API：
-
-```txt
-vex-vue commandQueue.execute(envelope)
-  -> src/api/obl-command.ts sendOblCommand()
-  -> POST /phpdts/oblivions/api/command.php
-```
-
-新增文件：
-
-| 文件 | 职责 |
-|---|---|
-| `src/api/obl-command.ts` | 发送 JSON command envelope，解析后端统一响应，并适配为旧 `CommandResult` |
-
-`src/api/client.ts` 中的旧 `submitCommand()` 仍存在，但 Oblivions 新写操作不应再调用它。
-
-### commandQueue 入参
-
-现在使用结构化 envelope：
-
-```ts
-commandQueue.execute({
-  command: 'battle.submit_turn',
-  payload: {
-    actions: [
-      { act_id: 'unarmed_strike', target: 101, params: {} },
-    ],
-  },
-  expected: {
-    action: 'battle',
-    battle_state: 'PLAYER_TURN',
-  },
-});
-```
-
-战斗动作队列直接作为 JSON 数组提交，不再 `JSON.stringify(actions)` 塞入表单字段。
-
-### 新命令名
-
-| 场景 | 命令 |
-|---|---|
-| 移动 | `map.move` |
-| 探索 | `map.explore` |
-| 搜索 POI | `poi.search` |
-| 拾取 | `item.pickup` |
-| 丢弃 | `item.discard` |
-| 使用道具 | `item.use` |
-| 整理背包 | `inventory.organize` |
-| 合成 | `craft.execute` |
-| 战斗开始 | `battle.start` |
-| 提交玩家回合 | `battle.submit_turn` |
-
-`src/stores/command-registry.ts` 已同步使用新命令名。`battle.start` 的 `mode: 'battle'` 是前端预战斗装填 UI 语义；后端玩家 `action` 此时仍是普通探索状态。
 

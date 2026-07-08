@@ -7,19 +7,19 @@
 // - normal（探索）→ 玩家点击敌人 → startBattle() → battle
 // - battle（战斗）→ 玩家/NPC 回合交替 → 播放 battlelog → 继续 battle 或回 normal
 //
-// battlelog 数据流（played 标记机制 + 导演编排，设计案2 v3）：
+// battlelog 数据流（played 标记机制 + v2 导演编排）：
 // - 后端所有 battlelog 持久化到文件，每条带 log_id + played=0
-// - 前端拉取 played=0 的条目 → BattleDirector.direct() 编排为 PlayScript
-// - playScript() 按 PlaySegment 分段执行 → BattleModal 逐段播放
+// - 前端拉取 played=0 的 v2 event → DirectorV2.directV2() 编排为脚本
+// - playScriptV2() 按 BattleSegmentV2 分段执行 → BattleModal 逐段播放
 // - 播完调 mark_battle_log_played.php 标记 played=1
 //
 // 演出事件转发（store → 组件单向触发）：
 // - battle:preload-init → PreloadArea 组件初始化装填区
-// - battle:play-collision → CollisionAnimation 组件播放碰撞动画
-// - battle:play-damage-numbers → DamageNumber 组件播放残留伤害数字
+// - battle:play-action-animation → CollisionAnimation 组件播放动作动画计划
+// - battle:play-damage-numbers → DamageNumber 组件播放 effect visual plan
 //
 // 模态框播放完成机制：
-// - store 设置 currentSegment + battleLogEntries + battleModalOpen=true，返回 Promise
+// - store 设置 currentSegment + battleModalOpen=true，返回 Promise
 // - BattleModal 播放完成后调用 store.notifyModalClosed()
 // - store 触发 resolve，继续后续流程
 //
@@ -35,16 +35,17 @@ import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
 import { getActorById } from '@/composables/actorRegistry';
 import { resolveActionSpec } from '@/animations/action-specs';
-import type { BattleLogEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
+import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
 import {
-  direct,
-  extractNpcPid,
-  collectAllLogIds,
-  type PlayScript,
-  type PlaySegment,
-  type DirectedEntry,
-} from './battle-director';
-import { renderDirectedEntryHtml } from '@/data/battle-templates';
+  directV2,
+  isBattleLogV2Event,
+  type BattlePlayScriptV2,
+  type BattleSegmentV2,
+  type CombatantView,
+  type DirectedActionV2,
+  type DirectedEffectV2,
+  type DirectedNoticeV2,
+} from './battle-director-v2';
 
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
@@ -69,6 +70,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function collectAllLogIds(entries: BattleLogRawEntry[]): number[] {
+  return entries.map(e => Number(e.log_id)).filter(id => id > 0);
+}
+
+function extractNpcPidFromScriptV2(script: BattlePlayScriptV2): number {
+  for (const segment of script.segments) {
+    if (segment.actor && segment.actor.type > 0) return segment.actor.pid;
+    for (const action of segment.actions) {
+      if (action.actor.type > 0) return action.actor.pid;
+      for (const target of action.targets) {
+        if (target.snapshot && target.snapshot.type > 0) return target.snapshot.pid;
+        if (target.kind === 'pid' && target.pid && target.pid > 0) return target.pid;
+      }
+      for (const effect of action.effects) {
+        if (effect.source && effect.source.type > 0) return effect.source.pid;
+        if (effect.target.snapshot && effect.target.snapshot.type > 0) return effect.target.snapshot.pid;
+        if (effect.target.kind === 'pid' && effect.target.pid && effect.target.pid > 0) return effect.target.pid;
+      }
+    }
+    for (const notice of segment.notices) {
+      if (notice.actor && notice.actor.type > 0) return notice.actor.pid;
+      if (notice.combatant && notice.combatant.type > 0) return notice.combatant.pid;
+    }
+  }
+  return 0;
+}
+
 export const useBattleStore = defineStore('battle', () => {
   // ── 战斗状态 ──
   const currentMode = ref<'normal' | 'battle'>('normal');
@@ -85,12 +113,10 @@ export const useBattleStore = defineStore('battle', () => {
   const enemyName = ref<string>('');
   /** 敌人位置（供 BattleHeader 显示） */
   const enemyLocation = ref<string | number | null>(null);
-  /** 当前正在播放的 battlelog 条目（供 BattleModal v-for 渲染，类型为 DirectedEntry[]） */
-  const battleLogEntries = ref<DirectedEntry[]>([]);
   /** 战斗模态框是否打开 */
   const battleModalOpen = ref<boolean>(false);
-  /** 当前正在播放的段（供 BattleModal 读取 meta + entries） */
-  const currentSegment = ref<PlaySegment | null>(null);
+  /** 当前正在播放的 v2 段（供 BattleModal 读取 text cues/actions/notices） */
+  const currentSegment = ref<BattleSegmentV2 | null>(null);
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
   let npcTurnRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -243,7 +269,6 @@ export const useBattleStore = defineStore('battle', () => {
     enemyName.value = '';
     enemyLocation.value = null;
     isPlayerTurn.value = false;
-    battleLogEntries.value = [];
     battleModalOpen.value = false;
     currentSegment.value = null;
 
@@ -406,32 +431,47 @@ export const useBattleStore = defineStore('battle', () => {
       const result = await dataManager.fetch('battle_log', true);
       if (result.status !== 'success' || !result.data) return;
 
-      const entries = (result.data as { entries?: BattleLogEntry[] }).entries || [];
+      const entries = (result.data as { entries?: BattleLogRawEntry[] }).entries || [];
       if (entries.length === 0) return;
 
       isPlayingBattleLog.value = true;
 
-      // 1. 导演编排（同步纯函数）
-      const script = direct(entries);
-      if (script.segments.length === 0) {
-        await markBattleLogPlayed(currentGroomid.value, currentPid.value, collectAllLogIds(entries));
+      const v2Events = entries.filter(isBattleLogV2Event);
+
+      // battlelog.v2 是唯一播放协议。历史 v1 条目只标记已播，避免阻塞队列。
+      if (v2Events.length > 0) {
+        const scriptV2 = directV2(v2Events);
+        if (import.meta.env.DEV) {
+          (globalThis as Record<string, unknown>).__battleScriptV2 = scriptV2;
+          (globalThis as Record<string, unknown>).__battleRawEventsV2 = v2Events;
+        }
+
+        if (scriptV2.segments.length > 0) {
+          const npcPid = extractNpcPidFromScriptV2(scriptV2);
+          await playScriptV2(scriptV2, npcPid);
+        }
+
+        const markResult = await markBattleLogPlayed(
+          currentGroomid.value,
+          currentPid.value,
+          collectAllLogIds(entries),
+        );
+        if (!markResult.success) {
+          console.warn('[Battle] markBattleLogPlayed(v2 path) returned failure:', markResult);
+        }
         return;
       }
 
-      // 2. 提取 NPC PID（替代旧 groupByEncounter）
-      const npcPid = extractNpcPid(script);
-
-      // 3. 演员执行
-      await playScript(script, npcPid);
-
-      // 4. 标记已播放（基于原始 entries 的 log_id，不依赖导演输出）
+      if (import.meta.env.DEV) {
+        console.warn('[Battle] ignored non-v2 battlelog entries; battlelog.v2 is now required.', entries);
+      }
       const markResult = await markBattleLogPlayed(
         currentGroomid.value,
         currentPid.value,
         collectAllLogIds(entries),
       );
       if (!markResult.success) {
-        console.warn('[Battle] markBattleLogPlayed returned failure:', markResult);
+        console.warn('[Battle] markBattleLogPlayed(non-v2 ignored) returned failure:', markResult);
       }
     } catch (e) {
       console.error('[Battle] fetchAndPlayBattleLog error:', e);
@@ -442,191 +482,180 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   /**
-   * 战斗播放器：按 PlayScript 分段执行
+   * 战斗播放器：按 BattlePlayScriptV2 分段执行。
    *
-   * 不做任何业务判断，只读 script 字段执行。
-   * 逐段播放，每段根据 SegmentKind 决定渲染方式。
+   * 不做任何业务判断，只读 DirectorV2 产出的 action/effect/notice。
    */
-  async function playScript(script: PlayScript, npcPid: number): Promise<void> {
+  async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise<void> {
     for (const segment of script.segments) {
       switch (segment.kind) {
-        case 'phase0':
-          await playPhase0Segment(segment, npcPid);
-          break;
-        case 'round':
-          await playRoundSegment(segment, npcPid);
+        case 'round_intro':
+          await playRoundSegment(segment);
           break;
         case 'turn':
+        case 'system':
           await playTurnSegment(segment, npcPid);
           break;
         case 'battle_end':
-          await playBattleEndSegment(segment, npcPid);
-          break;
-        case 'ambush_battle_end':
-          await playAmbushBattleEndSegment(segment, npcPid);
+          await playBattleEndSegment(segment);
           break;
       }
     }
   }
 
   /**
-   * 处理段内 entries 的碰撞动画 + 清场动画
-   * playPhase0Segment 和 playTurnSegment 共用，确保突袭和普通战斗都播放攻击/受击动画
+   * 处理段内 actions 的动作动画 + notices 的清场动画。
    */
-  async function processSegmentEntries(segment: PlaySegment, npcPid: number): Promise<void> {
-    for (const e of segment.entries) {
-      if (e.animation === 'collision') {
-        dataManager.broadcast('battle:play-collision', { entry: e, npcPid });
+  async function processSegmentEvents(segment: BattleSegmentV2, npcPid: number): Promise<void> {
+    for (const action of segment.actions) {
+      await processActionAnimation(action, npcPid);
+    }
 
-        // 受击动画（hpSnapshot 过滤无效受击）
-        if (e.hpSnapshot) {
-          const actor_pid = Number(e.actor_pid);
-          const actor_type = Number(e.actor_type);
-          const target_pid = Number(e.target_pid);
-          const target_type = Number(e.target_type);
-          const hpDropped = e.hpSnapshot.targetHpAfter < e.hpSnapshot.targetHpBefore;
-
-          // 按动作类型解析时序规格（impactAt / target.duration / attacker.kind）
-          const spec = resolveActionSpec(e.action_id);
-
-          // 阶段 1：攻击者动画（kind 由 spec 驱动）
-          // 玩家走 intent 系统（避免绕过 playerAvatarStore 状态机），敌人直接命令式调用
-          {
-            const targetId = target_type === 0 ? 'player' : `enemy-${target_pid}`;
-            if (actor_type === 0 && actor_pid === currentPid.value) {
-              usePlayerAvatarStore().onAttack(targetId, spec.attacker.kind);
-            } else if (actor_type !== 0) {
-              const targetPos = getActorById(targetId)?.getPosition();
-              getActorById(`enemy-${actor_pid}`)?.playAttack(targetPos, spec.attacker.kind);
-            }
-          }
-
-          // 等待命中时刻（impactAt），再触发受击——实现"攻击→命中→受击"因果时序
-          // 攻击后摇（impactAt ~ 攻击动画结束）与受击动画重叠播放
-          await sleep(spec.attacker.impactAt);
-
-          // 阶段 2：受击动画（仅命中时播放）
-          if (hpDropped) {
-            if (target_pid === currentPid.value && target_type === 0) {
-              // 玩家受击
-              usePlayerAvatarStore().onHit();
-            } else if (target_type !== 0) {
-              // 敌人受击：基于 attacker/target 实际 x 坐标计算受击方向
-              const attackerId = actor_type === 0 ? 'player' : `enemy-${actor_pid}`;
-              const attackerPos = getActorById(attackerId)?.getPosition();
-              const targetPos = getActorById(`enemy-${target_pid}`)?.getPosition();
-              // 攻击者在目标左边 → 目标被推向右（dir=1）；右边 → 推向左（dir=-1）；位置未知 → 仅压缩（dir=0）
-              const dir: 1 | -1 | 0 = attackerPos && targetPos
-                ? (attackerPos.x < targetPos.x ? 1 : -1)
-                : 0;
-              getActorById(`enemy-${target_pid}`)?.playHit(dir);
-            }
-          }
-
-          // 等待受击动画完成（攻击后摇已重叠在内）
-          await sleep(spec.target.duration);
-        }
-      }
-
-      // 清场动画（combatant_cleared 实时触发）
-      if (e.directedKind === 'combatant_cleared') {
-        const cleared_pid = Number(e.cleared_pid);
-        const reason = e.reason;
-
-        if (cleared_pid === currentPid.value) {
-          if (reason === 'death') {
-            usePlayerAvatarStore().onDie();
-          } else if (reason === 'escaped') {
-            usePlayerAvatarStore().onFlee();
-          }
-        } else if (cleared_pid === npcPid) {
-          const actor = getActorById(`enemy-${cleared_pid}`);
-          if (reason === 'death' || reason === 'escaped') {
-            // 死亡和逃跑都走 playFadeOut（与 entities watch 一致，无时序冲突）
-            // playFall 留给未来 POI 转换（后端保留尸体时不触发 entities watch）
-            actor?.playFadeOut();
-          }
-        }
-
-        await sleep(CLEARED_ANIM_DURATION);
+    for (const notice of segment.notices) {
+      if (notice.type === 'combatant_cleared') {
+        await processCombatantCleared(notice);
       }
     }
   }
 
-  /** Phase 0 段：突袭攻击，无 Turn/Round 结构 */
-  async function playPhase0Segment(segment: PlaySegment, npcPid: number): Promise<void> {
-    updateEnemyNameFromSegment(segment);
-    await refreshEnemyLocation(npcPid);
-    await processSegmentEntries(segment, npcPid);
-    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
+  async function processActionAnimation(action: DirectedActionV2, npcPid: number): Promise<void> {
+    if (action.animation.kind !== 'none') {
+      dataManager.broadcast('battle:play-action-animation', {
+        action,
+        plan: action.animation,
+        npcPid,
+      });
+    }
+
+    const damageEffect = action.effects.find(isDamageHpDrop);
+    if (!damageEffect) return;
+
+    const target = damageEffect.target.snapshot;
+    if (!target) return;
+
+    const spec = resolveActionSpec(action.actionId);
+    const attackerId = combatantEntityId(action.actor);
+    const targetId = combatantEntityId(target);
+
+    if (action.actor.type === 0 && action.actor.pid === currentPid.value) {
+      usePlayerAvatarStore().onAttack(targetId, spec.attacker.kind);
+    } else if (action.actor.type !== 0) {
+      const targetPos = getActorById(targetId)?.getPosition();
+      getActorById(attackerId)?.playAttack(targetPos, spec.attacker.kind);
+    }
+
+    await sleep(action.animation.impactAt ?? spec.attacker.impactAt);
+
+    if (target.type === 0 && target.pid === currentPid.value) {
+      usePlayerAvatarStore().onHit();
+    } else if (target.type !== 0) {
+      const attackerPos = getActorById(attackerId)?.getPosition();
+      const targetPos = getActorById(targetId)?.getPosition();
+      const dir: 1 | -1 | 0 = attackerPos && targetPos
+        ? (attackerPos.x < targetPos.x ? 1 : -1)
+        : 0;
+      getActorById(targetId)?.playHit(dir);
+    }
+
+    await sleep(spec.target.duration);
   }
 
-  /** Round 段：先攻掷骰，即使 entries 渲染为空也显示段分隔符 */
-  async function playRoundSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    await playSegmentInModal(segment, { npcPid, alwaysShowHeader: true });
+  async function processCombatantCleared(notice: DirectedNoticeV2): Promise<void> {
+    const combatant = notice.combatant;
+    if (!combatant) return;
+
+    const reason = notice.reason;
+    if (combatant.pid === currentPid.value && combatant.type === 0) {
+      if (reason === 'death') {
+        usePlayerAvatarStore().onDie();
+      } else if (reason === 'escaped') {
+        usePlayerAvatarStore().onFlee();
+      }
+    } else if (combatant.type !== 0) {
+      const actor = getActorById(combatantEntityId(combatant));
+      if (reason === 'death' || reason === 'escaped') {
+        // 死亡和逃跑都走 playFadeOut（与 entities watch 一致，无时序冲突）
+        // playFall 留给未来 POI 转换（后端保留尸体时不触发 entities watch）
+        actor?.playFadeOut();
+      }
+    }
+
+    await sleep(CLEARED_ANIM_DURATION);
   }
 
-  /** Turn 段：单回合动作，切换 HP 条目标 */
-  async function playTurnSegment(segment: PlaySegment, npcPid: number): Promise<void> {
+  function isDamageHpDrop(effect: DirectedEffectV2): boolean {
+    if (effect.type !== 'damage') return false;
+    if (!effect.target.snapshot) return false;
+    const before = Number(effect.delta?.hp_before ?? effect.target.snapshot.hp);
+    const after = Number(effect.delta?.hp_after ?? effect.target.snapshot.hp);
+    return after < before;
+  }
+
+  function combatantEntityId(combatant: CombatantView): string {
+    return combatant.type === 0 ? 'player' : `enemy-${combatant.pid}`;
+  }
+
+  /** Round 段：即使没有正文也显示段分隔符 */
+  async function playRoundSegment(segment: BattleSegmentV2): Promise<void> {
+    await playSegmentInModal(segment, { alwaysShowHeader: true });
+  }
+
+  /** Turn 段：播放动作动画、模态框、残留数字 */
+  async function playTurnSegment(segment: BattleSegmentV2, npcPid: number): Promise<void> {
     updateEnemyNameFromSegment(segment);
     await refreshEnemyLocation(npcPid);
 
-    // 碰撞动画 + 受击意图 + 死亡主判定（与 playPhase0Segment 共用）
-    await processSegmentEntries(segment, npcPid);
+    await processSegmentEvents(segment, npcPid);
 
-    // 模态框播放
-    await playSegmentInModal(segment, { npcPid });
+    await playSegmentInModal(segment, {});
 
-    // 伤害数字
+    const effects = segment.actions.flatMap(action => action.effects);
     dataManager.broadcast('battle:play-damage-numbers', {
-      entries: segment.entries,
+      effects,
       npcPid,
     });
   }
 
   /** Battle End 段：标准战斗终结 */
-  async function playBattleEndSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    await playSegmentInModal(segment, { npcPid, isBattleEnd: true });
-  }
-
-  /** Ambush Battle End 段：突袭阶段结束 */
-  async function playAmbushBattleEndSegment(segment: PlaySegment, npcPid: number): Promise<void> {
-    await playSegmentInModal(segment, { npcPid, isBattleEnd: true });
+  async function playBattleEndSegment(segment: BattleSegmentV2): Promise<void> {
+    await playSegmentInModal(segment, { isBattleEnd: true });
   }
 
   interface SegmentPlayOptions {
-    npcPid: number;
-    /** 即使 entries 渲染为空也打开模态框（显示段分隔符） */
+    /** 即使正文为空也打开模态框（显示段分隔符） */
     alwaysShowHeader?: boolean;
-    /** 战斗结束段（即使无渲染条目也打开） */
+    /** 战斗结束段（即使无正文也打开） */
     isBattleEnd?: boolean;
   }
 
   /**
    * 在模态框中播放一个 segment
    *
-   * 设置 currentSegment（供 BattleModal 读取 meta），打开模态框，等待关闭。
-   * 模态框根据 currentSegment.kind 和 entries 逐条渲染。
+   * 设置 currentSegment，打开模态框，等待关闭。
+   * 模态框根据 BattleSegmentV2 的 notices/actions/effects 逐条渲染。
    */
   async function playSegmentInModal(
-    segment: PlaySegment,
+    segment: BattleSegmentV2,
     options: SegmentPlayOptions,
   ): Promise<void> {
-    const rendered = segment.entries
-      .map(e => ({ entry: e, html: renderDirectedEntryHtml(e, currentPid.value) }))
-      .filter(r => r.html);
-
-    // 无渲染条目时的处理：
+    // 无正文时的处理：
     // - isBattleEnd：仍打开模态框（显示战斗结束文字）
     // - alwaysShowHeader：仍打开模态框（显示段分隔符）
     // - 其他：跳过
-    if (rendered.length === 0 && !options.isBattleEnd && !options.alwaysShowHeader) return;
+    if (!segmentHasRenderableText(segment) && !options.isBattleEnd && !options.alwaysShowHeader) return;
 
     currentSegment.value = segment;
-    battleLogEntries.value = rendered.map(r => r.entry);
     battleModalOpen.value = true;
 
     await waitForModalClose();
+  }
+
+  function segmentHasRenderableText(segment: BattleSegmentV2): boolean {
+    if (segment.notices.some(notice => Boolean(notice.text.html))) return true;
+    return segment.actions.some(action =>
+      action.text.some(text => Boolean(text.html)) ||
+      action.effects.some(effect => Boolean(effect.text?.html)),
+    );
   }
 
   /** 等待模态框关闭 */
@@ -650,7 +679,6 @@ export const useBattleStore = defineStore('battle', () => {
    */
   function notifyModalClosed(): void {
     battleModalOpen.value = false;
-    battleLogEntries.value = [];
     currentSegment.value = null;
     if (_modalResolve) {
       _modalResolve();
@@ -658,13 +686,25 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  /** 从 segment entries 读取敌人名称（优先用 action entry 的 target_name） */
-  function updateEnemyNameFromSegment(segment: PlaySegment): void {
-    const firstAction = segment.entries.find(e => e.directedKind === 'action');
-    if (firstAction?.target_name) {
-      enemyName.value = firstAction.target_name;
-    } else if (firstAction?.actor_name && Number(firstAction.actor_type) > 0) {
-      enemyName.value = firstAction.actor_name;
+  /** 从 v2 segment 读取敌人名称 */
+  function updateEnemyNameFromSegment(segment: BattleSegmentV2): void {
+    const targetEnemy = segment.actions
+      .flatMap(action => action.targets)
+      .find(target => target.snapshot && target.snapshot.type > 0);
+    if (targetEnemy?.snapshot?.name) {
+      enemyName.value = targetEnemy.snapshot.name;
+      return;
+    }
+
+    const actorEnemy = segment.actions.find(action => action.actor.type > 0)?.actor;
+    if (actorEnemy?.name) {
+      enemyName.value = actorEnemy.name;
+      return;
+    }
+
+    const noticeEnemy = segment.notices.find(notice => notice.combatant?.type && notice.combatant.type > 0)?.combatant;
+    if (noticeEnemy?.name) {
+      enemyName.value = noticeEnemy.name;
     }
   }
 
@@ -742,7 +782,6 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayerTurn.value = false;
     enemyName.value = '';
     enemyLocation.value = null;
-    battleLogEntries.value = [];
     battleModalOpen.value = false;
     currentSegment.value = null;
     stopNpcTurnRefresh();
@@ -763,7 +802,6 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayerTurn,
     enemyName,
     enemyLocation,
-    battleLogEntries,
     battleModalOpen,
     currentSegment,
     // 定时器管理

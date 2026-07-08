@@ -161,13 +161,9 @@ function battle_queue_create_and_init(&$actor_data, array $pids, &$obl_battle_lo
             'qid'        => $qid,
             'combatants' => $sorted,
         ], true);  // debug
-        $obl_battle_log->setPhase('initiative_roll');
-        $obl_battle_log->emit([
-            'qid'        => $qid,
-            'rolls'      => $sorted,
-            'ambush_pid' => $ambush_pid > 0 ? (int)$actor_data['pid'] : 0,
-            'combatants' => $sorted,
-        ]);
+        if (function_exists('combat_log_v2_round_start')) {
+            combat_log_v2_round_start($obl_battle_log, $qid, $sorted, $ambush_pid > 0 ? (int)$actor_data['pid'] : 0);
+        }
     }
 
     return $qid;
@@ -206,13 +202,8 @@ function battle_queue_set_initiative($qid, &$actor_data, &$obl_battle_log, $ambu
         obl_queue_update_myorder($r['pid'], $qid, $r['myorder']);
     }
 
-    if ($obl_battle_log) {
-        $obl_battle_log->setPhase('initiative_roll');
-        $obl_battle_log->emit([
-            'qid'        => $qid,
-            'rolls'      => $sorted,
-            'ambush_pid' => $ambush_pid,
-        ]);
+    if ($obl_battle_log && function_exists('combat_log_v2_round_start')) {
+        combat_log_v2_round_start($obl_battle_log, $qid, $sorted, $ambush_pid);
     }
 
     return $sorted;

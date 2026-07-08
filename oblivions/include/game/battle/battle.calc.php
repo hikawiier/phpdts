@@ -147,8 +147,35 @@ function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
     $damage = ($actor_data['att'] * $damage_factor) - $target_data['def'];
     $damage = max(1, $damage); //伤害不能为负数，最小为1
 
-    //调试用 伤害最大为25 
+    //调试用 伤害最大为25
     $damage = min(25, $damage);
-    
+
     return $damage;
+}
+
+/**
+ * 纯伤害计算函数（无副作用，可独立单测）
+ * 与旧 obl_calc_damage 的差异：config 由调用方传入，不再内部调 skill_get_config
+ * 调用方应通过 combat_skill_get_config 获取配置后传入
+ * 保留旧 obl_calc_damage 不修改（旧系统仍在使用）
+ *
+ * @param array $actor_data  攻击者数据
+ * @param array $target_data 目标数据
+ * @param array $config      技能配置数组（由调用方获取后传入）
+ * @return int 伤害值
+ */
+function obl_calc_damage_value($actor_data, $target_data, $config): int {
+    // 无伤害技能返回 0
+    if (!$config || (($config['damage_type'] ?? 'none') === 'none')) {
+        return 0;
+    }
+
+    $damage_factor = isset($config['damage_factor']) ? (float)$config['damage_factor'] : 1.0;
+    $damage = ($actor_data['att'] * $damage_factor) - $target_data['def'];
+    $damage = max(1, $damage); //伤害最小为1
+
+    //调试用 伤害最大为25
+    $damage = min(25, $damage);
+
+    return (int)$damage;
 }

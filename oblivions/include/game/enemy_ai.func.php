@@ -24,7 +24,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 //                   obl_format_playerdata / obl_save_player）
 // - tick.func.php（obl_tick_request_advance，仅监听器需要）
 // - explore.func.php（obl_clear_fog，仅 obl_discover_enemies 需要）
-// 依赖：move.func.php + player.func.php + battle.main.php + explore.func.php（由 obl_bootstrap.php 统一加载）
+// 依赖：move.func.php + player.func.php + combat.core.php + explore.func.php（由 obl_bootstrap.php 统一加载）
 
 // ================================================================
 // 模块 1：NPC 生成
@@ -93,10 +93,10 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
 		$atk_act = obl_ai_select_combat_action($npc_data, $ctx['player']['pid']);
 
-		# 通过 battle_entry_dispatch 调用 battle_main（统一战斗入口路径，battle.entry.php 已由 obl_bootstrap.php 加载）
-		# battle_entry_dispatch 内部调用 battle_manage_queue，
-		# 已包含：done → update → 确定 next + 状态转换 + try_end
-		$result = battle_entry_dispatch('npc_turn', $npc_data, $atk_act, [
+		# 通过新 combat 入口调度 NPC 回合。
+		# 内部调用 battle_manage_queue，已包含：done → update → 确定 next + 状态转换 + try_end
+		error_log("[combat_engine] routed to new system: npc_turn (pid={$npc_data['pid']})");
+		$result = combat_dispatch('npc_turn', $npc_data, $atk_act, [
 			'allow_empty_actions' => true,
 		]);
 

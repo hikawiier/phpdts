@@ -33,10 +33,16 @@ const skills = ref<Skill[]>([]);
 const visibleSkills = computed(() => skills.value.filter(s => !s.hidden));
 const playerAp = ref<number>(0);
 const playerMaxAp = ref<number>(0);
+type TargetIntent =
+  | { type: 'pid'; id: number }
+  | { type: 'tile'; id: number }
+  | { type: 'self' }
+  | { type: 'none' }
+  | { type: 'all' };
 interface QueueItem {
   id: number;
   act_id: string;
-  target: number;
+  target: TargetIntent;
 }
 const queue = ref<QueueItem[]>([]);
 let queueIdSeed = 0;
@@ -166,9 +172,13 @@ function onSkillClick(actId: string): void {
     return;
   }
 
-  if (skill.target === 'self') {
-    // self 目标：直接加入队列，target 为玩家自己的 PID
-    addToQueue(actId, playerPid.value);
+  if (actId === 'escape' || skill.target === 'none') {
+    addToQueue(actId, { type: 'none' });
+  } else if (skill.target === 'self') {
+    addToQueue(actId, { type: 'self' });
+  } else if (skill.target === 'tiles' || skill.target === 'tile') {
+    if (mapStore.curLoc === null) return;
+    addToQueue(actId, { type: 'tile', id: Number(mapStore.curLoc) });
   } else {
     // enemy 目标：MVP 单敌人战斗，直接使用当前敌人 PID
     // 未来多敌人时可启用瞄准模式：enterAimMode(actId)
@@ -177,7 +187,7 @@ function onSkillClick(actId: string): void {
         useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
         return;
       }
-      addToQueue(actId, enemyPid.value);
+      addToQueue(actId, { type: 'pid', id: enemyPid.value });
     } else {
       enterAimMode(actId);
     }
@@ -233,7 +243,7 @@ function onTargetSelect(data: unknown): void {
   }
 
   // 瞄准选中的 pid 直接传入 addToQueue，用完即弃
-  addToQueue(pendingActId.value, pid);
+  addToQueue(pendingActId.value, { type: 'pid', id: pid });
   exitAimMode();
 }
 
@@ -249,12 +259,12 @@ function onAimExit(): void {
 // 队列操作
 // ══════════════════════════════════════════════════
 
-function addToQueue(actId: string, targetPid: number): void {
+function addToQueue(actId: string, target: TargetIntent): void {
   const skill = skills.value.find((s) => s.act_id === actId);
   const isFinisher = skill ? Number(skill.finisher) > 0 : false;
 
   if (isFinisher) {
-    queue.value.push({ id: ++queueIdSeed, act_id: actId, target: targetPid });
+    queue.value.push({ id: ++queueIdSeed, act_id: actId, target });
   } else {
     // 普通技：如果队列有终结技，插入到它前面
     const finisherIdx = queue.value.findIndex((item) => {
@@ -262,9 +272,9 @@ function addToQueue(actId: string, targetPid: number): void {
       return s ? Number(s.finisher) > 0 : false;
     });
     if (finisherIdx >= 0) {
-      queue.value.splice(finisherIdx, 0, { id: ++queueIdSeed, act_id: actId, target: targetPid });
+      queue.value.splice(finisherIdx, 0, { id: ++queueIdSeed, act_id: actId, target });
     } else {
-      queue.value.push({ id: ++queueIdSeed, act_id: actId, target: targetPid });
+      queue.value.push({ id: ++queueIdSeed, act_id: actId, target });
     }
   }
 }
@@ -279,8 +289,13 @@ function clearQueue(): void {
 }
 
 /** 根据 PID 查询目标显示文本 */
-function getTargetDisplayText(targetPid: number): string {
-  const pid = parseInt(String(targetPid));
+function getTargetDisplayText(target: TargetIntent): string {
+  if (target.type === 'self') return '自己';
+  if (target.type === 'none') return '无目标';
+  if (target.type === 'tile') return `位置${target.id}`;
+  if (target.type === 'all') return '全部敌人';
+
+  const pid = parseInt(String(target.id));
   if (pid === parseInt(String(playerPid.value))) return '自己';
 
   const enemy = mapStore.enemies.find(
@@ -293,10 +308,10 @@ function getTargetDisplayText(targetPid: number): string {
 }
 
 
-function normalizeActions(actions: QueueItem[]): Array<{ act_id: string; target: number; params: Record<string, unknown> }> {
+function normalizeActions(actions: QueueItem[]): Array<{ act_id: string; target: TargetIntent; params: Record<string, unknown> }> {
   return actions.map((action) => ({
     act_id: action.act_id,
-    target: Number(action.target),
+    target: action.target,
     params: {},
   }));
 }

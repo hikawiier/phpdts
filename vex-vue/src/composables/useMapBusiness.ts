@@ -14,7 +14,6 @@
 //   - mapStore（loadMap / updateMapData / curLoc / curRegion / links / enemies）
 //   - commandQueue（execute）
 //   - dataManager（invalidate / broadcast / listen）
-//   - useMapReachability（findPath）
 //   - useMapRender（setRenderCallbacks）
 //   - useMapInteraction（setInteractionCallbacks）
 //   - debugBus（registerState）
@@ -25,7 +24,6 @@ import { useBattleStore } from '@/stores/battle';
 import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
-import { findPath } from '@/composables/useMapReachability';
 import { setRenderCallbacks, getZoomLevel } from '@/composables/useMapRender';
 import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer } from '@/composables/useMapInteraction';
 import { perf } from '@/utils/perf';
@@ -102,24 +100,55 @@ export async function clickMove(areaId: string | number): Promise<void> {
 }
 
 /**
- * 敌人格点击处理：前端校验攻击距离（阶段一射程=1，相邻格），
- * 通过后触发战斗开始
+ * 敌人格点击处理：调用后端 L0 可达性判断，通过后触发战斗开始
  *
- * 迁移自现有 vex/js/map.js handleEnemyClick → startBattle(pid)。
+ * 替代旧的硬编码 distance!==1 前端校验。后端 combat.can_engage 命令基于
+ * actor 的 max_attack_range + move_power 判断目标是否可达。
  */
-export function handleEnemyClick(enemy: Enemy): void {
+export async function handleEnemyClick(enemy: Enemy): Promise<void> {
   const mapStore = useMapStore();
   if (mapStore.curLoc === null) return;
-  // 前端校验攻击距离（阶段一射程=1，相邻格）
-  const path = findPath(mapStore.curLoc, parseInt(String(enemy.pls), 10));
-  const distance = path ? path.length - 1 : -1;
-  if (distance !== 1) {
-    dataManager.broadcast('ui:toast', { type: 'error', msg: '目标距离过远，需先靠近' });
+
+  const enemyPid = parseInt(String(enemy.pid), 10);
+
+  const result = await commandQueue.execute({
+    command: 'combat.can_engage',
+    payload: { target_pid: enemyPid },
+  });
+
+  if (!result.success) {
+    dataManager.broadcast('ui:toast', { type: 'error', msg: result.message || '可达性判断失败' });
     return;
   }
-  // 触发战斗（M6：battleStore.startBattle）
+
+  const engageData = (result.gamedata?.data as {
+    reachable: boolean;
+    max_attack_range: number;
+    move_power: number;
+    distance: number;
+    reason: string | null;
+  } | undefined);
+
+  if (!engageData) {
+    dataManager.broadcast('ui:toast', { type: 'error', msg: '可达性判断返回数据异常' });
+    return;
+  }
+
+  if (!engageData.reachable) {
+    let msg: string;
+    if (engageData.reason === 'cross_zone') {
+      msg = '目标在其他区域，无法发起战斗';
+    } else if (engageData.reason === 'unreachable') {
+      msg = '目标不可达，无法发起战斗';
+    } else {
+      msg = `目标距离 ${engageData.distance} 格，你最远可达 ${engageData.max_attack_range + engageData.move_power} 格`;
+    }
+    dataManager.broadcast('ui:toast', { type: 'error', msg });
+    return;
+  }
+
   const battleStore = useBattleStore();
-  battleStore.startBattle(parseInt(String(enemy.pid), 10));
+  battleStore.startBattle(enemyPid);
 }
 
 /**

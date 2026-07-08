@@ -28,8 +28,8 @@ if (!defined('IN_GAME')) {
 /**
  * 战斗日志收集器（单次请求内累积，请求结束前持久化）
  *
- * 由 battle_entry_dispatch 统一初始化，传入 battle_main()。
- * battle_main 各阶段通过 setPhase() 标记阶段。
+ * 由 new combat 入口统一初始化。
+ * battlelog.v2 事件通过 combat.log.php 写入；队列层仍可写少量共享队列事件。
  */
 class BattleLogCollector {
 
@@ -50,10 +50,6 @@ class BattleLogCollector {
         'initiative_roll'          => false,
         'queue_create'             => true,
         'queue_rebuild'            => true,
-        'once_execute_pre'         => false,
-        'once_execute_post'        => false,
-        'execute_verify_failed'    => false,
-        'middle_check_target_dead' => false,
         'actor_state_check'        => true,
         'ap_recover'               => false,
         'flee'                     => false,
@@ -69,6 +65,23 @@ class BattleLogCollector {
         'battle_end'         => 'battle_end',
         'ambush_battle_end'  => 'ambush_battle_end',
     ];
+
+    /**
+     * 注册新 phase（用于新战斗系统扩展，不修改既有 phase 配置）
+     *
+     * $phaseDebugDefault / $phaseSegmentFlag 是 private static，外部无法直接修改，
+     * 此方法提供受控的扩展入口。新系统通过此方法注册 move/heal/escape/ap_change 等 phase。
+     *
+     * @param string      $phase         阶段名
+     * @param bool        $debugDefault  debug 默认值
+     * @param string|null $segmentFlag   段边界标记（null=非段边界，不写入 $phaseSegmentFlag）
+     */
+    public static function registerPhase(string $phase, bool $debugDefault, ?string $segmentFlag = null): void {
+        self::$phaseDebugDefault[$phase] = $debugDefault;
+        if ($segmentFlag !== null) {
+            self::$phaseSegmentFlag[$phase] = $segmentFlag;
+        }
+    }
 
     /**
      * 设置当前阶段标识
@@ -117,13 +130,23 @@ class BattleLogCollector {
             'target_hp'     => $params['target_hp']     ?? null,
             'target_max_hp' => $params['target_max_hp'] ?? null,
             'effect_value' => $params['effect_value'] ?? null,
+            'effect_type'  => $params['effect_type']  ?? null,
             'success'      => $params['success']      ?? null,
             'qid'          => $params['qid']          ?? null,
+            'schema'       => $params['schema']       ?? null,
+            'event_type'   => $params['event_type']   ?? null,
+            'channel'      => $params['channel']      ?? null,
+            'event_uid'    => $params['event_uid']    ?? null,
+            'action_uid'   => $params['action_uid']   ?? null,
+            'effect_uid'   => $params['effect_uid']   ?? null,
+            'payload'      => $params['payload']      ?? null,
             'rolls'        => $params['rolls']        ?? null,
             'ambush_pid'   => $params['ambush_pid']   ?? null,
             'combatants'   => $params['combatants']   ?? null,
             'reason'       => $params['reason']       ?? null,
             'distance'     => $params['distance']     ?? null,
+            'from_pls'     => $params['from_pls']     ?? null,
+            'to_pls'       => $params['to_pls']       ?? null,
             'range'        => $params['range']        ?? null,
             'range_mode'   => $params['range_mode']   ?? null,
             'range_max'    => $params['range_max']    ?? null,

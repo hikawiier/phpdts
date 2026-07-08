@@ -134,12 +134,8 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
     $queue_rows = obl_fetch_queue_all_by_qid($qid);
     if (empty($queue_rows)) {
         // 极端兜底：队列不存在但 actor 还有 bid（队列被意外删除）
-        if ($obl_battle_log) {
-            $obl_battle_log->setPhase('battle_end');
-            $obl_battle_log->emit([
-                'winner_pid' => (int)$actor_data['pid'],
-                'reason'     => 'queue_empty',
-            ]);
+        if ($obl_battle_log && function_exists('combat_log_v2_battle_end')) {
+            combat_log_v2_battle_end($obl_battle_log, 'queue_empty', (int)$actor_data['pid']);
         }
         // 清理所有 bid 指向此 qid 的人（队列行已不存在，改扫玩家表）
         $stale_pids = obl_fetch_pids_by_bid($qid);
@@ -193,12 +189,17 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
 
     // ── 2. 解散判定（基于 active=1 计数）──
     if ($active_count <= 1 || !$has_player) {
-        if ($obl_battle_log) {
-            $obl_battle_log->setPhase('battle_end');
-            $obl_battle_log->emit([
-                'winner_pid' => (int)$actor_data['pid'],
-                'reason'     => 'disband',
-            ]);
+        if ($obl_battle_log && function_exists('combat_log_v2_battle_end')) {
+            $survivors = [];
+            if (function_exists('combat_log_v2_combatant_snapshot')) {
+                foreach ($queue_rows as $r) {
+                    if ((int)$r['active'] !== 1) continue;
+                    $survivor_data = obl_fetch_playerdata_by_pid((int)$r['pid']);
+                    $snapshot = combat_log_v2_combatant_snapshot($survivor_data);
+                    if ($snapshot !== null) $survivors[] = $snapshot;
+                }
+            }
+            combat_log_v2_battle_end($obl_battle_log, 'disband', (int)$actor_data['pid'], $survivors);
         }
         battle_disband_cleanup($qid, $actor_data, $obl_battle_log);
         obl_queue_delete_by_qid($qid);

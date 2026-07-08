@@ -9,6 +9,9 @@ if (!defined('IN_GAME')) {
 // 由 skill_load_modules() 自动加载。idle_calc 由 skill_execute 调用。
 // NPC 专属兜底技能：无功能、无消耗，仅 emit 发呆日志供前端渲染文案。
 // 前端根据 actor_type（敌人类型 ID）选择对应文案。
+//
+// @deprecated 1.0 旧技能模块，被 oblivions/gamedata/combat_skills/ 目录下新系统技能钩子替代
+// @see oblivions/gamedata/combat_skills/
 // ================================================================
 
 function idle_calc(&$actor_data, &$target_data, &$obl_battle_log, &$battle_cache)

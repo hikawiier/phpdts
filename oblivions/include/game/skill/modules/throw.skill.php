@@ -5,6 +5,9 @@ if (!defined('IN_GAME')) {
 
 // ================================================================
 // 投掷技能模块 / Throw skill module
+//
+// @deprecated 1.0 旧技能模块，被 oblivions/gamedata/combat_skills/skill_throw.php 替代
+// @see oblivions/gamedata/combat_skills/skill_throw.php
 // ================================================================
 
 function skill_throw_actor_has_throwing_weapon(&$actor_data)

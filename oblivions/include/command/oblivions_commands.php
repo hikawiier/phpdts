@@ -119,8 +119,8 @@ function cmd_handle_obl_craft($slots, $workbench_materials, &$pdata) {
  * 玩家突袭 NPC
  *
  * 玩家前端点击已发现的 NPC → 前端预装填动作 → 提交 obl_battle_start 命令。
- * 不做任何目标校验，直接委托 battle_entry_dispatch('ambush') 处理。
- * 突袭不创建先攻队列，直接动手打一次，由 battle_main 尾部的 battle_queue_check 后补票创建队列。
+ * 不做任何目标校验，直接委托 combat_start_battle 处理。
+ * 新 combat 负责执行玩家首轮动作并创建先攻队列。
  *
  * 指令格式统一：只传 actions JSON 数组，突袭目标从 actions[0]['target'] 推导。
  *
@@ -129,19 +129,19 @@ function cmd_handle_obl_craft($slots, $workbench_materials, &$pdata) {
  */
 function cmd_handle_obl_battle_start(&$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
-    battle_entry_dispatch('ambush', $pdata, $actions);
+    combat_start_battle($pdata, $actions);
 }
 
 /**
  * 玩家回合（已有先攻队列的情况下）
  *
  * 由前端在玩家选择动作后提交 obl_battle_action 命令时调用。
- * 直接委托 battle_entry_dispatch('player_turn') 处理。
+ * 直接委托 combat_dispatch('player_turn') 处理。
  *
  * @param array     &$pdata    玩家数据
  * @param array|null $actions   预装填动作数组，每项含 act_id + target。提供时优先使用
  */
 function cmd_handle_obl_battle_action(&$pdata, $actions = null) {
     if (!oblivions_is_active()) return;
-    battle_entry_dispatch('player_turn', $pdata, $actions);
+    combat_dispatch('player_turn', $pdata, $actions);
 }

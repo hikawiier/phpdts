@@ -6,6 +6,12 @@ if (!defined('IN_GAME')) {
 // ================================================================
 // Oblivions 战斗系统功能文件 / Oblivions battle system
 // 功能函数负责实现战斗系统的具体功能
+//
+// @deprecated 1.0 部分函数被 combat/ 模块替代：
+//   - battle_state_clear → combat_state_clear (combat.state.php)
+//   - battle_state_init → combat_state_init (combat.state.php)
+// 共享函数不标记：battle_queue_* / battle_calc_initiative
+// @see combat.state.php
 // ================================================================
 
 // 依赖声明（由 obl_bootstrap.php 统一加载，此处 require_once 仅作自文档化）
@@ -57,16 +63,8 @@ function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
     $actor_data['ap'] = min($old_ap + $max_ap, $max_ap);
     $recovered = $actor_data['ap'] - $old_ap;
 
-    # 记录日志（AP 恢复信息）
-    if ($obl_battle_log) {
-        $obl_battle_log->setPhase('ap_recover');
-        $obl_battle_log->emit([
-            'actor_pid'    => (int)$actor_data['pid'],
-            'actor_name'   => $actor_data['name'],
-            'actor_ap'     => (int)$actor_data['ap'],
-            'actor_max_ap' => (int)$actor_data['max_ap'],
-            'effect_value' => $recovered,
-        ]);
+    if ($obl_battle_log && function_exists('combat_log_v2_turn_start')) {
+        combat_log_v2_turn_start($obl_battle_log, $actor_data, $recovered);
     }
 }
 
@@ -98,7 +96,7 @@ function battle_target_distance_check(&$actor_data, &$target_data, $act_id, &$ba
         $pass = ($distance >= 0 && $distance <= $actor_range);
     }
 
-    // 记录最近一次射程检查，供 execute_verify_failed 日志补充 distance/range。
+    // 记录最近一次射程检查，供诊断日志补充 distance/range。
     $battle_cache['last_range_check'] = array(
         'actor_pid'    => isset($actor_data['pid']) ? (int)$actor_data['pid'] : 0,
         'target_pid'   => isset($target_data['pid']) ? (int)$target_data['pid'] : 0,

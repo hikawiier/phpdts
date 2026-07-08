@@ -5,6 +5,47 @@
 
 ---
 
+## 〇、当前架构摘要（AI 快速判断区）
+
+> 阅读以下要点后再深入各章节，可避免被历史段落误导。本节是"当前真相"，正文若与本节冲突以本节为准。
+
+**三个独立 HTTP 入口**（均不依赖 `common.inc.php`，由 `obl_runtime_boot($kind)` 提供独立运行期）：
+
+| 入口 | 用途 | 加载的 bootstrap |
+|------|------|-----------------|
+| `oblivions/api/command.php` | JSON Command API（玩家写操作唯一主路径） | `obl_command_api_bootstrap.php` → Command Bus |
+| `oblivions/api/heartbeat.php` | Heartbeat API（前端显式驱动 tick 推进 + NPC 行动） | `obl_heartbeat_api_bootstrap.php` → Tick Orchestrator |
+| `oblivions/api/state.php` | State API（纯读，不推进 tick） | `obl_state_api_bootstrap.php` → State handlers |
+
+**命令名（新）**：`map.move` / `map.explore` / `poi.search` / `item.pickup` / `item.discard` / `item.use` / `inventory.organize` / `craft.execute` / `battle.start` / `battle.submit_turn`。旧名 `obl_explore` / `obl_battle_action` 等仅存于 deprecated 的根 `command.php` → `obl_command.php` 兼容路径，前端不再调用。
+
+**tick 推进两条路径**：
+1. **玩家命令路径**：Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（仅 `advancesTick=true` 的命令）
+2. **心跳路径**：`obl_tick_orchestrator_heartbeat()` → `obl_tick_orchestrator_resolve_pending()` → `obl_resolve_tick_events()`（处理 NPC 行动）
+
+> 旧 `obl_command.php` 的 [F] 段 `obl_tick_advance()` 仍存在于代码中，但该文件整体标记为 `@deprecated`，仅服务旧根 `command.php` 兼容路径。新前端走 Command API，不经过 [F] 段。
+
+**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback: { id, params }, refresh, server_state } }`。`feedback.id + params` 复用 `log-templates.ts` 模板，由前端 `command-feedback.ts` 渲染文案。后端不输出用户可见文案。
+
+**三套日志系统职责**（物理隔离）：
+
+| 日志 | 用途 | 前端呈现 |
+|------|------|---------|
+| `obl_log` | 玩家历史事件 | 日志区 + Toast（按白名单） |
+| `obl_battle_log` | 战斗导演事件 | 战斗模态框播放 |
+| `obl_error_log` | **诊断流**（后端异常/命令拒绝） | 默认不提示；仅 `?debug=ai` / `?poll_error=1` 时弹诊断 Toast |
+
+> `obl_error_log` 不再作为普通 UI 错误通道。普通业务拒绝由 Command API response 的 `code + feedback` 负责，前端 `command-feedback.ts` 渲染。
+
+**不可破的边界**：
+- 不升级旧根 `command.php` 为 JSON；Oblivions 新写操作只走 `oblivions/api/command.php`
+- Oblivions 运行时不依赖 `common.inc.php`
+- 后端只返回结构（`code + feedback.id + params`），前端负责文案/i18n/HTML
+- `battle_log` 是战斗导演事件流，不是普通日志
+- Vite proxy 保留（开发环境转发 `/phpdts/*` 到后端）
+
+---
+
 ## 一、核心概念词典
 
 以下概念在 Oblivions 中有特定含义，不可按字面意思理解。
@@ -72,19 +113,21 @@
 **itempara**（玩家道具栏 JSON 大字段，`bra_oblplayers.itempara`）：
 - JSON 数组，长度 = `itemmaxslots + 1`（index 0=itm0 缓存槽，1~itemmaxslots=普通槽）
 - 每个元素是一个道具对象或 `null`（空槽）
-- itm0 是新增道具（拾取/合成产物/未来卸装备）的中转槽，所有新增道具先入 itm0 再整理入背包；itm0 非空时玩家被锁定，仅 `obl_organize` / `obl_discard` 命令可用（详见 §2.24）
+- itm0 是新增道具（拾取/合成产物/未来卸装备）的中转槽，所有新增道具先入 itm0 再整理入背包；itm0 非空时玩家被锁定，仅 `inventory.organize` / `item.discard` 命令可用（详见 §2.24）
 - 道具对象的 `itmid` 是模板 ID（如 `rusty_pipe`），地图实例主键是 `bra_oblmapitem.iid`
 
 > 道具对象七字段规范与 JSON 示例见 [CODEBASE.md §3.1](./CODEBASE.md#31-bra_oblplayers-玩家敌人统一数据表)。
 
 ### 1.7 游戏刻 (tick) 与推进驱动
 
-- 游戏刻存储在 `$gamevars['obl_tick']`，`$gamevars['obl_pretick']` 标记已处理到的刻
-- **前端心跳是后端 tick 推进的唯一驱动力**：前端显式调用 `oblivions/api/heartbeat.php`，由 Oblivions Tick Orchestrator 检测 pending tick 并调度 NPC 敌人行动
-- **tick 推进的两种触发源**：
-  - 玩家提交推进 tick 的命令（`move` / `obl_explore` / `obl_search` / `obl_battle_start` / `obl_battle_action`）→ `obl_command.php` [F] 段 `obl_tick_advance()`
-  - NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`，下次心跳继续处理
-- **玩家操作与 NPC 回合互斥**：由战斗状态机管辖，PROCESSING 状态时拒绝推进 tick 的命令（[C2b]，防止玩家在 NPC 行动期间重复提交）
+- 游戏刻存储在 `{$tablepre}oblgame.tick` / `processed_tick`（source of truth），`$gamevars['obl_tick']` / `$gamevars['obl_pretick']` 是兼容镜像（由 `obl_gamevars_sync_to_globals()` 同步，供领域函数运行期读取）
+- **tick 推进的两条路径**（互斥，由战斗状态机管辖）：
+  1. **玩家命令路径**：玩家提交 `advancesTick=true` 的命令（`map.move` / `map.explore` / `poi.search` / `battle.start` / `battle.submit_turn`）→ Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（`obl_tick++`）
+  2. **心跳路径**：前端显式 `POST oblivions/api/heartbeat.php` → `obl_tick_orchestrator_heartbeat()` → 检测 `obl_pretick < obl_tick` → `obl_tick_orchestrator_resolve_pending()` → `obl_resolve_tick_events()` 调度 NPC 行动
+- **NPC 行动自驱动**：NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`（`obl_tick++`），下次心跳检测到 pending tick 继续处理
+- **玩家操作与 NPC 回合互斥**：PROCESSING 状态时 Command Bus gate `BATTLE_BUSY` 拒绝推进 tick 的命令（防止玩家在 NPC 行动期间重复提交）
+
+> 旧根 `command.php` → `obl_command.php` 的 [F] 段 `obl_tick_advance()` 仍存在于代码中，但该路径整体标记为 `@deprecated`。新前端走 Command API（`oblivions/api/command.php` → `obl_command_bus.php`），不经过 [F] 段。
 
 > 完整链路（heartbeat.php → Oblivions Runtime → Tick Orchestrator）与 PROCESSING 实际生命周期详见 [§2.16 前端守护进程模型](#216-前端守护进程模型心跳)。
 
@@ -186,15 +229,15 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 ### 1.11 错误日志 (Error Log)
 
-与 `obl_log` / `obl_battle_log` 物理隔离的第三套日志系统，专门记录后端异常和命令拒绝事件：
+与 `obl_log` / `obl_battle_log` 物理隔离的第三套日志系统，专门记录后端异常和命令拒绝事件，**当前定位为诊断流**：
 
 - **全局变量**：`$obl_error_log`（`OblivionsErrorLogger` 实例）
 - **持久化**：`oblivions/cache/logs/obl_error_{groomid}_{pid}.json`
 - **emit 签名**：无 `logcategory` 参数（区别于 `$obl_log->emit($id, $logcategory, $params)`）
-- **前端使用**：前端按 ID 分发渲染，常用于 Toast 错误提示
-- **兜底保护**：`obl_command.php [A0]` 注册 `register_shutdown_function`，PHP fatal error 时输出 JSON 错误而非 HTML 500；前端 `submitCommand()` 检测非 JSON 响应时返回 `SERVER_ERROR`
+- **前端使用**：默认不作为普通 UI 提示通道。前端 `error-log.ts` store 做增量检测，仅在 `?debug=ai` 或 `?poll_error=1` 诊断模式下弹出 Toast；普通业务拒绝改由 Command API response 的 `code + feedback` 负责（前端 `command-feedback.ts` 渲染）
+- **兜底保护**：`oblivions/api/command.php` 与 `heartbeat.php` 均注册 `register_shutdown_function`，PHP fatal error 时输出 JSON 错误而非 HTML 500；前端 `sendOblCommand()` 检测非 JSON 响应时返回 `SERVER_ERROR`（经 `command-feedback.ts` 渲染兜底文案）
 
-**设计理由**：与结构化日志分离存储，避免错误日志污染正常日志流；独立裁剪策略，错误日志不参与正式日志的 200 条上限计数。
+**设计理由**：与结构化日志分离存储，避免错误日志污染正常日志流；独立裁剪策略，错误日志不参与正式日志的 200 条上限计数。诊断流定位让 error_log 专注于后端可观测性，不承担玩家可见反馈职责。
 
 ### 1.12 Tag 系统（A/B 分类）
 
@@ -261,13 +304,15 @@ $obl_log->emit('move.success', 'move', [
 
 由战斗状态机直接管辖（替代旧的 `obl_tick_pending_npc` 全局标志，该标志已移除）：
 
-- 玩家提交战斗指令并结束 → `PLAYER_TURN → PROCESSING`（[C2d] 过渡，`player_acted` 事件）
-- tick 推进 / NPC 回合处理 → 在 `PROCESSING` 状态下允许（[F-bs] 刷新时间戳）
-- 后端 [C2b] 检测 `PROCESSING` 状态 → 拒绝提交战斗命令的命令
+- 玩家提交战斗指令并结束 → `PLAYER_TURN → PROCESSING`（Command Bus `obl_command_after_dispatch()` 触发 `player_acted` 事件）
+- tick 推进 / NPC 回合处理 → 在 `PROCESSING` 状态下允许（Tick Orchestrator `obl_tick_orchestrator_after_command()` 中调用 `obl_battle_state_refresh()` 刷新时间戳）
+- 后端 Command Bus `obl_command_gate()` 检测 `PROCESSING` 状态 → 拒绝提交战斗命令的命令（返回 `BATTLE_BUSY`，`battle.submit_turn` 自身例外）
 - 前端 `commandQueue` 第 5 层 PROCESSING 锁（`_checkLocks` 中检查 `oblBattleState === 'PROCESSING'`）仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令；`isLocked` 只含 HTTP/演出两层全局锁，`pendingNpc` 仅用于 UI 状态展示（详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
 - 下一顺位判定 → `battle_manage_queue()` 集中确定 next 并写入 `bra_oblbattle_state.next_pid`：下一位是玩家则 `player_turn` 事件 → `PLAYER_TURN`，仍是 NPC 则 `self_loop` 事件刷新时间戳
 
 **设计理由**：全局标志是单布尔值，无法区分多战场。状态机按 qid 分离，支持多战场并发，且 qid 销毁后自动清理状态。
+
+> 旧的 `obl_command.php` 中段名 `[C2b]` / `[C2d]` / `[F-bs]` 仍存在于 deprecated 兼容路径中，新前端走 Command Bus（`obl_command_bus.php`），不经过这些段。
 
 ### 2.4 played 标记机制替代响应内嵌
 
@@ -302,7 +347,7 @@ $obl_log->emit('move.success', 'move', [
 | 前端第 3 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
 | 前端第 4 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
 | 前端第 5 层：PROCESSING | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令 | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
-| 后端文件锁 | `obl_command.php: flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
+| 后端文件锁 | `obl_command_bus.php: obl_command_acquire_lock() flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
 
 **`isLocked` 语义边界**：`isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制。`pendingNpc` getter 仍从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`。
 
@@ -351,7 +396,7 @@ $obl_log->emit('move.success', 'move', [
 normal（探索）←→ battle（战斗）
 ```
 
-- **prebattle 取消**：玩家点击敌人 → 纯前端确认界面（"是否攻击？"）→ 确认后直接提交 `obl_battle_start`，后端直接进入 `action='battle'`
+- **prebattle 取消**：玩家点击敌人 → 纯前端确认界面（"是否攻击？"）→ 确认后直接提交 `battle.start`，后端直接进入 `action='battle'`
 - **ended 取消**：模态框播放完自动关闭，关闭后刷新状态决定去留
 
 **设计理由**：减少中间态，降低状态机复杂度。前端确认界面承担了 prebattle 的确认职责，无需后端状态。
@@ -376,12 +421,12 @@ IDLE ──battle_start──→ PROCESSING（队列创建即 PROCESSING）
 | 状态 | 含义 | 玩家是否可操作 |
 |------|------|---------------|
 | `IDLE` | 无战斗 | 探索命令 |
-| `PLAYER_TURN` | 玩家回合 | 仅 `obl_battle_action` |
+| `PLAYER_TURN` | 玩家回合 | 仅 `battle.submit_turn` |
 | `PROCESSING` | 后端处理中（NPC 行动 / 玩家行动已提交未结算） | 拒绝推进 tick 的命令 |
 
 **关键转换触发点**（代码位置见 [CODEBASE.md §6.4.1](./CODEBASE.md#641-战斗状态机三态与转换触发点)）：
 - 队列创建（`battle_queue_create_and_init`）：初始为 `PROCESSING`（首顺位是 NPC 时 NPC 先行动；首顺位是玩家时立即切到 `PLAYER_TURN`）
-- 玩家提交推进 tick 命令（`obl_command.php` [C2d]）：`PLAYER_TURN → PROCESSING`
+- 玩家提交推进 tick 命令（Command Bus `obl_command_after_dispatch()`）：`PLAYER_TURN → PROCESSING`
 - `battle_manage_queue` 检测下一顺位是玩家：`PROCESSING → PLAYER_TURN`
 - NPC 行动调度（`obl_tick_phase_battle_npc`）：`PROCESSING → PLAYER_TURN`
 - 队列解散（`battle.queue.main.php`）：任意 → `IDLE`
@@ -389,16 +434,16 @@ IDLE ──battle_start──→ PROCESSING（队列创建即 PROCESSING）
 **`self_loop` 转换的设计用途**：NPC 多回合连击时保持 `PROCESSING` 状态并刷新时间戳，避免被超时恢复机制误判为卡死。`obl_battle_state_find_stale` 会检测 `PROCESSING` 状态超过 30 秒的战场并降级到 `PLAYER_TURN`（兜底异常恢复）。
 
 **与 §2.10 命令状态强制过滤的协作**：
-- `action='battle'` 时 `obl_command_allowed_by_state` 仅允许 `obl_battle_action`（覆盖 `PLAYER_TURN` 与 `PROCESSING`）
-- `obl_tick_has_busy_battle()` 检查**任何**战场在 `PROCESSING`，配合 [C2b] 拒绝推进 tick 命令（防止玩家在 NPC 行动期间重复提交）
+- `action='battle'` 时 Command Bus `obl_command_allowed_by_contract()` 仅允许 `battle.submit_turn`（覆盖 `PLAYER_TURN` 与 `PROCESSING`）
+- `obl_tick_has_busy_battle()` 检查**任何**战场在 `PROCESSING`，配合 Command Bus gate `BATTLE_BUSY` 拒绝推进 tick 命令（防止玩家在 NPC 行动期间重复提交）
 - 二者正交：`action` 是玩家维度的战斗状态，`obl_battle_state` 是战场维度的处理状态
 
 ### 2.10 命令状态强制过滤
 
-后端 `obl_command_allowed_by_state` 强制过滤命令：
-- `action='battle'` 时只允许 `obl_battle_action`
-- 非战斗状态不允许 `obl_battle_action`（`obl_battle_start` 仍允许）
-- 被拒绝的命令 emit `command.rejected` 日志，不推进 tick
+后端 Command Bus `obl_command_allowed_by_contract()` 强制过滤命令（旧 deprecated 路径仍调 `obl_command_allowed_by_state()`）：
+- `action='battle'` 时只允许 `battle.submit_turn`
+- 非战斗状态不允许 `battle.submit_turn`（`battle.start` 仍允许）
+- 被拒绝的命令 emit `command.rejected` 日志（`obl_error_log`），返回 `COMMAND_NOT_ALLOWED`，不推进 tick
 
 **设计理由**：防止前端在错误状态下提交命令，后端强制兜底。
 
@@ -450,20 +495,21 @@ Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php`
 
 > 当前加载层序见 [CODEBASE.md](./CODEBASE.md#三引导加载bootstrap)。
 
-### 2.15 后端日志 ID 必须有前端模板对应
+### 2.15 后端日志 / battlelog 事件必须有前端消费契约
 
-Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前端有对应的渲染模板，否则前端会静默失败（渲染为空或 undefined），不会报错，非常难排查：
+Oblivions 有三套独立的日志系统。普通日志仍按 ID 映射模板；战斗日志已迁移为 battlelog.v2 事件协议，由 DirectorV2 生成演出脚本。
 
-| 日志系统 | 后端 emit 位置 | 前端模板文件 | 模板格式 |
+| 日志系统 | 后端 emit 位置 | 前端消费位置 | 契约格式 |
 |---------|---------------|------------|---------|
 | `obl_log`（结构化日志） | `$obl_log->emit($id, ...)` | `vex-vue/src/data/log-templates.ts` | `{ id: { render(params) { return '...' } } }` |
-| `obl_battle_log`（战斗日志） | `$obl_battle_log->emit($action_id, ...)` | `vex-vue/src/data/battle-templates.ts` | `{ action_id: { render(entry) { return '...' } } }` |
+| `obl_battle_log`（战斗日志） | `combat_log_v2_*()` / `$obl_battle_log->emit(...)` | `vex-vue/src/stores/battle-director-v2.ts` + `BattleModal.vue` | `battlelog.v2 event -> BattlePlayScriptV2 -> TextCue/AnimationPlan/EffectVisualPlan` |
 | `obl_error_log`（错误日志） | `$obl_error_log->emit($id, ...)` | 前端错误渲染逻辑 | 按 ID 分发渲染 |
 
 **强制约定**：
-- 后端新增任何日志 ID 时，必须同步在对应前端模板文件中添加渲染函数
+- 后端新增任何 `obl_log` ID 时，必须同步在对应前端模板文件中添加渲染函数
+- 后端新增任何 battlelog.v2 `event_type` / `effect_type` / action 表现语义时，必须同步 DirectorV2 的聚合、text cue、animation plan 或 effect visual plan
 - ID 命名使用点号分隔（如 `initiative.roll`），前后端必须完全一致
-- 如果该日志不需要前端渲染（如纯 debug），仍需在模板中注册返回空字符串的 render 函数
+- 如果该日志不需要玩家演出，应放入 `debug` / `diagnostic` channel，默认不进入 render script
 
 **设计理由**：
 - 曾因 `initiative.roll`（后端）vs `initiative_roll`（前端）命名不一致导致静默失败
@@ -554,7 +600,7 @@ oblgame 持久化 obl_tick/obl_pretick
 
 | | Phase 0（突袭阶段） | Phase 1（标准战斗阶段） |
 |---|---|---|
-| **触发条件** | `obl_battle_start` 时立即执行 | 玩家/敌人队列存在后执行 |
+| **触发条件** | `battle.start` 时立即执行 | 玩家/敌人队列存在后执行 |
 | **队列** | 无队列（不创建 `oblbattle_queue`） | 有队列，按先攻排序 |
 | **Turn/Round** | 无 Turn/Round（`bl_turn_num=null`） | 有 Turn/Round 递增 |
 | **边界信号** | 达到 `ambush_battle_end` 条件（被攻击者全死/全逃）→ `ambush_battle_end` 段 | `round_start` / `turn_start` / `battle_end` |
@@ -784,7 +830,7 @@ if ($s === '0' || $s === '') continue;
 
 | 场景 | 方向 | 合理性 | 说明 |
 |------|------|--------|------|
-| 玩家主动攻击时前端先切换 `currentMode='battle'` | 前端比后端**早进入** | ✅ 合理 | 玩家需要装填区才能发起 `obl_battle_start`，UI 必须先切换 |
+| 玩家主动攻击时前端先切换 `currentMode='battle'` | 前端比后端**早进入** | ✅ 合理 | 玩家需要装填区才能发起 `battle.start`，UI 必须先切换 |
 | 退出战斗时前端等 battlelog 播完才切 `currentMode='normal'` | 前端比后端**晚退出** | ✅ 合理 | 演出完整性优先，避免战斗突然结束的突兀感 |
 | 被动遭遇时后端先切换 `action='battle'` | 后端比前端**早进入** | ✅ 合理 | 遭遇战由后端判定触发，前端通过 `player_info` 跟随 |
 
@@ -803,11 +849,11 @@ battleStore.startBattle() → currentMode='battle'（前端先切换，显示装
   ↓
 玩家装填 + 点击执行
   ↓
-PreloadArea.onExecute → commandQueue.execute({ command: 'obl_battle_start' })
+PreloadArea.onExecute → commandQueue.execute({ command: 'battle.start' })
   ↓
-后端收到命令：action='normal'（尚未切换）→ obl_command_allowed_by_state 允许
+后端收到命令：action='normal'（尚未切换）→ Command Bus gate 允许
   ↓
-后端处理 obl_battle_start → 创建队列（状态=PROCESSING）→ action='battle' → 切到 PLAYER_TURN
+后端处理 battle.start → 创建队列（状态=PROCESSING）→ action='battle' → 切到 PLAYER_TURN
   ↓
 后续 refreshBattle → enterBattleMode（currentMode 已是 battle，仅更新 isPlayerTurn）
 ```
@@ -815,7 +861,7 @@ PreloadArea.onExecute → commandQueue.execute({ command: 'obl_battle_start' })
 **路径 B：被动遭遇**——后端先切换，前端跟随：
 
 ```
-玩家执行 move/obl_explore/obl_search
+玩家执行 map.move / map.explore / poi.search
   ↓
 后端触发遭遇战 → battle_queue_create_and_init → action='battle'，状态=PROCESSING
   ↓
@@ -840,7 +886,61 @@ fetchAndPlayBattleLog（先播完积压的 battlelog）← 关键：演出完整
 
 - `currentMode` 反映"UI 应该处于什么模式"，`action` 反映"逻辑上是否在战斗中"——二者在稳定状态下一致，仅在窗口期有合理偏差
 - 前端白名单判断应**以前端 `currentMode` 为真值源**（详见 [战斗锁定白名单-设计案](./docs/战斗锁定白名单-设计案.md) §4 决策 5），因为前端 UI 反馈需要即时性，不能等待后端 action 同步
-- `obl_battle_start` 在前端归"战斗内"（mode='battle'），在后端归"探索内"（action='normal' 时允许）——两端分类不同但语义自洽：前端按 UI 模式，后端按逻辑状态
+- `battle.start` 在前端归"战斗内"（mode='battle'），在后端归"探索内"（action='normal' 时允许）——两端分类不同但语义自洽：前端按 UI 模式，后端按逻辑状态
+
+### 2.27 Oblivions 独立运行期（Runtime 与 common.inc.php 解耦）
+
+**问题**：旧 `api_v2.php` → `common.inc.php` 路径在读取状态时会隐式装配旧核心 runtime，包括旧输入过滤、旧 game 表生命周期读取、旧 entrypoint 装配。更危险的是，阶段三移除 `common.inc.php` 隐式 tick 解析后，前端曾假设"fetch(player_info) 会顺便结算 NPC / pending tick"，导致 stale state（PROCESSING 残留 / battlelog 读取过早 / 导演无日志）。
+
+**设计**：Oblivions 三个 HTTP 入口（command / state / heartbeat）共用 `obl_runtime_boot($kind)` 装配独立运行期，不加载 `common.inc.php`。Runtime 只装配 Oblivions 需要的：DB 连接、cookie 解析、房间锁、gamevars 同步、logger。旧 `{$gtablepre}game` 表仍作为 Room Registry（房间生命周期），但 Oblivions tick/gamevars 不再读写它。
+
+**收益**：
+- 读请求不再有隐式副作用——`state.php` 纯读，绝不推进 tick
+- 写命令与 tick 推进在同一 Runtime 内完成，不需要跨入口状态传递
+- 前端契约清晰：要推进世界就显式 `heartbeat`，要读状态就 `state.php?scope=xxx`
+
+**未独立的内容**：房间创建（`index.php` / `roommng.func.php`）、游戏 prepare/start 触发（`common.inc.php` / `obl_gamestate_try_prepare`）、玩家激活（`valid.php`）仍依赖旧核心。这些属于 Room / Lifecycle / Spawn 独立任务，不在本设计案范围内。
+
+### 2.28 单房间 Game State 表（{$tablepre}oblgame）与 Room Registry 分离
+
+**问题**：旧 `{$gtablepre}game` 表同时承担房间生命周期（gamestate / winner / winmode / starttime）和 Oblivions 运行期 state（tick / gamevars）。两个字段集生命周期不同：房间生命周期跨越整局，运行期 state 每个 tick 都变。混在一张表导致：
+- 纯读请求可能意外触发 gamestate 同步
+- 重开局时旧 gamevars 残留可能把 gamestate 改回 stale 值（曾出现 `obl_rs_game()` 因 stale RUNNING 行不执行的 bug）
+- tick 频繁写入与 gamestate 偶尔写入竞争同一行
+
+**设计**：分离到 `{$tablepre}oblgame` 表（每房间一张，固定一行 id=1）：
+- `tick` / `processed_tick` / `tick_version` 是主字段，不写入 `vars_json`
+- `state`（INIT/READY/RUNNING/ENDED）与 legacy gamestate（0/10/20）双向映射（`obl_game_state_from_legacy_gamestate()` / `obl_game_state_to_legacy_gamestate()`）
+- `vars_json` 存其余 gamevars，但 `obl_tick` / `obl_pretick` 不写入（由主字段提供）
+- `$gamevars['obl_tick']` / `$gamevars['obl_pretick']` 退化为兼容镜像，由 `obl_gamevars_sync_to_globals()` 同步，供领域函数运行期读取
+
+**收益**：
+- 纯读用 `obl_gamevars_sync_to_globals(false, false)` 不建表、不写库
+- 重开局时 `oblgame` 表被 `obl_game_reset()` 重置，不影响 `{$gtablepre}game` 的房间生命周期
+- legacy gamestate 映射保留向后兼容，旧流程读 `$gamestate` 仍能拿到正确值
+
+### 2.29 三入口职责分离（读 / 写 / 推进互不混入）
+
+**问题**：旧 `api_v2.php` 单入口同时承担读状态、写命令、推进 tick、调试 dump 等多种职责。前端容易误以为读接口可以推进世界，后端也难以保证读请求不产生副作用。阶段三后移除 `common.inc.php` 隐式 tick 解析正是这条混淆链路造成的典型风险。
+
+**设计**：Oblivions 正常游玩运行期三条链路完全分离：
+
+| 入口 | 职责 | Runtime kind | tick 推进 |
+|------|------|-------------|----------|
+| `oblivions/api/command.php` | 玩家写操作（唯一主路径） | `command` | `advancesTick=true` 命令触发 |
+| `oblivions/api/heartbeat.php` | 显式 tick 推进 + NPC 行动 | `heartbeat` | 核心职责 |
+| `oblivions/api/state.php?scope=xxx` | 纯读状态 | `state` | 绝不推进 |
+
+**核心约束**：
+- State API 绝不调用 `obl_tick_orchestrator_heartbeat()` / `obl_resolve_tick_events()` / `save_gameinfo()`
+- State API 发现 `processed_tick < tick` 时只返回状态提示，不结算
+- 前端需要最新状态时必须 `await oblHeartbeat()` 然后 `await gameApi(scope)`，不能让读接口自己推进
+- `ai_dump_save` 等调试写接口不属于纯读，不迁入 State API；已确认 vex-vue 内无实际调用者，作为过时残留不迁移
+
+**收益**：
+- 读请求幂等无副作用，可安全重试
+- tick 推进只在 heartbeat 入口发生，时序可预测
+- 前端契约明确：`gameApi()` 不推进世界，`oblHeartbeat()` 才推进
 
 ---
 
@@ -853,6 +953,38 @@ Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` �
 - 每个 `*_persist` 函数和锁文件路径都有 `is_dir + @mkdir` 保护，避免目录缺失导致 bug
 - 游戏重置时（`rs_game()` 钩子）自动清理，日常依赖条目上限自然轮转
 - `.htaccess` 防止直接访问（锁文件有 `die` 保护，但 json/jsonl 文件可被直接读取）
+
+---
+
+## 四、战斗系统（Combat System）
+
+### 核心概念
+
+**CombatContext**：单 action 执行上下文，封装 actor/battle_cache 引用 + per-target effects/snapshot。是管道各阶段共享的唯一状态载体。
+
+**Pipeline 管道**：8 阶段 attack / 7 阶段 utility / 1 阶段 passive。per-target 迭代 + per-target 短路（check_rules 失败只跳过该 target）。
+
+**AP Wallet 模型**：verify 阶段维护 `pending_ap_spent` 计数器，按排序后顺序累计检查 AP。通过的 action 写入 `_ap_cost` 字段，execute/persist 从 action 读取（不重算）。
+
+**失败分级**：普通失败（AP 不够/目标不存在/射程不够/规则 forbid）跳过自己；actor 级终止（已死/已逃离/战斗结束）中断后续全部。
+
+**Tag 纯读约束**：Cat A（每次重算）+ Cat B（从 tag_mutations 读）均不写 mutation。mutation 只由 post_check/effect applier 写入。
+
+**引用硬约束**：self 目标 `target_data = &$actor_data`；persist 保存内存引用，禁止重新 fetch。
+
+### 入口与切换
+
+`combat_dispatch($mode, &$actor, $actions, $extra)` 是统一入口，3 种模式：ambush / player_turn / npc_turn。签名对齐旧 `battle_entry_dispatch`。
+
+`obl_config.php` 的 `combat_engine` 字段控制新旧系统切换。出口调 `battle_manage_queue` 推进队列状态机（策略 B：复用不重写）。
+
+### 技能钩子约定
+
+技能配置在 `gamedata/combat_skill_config.php`，钩子文件在 `gamedata/combat_skills/skill_{act_id}.php`。
+
+钩子函数签名：`skill_{act_id}_execute(CombatContext $ctx): void`
+
+钩子内调 `$ctx->declareEffect($type, $payload)` 声明效果。禁止直接改 actor_data / battle_cache / tag_mutations（move 除外）/ 调 obl_save_player。
 
 ---
 

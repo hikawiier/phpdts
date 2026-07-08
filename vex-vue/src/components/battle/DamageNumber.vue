@@ -6,7 +6,7 @@
 // 模态框关闭后，在地图格上淡入显示伤害数字（残留反馈）。
 //
 // 触发方式：监听 dataManager 'battle:play-damage-numbers' 事件
-// 数据格式：{ entries: BattleLogEntry[], npcPid: number }
+// 数据格式：{ effects: DirectedEffectV2[], npcPid: number }
 //
 // 实现方式：
 // - 用 Vue 响应式 damageList ref + v-for 渲染（替代原前端的 document.createElement）
@@ -16,7 +16,7 @@
 
 import { ref, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import type { BattleLogEntry } from '@/types/api';
+import type { DirectedEffectV2 } from '@/stores/battle-director-v2';
 import type { PlayDamageNumbersEventData } from '@/types/events';
 
 // 残留时间（与 CSS 动画 damage-linger 时长匹配）
@@ -73,24 +73,23 @@ function getEnemyElement(enemyPid: number): HTMLElement | null {
 /**
  * 模态框关闭后，在地图格上淡入显示伤害数字（残留反馈）
  *
- * 遍历该组 battlelog 中的攻击动作，在受击方格子上显示伤害数字。
+ * 遍历该组 v2 effect visual plan，在受击方格子上显示伤害数字。
  * 与 playCollisionAnimation 不同，这里只显示数字（不播冲刺/抖动），
  * 且使用淡入动画（damage-fade-in）而非浮起动画（damage-float）。
  *
  * 迁移自现有 vex/js/battle-animation.js playDamageNumbersAfterModal()。
  */
-function playDamageNumbersAfterModal(entries: BattleLogEntry[], enemyPid: number): void {
-  if (!entries || !entries.length) return;
+function playDamageNumbersAfterModal(effects: DirectedEffectV2[], enemyPid: number): void {
+  if (!effects || !effects.length) return;
 
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    if (entry.action_id !== 'unarmed_strike') continue;
+  for (let i = 0; i < effects.length; i++) {
+    const effect = effects[i];
+    if (effect.visual.kind !== 'damage_number') continue;
 
-    const damage = Number(entry.effect_value || 0);
+    const damage = Number(effect.visual.value ?? effect.value ?? 0);
     if (damage <= 0) continue;
 
-    const isPlayerAttacker = Number(entry.actor_type) === 0;
-    const targetEl = isPlayerAttacker ? getEnemyElement(enemyPid) : getPlayerElement();
+    const targetEl = getTargetElement(effect, enemyPid);
     if (!targetEl) continue;
 
     // 用视口坐标（position: fixed），避免依赖容器的定位上下文
@@ -124,8 +123,8 @@ function playDamageNumbersAfterModal(entries: BattleLogEntry[], enemyPid: number
 
 function onPlayDamageNumbers(data: unknown): void {
   const payload = data as PlayDamageNumbersEventData;
-  if (!payload || !Array.isArray(payload.entries) || typeof payload.npcPid !== 'number') return;
-  playDamageNumbersAfterModal(payload.entries, payload.npcPid);
+  if (!payload || !Array.isArray(payload.effects) || typeof payload.npcPid !== 'number') return;
+  playDamageNumbersAfterModal(payload.effects, payload.npcPid);
 }
 
 onMounted(() => {
@@ -141,6 +140,14 @@ onUnmounted(() => {
 defineExpose({
   playDamageNumbersAfterModal,
 });
+
+function getTargetElement(effect: DirectedEffectV2, enemyPid: number): HTMLElement | null {
+  const snapshot = effect.target.snapshot;
+  if (snapshot?.type === 0 || effect.target.id === 'player') return getPlayerElement();
+  if (snapshot && snapshot.type > 0) return getEnemyElement(snapshot.pid);
+  if (effect.target.pid && effect.target.pid > 0) return getEnemyElement(effect.target.pid);
+  return getEnemyElement(enemyPid);
+}
 </script>
 
 <template>

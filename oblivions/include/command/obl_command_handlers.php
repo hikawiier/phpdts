@@ -32,11 +32,46 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             item_craft($slots, $pdata, $workbench_materials);
             break;
         case 'battle.start':
-            battle_entry_dispatch('ambush', $pdata, $payload['actions']);
-            break;
+            error_log("[combat_engine] routed to new system: battle.start (pid={$pdata['pid']})");
+            return combat_start_battle($pdata, $payload['actions']);
         case 'battle.submit_turn':
-            battle_entry_dispatch('player_turn', $pdata, $payload['actions']);
+            error_log("[combat_engine] routed to new system: battle.submit_turn (pid={$pdata['pid']})");
+            combat_dispatch('player_turn', $pdata, $payload['actions']);
             break;
+        case 'combat.can_engage':
+            // L0 可达性查询：前端"点击敌人发起战斗"前的预判
+            // 返回 reachable / max_attack_range / move_power / distance / reason
+            $target_pid = (int)($payload['target_pid'] ?? 0);
+            if ($target_pid <= 0) {
+                return array('ok' => false, 'code' => 'INVALID_TARGET');
+            }
+            $target_data = obl_fetch_playerdata_by_pid($target_pid);
+            if (!$target_data) {
+                return array('ok' => false, 'code' => 'TARGET_NOT_FOUND');
+            }
+            $result = combat_can_engage($pdata, $target_data);
+            return array('ok' => true, 'data' => $result);
+
+        case 'combat.preview_single':
+            // L1 即时校验：单次 action 合法性预判
+            $act_id = (string)($payload['act_id'] ?? '');
+            $target_pid = (int)($payload['target_pid'] ?? 0);
+            if ($act_id === '' || $target_pid < 0) {
+                return array('ok' => false, 'code' => 'INVALID_PARAMS');
+            }
+            $result = combat_preview_single($pdata, $act_id, $target_pid);
+            return array('ok' => true, 'data' => $result);
+
+        case 'combat.preview_chain':
+            // L2 动作链模拟：整条动作链预校验
+            $actions = $payload['actions'] ?? [];
+            $battle_cache = $payload['battle_cache'] ?? ['combatants' => [], 'tag_mutations' => []];
+            if (!is_array($actions) || empty($actions)) {
+                return array('ok' => false, 'code' => 'INVALID_ACTIONS');
+            }
+            $result = combat_preview_chain($pdata, $actions, $battle_cache);
+            return array('ok' => true, 'data' => $result);
+
         default:
             return array('ok' => false, 'code' => 'UNKNOWN_COMMAND');
     }

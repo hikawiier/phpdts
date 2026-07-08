@@ -99,6 +99,47 @@ function obl_command_contracts() {
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
             'refresh' => array('player_info', 'battle_log', 'enemies'),
         ),
+        'combat.can_engage' => array(
+            // L0 可达性查询（read-only）：前端"点击敌人发起战斗"前的预判
+            // 不推进 tick、不修改状态，仅调 combat_can_engage 返回可达性数据
+            'legacy' => 'obl_combat_can_engage',
+            'ui_mode' => 'explore',
+            'allowed_actions' => array('', null),
+            'advances_tick' => false,
+            'itm0_allowed' => false,
+            'payload_schema' => array('target_pid' => array('type' => 'int', 'required' => true, 'min' => 1)),
+            'refresh' => array(),
+        ),
+
+        'combat.preview_single' => array(
+            // L1 即时校验（read-only）：单次 action 合法性预判
+            // 不推进 tick、不修改状态，返回 pass/reason/ap_cost
+            'legacy' => 'obl_combat_preview_single',
+            'ui_mode' => 'battle',
+            'allowed_actions' => array('battle'),
+            'advances_tick' => false,
+            'itm0_allowed' => false,
+            'payload_schema' => array(
+                'act_id' => array('type' => 'string', 'required' => true),
+                'target_pid' => array('type' => 'int', 'required' => true, 'min' => 0),
+            ),
+            'refresh' => array(),
+        ),
+
+        'combat.preview_chain' => array(
+            // L2 动作链模拟（read-only）：整条动作链预校验
+            // 不推进 tick、不修改状态，返回 actions/total_ap_cost/actor_final_state
+            'legacy' => 'obl_combat_preview_chain',
+            'ui_mode' => 'battle',
+            'allowed_actions' => array('battle'),
+            'advances_tick' => false,
+            'itm0_allowed' => false,
+            'payload_schema' => array(
+                'actions' => array('type' => 'array', 'required' => true),
+                'battle_cache' => array('type' => 'array', 'required' => false),
+            ),
+            'refresh' => array(),
+        ),
     );
 }
 
@@ -197,13 +238,57 @@ function obl_command_validate_actions($actions) {
         if ($act_id === '' || !preg_match('/^[a-zA-Z0-9_.:-]{1,64}$/', $act_id)) {
             return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_act_id', 'index' => $idx));
         }
-        $target = isset($action['target']) ? (int)$action['target'] : 0;
-        if ($target <= 0) {
-            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
-        }
+        $target_result = obl_command_validate_action_target(
+            array_key_exists('target', $action) ? $action['target'] : null,
+            $idx
+        );
+        if (!$target_result['ok']) return $target_result;
+        $target = $target_result['value'];
         $params = isset($action['params']) && is_array($action['params']) ? $action['params'] : array();
         $normalized[] = array('act_id' => $act_id, 'target' => $target, 'params' => $params);
     }
+    return array('ok' => true, 'value' => $normalized);
+}
+
+function obl_command_validate_action_target($target, $idx) {
+    if ($target === null) {
+        return array('ok' => true, 'value' => null);
+    }
+
+    if (is_numeric($target)) {
+        $id = (int)$target;
+        if ($id < 0) {
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
+        }
+        return array('ok' => true, 'value' => $id);
+    }
+
+    if (!is_array($target)) {
+        return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
+    }
+
+    $type = isset($target['type']) ? (string)$target['type'] : '';
+    if ($type === 'enemy') $type = 'pid';
+    if ($type === 'tiles') $type = 'tile';
+    if (!in_array($type, array('pid', 'tile', 'self', 'none', 'all'), true)) {
+        return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target_type', 'index' => $idx));
+    }
+
+    $normalized = array('type' => $type);
+    if ($type === 'pid') {
+        $id = (int)($target['id'] ?? ($target['pid'] ?? ($target['target_id'] ?? 0)));
+        if ($id <= 0) {
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
+        }
+        $normalized['id'] = $id;
+    } elseif ($type === 'tile') {
+        $id = (int)($target['id'] ?? ($target['pls'] ?? ($target['target_id'] ?? 0)));
+        if ($id <= 0) {
+            return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'invalid_target', 'index' => $idx));
+        }
+        $normalized['id'] = $id;
+    }
+
     return array('ok' => true, 'value' => $normalized);
 }
 

@@ -7,6 +7,9 @@ if (!defined('IN_GAME')) {
 // 逃跑技能模块 / Escape skill module
 //
 // 由 skill_load_modules() 自动加载。escape_calc 由 skill_execute 调用。
+//
+// @deprecated 1.0 旧技能模块，被 oblivions/gamedata/combat_skills/skill_escape.php 替代
+// @see oblivions/gamedata/combat_skills/skill_escape.php
 // ================================================================
 
 function escape_calc(&$actor_data, &$target_data, &$obl_battle_log, &$battle_cache)

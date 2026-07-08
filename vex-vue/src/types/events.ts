@@ -21,7 +21,7 @@ export type AppEvent =
   | 'log:force-scroll'
   | 'log:add-unread'
   // ── M6 战斗演出事件（store → 组件单向触发） ──
-  | 'battle:play-collision'
+  | 'battle:play-action-animation'
   | 'battle:play-damage-numbers'
   | 'battle:preload-init'
   // ── M6 瞄准模式事件（组件间通信） ──
@@ -65,19 +65,21 @@ export interface PreloadInitEventData {
   playerPid: number;
 }
 
-/** 碰撞动画事件数据（battle:play-collision） */
-export interface PlayCollisionEventData {
-  /** 单条 battle_log 条目 */
-  entry: import('@/types/api').BattleLogEntry;
-  /** 敌人 PID（用于定位敌人 DOM 元素） */
+/** 动作动画事件数据（battle:play-action-animation） */
+export interface PlayActionAnimationEventData {
+  /** v2 导演动作 */
+  action: import('@/stores/battle-director-v2').DirectedActionV2;
+  /** v2 动作动画计划 */
+  plan: import('@/stores/battle-director-v2').ActionAnimationPlan;
+  /** 敌人 PID（用于兜底定位敌人 DOM 元素） */
   npcPid: number;
 }
 
 /** 伤害数字事件数据（battle:play-damage-numbers） */
 export interface PlayDamageNumbersEventData {
-  /** 同一 NPC 的 battle_log 条目数组 */
-  entries: import('@/types/api').BattleLogEntry[];
-  /** 敌人 PID */
+  /** 同一 segment 的 v2 effect 数组 */
+  effects: import('@/stores/battle-director-v2').DirectedEffectV2[];
+  /** 敌人 PID（用于兜底定位敌人 DOM 元素） */
   npcPid: number;
 }
 

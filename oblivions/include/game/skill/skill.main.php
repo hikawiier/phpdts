@@ -306,7 +306,7 @@ function skill_inject_equipment(&$skillpara, &$pdata) {
 }
 
 /**
- * 技能执行（由 battle_once_execute 调用）
+ * 技能执行（历史旧 battle_once_execute 调用；new combat 技能执行走 combat/skill 模块）
  *
  * 职责：
  * 1. 调用 {skill_id}_calc() 执行技能的非伤害处理（由 modules 模块加载）

@@ -32,4 +32,9 @@ export const COMMAND_REGISTRY: Record<string, CommandSpec> = {
   // ── 战斗 UI 类 ──
   'battle.start':       { mode: 'battle', advancesTick: true,  itm0Allowed: false },
   'battle.submit_turn': { mode: 'battle', advancesTick: true,  itm0Allowed: false },
+
+  // ── 战斗预校验类（read-only，不推进 tick） ──
+  'combat.can_engage':      { mode: 'explore', advancesTick: false, itm0Allowed: false },
+  'combat.preview_single':  { mode: 'battle',  advancesTick: false, itm0Allowed: false },
+  'combat.preview_chain':   { mode: 'battle',  advancesTick: false, itm0Allowed: false },
 };

@@ -17,6 +17,10 @@ if (!defined('IN_GAME')) {
 #     'damage_factor' => 伤害系数（att × factor，默认0）
 # ]
 # 不含 name/desc/icon，资源由前端 skill-templates.js 按 skill_id 渲染
+#
+# @deprecated 1.0 被 oblivions/gamedata/combat_skill_config.php 替代
+# @see combat_skill_config.php
+# 新系统技能钩子目录：oblivions/gamedata/combat_skills/
 return [
     # ── 攻击类 ──────────────────────────────
     'unarmed_strike' => [

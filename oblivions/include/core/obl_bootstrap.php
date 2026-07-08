@@ -41,14 +41,25 @@ require_once GAME_ROOT . './oblivions/include/game/battle_state_machine.func.php
 // 第 3 层：依赖第 1-2 层
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
 
-// 第 4 层：依赖第 1-3 层
-require_once GAME_ROOT . './oblivions/include/game/battle/battle.main.php';
-require_once GAME_ROOT . './oblivions/include/game/battle/battle.entry.php';
-
-// 第 4.5 层：先攻队列原语（依赖 battle.func.php 和 sql.func.php）
+// 第 4 层：先攻队列原语（依赖 battle.func.php 和 sql.func.php）
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.func.php';
-// 第 4.6 层：先攻队列编排（依赖原语层）
+// 第 4.5 层：先攻队列编排（依赖原语层）
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.main.php';
+
+// 第 4.7 层：新战斗系统 combat/ 模块（唯一战斗执行入口）
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.runtime.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.context.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.core.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.pipeline.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.target.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.skill.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.ap.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.tag.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.queue.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.state.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.preview.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.log.php';
 
 // 第 5 层：探索交互 + 敌人 AI（依赖 vision，无循环依赖）
 require_once GAME_ROOT . './oblivions/include/game/explore.func.php';

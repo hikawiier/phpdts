@@ -33,7 +33,7 @@ import AimMode from '@/components/battle/AimMode.vue';
     <!-- 战斗演出模态框（Teleport to body，全屏覆盖） -->
     <BattleModal />
 
-    <!-- 碰撞动画（纯逻辑组件，监听 battle:play-collision 事件） -->
+    <!-- 动作动画（纯逻辑组件，监听 battle:play-action-animation 事件） -->
     <CollisionAnimation />
 
     <!-- 残留伤害数字（Teleport to body） -->

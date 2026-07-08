@@ -13,7 +13,7 @@ export interface SkillTemplate {
   name: string;
   /** 技能描述（显示在按钮副文本） */
   desc: string;
-  /** 动作描述（用于 battle_log 渲染，目前由 battle-templates.ts 各模板自行处理） */
+  /** 动作描述（用于 battle_log / battlelog.v2 演出文案） */
   action_desc: string;
 }
 

@@ -2,10 +2,10 @@
 // ══════════════════════════════════════════════════
 // 战斗演出模态框 / Battle Presentation Modal
 //
-// 纯展示模态框，按 PlaySegment 分段播放 battlelog 条目：
+// 纯展示模态框，按 BattleSegmentV2 分段播放 battlelog 条目：
 // - 逐条显示，每条带淡入动画
-// - 段首插入段分隔符（── 突袭 ── / ── 第 N 轮 ── / ── 战斗结束 ──）
-// - HP 条从 DirectedEntry.hpSnapshot 更新
+// - 段首插入段分隔符（── 第 N 轮 ── / ── 战斗结束 ──）
+// - HP 条从 effect delta 更新
 // - 播放完自动关闭
 // - 遮罩拦截点击，播放期间禁止操作
 //
@@ -20,8 +20,13 @@
 
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
-import { renderDirectedEntryHtml } from '@/data/battle-templates';
-import type { DirectedEntry, PlaySegment } from '@/stores/battle-director';
+import type {
+  BattleSegmentV2,
+  CombatantView,
+  DirectedActionV2,
+  DirectedEffectV2,
+  TextCue,
+} from '@/stores/battle-director-v2';
 
 // ── 播放参数 ──
 const ENTRY_INTERVAL = 500;       // 条目间隔 ms
@@ -43,6 +48,13 @@ interface DisplayedEntry {
   isDivider: boolean;
 }
 const displayedEntries = ref<DisplayedEntry[]>([]);
+
+interface PlaybackItem {
+  rawLogId: number;
+  cue: TextCue;
+  action?: DirectedActionV2;
+  effect?: DirectedEffectV2;
+}
 
 // ── HP 条状态 ──
 const enemyName = ref<string>('');
@@ -68,7 +80,7 @@ const playerHpPercent = computed<string>(() => hpPercent(playerHp.value, playerM
 const showHpBar = computed<boolean>(() => {
   const seg = battleStore.currentSegment;
   if (!seg) return false;
-  return seg.kind === 'turn' || seg.kind === 'phase0';
+  return seg.kind === 'turn' && hasHpEffect(seg);
 });
 
 function hpBarClass(hp: number, maxHp: number): string {
@@ -115,20 +127,20 @@ async function playBattleLog(): Promise<void> {
   }
   playing.value = true;
   try {
-    const segment = battleStore.currentSegment as PlaySegment | null;
-    const entries = battleStore.battleLogEntries as DirectedEntry[];
+    const segment = battleStore.currentSegment as BattleSegmentV2 | null;
     if (!segment) {
       battleStore.notifyModalClosed();
       return;
     }
-    // battle_end/ambush_battle_end 段可能 entries 为空但仍需显示
-    if (entries.length === 0 && segment.kind !== 'battle_end' && segment.kind !== 'ambush_battle_end') {
+    const playbackItems = collectPlaybackItems(segment);
+    // battle_end/round_intro 段可能正文为空但仍需显示分隔符
+    if (playbackItems.length === 0 && segment.kind !== 'battle_end' && segment.kind !== 'round_intro') {
       battleStore.notifyModalClosed();
       return;
     }
 
-    // 初始化 HP（从段首条 action entry 的 hpSnapshot 读 before 值）
-    initHpFromSegment(entries);
+    // 初始化 HP（从段首 HP effect 的 before 值读）
+    initHpFromSegment(segment);
 
     // 清空正文
     displayedEntries.value = [];
@@ -151,10 +163,10 @@ async function playBattleLog(): Promise<void> {
     }
 
     // 逐条播放
-    const sorted = [...entries].sort((a, b) => Number(a.log_id || 0) - Number(b.log_id || 0));
-    for (const entry of sorted) {
+    const sorted = playbackItems.sort((a, b) => Number(a.rawLogId || 0) - Number(b.rawLogId || 0));
+    for (const item of sorted) {
       if (cancelRequested) return;
-      const html = renderDirectedEntryHtml(entry, battleStore.currentPid);
+      const html = item.cue.html;
       if (html) {
         displayedEntries.value.push({ html, shown: false, isDivider: false });
         await nextTick();
@@ -162,7 +174,7 @@ async function playBattleLog(): Promise<void> {
         displayedEntries.value[displayedEntries.value.length - 1].shown = true;
         scrollToBottom();
       }
-      updateHpFromSnapshot(entry);
+      if (item.effect && item.action) updateHpFromEffect(item.action, item.effect);
       await sleep(ENTRY_INTERVAL);
     }
 
@@ -184,54 +196,98 @@ async function playBattleLog(): Promise<void> {
   }
 }
 
-/** 从段首条 action entry 的 hpSnapshot 初始化 HP 条 */
-function initHpFromSegment(entries: DirectedEntry[]): void {
-  const firstAction = entries.find(e => e.directedKind === 'action' && e.hpSnapshot);
-  if (firstAction?.hpSnapshot) {
-    const snap = firstAction.hpSnapshot;
-    if (Number(firstAction.actor_type) === 0) {
-      enemyName.value = firstAction.target_name ?? '敌人';
-      enemyHp.value = snap.targetHpBefore;
-      enemyMaxHp.value = snap.targetMaxHp;
-      playerHp.value = snap.actorHpBefore;
-      playerMaxHp.value = snap.actorMaxHp;
-    } else if (Number(firstAction.target_type) === 0) {
-      enemyName.value = firstAction.actor_name ?? '敌人';
-      enemyHp.value = snap.actorHpBefore;
-      enemyMaxHp.value = snap.actorMaxHp;
-      playerHp.value = snap.targetHpBefore;
-      playerMaxHp.value = snap.targetMaxHp;
+function collectPlaybackItems(segment: BattleSegmentV2): PlaybackItem[] {
+  const items: PlaybackItem[] = [];
+  for (const action of segment.actions) {
+    for (const cue of action.text) {
+      items.push({ rawLogId: action.rawLogId, cue, action });
+    }
+    for (const effect of action.effects) {
+      if (effect.text) {
+        items.push({ rawLogId: effect.rawLogId, cue: effect.text, action, effect });
+      }
+    }
+  }
+  for (const notice of segment.notices) {
+    items.push({ rawLogId: notice.rawLogId, cue: notice.text });
+  }
+  return items;
+}
+
+function hasHpEffect(segment: BattleSegmentV2): boolean {
+  return segment.actions.some(action => action.effects.some(isHpEffect));
+}
+
+function isHpEffect(effect: DirectedEffectV2): boolean {
+  return (effect.type === 'damage' || effect.type === 'heal') && Boolean(effect.target.snapshot);
+}
+
+/** 从段首 HP effect 初始化 HP 条 */
+function initHpFromSegment(segment: BattleSegmentV2): void {
+  for (const action of segment.actions) {
+    const effect = action.effects.find(isHpEffect);
+    if (effect) {
+      initHpFromEffect(action, effect);
+      return;
     }
   }
 }
 
-/** 根据 DirectedEntry 的 hpSnapshot 更新 HP 条 */
-function updateHpFromSnapshot(entry: DirectedEntry): void {
-  if (!entry.hpSnapshot) return;
-  const snap = entry.hpSnapshot;
-  if (Number(entry.actor_type) === 0) {
-    enemyHp.value = snap.targetHpAfter;
-    enemyMaxHp.value = snap.targetMaxHp;
-    playerHp.value = snap.actorHpAfter;
-    playerMaxHp.value = snap.actorMaxHp;
-  } else if (Number(entry.target_type) === 0) {
-    playerHp.value = snap.targetHpAfter;
-    playerMaxHp.value = snap.targetMaxHp;
-    enemyHp.value = snap.actorHpAfter;
-    enemyMaxHp.value = snap.actorMaxHp;
+function initHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): void {
+  const target = effect.target.snapshot;
+  if (!target) return;
+
+  const before = effect.delta?.hp_before ?? target.hp;
+  const source = effect.source ?? action.actor;
+
+  if (target.type === 0) {
+    playerHp.value = before;
+    playerMaxHp.value = target.maxHp || 1;
+    setEnemyHpFromCombatant(source);
+  } else {
+    enemyName.value = target.name || enemyName.value || '敌人';
+    enemyHp.value = before;
+    enemyMaxHp.value = target.maxHp || 1;
+    if (source.type === 0) {
+      playerHp.value = source.hp;
+      playerMaxHp.value = source.maxHp || 1;
+    }
   }
+}
+
+/** 根据 effect delta 更新 HP 条 */
+function updateHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): void {
+  const target = effect.target.snapshot;
+  if (!target || !isHpEffect(effect)) return;
+
+  const after = effect.delta?.hp_after ?? target.hp;
+  if (target.type === 0) {
+    playerHp.value = after;
+    playerMaxHp.value = target.maxHp || 1;
+    setEnemyHpFromCombatant(effect.source ?? action.actor);
+  } else {
+    enemyName.value = target.name || enemyName.value || '敌人';
+    enemyHp.value = after;
+    enemyMaxHp.value = target.maxHp || 1;
+  }
+}
+
+function setEnemyHpFromCombatant(combatant: CombatantView | null | undefined): void {
+  if (!combatant || combatant.type === 0) return;
+  enemyName.value = combatant.name || enemyName.value || '敌人';
+  enemyHp.value = combatant.hp;
+  enemyMaxHp.value = combatant.maxHp || 1;
 }
 
 /** 获取当前段的分隔符（无则返回 null） */
 function getSegmentDivider(): { html: string } | null {
-  const seg = battleStore.currentSegment as PlaySegment | null;
+  const seg = battleStore.currentSegment as BattleSegmentV2 | null;
   if (!seg) return null;
   switch (seg.kind) {
-    case 'phase0':            return { html: '── 突袭 ──' };
-    case 'turn':              return { html: `── 第 ${seg.meta.roundNum ?? 0} 轮 ──` };
-    case 'battle_end':        return { html: '── 战斗结束 ──' };
-    case 'ambush_battle_end': return { html: '── 突袭结束 ──' };
-    default:                  return null;
+    case 'round_intro': return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
+    case 'turn':        return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
+    case 'battle_end':  return { html: '── 战斗结束 ──' };
+    default:            return null;
   }
 }
 

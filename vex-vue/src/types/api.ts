@@ -245,8 +245,8 @@ export interface Skill {
   lstact: string;
   /** 是否可用（综合判断：AP 足够 + 未冷却 + ...） */
   available: boolean;
-  /** 目标类型：'self'（自身）/ 'enemy'（敌人，需选目标） */
-  target: 'self' | 'enemy';
+  /** 目标类型：enemy/pid、tiles/tile、self、none、all */
+  target: 'self' | 'enemy' | 'tiles' | 'tile' | 'none' | 'all';
   range_mode?: 'fixed' | 'inherit' | 'additive' | 'capped_additive';
   range_max?: string | number;
   range_bonus?: string | number;
@@ -308,70 +308,112 @@ export interface RollData {
   is_ambush: boolean;
 }
 
-/**
- * 战斗日志条目（oblivions/api/state.php?scope=battle_log）
- *
- * 字段对应后端 BattleLogCollector::emit() 的实际输出（设计案2 v3）。
- * 后端 obl_battle_log_load 默认过滤 debug=true，前端拿到的全是 debug=false 原料。
- */
-export interface BattleLogEntry {
+export type BattleLogV2EventType =
+  | 'round_start'
+  | 'turn_start'
+  | 'action_start'
+  | 'effect_applied'
+  | 'action_end'
+  | 'action_failed'
+  | 'combatant_cleared'
+  | 'battle_end'
+  | 'notice';
+
+export type BattleLogV2Channel = 'render' | 'debug' | 'diagnostic';
+
+export interface CombatantSnapshot {
+  pid: number;
+  type: number;
+  name: string;
+  hp: number;
+  max_hp: number;
+  ap?: number;
+  max_ap?: number;
+  pgroup?: number;
+  pls?: number;
+  state?: number;
+}
+
+export type CombatTargetRef =
+  | { kind: 'pid'; pid: number; snapshot?: CombatantSnapshot | null }
+  | { kind: 'tile'; pgroup: number; pls: number; name?: string }
+  | { kind: 'self'; pid: number; snapshot?: CombatantSnapshot | null }
+  | { kind: 'none' };
+
+export interface StateDelta {
+  hp_before?: number;
+  hp_after?: number;
+  ap_before?: number;
+  ap_after?: number;
+  pls_before?: number;
+  pls_after?: number;
+  state_before?: number;
+  state_after?: number;
+}
+
+export interface BattleLogV2Payload {
+  qid?: number | null;
+  action_uid?: string | null;
+  action_id?: string | null;
+  actor?: CombatantSnapshot | null;
+  targets?: CombatTargetRef[];
+  target?: CombatTargetRef;
+  ap_cost?: number;
+  ap_spent?: number;
+  effect_uid?: string | null;
+  effect_type?: string;
+  source?: CombatantSnapshot | null;
+  value?: number;
+  delta?: StateDelta;
+  flags?: Record<string, boolean | undefined>;
+  success?: boolean;
+  reason?: string | null;
+  message?: string;
+  text?: string;
+  title?: string;
+  detail?: Record<string, unknown>;
+  combatant?: CombatantSnapshot | null;
+  by_action_uid?: string | null;
+  by_effect_uid?: string | null;
+  winner_pid?: number | null;
+  survivors?: CombatantSnapshot[];
+  [key: string]: unknown;
+}
+
+export interface BattleLogV2Event {
   log_id: number;
   played: number;
   ts: number;
-
-  // 事件标识
-  phase: string;
-  action_id: string | null;
-
-  // 行动者信息
+  phase: 'battlelog_v2' | string;
+  schema: 'battlelog.v2';
+  event_type: BattleLogV2EventType;
+  channel: BattleLogV2Channel;
+  event_uid: string;
+  action_uid: string | null;
+  effect_uid: string | null;
+  payload: BattleLogV2Payload;
+  debug: boolean;
+  qid: number | null;
   actor_pid: number | null;
-  actor_type: number | null;
-  actor_name: string | null;
-  actor_hp: number | null;
-  actor_max_hp: number | null;
-  actor_ap: number | null;
-  actor_max_ap: number | null;
-
-  // 目标信息
   target_pid: number | null;
-  target_type: number | null;
-  target_name: string | null;
-  target_hp: number | null;
-  target_max_hp: number | null;
-
-  // 效果
+  action_id: string | null;
+  effect_type: string | null;
   effect_value: number | null;
   success: boolean | null;
-
-  // 事件元数据
-  qid: number | null;
-  rolls: RollData[] | null;
-  ambush_pid: number | null;
-  combatants: RollData[] | null;
   reason: string | null;
-  distance?: number | null;
-  range?: number | null;
-  range_mode?: string | null;
-  range_max?: number | null;
-  range_bonus?: number | null;
   winner_pid: number | null;
   cleared_pid: number | null;
   cleared_name: string | null;
-  ambusher_pid: number | null;
-  ambusher_name: string | null;
-
-  // 渲染/调试
-  debug: boolean;
-
-  // 边界标记（后端 BattleLogCollector 自动填充）
-  bl_turn_num: number | null;       // null=Phase 0/尚未开始，1+=第 N turn
-  bl_round_num: number | null;      // null=Phase 0 无队列，0+=第 N round（0-indexed）
+  bl_turn_num: number | null;
+  bl_round_num: number | null;
   bl_segment_flag: 'round_start' | 'turn_start' | 'battle_end' | 'ambush_battle_end' | null;
 }
 
+export type BattleLogRawEntry = BattleLogV2Event;
+
 /** 战斗日志响应（oblivions/api/state.php?scope=battle_log） */
 export interface BattleLogResponse {
-  entries: BattleLogEntry[];
+  entries: BattleLogRawEntry[];
   total: number;
 }
 

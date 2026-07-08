@@ -77,7 +77,12 @@ function obl_command_api_handle($envelope) {
             } else {
                 $dispatched = true;
                 obl_command_after_dispatch($command, $contract, $pdata);
-                $response = obl_command_response_success($request_id, obl_command_build_response_data($command, $contract, $pdata), 'OK');
+                $response_data = obl_command_build_response_data($command, $contract, $pdata);
+                // 允许 handler 返回额外数据（如 combat.can_engage 的 L0 可达性查询结果）
+                if (isset($dispatch['data']) && is_array($dispatch['data'])) {
+                    $response_data['data'] = $dispatch['data'];
+                }
+                $response = obl_command_response_success($request_id, $response_data, 'OK');
             }
         }
 

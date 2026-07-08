@@ -7,8 +7,8 @@
 // - 攻击方冲刺（向受击方方向位移后回位）
 // - 受击方抖动（延迟 120ms，模拟命中时机）
 //
-// 触发方式：监听 dataManager 'battle:play-collision' 事件
-// 数据格式：{ entry: BattleLogEntry, npcPid: number }
+// 触发方式：监听 dataManager 'battle:play-action-animation' 事件
+// 数据格式：{ action: DirectedActionV2, plan: ActionAnimationPlan, npcPid: number }
 //
 // DOM 操作说明：
 // 由于需要直接操作地图格元素的 class 和 CSS 变量（触发 CSS 动画），
@@ -18,8 +18,8 @@
 
 import { onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import type { BattleLogEntry } from '@/types/api';
-import type { PlayCollisionEventData } from '@/types/events';
+import type { ActionAnimationPlan, CombatantView, CombatTargetView, DirectedActionV2 } from '@/stores/battle-director-v2';
+import type { PlayActionAnimationEventData } from '@/types/events';
 
 // 动画时长（与原前端一致）
 const LUNGE_DURATION = 300;
@@ -64,31 +64,22 @@ function getEnemyElement(enemyPid: number): HTMLElement | null {
 // ══════════════════════════════════════════════════
 
 /**
- * 播放碰撞动画
+ * 播放动作动画计划
  *
- * 根据 battlelog 条目判断攻击方/受击方，在地图上播放动画。
+ * 根据 DirectorV2 的 ActionAnimationPlan 判断攻击方/受击方，在地图上播放动画。
  * 玩家元素通过 .current 类定位，敌人元素通过 [data-enemy-pid] 定位。
  *
  * 迁移自现有 vex/js/battle-animation.js playCollisionAnimation()。
  */
-function playCollisionAnimation(entry: BattleLogEntry, enemyPid: number): void {
-  if (!entry) return;
+function playActionAnimation(action: DirectedActionV2, plan: ActionAnimationPlan, enemyPid: number): void {
+  if (!action || !plan) return;
+  if (plan.kind !== 'melee_hit' && plan.kind !== 'projectile' && plan.kind !== 'area_burst') return;
 
-  // 只对攻击动作播放动画（battle.start/initiative.roll/battle.end/escape 跳过）
-  const actionId = entry.action_id || '';
-  if (
-    actionId === 'battle.start' ||
-    actionId === 'initiative.roll' ||
-    actionId === 'battle.end' ||
-    actionId === 'escape'
-  ) {
-    return;
-  }
-
-  // 判断攻击方和受击方
-  const isPlayerAttacker = Number(entry.actor_type) === 0;
-  const attackerEl = isPlayerAttacker ? getPlayerElement() : getEnemyElement(enemyPid);
-  const targetEl = isPlayerAttacker ? getEnemyElement(enemyPid) : getPlayerElement();
+  const attackerEl = getCombatantElement(action.actor, enemyPid);
+  const primaryTarget = getPrimaryTarget(action, plan);
+  const targetEl = primaryTarget
+    ? getTargetElement(primaryTarget, enemyPid)
+    : getElementByPlanId(plan.targetIds?.[0] ?? '', enemyPid);
 
   if (!attackerEl || !targetEl) return;
 
@@ -168,14 +159,14 @@ function playShake(el: HTMLElement): void {
 // 事件监听
 // ══════════════════════════════════════════════════
 
-function onPlayCollision(data: unknown): void {
-  const payload = data as PlayCollisionEventData;
-  if (!payload || !payload.entry || typeof payload.npcPid !== 'number') return;
-  playCollisionAnimation(payload.entry, payload.npcPid);
+function onPlayActionAnimation(data: unknown): void {
+  const payload = data as PlayActionAnimationEventData;
+  if (!payload || !payload.action || !payload.plan || typeof payload.npcPid !== 'number') return;
+  playActionAnimation(payload.action, payload.plan, payload.npcPid);
 }
 
 onMounted(() => {
-  dataManager.listen('battle:play-collision', onPlayCollision);
+  dataManager.listen('battle:play-action-animation', onPlayActionAnimation);
 });
 
 onUnmounted(() => {
@@ -184,8 +175,39 @@ onUnmounted(() => {
 
 // 暴露方法供外部调用（备用，主要通过事件触发）
 defineExpose({
-  playCollisionAnimation,
+  playActionAnimation,
 });
+
+function getCombatantElement(combatant: CombatantView, fallbackEnemyPid: number): HTMLElement | null {
+  if (combatant.type === 0) return getPlayerElement();
+  return getEnemyElement(combatant.pid || fallbackEnemyPid);
+}
+
+function getTargetElement(target: CombatTargetView, fallbackEnemyPid: number): HTMLElement | null {
+  if (target.snapshot) return getCombatantElement(target.snapshot, fallbackEnemyPid);
+  if (target.id === 'player') return getPlayerElement();
+  if (target.pid && target.pid > 0) return getEnemyElement(target.pid);
+  return getElementByPlanId(target.id, fallbackEnemyPid);
+}
+
+function getElementByPlanId(id: string, fallbackEnemyPid: number): HTMLElement | null {
+  if (id === 'player') return getPlayerElement();
+  const enemyMatch = /^enemy-(\d+)$/.exec(id);
+  if (enemyMatch) return getEnemyElement(Number(enemyMatch[1]));
+  const pidMatch = /^pid-(\d+)$/.exec(id);
+  if (pidMatch) return getEnemyElement(Number(pidMatch[1]));
+  if (fallbackEnemyPid > 0) return getEnemyElement(fallbackEnemyPid);
+  return null;
+}
+
+function getPrimaryTarget(action: DirectedActionV2, plan: ActionAnimationPlan): CombatTargetView | null {
+  const targetIds = plan.targetIds ?? [];
+  if (targetIds.length > 0) {
+    const matched = action.targets.find(target => targetIds.includes(target.id));
+    if (matched) return matched;
+  }
+  return action.targets.find(target => target.kind === 'pid' || target.kind === 'self') ?? null;
+}
 </script>
 
 <template>

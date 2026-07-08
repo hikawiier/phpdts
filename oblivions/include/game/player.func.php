@@ -109,6 +109,35 @@ function obl_fetch_enemies_by_region($pgroup) {
 }
 
 /**
+ * 查询指定图格内的所有玩家 PID
+ * 从 obl_move 占用检查的裸 SQL 抽出的共享原语，供移动/战斗等子系统复用
+ * 纯读取，无副作用
+ *
+ * @param int $pgroup      区域组号
+ * @param int $pls         图格 ID
+ * @param int $exclude_pid 排除的 PID（如 actor 自己），0 表示不排除
+ * @return int[] PID 列表
+ */
+function obl_get_pids_in_tile($pgroup, $pls, $exclude_pid = 0): array {
+	global $db, $tablepre;
+	$pgroup = (int)$pgroup;
+	$pls = (int)$pls;
+	$exclude_pid = (int)$exclude_pid;
+
+	$sql = "SELECT pid FROM {$tablepre}oblplayers WHERE pgroup = {$pgroup} AND pls = {$pls}";
+	if ($exclude_pid > 0) {
+		$sql .= " AND pid != {$exclude_pid}";
+	}
+
+	$result = $db->query($sql);
+	$pids = array();
+	while ($row = $db->fetch_array($result)) {
+		$pids[] = (int)$row['pid'];
+	}
+	return $pids;
+}
+
+/**
  * 模块 3：格式化 player 数据（玩家和 NPC 共用）
  *
  * 解码所有 JSON 字段为 PHP 数组，并保证结构合法（防止"怪东西"）：
