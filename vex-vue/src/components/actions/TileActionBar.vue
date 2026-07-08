@@ -235,14 +235,14 @@ function poiCountLabel(poi: Poi): string {
         <button
           class="term-btn block"
           style="flex:1;"
-          :disabled="!commandQueue.canExecute('obl_craft')"
+          :disabled="!commandQueue.canExecute('craft.execute')"
           @click="onOpenCraft"
         >[合成]</button>
         <button
           v-if="switchRegionVisible"
           class="term-btn block"
           style="flex:2;"
-          :disabled="!commandQueue.canExecute('move')"
+          :disabled="!commandQueue.canExecute('map.move')"
           @click="onSwitchRegion"
         >{{ switchRegionText }}</button>
       </div>
@@ -309,7 +309,7 @@ function poiCountLabel(poi: Poi): string {
             <div v-else-if="showSearchBtn" style="margin-bottom:8px;">
               <button
                 class="term-btn block"
-                :disabled="!commandQueue.canExecute('obl_search')"
+                :disabled="!commandQueue.canExecute('poi.search')"
                 @click="onSearch"
               >{{ searchBtnText }}</button>
             </div>
@@ -331,7 +331,7 @@ function poiCountLabel(poi: Poi): string {
               <div class="modal-footer">
                 <button
                   class="term-btn"
-                  :disabled="!commandQueue.canExecute('obl_pickup')"
+                  :disabled="!commandQueue.canExecute('item.pickup')"
                   @click="onPickupAll"
                 >[全部拾取]</button>
               </div>

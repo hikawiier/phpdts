@@ -31,12 +31,17 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5174,
     proxy: {
-      '/phpdts/api_v2.php': {
+      '/phpdts/oblivions/api/command.php': {
         target: 'http://127.0.0.1',
         changeOrigin: true,
         agent: proxyAgent,
       },
-      '/phpdts/command.php': {
+      '/phpdts/oblivions/api/heartbeat.php': {
+        target: 'http://127.0.0.1',
+        changeOrigin: true,
+        agent: proxyAgent,
+      },
+      '/phpdts/oblivions/api/state.php': {
         target: 'http://127.0.0.1',
         changeOrigin: true,
         agent: proxyAgent,

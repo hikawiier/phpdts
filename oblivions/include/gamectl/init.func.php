@@ -22,7 +22,7 @@ if (!defined('IN_GAME')) {
 //   - 日志清理
 // ================================================================
 // 依赖：bootstrap（obl_generate_region_items + obl_get_map_data）
-//       system.func.php（rs_reset_social + rs_init_players，由 common.inc.php 加载）
+//       system.func.php（rs_reset_social + rs_init_players，由当前 lifecycle 入口加载）
 
 /**
  * Oblivions 游戏初始化主入口
@@ -43,8 +43,8 @@ function obl_rs_game() {
     require_once GAME_ROOT . './oblivions/include/core/obl_bootstrap.php';
 
     // 3. Oblivions 专属初始化
-    obl_init_tables();          // 建表（DROP + CREATE 5 张 obl* 表）
-    obl_init_tick_vars();       // 游戏刻双变量初始化
+    obl_init_tables();          // 建表（DROP + CREATE obl* 表，含 oblgame）
+    obl_init_tick_vars();       // 游戏刻双变量初始化，并重置 oblgame 当前局行
     obl_init_map();             // 地图+POI+道具+迷雾生成
     obl_init_enemies();         // 敌人生成
 
@@ -72,7 +72,7 @@ function obl_init_tables() {
     global $db, $tablepre;
     $sqldir = GAME_ROOT . './oblivions/sql/';
 
-    $tables = ['oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql', 'oblplayers.sql', 'oblqueue.sql', 'oblbattle_state.sql'];
+    $tables = ['oblgame.sql', 'oblmappoi.sql', 'oblmapitem.sql', 'oblmapstates.sql', 'oblplayers.sql', 'oblqueue.sql', 'oblbattle_state.sql'];
     foreach ($tables as $file) {
         $sql = file_get_contents($sqldir . $file);
         // 与 rs_reset_social() 一致：CR→LF，再替换表前缀
@@ -85,15 +85,27 @@ function obl_init_tables() {
  * 初始化游戏刻双变量
  *
  * obl_tick / obl_pretick
- * 由 common.inc.php 检测并驱动后续 tick 事件处理。
+ * 后续 tick 事件由 Oblivions Tick Orchestrator 显式驱动。
  *
  * @return void
  */
 function obl_init_tick_vars() {
-    global $gamevars;
-    if (!isset($gamevars)) $gamevars = array();
+    global $gamevars, $gamestate, $starttime, $now;
+    if (!isset($gamevars) || !is_array($gamevars)) $gamevars = array();
     $gamevars['obl_tick'] = 0;
     $gamevars['obl_pretick'] = 0;
+
+    if (function_exists('obl_game_reset')) {
+        obl_game_reset(array(
+            'vars' => $gamevars,
+            'tick' => 0,
+            'processed_tick' => 0,
+            'state' => obl_game_state_from_legacy_gamestate(isset($gamestate) ? (int)$gamestate : 0),
+            'phase' => 'PREPARE',
+            'started_at' => isset($starttime) ? (int)$starttime : 0,
+            'updated_at' => isset($now) ? (int)$now : time(),
+        ));
+    }
 }
 
 /**

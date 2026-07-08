@@ -29,9 +29,10 @@
 import { defineStore } from 'pinia';
 import { ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import { markBattleLogPlayed } from '@/api/client';
+import { markBattleLogPlayed, oblHeartbeat } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
+import { usePlayerStore } from '@/stores/player';
 import { getActorById } from '@/composables/actorRegistry';
 import { resolveActionSpec } from '@/animations/action-specs';
 import type { BattleLogEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
@@ -48,8 +49,11 @@ import { renderDirectedEntryHtml } from '@/data/battle-templates';
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
 
-/** 守护进程心跳间隔（毫秒）— 纯后端 tick 激活，不与前端业务耦合 */
-const DAEMON_BEAT_INTERVAL = 200;
+/** 守护进程快心跳间隔（毫秒）— PROCESSING 时尽快推进 NPC / battlelog */
+const DAEMON_BEAT_FAST_INTERVAL = 300;
+
+/** 守护进程慢心跳间隔（毫秒）— 非 PROCESSING 时降低空转请求 */
+const DAEMON_BEAT_IDLE_INTERVAL = 1000;
 
 /** 清场动画时长（毫秒）— playFadeOut 0.35s + 缓冲 */
 const CLEARED_ANIM_DURATION = 450;
@@ -92,7 +96,8 @@ export const useBattleStore = defineStore('battle', () => {
   let npcTurnRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── 守护进程定时器（不响应式，仅内部使用） ──
-  let daemonTimer: ReturnType<typeof setInterval> | null = null;
+  let daemonTimer: ReturnType<typeof setTimeout> | null = null;
+  let daemonRunning = false;
 
   // ── 模态框播放完成回调（内部使用） ──
   let _modalResolve: (() => void) | null = null;
@@ -124,8 +129,8 @@ export const useBattleStore = defineStore('battle', () => {
   /**
    * 启动 NPC 回合自动刷新循环
    *
-   * NPC 顺位时，后端会在下次 common.inc 加载时执行 NPC 先攻轮。
-   * 前端通过定时拉取 player_info 触发 common.inc，从而推进 NPC 行动。
+   * NPC 顺位时，后端由 oblivions/api/heartbeat.php 显式执行 NPC 先攻轮。
+   * 前端轮询 refreshBattle() 会先 await heartbeat，再拉取 player_info/battle_log。
    */
   function startNpcTurnRefresh(): void {
     if (npcTurnRefreshTimer !== null) return;
@@ -153,26 +158,45 @@ export const useBattleStore = defineStore('battle', () => {
   // 守护进程（纯后端 tick 激活器）
   // ══════════════════════════════════════════════════
 
+  /** 当前心跳间隔：PROCESSING 快速推进，其他状态降低空转请求 */
+  function getDaemonBeatInterval(): number {
+    return usePlayerStore().oblBattleState === 'PROCESSING'
+      ? DAEMON_BEAT_FAST_INTERVAL
+      : DAEMON_BEAT_IDLE_INTERVAL;
+  }
+
   /** 心跳拍：fire-and-forget，成功/失败都不影响前端业务 */
   async function _daemonBeat(): Promise<void> {
-    const apiBase = import.meta.env.VITE_API_BASE || '/phpdts';
     try {
-      await fetch(`${apiBase}/api_v2.php?action=heartbeat`, { credentials: 'include' });
+      await oblHeartbeat();
     } catch {
       // 静默失败，下次心跳重试
     }
   }
 
+  /** 安排下一次心跳；使用 setTimeout 避免 heartbeat 慢请求重叠 */
+  function scheduleDaemonBeat(delay = getDaemonBeatInterval()): void {
+    if (!daemonRunning) return;
+    if (daemonTimer !== null) clearTimeout(daemonTimer);
+    daemonTimer = setTimeout(async () => {
+      daemonTimer = null;
+      await _daemonBeat();
+      scheduleDaemonBeat();
+    }, delay);
+  }
+
   /** 启动守护进程（页面挂载时调用） */
   function startDaemonPoll(): void {
-    if (daemonTimer !== null) return;
-    daemonTimer = setInterval(_daemonBeat, DAEMON_BEAT_INTERVAL);
+    if (daemonRunning) return;
+    daemonRunning = true;
+    scheduleDaemonBeat(getDaemonBeatInterval());
   }
 
   /** 停止守护进程（页面卸载时调用） */
   function stopDaemonPoll(): void {
+    daemonRunning = false;
     if (daemonTimer !== null) {
-      clearInterval(daemonTimer);
+      clearTimeout(daemonTimer);
       daemonTimer = null;
     }
   }
@@ -301,10 +325,14 @@ export const useBattleStore = defineStore('battle', () => {
     isProcessingBattle.value = true;
 
     try {
+      // 阶段三后只读 API 不再隐式推进世界；战斗刷新必须显式等待 tick 结算，
+      // 否则可能读到旧的 PROCESSING 状态或拿不到刚生成的 battlelog。
+      await oblHeartbeat();
       const result = await dataManager.fetch('player_info', true);
       if (result.status !== 'success' || !result.data) return;
 
       const playerInfo = result.data as PlayerInfo;
+      usePlayerStore().playerInfo = playerInfo;
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
       const battleState = playerInfo.obl_battle_state;
@@ -331,9 +359,11 @@ export const useBattleStore = defineStore('battle', () => {
 
       // 播放完成后，根据 action 决定后续状态
       if (action === 'battle') {
+        await oblHeartbeat();
         const afterResult = await dataManager.fetch('player_info', true);
         if (afterResult.status === 'success' && afterResult.data) {
           const afterInfo = afterResult.data as PlayerInfo;
+          usePlayerStore().playerInfo = afterInfo;
           const afterAction = afterInfo.action || '';
           if (afterAction === 'battle') {
             if (afterInfo.obl_battle_state === 'PLAYER_TURN') {

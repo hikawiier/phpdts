@@ -14,7 +14,7 @@ import { commandQueue } from '@/stores/command-queue';
 
 const tileActionStore = useTileActionStore();
 
-const disabled = computed(() => !commandQueue.canExecute('obl_explore'));
+const disabled = computed(() => !commandQueue.canExecute('map.explore'));
 
 function onClick(): void {
   if (disabled.value) return;

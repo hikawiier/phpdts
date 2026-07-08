@@ -14,6 +14,10 @@ if (!defined('IN_GAME')) {
 // 第 0 层：公共函数库（跨业务域通用函数，最先加载）
 require_once GAME_ROOT . './oblivions/include/game/obl_global.func.php';
 
+// 第 0.5 层：Oblivions 单局状态仓储与 gamevars 兼容镜像
+require_once GAME_ROOT . './oblivions/include/core/obl_game_repository.php';
+require_once GAME_ROOT . './oblivions/include/core/obl_gamevars.php';
+
 // 第 1 层：独立函数库（依赖第 0 层或无依赖）
 require_once GAME_ROOT . './oblivions/include/game/log.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle_log.func.php';
@@ -31,7 +35,7 @@ skill_load_modules();
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
 
-// 第 2.5 层：战斗状态机（独立模块，被 battle.func.php / enemy_ai.func.php / common.inc.php 依赖）
+// 第 2.5 层：战斗状态机（独立模块，被 battle.func.php / enemy_ai.func.php / Tick Orchestrator 依赖）
 require_once GAME_ROOT . './oblivions/include/game/battle_state_machine.func.php';
 
 // 第 3 层：依赖第 1-2 层
@@ -59,8 +63,12 @@ require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
 // 第 6 层：依赖最广，末尾注册 tick 监听器
 require_once GAME_ROOT . './oblivions/include/game/tick.func.php';
 
+// 第 6.5 层：Tick Orchestrator（集中调度 command/heartbeat/state 的 tick 策略）
+require_once GAME_ROOT . './oblivions/include/core/obl_tick_orchestrator.php';
+
 // 第 7 层：游戏初始化（依赖全部函数库，仅在 obl_rs_game 调用时执行）
 require_once GAME_ROOT . './oblivions/include/gamectl/init.func.php';
 
-// 第 8 层：游戏状态机（依赖 init.func.php，由 common.inc.php 调用）
+// 第 8 层：游戏状态机（依赖 init.func.php；当前主要由旧 Room/Lifecycle 入口调用）
 require_once GAME_ROOT . './oblivions/include/gamectl/state.func.php';
+

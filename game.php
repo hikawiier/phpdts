@@ -181,11 +181,6 @@ if(isset($opendialog))
 
 } // end is_rich_template_enabled()
 
-// VEX 前端 API 代理 / VEX frontend API proxy
-if (isset($_GET['vex_api']) && $_GET['vex_api'] == '1') {
-	include './api_v2.php';
-	exit;
-}
 
 init_profile();
 if (isset($_GET['is_new'])) {

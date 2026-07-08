@@ -52,15 +52,15 @@ export async function clickMove(areaId: string | number): Promise<void> {
   perf.mark('clickMove 开始', 'store');
   debugBus.emit('action', 'clickMove:trigger', { target: areaId, current: mapStore.curLoc });
 
-  const cmdParams: Record<string, string> = {
-    command: 'move',
-    moveto: String(parseInt(String(areaId), 10)),
+  const cmdParams = {
+    command: 'map.move',
+    payload: { to: parseInt(String(areaId), 10) },
   };
   const t0 = Date.now();
   try {
-    perf.mark('→ submitCommand 开始', 'store');
+    perf.mark('→ sendOblCommand 开始', 'store');
     const result = await commandQueue.execute(cmdParams);
-    perf.mark('← submitCommand 完成', 'store');
+    perf.mark('← sendOblCommand 完成', 'store');
     debugBus.emit('action', 'clickMove:response', {
       elapsed_ms: Date.now() - t0,
       success: result.success,
@@ -87,7 +87,7 @@ export async function clickMove(areaId: string | number): Promise<void> {
 
       perf.report();
     } else {
-      debugBus.emit('action', 'clickMove:failed', { moveto: areaId, error: result.error });
+      debugBus.emit('action', 'clickMove:failed', { target: areaId, error: result.error });
       dataManager.broadcast('ui:toast', {
         type: 'error',
         msg: '移动失败' + (result.error ? ': ' + result.error : ''),

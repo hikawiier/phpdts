@@ -100,7 +100,7 @@ export const useInventoryStore = defineStore('inventory', () => {
    * 丢弃道具
    *
    * 迁移自现有 vex/js/inventory.js handleDiscard()：
-   *   - commandQueue.execute(obl_discard)
+   *   - commandQueue.execute(item.discard)
    *   - 成功后失效 player_inventory + 广播
    *   - 失败时广播 ui:toast
    */
@@ -108,8 +108,8 @@ export const useInventoryStore = defineStore('inventory', () => {
     debugBus.emit('action', 'discard:trigger', { slot });
     try {
       const result = await commandQueue.execute({
-        command: 'obl_discard',
-        slot: String(slot),
+        command: 'item.discard',
+        payload: { slot: Number(slot) },
       });
       if (result.success) {
         dataManager.invalidate('player_inventory');
@@ -129,7 +129,7 @@ export const useInventoryStore = defineStore('inventory', () => {
   }
 
   /**
-   * 使用道具（obl_use_item 命令）
+   * 使用道具（item.use 命令）
    *
    * 后端流程：状态过滤 → 应用 use_effect → 数量模型扣 itms-1 / 耐久模型不消耗 → emit use_item.success
    *
@@ -143,8 +143,8 @@ export const useInventoryStore = defineStore('inventory', () => {
     debugBus.emit('action', 'useItem:trigger', { slot });
     try {
       await commandQueue.execute({
-        command: 'obl_use_item',
-        slot: String(slot),
+        command: 'item.use',
+        payload: { slot: Number(slot) },
       });
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
@@ -160,7 +160,7 @@ export const useInventoryStore = defineStore('inventory', () => {
   }
 
   /**
-   * 堆叠合并（obl_organize 命令）
+   * 堆叠合并（inventory.organize 命令）
    *
    * 后端流程：将 itm0 中的道具尝试与背包内同类堆叠，腾出空槽
    * 成功后 itm0 清空，itm0Locked 自动变 false（computed 响应式）
@@ -169,7 +169,8 @@ export const useInventoryStore = defineStore('inventory', () => {
     debugBus.emit('action', 'organize:trigger', {});
     try {
       await commandQueue.execute({
-        command: 'obl_organize',
+        command: 'inventory.organize',
+        payload: {},
       });
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');
@@ -195,16 +196,16 @@ export const useInventoryStore = defineStore('inventory', () => {
   }
 
   /**
-   * 丢弃手持道具（obl_discard slot=0 命令）
+   * 丢弃手持道具（item.discard slot=0 命令）
    *
-   * 后端复用 obl_discard_item(slot=0) 分支。成功后 itm0 清空，itm0Locked 自动变 false。
+   * 后端通过 item.discard 复用 obl_discard_item(slot=0) 分支。成功后 itm0 清空，itm0Locked 自动变 false。
    */
   async function handleDiscardItm0(): Promise<void> {
     debugBus.emit('action', 'discardItm0:trigger', {});
     try {
       await commandQueue.execute({
-        command: 'obl_discard',
-        slot: '0',
+        command: 'item.discard',
+        payload: { slot: 0 },
       });
       dataManager.invalidate('player_inventory');
       dataManager.broadcast('game:action-completed');

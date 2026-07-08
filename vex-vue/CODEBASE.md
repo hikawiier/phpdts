@@ -251,29 +251,29 @@ battle（战斗）
 
 ### 3.6 心跳守护进程与 NPC 轮询
 
-[`battle.ts`](../src/stores/battle.ts) 实现两个职责分离的定时器，是后端游戏刻推进的唯一驱动力。
+[`battle.ts`](../src/stores/battle.ts) 实现两个职责分离的后台节拍，是后端游戏刻推进的唯一驱动力。
 
 #### 3.6.1 两个定时器
 
 | 定时器 | 间隔 | 实现 | 职责 |
 |--------|------|------|------|
-| **心跳守护进程** | **200ms** | [`_daemonBeat`](../src/stores/battle.ts#L157-L164) → `fetch('/api_v2.php?action=heartbeat')` | fire-and-forget 触发后端 tick 推进 + NPC 行动（不读响应 body） |
-| **NPC 状态轮询** | **1000ms** | [`startNpcTurnRefresh`](../src/stores/battle.ts#L130-L137) → `dataManager.fetch('player_info')` | 状态发现——查看是否切回 PLAYER_TURN |
+| **心跳守护进程** | **PROCESSING 300ms；其他状态 1000ms** | [`oblHeartbeat()`](../src/api/client.ts) → `POST /phpdts/oblivions/api/heartbeat.php` | 显式触发后端 tick 推进 + NPC 行动 |
+| **NPC 状态轮询** | **1000ms** | [`startNpcTurnRefresh`](../src/stores/battle.ts#L131-L137) → `dataManager.fetch('player_info')` | 状态发现——查看是否切回 PLAYER_TURN |
 
-**启动方式**：`App.vue` `onMounted` 调用 `battleStore.startDaemonPoll()`，页面挂载期间持续运行；NPC 状态轮询由 `refreshBattle` 在感知到 PROCESSING 时启动，切回 PLAYER_TURN/IDLE 时停止。
+**启动方式**：`App.vue` `onMounted` 调用 `battleStore.startDaemonPoll()`，页面挂载期间持续运行；NPC 状态轮询由 `refreshBattle` 在感知到 PROCESSING 时启动，切回 PLAYER_TURN/IDLE 时停止。心跳守护进程使用 `setTimeout` 串行调度，避免慢请求重叠。
 
 #### 3.6.2 完整链路
 
 ```
-前端 _daemonBeat（每 200ms）
+前端 _daemonBeat（PROCESSING 300ms；其他状态 1000ms）
   ↓
-fetch('/api_v2.php?action=heartbeat')  ← 不读响应 body
+POST /phpdts/oblivions/api/heartbeat.php
   ↓
-后端 api_v2.php 加载 common.inc.php
+后端 heartbeat.php 加载 Heartbeat API bootstrap
   ↓
-common.inc.php 末尾检测：obl_pretick < obl_tick ?
-  ↓ 是
-obl_resolve_tick_events() → 调度 NPC 行动
+obl_runtime_boot('heartbeat') + obl_tick_orchestrator_heartbeat()
+  ↓
+检测 obl_pretick < obl_tick 并 resolve pending tick → 调度 NPC 行动
   ↓
 状态机切换（PROCESSING → PLAYER_TURN / self_loop / IDLE）
   ↓
@@ -284,17 +284,17 @@ obl_resolve_tick_events() → 调度 NPC 行动
 
 #### 3.6.3 PROCESSING 实际生命周期
 
-由于心跳 200ms 高频驱动，PROCESSING 通常在 **200-400ms 内**（一个心跳周期）被处理完：
+由于 PROCESSING 下心跳以 300ms 快速驱动，PROCESSING 通常在 **300-600ms 内**（一到两个心跳周期）被处理完：
 
 - 单次 NPC 行动：1 秒轮询大概率看不到 PROCESSING，已切回 PLAYER_TURN
 - NPC 多回合连击（self_loop）：1 秒轮询可能看到 PROCESSING
 - 服务器高负载：1 秒轮询看到 PROCESSING，启动轮询循环
 
 **前端实际感知 PROCESSING 的场景**：
-1. 玩家执行 `obl_battle_action` 后 `_checkBattleState` 立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
+1. 玩家执行 `battle.submit_turn` 后立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
 2. NPC 多回合连击时 1 秒轮询拉取到 PROCESSING
 
-**常见误解**：1 秒轮询不是"驱动后端"——真正驱动后端 NPC 行动的是 200ms 心跳，1 秒轮询只是"状态发现"。
+**常见误解**：1 秒轮询不是“驱动后端”——真正驱动后端 NPC 行动的是 heartbeat，1 秒轮询只是“状态发现”。
 
 ---
 
@@ -330,10 +330,10 @@ obl_resolve_tick_events() → 调度 NPC 行动
 │  └─ broadcast/listen/unlisten：事件总线                      │
 ├─────────────────────────────────────────────────────────────┤
 │  API Client（api/client.ts）                                 │
-│  ├─ gameApi(action)：GET api_v2.php?action=xxx               │
-│  ├─ submitCommand(params)：POST command.php                  │
+│  ├─ gameApi(action)：GET oblivions/api/state.php?scope=xxx               │
+│  ├─ sendOblCommand(envelope)：POST oblivions/api/command.php                  │
 │  ├─ markBattleLogPlayed：POST oblivions/mark_battle_log_played.php │
-│  └─ aiDumpSave：POST api_v2.php?action=ai_dump_save          │
+│  └─ aiDumpSave：已移除（过时调试残留）          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,7 +364,7 @@ tileActionStore / inventoryStore / useMapBusiness.clickMove
   ↓
 commandQueue.execute(params)              // HTTP 请求锁
   ↓
-submitCommand(params)                     // POST command.php
+sendOblCommand(envelope)                  // POST oblivions/api/command.php
   ↓ 成功后：
   ├─ dataManager.invalidate(...)          // 精准失效受影响的缓存
   ├─ mapStore.loadMap()（移动/探索时）    // 重新拉取地图
@@ -421,7 +421,7 @@ submitCommand(params)                     // POST command.php
 
 **例外**：`obl_tick` / `obl_pretick` 是数字类型（后端显式 `intval`），`LogEntry.ts` 也是数字类型。
 
-### 5.2 只读 API（GET `api_v2.php?action=xxx`）
+### 5.2 只读 API（GET `oblivions/api/state.php?scope=xxx`）
 
 通过 `gameApi(action)` 调用，返回完整响应对象 `{status, data, ...}`。
 
@@ -435,61 +435,53 @@ submitCommand(params)                     // POST command.php
 | `battle_log` | 战斗日志条目数组（played=0） | battleStore | 不缓存 |
 | `enemies` | 当前区域敌人列表 | mapStore, battleStore | 不缓存 |
 | `skill_list` | 技能列表 + player_ap | PreloadArea | 不缓存 |
-| `ai_dump_save` | AI dump 保存结果 | debugBus | 不缓存（POST） |
 
 **响应格式**：
 ```json
 { "status": "success" | "error", "data": {...}, "msg": "..." }
 ```
 
-### 5.3 写入 API（POST `command.php`）
+### 5.3 写入 API（POST `oblivions/api/command.php`）
 
-通过 `commandQueue.execute(params)` → `submitCommand(params)` 调用。
+通过 `commandQueue.execute(params)` → `sendOblCommand(envelope)` 调用。前端不再调用根目录旧 `command.php`。
 
-**params 格式**：
+**envelope 格式**：
 
 ```typescript
-// 探索
-{ command: 'obl_explore' }
-
-// 搜索 POI
-{ command: 'obl_search', iaid: '123' }
-
-// 拾取道具
-{ command: 'obl_pickup', iid: '456' }
-
-// 丢弃背包道具
-{ command: 'obl_discard', slot: '3' }  // slot: 1~itemmaxslots
-
-// 移动
-{ command: 'move', moveto: '5' }  // moveto = 目标格 pls
-
-// 玩家主动攻击（直接进入 battle 状态）
-{ command: 'obl_battle_start', enemy_pid: '101' }
-
-// 战斗动作（玩家回合）
-{ command: 'obl_battle_action', action_id: 'unarmed_strike' }
+{
+  command: 'map.explore' | 'map.move' | 'poi.search' | 'item.pickup' | 'item.discard' |
+    'item.use' | 'inventory.organize' | 'craft.execute' | 'battle.start' | 'battle.submit_turn',
+  request_id: string,
+  payload: Record<string, unknown>,
+  expected?: Record<string, unknown>,
+}
 ```
 
-**响应格式**（Oblivions 模式）：
+**响应格式**：
+
 ```json
-{}
+{
+  "status": "success",
+  "code": "OK",
+  "request_id": "client-generated-id",
+  "data": { "refresh": ["player_info"] }
+}
 ```
 
-Oblivions 模式下 `command.php` 仅做模式判定后委托给 `oblivions/include/core/obl_command.php`，响应只返回空 JSON `{}`。前端不依赖命令响应获取业务数据，而是通过 `dataManager.invalidateAll()` + 重新拉取只读 API 获取最新状态。
+Oblivions 模式写入请求直接提交到 `oblivions/api/command.php`，后端入口通过 `include/api/obl_command_api_bootstrap.php` 聚合加载 Runtime、JSON request、Command response 与 Command Bus，再由 Tick Orchestrator 处理推进。
 
 **并发冲突响应**：
 ```json
-{ "error": "COMMAND_IN_PROGRESS" }
+{ "status": "error", "code": "COMMAND_IN_PROGRESS", "message": "上一个命令仍在处理中" }
 ```
 
-`submitCommand` 检测 `gamedata.error` 存在时返回 `success: false`，前端视为失败（通常由 `commandQueue._locked` 在前端就拦截）。
+`sendOblCommand` 检测 `status !== 'success'` 时返回 `success: false`，前端视为失败（通常由 `commandQueue._locked` 在前端就拦截）。
 
 ### 5.4 零依赖接口：`mark_battle_log_played.php`
 
-**独立文件**（不走 `api_v2.php`），位于 `vex/mark_battle_log_played.php`。
+**独立文件**（不走 State API），位于 `oblivions/mark_battle_log_played.php`。
 
-- **请求**: `POST /phpdts/vex/mark_battle_log_played.php`
+- **请求**: `POST /phpdts/oblivions/mark_battle_log_played.php`
 - **Content-Type**: `application/x-www-form-urlencoded`
 - **参数**: `groomid` (int) + `pid` (int) + `log_ids` (逗号分隔字符串)
 - **响应**: `{ "success": true, "marked": N }`
@@ -1108,9 +1100,10 @@ const proxyAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
 server: {
   port: 5174,
   proxy: {
-    '/phpdts/api_v2.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
-    '/phpdts/command.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
-    '/phpdts/vex/mark_battle_log_played.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/oblivions/api/command.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/oblivions/api/heartbeat.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/oblivions/api/state.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
+    '/phpdts/oblivions/mark_battle_log_played.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
     '/phpdts/img/': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
   },
 }
@@ -1251,3 +1244,62 @@ perf.clear();
 > 3. 重构为 `useMapEntities` + `entitiesStore` 的多实体分层架构（泛化支持 actor/poi/grass/crevice/worm，z-index 全部由 JS 控制，删除 `.actor.popped` CSS 类，引入 z-index 层级变量与 Y 排序预留）
 >
 > `usePlayerAvatar.ts` / `useActors.ts` / `actors.ts` / `actor.ts` 均已删除，`player:popup`/`player:fall` 事件已从 `events.ts` 移除。设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)。
+
+---
+
+## 近期变更：Oblivions JSON Command API 前端接入（2026-07-08）
+
+Oblivions 写操作已切换到独立 JSON Command API：
+
+```txt
+vex-vue commandQueue.execute(envelope)
+  -> src/api/obl-command.ts sendOblCommand()
+  -> POST /phpdts/oblivions/api/command.php
+```
+
+新增文件：
+
+| 文件 | 职责 |
+|---|---|
+| `src/api/obl-command.ts` | 发送 JSON command envelope，解析后端统一响应，并适配为旧 `CommandResult` |
+
+`src/api/client.ts` 中的旧 `submitCommand()` 仍存在，但 Oblivions 新写操作不应再调用它。
+
+### commandQueue 入参
+
+现在使用结构化 envelope：
+
+```ts
+commandQueue.execute({
+  command: 'battle.submit_turn',
+  payload: {
+    actions: [
+      { act_id: 'unarmed_strike', target: 101, params: {} },
+    ],
+  },
+  expected: {
+    action: 'battle',
+    battle_state: 'PLAYER_TURN',
+  },
+});
+```
+
+战斗动作队列直接作为 JSON 数组提交，不再 `JSON.stringify(actions)` 塞入表单字段。
+
+### 新命令名
+
+| 场景 | 命令 |
+|---|---|
+| 移动 | `map.move` |
+| 探索 | `map.explore` |
+| 搜索 POI | `poi.search` |
+| 拾取 | `item.pickup` |
+| 丢弃 | `item.discard` |
+| 使用道具 | `item.use` |
+| 整理背包 | `inventory.organize` |
+| 合成 | `craft.execute` |
+| 战斗开始 | `battle.start` |
+| 提交玩家回合 | `battle.submit_turn` |
+
+`src/stores/command-registry.ts` 已同步使用新命令名。`battle.start` 的 `mode: 'battle'` 是前端预战斗装填 UI 语义；后端玩家 `action` 此时仍是普通探索状态。
+

@@ -71,7 +71,7 @@ function item_use($slot, &$pdata) {
     // 5. emit 成功事件（介入点：供对话系统订阅触发猫提醒）
     $obl_log->emit('use_item.success', 'system', ['item_id' => $item_id, 'slot' => $slot]);
 
-    // $pdata 由外部（obl_command.php）统一持久化
+    // $pdata 由外部 Command Bus / Tick Orchestrator 统一持久化
 }
 
 /**

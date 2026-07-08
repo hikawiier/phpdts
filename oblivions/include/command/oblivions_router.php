@@ -6,7 +6,7 @@ if (!defined('IN_GAME')) {
 // ================================================================
 // Oblivions 命令子路由 / Oblivions command sub-router
 //
-// 由 obl_command.php 在 Oblivions 模式下调用，独立于旧模式的 include/command/router.php。
+// 由 Oblivions Command Bus 调用，独立于旧模式的 include/command/router.php。
 // 所有 Oblivions 命令的分发逻辑集中在此，不再散落在旧路由树内。
 // ================================================================
 

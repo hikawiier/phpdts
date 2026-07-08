@@ -6,7 +6,7 @@
 //
 // 状态机（3 态，由 playerStore.oblBattleState 派生）：
 //   - IDLE / PLAYER_TURN / PROCESSING
-//   - 轮询由 battle.ts 统一管理（200ms 心跳守护进程 + 1000ms NPC 状态轮询）
+//   - 轮询由 battle.ts 统一管理（PROCESSING 300ms / 其他 1000ms 心跳守护进程 + 1000ms NPC 状态轮询）
 //   - pendingNpc getter 仅用于 UI 状态展示（StatusBar NPC 指示器）
 //
 // 锁结构（5 层，详见 docs/战斗锁定白名单-设计案.md §2.7.2）：
@@ -20,7 +20,8 @@
 // 实际执行判断完全一致——避免重蹈 isLocked 与 execute 行为分叉的隐性 bug。
 // ══════════════════════════════════════════════════
 
-import { submitCommand, type CommandResult } from '@/api/client';
+import { oblHeartbeat, type CommandResult } from '@/api/client';
+import { sendOblCommand, type OblCommandEnvelope } from '@/api/obl-command';
 import { dataManager } from '@/stores/data-manager';
 import { usePlayerStore } from '@/stores/player';
 import { useBattleStore } from '@/stores/battle';
@@ -33,32 +34,41 @@ class CommandQueue {
 
   /**
    * 统一的前置检查逻辑（execute 与 canExecute 共用）
-   * 返回 true 表示通过所有锁，可执行。
+   * 返回 null 表示通过所有锁；否则返回锁定原因。
    *
    * 五层锁顺序：HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING
    */
-  private _checkLocks(command: string): boolean {
+  private _lockReason(command: string): string | null {
     // ── 第 1 层：HTTP 请求锁 + 冷却 ──
-    if (this._locked || this._cooldown > Date.now()) return false;
+    if (this._locked) return 'HTTP_LOCKED';
+    if (this._cooldown > Date.now()) return 'COOLDOWN';
+
+    const battleStore = useBattleStore();
+    const playerStore = usePlayerStore();
+    const inventoryStore = useInventoryStore();
 
     // ── 第 2 层：战斗演出锁 ──
-    if (useBattleStore().isPlayingBattleLog) return false;
+    if (battleStore.isPlayingBattleLog) return 'BATTLE_LOG_PLAYING';
 
     const spec = COMMAND_REGISTRY[command];
-    if (!spec) return false; // 未注册命令拒绝
+    if (!spec) return 'UNKNOWN_COMMAND';
 
     // ── 第 3 层：itm0 锁 ──
-    if (useInventoryStore().itm0 !== null && !spec.itm0Allowed) return false;
+    if (inventoryStore.itm0 !== null && !spec.itm0Allowed) return 'ITM0_PENDING';
 
     // ── 第 4 层：模式锁（以前端 currentMode 为真值源） ──
-    const inBattle = useBattleStore().currentMode === 'battle';
-    if (inBattle && spec.mode !== 'battle') return false;
-    if (!inBattle && spec.mode === 'battle') return false;
+    const inBattle = battleStore.currentMode === 'battle';
+    if (inBattle && spec.mode !== 'battle') return 'MODE_BATTLE';
+    if (!inBattle && spec.mode === 'battle') return 'MODE_EXPLORE';
 
     // ── 第 5 层：PROCESSING 锁（仅拦截推进 tick 命令） ──
-    if (spec.advancesTick && usePlayerStore().oblBattleState === 'PROCESSING') return false;
+    if (spec.advancesTick && playerStore.oblBattleState === 'PROCESSING') return 'BATTLE_PROCESSING';
 
-    return true;
+    return null;
+  }
+
+  private _checkLocks(command: string): boolean {
+    return this._lockReason(command) === null;
   }
 
   /**
@@ -75,22 +85,23 @@ class CommandQueue {
   /**
    * 执行命令（带锁 + 冷却 + 状态机锁检查）
    *
-   * @param params 提交给 command.php 的参数
-   * @returns CommandResult（与 submitCommand 返回结构一致）
+   * @param envelope 提交给 Oblivions JSON Command API 的命令信封
+   * @returns CommandResult（由 sendOblCommand 适配旧调用语义）
    *   - 锁定/冷却/演出/itm0/模式/PROCESSING 任一不通过返回 { success: false, error: 'LOCKED', message: '当前状态不可执行此操作' }
    */
-  async execute(params: Record<string, string>): Promise<CommandResult> {
-    const command = params.command || '';
+  async execute<TPayload = unknown>(envelope: OblCommandEnvelope<TPayload>): Promise<CommandResult> {
+    const command = envelope.command || '';
 
     // ── 前置检查：复用 _checkLocks（与 canExecute 共用，保证一致） ──
-    if (!this._checkLocks(command)) {
-      return { success: false, error: 'LOCKED', message: '当前状态不可执行此操作' };
+    const lockReason = this._lockReason(command);
+    if (lockReason !== null) {
+      return { success: false, error: 'LOCKED', message: `当前状态不可执行此操作：${lockReason}` };
     }
 
     const spec = COMMAND_REGISTRY[command];
     this._locked = true;
     try {
-      const result = await submitCommand(params);
+      const result = await sendOblCommand(envelope);
       // 后端返回 timer 时设置冷却（单位：秒）
       if (result.timer) {
         this._cooldown = Date.now() + result.timer * 1000;
@@ -108,13 +119,14 @@ class CommandQueue {
   /**
    * 推进 tick 后检查战斗状态
    *
-   * 拉取 player_info（同时触发后端 common.inc 的 NPC 先攻轮），
-   * 更新 playerStore.oblBattleState，然后广播 game:tick-advanced 事件，
+   * 阶段三后 player_info 不再隐式推进 tick；先显式等待 heartbeat，
+   * 再拉取 player_info，最后广播 game:tick-advanced 事件，
    * 由 battle.ts 响应并决定是否启动/停止轮询。
    */
   private async _checkBattleState(): Promise<void> {
     try {
-      await dataManager.fetch('player_info', true);
+      await oblHeartbeat();
+      await usePlayerStore().loadPlayerInfo(true);
       // 广播事件，由 battle.ts 监听并调用 refreshBattle 决定轮询行为
       dataManager.broadcast('game:tick-advanced');
     } catch (e) {

@@ -76,12 +76,12 @@ function slotMeta(item: InventoryItem): string {
             <button
               v-if="s.usable"
               class="term-btn"
-              :disabled="!commandQueue.canExecute('obl_use_item')"
+              :disabled="!commandQueue.canExecute('item.use')"
               @click="onUse(s.slot)"
             >[使用]</button>
             <button
               class="term-btn discard"
-              :disabled="!commandQueue.canExecute('obl_discard')"
+              :disabled="!commandQueue.canExecute('item.discard')"
               @click="onDiscard(s.slot)"
             >[丢弃]</button>
           </div>

@@ -16,7 +16,7 @@ if (!defined('IN_GAME')) {
 /**
  * 日志收集器（单次请求内累积，请求结束前持久化）
  *
- * 在 command.php 入口初始化为全局 $obl_log：
+ * 由 Oblivions Runtime / 兼容入口初始化为全局 $obl_log：
  *   $obl_log = oblivions_is_active() ? new OblivionsLogger() : null;
  *
  * obl_* 函数内通过 global $obl_log 引用，调用 emit() 追加条目。
@@ -206,14 +206,14 @@ function obl_log_clear_all() {
 // 与 obl_log（结构化事件日志）物理隔离，专门收集诊断性错误信息。
 // 设计原则：
 // - 错误日志独立存储，不被 obl_log 的 200 条上限挤掉
-// - 前端通过 api_v2.php ?action=obl_error 独立轮询
+// - 前端通过 oblivions/api/state.php?scope=obl_error 独立轮询
 // - POST 不返回信息，前端通过 GET 拉取错误日志感知后端异常
 // ================================================================
 
 /**
  * 错误日志收集器（单次请求内累积，请求结束前持久化）
  *
- * 在 common.inc.php 中与 $obl_log 同步初始化为全局 $obl_error_log。
+ * 由 Oblivions Runtime / 兼容入口与 $obl_log 同步初始化为全局 $obl_error_log。
  * 后端异常捕获时通过 emit() 追加条目，请求结束时统一持久化。
  */
 class OblivionsErrorLogger {

@@ -7,7 +7,7 @@ if (!defined('IN_GAME')) {
 // ================================================================
 // Oblivions 游戏状态机 / Oblivions game state machine
 //
-// 完全与旧模式解耦：Oblivions 模式下 common.inc.php 直接调用
+// 当前用于 Oblivions 房间 lifecycle：由旧 lifecycle 入口或未来专属 lifecycle 入口调用
 // obl_gamestate_* 系列函数，不再走 gamestate.func.php 的旧状态机。
 //
 // Oblivions 只需要 2 个状态转换：
@@ -22,7 +22,7 @@ if (!defined('IN_GAME')) {
 //   - gameover：游戏不自动结束，仅 GM 中止或玩家退出可终止
 // ================================================================
 // 依赖：init.func.php（obl_rs_game）
-//       system.func.php（addnews / systemputchat，由 common.inc.php 加载）
+//       system.func.php（addnews / systemputchat，由当前 lifecycle 入口加载）
 
 /**
  * Oblivions 游戏准备状态转换 / Oblivions game prepare state transition

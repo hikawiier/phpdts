@@ -43,10 +43,22 @@ Oblivions 是 PHPDTS 的大逃杀游戏模式之一，采用网格地图 + 迷�
 
 ```
 oblivions/
+├── api/
+│   ├── command.php              # JSON Command API：写入命令入口
+│   ├── heartbeat.php            # Heartbeat API：显式 tick 推进入口
+│   └── state.php                # State API：纯读状态入口
 ├── include/
+│   ├── api/
+│   │   ├── obl_api_bootstrap.php           # API 共用 bootstrap（Runtime）
+│   │   ├── obl_command_api_bootstrap.php   # Command API 依赖聚合
+│   │   ├── obl_heartbeat_api_bootstrap.php # Heartbeat API 依赖聚合
+│   │   ├── obl_state_api_bootstrap.php     # State API 依赖聚合
+│   │   ├── obl_state_response.php          # State API 响应 helper
+│   │   └── obl_state_handlers.php          # State API scope handlers
 │   ├── core/
-│   │   ├── obl_bootstrap.php     # 统一加载入口（按拓扑排序分 8 层加载所有函数库，详见 §4）
-│   │   └── obl_command.php       # Oblivions 命令入口（由 command.php require，处理全部命令流程 + 并发锁）
+│   │   ├── obl_runtime.php       # Oblivions 独立运行期（DB/cookie/room/gamevars/logger）
+│   │   ├── obl_bootstrap.php     # Domain 函数库加载入口（按拓扑排序分层加载，详见 §4）
+│   │   └── obl_command.php       # 旧根 command.php 兼容处理器（deprecated）
 │   ├── command/
 │   │   ├── oblivions_router.php       # Oblivions 命令子路由（分发到各 cmd_handle_obl_*，含 actions JSON 解析）
 │   │   └── oblivions_commands.php     # 6 个命令处理器（explore/search/pickup/discard + battle_start/battle_action）
@@ -112,10 +124,11 @@ oblivions/
 | 文件 | 作用 |
 |------|------|
 | `include/core/global.func.php` | `oblivions_is_active()` 定义 + `save_gameinfo()` Oblivions 分支 |
-| `include/core/common.inc.php` | 全局入口：初始化 `$obl_log` + `$obl_battle_log` + tick 事件触发 |
-| `include/command/handlers/basic_commands.php` | move/search 命令的 Oblivions 分支（Oblivions 模式由 oblivions_router.php 直接调用 obl_move） |
-| `api_v2.php` | 15 个 API 端点（player_info/player_inventory/game_map/tile_actions/obl_log/obl_error/battle_log/enemies/skill_list/skill_cd_check/ai_dump_save/heartbeat + 合成三件套：craft_preview/craft_workbench_materials/craft_recipes） |
-| `command.php` | Oblivions 模式路由分发器（require obl_command.php 后 exit） |
+| `include/core/common.inc.php` | 旧模式全局入口；Oblivions 局内 command/heartbeat/state 运行期已不再依赖它 |
+| `command.php` | 旧根命令入口；Oblivions 新写操作不再调用，仅保留兼容路径 |
+| `oblivions/api/command.php` | Oblivions JSON Command API 写入口，加载 `obl_command_api_bootstrap.php` |
+| `oblivions/api/heartbeat.php` | Oblivions Heartbeat API tick 推进入口，加载 `obl_heartbeat_api_bootstrap.php` |
+| `oblivions/api/state.php` | Oblivions 只读 State API，加载 `obl_state_api_bootstrap.php` |
 | `include/gamectl/system.func.php` | `rs_init_areas()` 在 Oblivions 模式下跳过禁区系统初始化 |
 | `valid.php` | 玩家激活时创建 oblplayers 记录 + 出生点迷雾点亮 |
 | `game.php` | 重定向到 `vex-vue/dist/index.html`（生产）或 dev server（开发） |
@@ -124,9 +137,24 @@ oblivions/
 
 ## 三、引导加载（bootstrap）
 
-Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php` 集中加载所有函数库，按拓扑排序分 8 层。
+Oblivions 运行期采用两层 bootstrap：
 
-**当前层序概览**（实际层序以 `obl_bootstrap.php` 为准）：
+1. **API bootstrap**：`oblivions/include/api/*_bootstrap.php` 只聚合各 HTTP 入口需要的 request/response/handler 依赖，不调用 `obl_runtime_boot()`，不执行业务逻辑。
+2. **Domain bootstrap**：`oblivions/include/core/obl_bootstrap.php` 只加载游戏领域函数库，由 `obl_runtime_boot($kind)` 在完成独立运行期初始化时加载。
+
+### 3.1 API 入口加载边界
+
+| HTTP 入口 | Bootstrap | 职责边界 |
+|---|---|---|
+| `oblivions/api/command.php` | `include/api/obl_command_api_bootstrap.php` | 写入命令：Runtime + JSON request + Command response + Command Bus |
+| `oblivions/api/heartbeat.php` | `include/api/obl_heartbeat_api_bootstrap.php` | tick 推进：Runtime + Command-style response + Tick Orchestrator |
+| `oblivions/api/state.php` | `include/api/obl_state_api_bootstrap.php` | 纯读状态：Runtime + State response + Tick status + State handlers；不加载 Command Bus |
+
+`obl_runtime_boot($kind)` 仍由入口显式调用，bootstrap 文件只做 `require_once` 聚合，避免加载阶段产生 schema 创建、heartbeat、pending tick resolve 等副作用。
+
+### 3.2 Domain 函数库加载顺序
+
+`oblivions/include/core/obl_bootstrap.php` 集中加载所有 domain/game 函数库，按拓扑排序分层。实际层序以该文件为准：
 
 | 层 | 文件/模块 | 说明 |
 |----|----------|------|
@@ -137,11 +165,11 @@ Oblivions 子系统通过统一入口 `oblivions/include/core/obl_bootstrap.php`
 | 4 | `battle.main` / `battle.entry` / `battle.queue` | 依赖第 1-3 层 |
 | 5 | `explore` / `enemy_ai` | 依赖 vision + battle |
 | 5.5 | `item.tag` / `item.basic` / `item.use` / `item.craft` | 道具系统（依赖 log + player + explore，无循环依赖；加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）） |
-| 6 | `tick` | 依赖最广，末尾注册监听器 |
+| 6 | `tick` / `obl_tick_orchestrator.php` | tick engine + tick 推进编排器 |
 | 7 | `gamectl/init.func.php` | 游戏初始化 |
 | 8 | `gamectl/state.func.php` | 游戏状态机 |
 
-**强制约定**：源于 [DESIGN.md §2.12](./DESIGN.md#212-新文件必须注册到-obl_bootstrap)。新增任何 `.func.php` / `.main.php` 文件，必须在 `obl_bootstrap.php` 中注册，按拓扑排序。
+**强制约定**：新增 API request/response/handler 文件注册到对应 `include/api/*_bootstrap.php`；新增 `.func.php` / `.main.php` 领域函数库注册到 `include/core/obl_bootstrap.php`，按拓扑排序。
 
 ## 四、数据库表
 
@@ -305,7 +333,7 @@ $oblpara['battle'] = [
 
 ### 5.1 通用协议
 
-- 入口: `api_v2.php?action=xxx`
+- 入口: `oblivions/api/state.php?scope=xxx`
 - 认证: Cookie 中的 `$cuser` / `$cpass`
 - 响应格式:
 ```json
@@ -315,7 +343,7 @@ $oblpara['battle'] = [
 
 ### 5.2 `game_map` — 地图数据（Oblivions扩展）
 
-- **请求**: `GET api_v2.php?action=game_map`
+- **请求**: `GET oblivions/api/state.php?scope=game_map`
 - **Oblivions扩展**: 当 `oblivions_is_active()` 为 true 时，额外返回 `links` 字段
 - **响应**:
 ```json
@@ -346,7 +374,7 @@ $oblpara['battle'] = [
 
 ### 5.3 `tile_actions` — 当前格交互数据
 
-- **请求**: `GET api_v2.php?action=tile_actions`
+- **请求**: `GET oblivions/api/state.php?scope=tile_actions`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -411,7 +439,7 @@ $oblpara['battle'] = [
 
 ### 5.4 `obl_log` — 结构化日志
 
-- **请求**: `GET api_v2.php?action=obl_log`
+- **请求**: `GET oblivions/api/state.php?scope=obl_log`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -444,7 +472,7 @@ $oblpara['battle'] = [
 
 ### 5.5 `battle_log` — 战斗日志（未播放条目）
 
-- **请求**: `GET api_v2.php?action=battle_log`
+- **请求**: `GET oblivions/api/state.php?scope=battle_log`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -482,7 +510,7 @@ $oblpara['battle'] = [
 
 ### 5.6 `enemies` — 当前区域敌人列表
 
-- **请求**: `GET api_v2.php?action=enemies`
+- **请求**: `GET oblivions/api/state.php?scope=enemies`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -530,7 +558,7 @@ api_response('success', array(
 
 ### 5.9 `craft_preview` — 合成预判（前端用）
 
-- **请求**: `GET api_v2.php?action=craft_preview&slots=1,3,5&workbench_materials=poi:123`
+- **请求**: `GET oblivions/api/state.php?scope=craft_preview&slots=1,3,5&workbench_materials=poi:123`
 - **前置条件**: 必须在 Oblivions 模式下
 - **参数**:
   - `slots` (string) — 逗号分隔的背包槽位号，数量不限
@@ -555,7 +583,7 @@ api_response('success', array(
 
 ### 5.10 `craft_workbench_materials` — 可用工作台素材
 
-- **请求**: `GET api_v2.php?action=craft_workbench_materials`
+- **请求**: `GET oblivions/api/state.php?scope=craft_workbench_materials`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -574,7 +602,7 @@ api_response('success', array(
 
 ### 5.11 `craft_recipes` — 配方列表
 
-- **请求**: `GET api_v2.php?action=craft_recipes`
+- **请求**: `GET oblivions/api/state.php?scope=craft_recipes`
 - **前置条件**: 必须在 Oblivions 模式下
 - **响应**:
 ```json
@@ -592,7 +620,7 @@ api_response('success', array(
 
 ### 5.12 `mark_battle_log_played.php` — 零依赖标记接口
 
-**独立文件**（不走 `api_v2.php`），位于 `oblivions/mark_battle_log_played.php`。
+**独立文件**（不走 State API），位于 `oblivions/mark_battle_log_played.php`。
 
 - **请求**: `POST oblivions/mark_battle_log_played.php`
 - **Content-Type**: `application/x-www-form-urlencoded`
@@ -615,87 +643,66 @@ api_response('success', array(
 
 ## 六、命令路由
 
-### 6.1 提交格式
+### 6.1 JSON Command API 提交格式
 
-通过 `command.php` POST 提交：
-- `mode=command`（必须）
-- `command=命令名`
-- 附加字段见下表
+Oblivions 新写操作通过独立入口提交，不再调用根目录旧 `command.php`：
 
-### 6.2 Oblivions 专用命令
-
-| 命令 | POST附加字段 | 处理函数 | 说明 |
-|------|-------------|----------|------|
-| `obl_explore` | 无 | `obl_explore($pdata)` | 探索（点亮迷雾+发现道具） |
-| `obl_search` | `iaid` (int) | `obl_search_poi($iaid, $pdata)` | 搜索POI |
-| `obl_pickup` | `iid` (int) | `obl_pickup_item($iid, $pdata)` | 拾取道具 |
-| `obl_discard` | `slot` (int 0~itemmaxslots) | `obl_discard_item($slot, $pdata)` | 丢弃道具（slot=0 丢弃 itm0 缓存槽；1~itemmaxslots 丢弃普通槽位道具，写回地图道具表） |
-| `obl_battle_start` | `actions` (JSON) | `cmd_handle_obl_battle_start($pdata, $actions)` | 玩家突袭：通过 `battle_entry_dispatch('ambush')` 执行 |
-| `obl_battle_action` | `actions` (JSON) | `cmd_handle_obl_battle_action($pdata, $actions)` | 玩家回合：通过 `battle_entry_dispatch('player_turn')` 执行 |
-| `obl_use_item` | `slot` (int 1~itemmaxslots) | `cmd_handle_obl_use_item($slot, $pdata)` → `item_use($slot, $pdata)` | 使用背包道具（检查 tag_usable + use_effect 分发） |
-| `obl_craft` | `slots` (string 逗号分隔槽位号), `workbench_materials` (string 可选) | `cmd_handle_obl_craft($slots, $wb, $pdata)` → `item_craft($slots, $pdata, $wb)` | 合成道具（指向性判断 + 素材消耗 + 产物生成） |
-| `obl_organize` | 无 | `cmd_handle_obl_organize($pdata)` → `obl_organize_inventory($pdata)` | 整理背包（合并同类堆叠 + 转移 itm0 → 背包；itm0 锁定时唯一可用命令之一） |
-
-### 6.3 通用命令的 Oblivions 分支
-
-| 命令 | Oblivions分支 |
-|------|--------------|
-| `move` | `obl_move($moveto, $pdata)` |
-| `search` | `obl_explore($pdata)` |
-
-### 6.4 命令执行流程
-
-Oblivions 模式下，`command.php` 仅做模式判定，业务逻辑全部委托给独立文件 `oblivions/include/core/obl_command.php`：
-
-```
-command.php
-  → oblivions_is_active() === true
-  → require GAME_ROOT.'./oblivions/include/core/obl_command.php'
-  → exit
-
-obl_command.php 内部流程：
-  [A0] register_shutdown_function — PHP fatal error 时输出 JSON 错误（兜底保护）
-  [A]  obl_game_entrypoint('command')           // 认证 + 抓取 + 格式化 $pdata
-  [A2] 并发锁：flock(LOCK_EX|LOCK_NB) — 同一玩家同时只能处理一个命令
-       → 获取失败返回 {'error': 'COMMAND_IN_PROGRESS'} 并 exit
-  [B]  $command/$mode 来自 POST（common.inc.php 已 extract）
-  [C2] obl_command_allowed_by_state($command, $action)  // 命令状态过滤
-       → action='battle' 时只允许 obl_battle_action
-       → 非战斗状态不允许 obl_battle_action（obl_battle_start 仍允许）
-       → 被拒绝的命令 emit 'command.rejected' 日志，不推进 tick
-   [C2a] itm0 门控（oblivions_router.php）：itempara[0] 非空时只允许 obl_organize / obl_discard
-        → 被拒绝的命令 emit 'system.itm0_pending' 日志，处理 itm0 是最高优先级
-   [C2b] obl_tick_has_busy_battle() → 委托 obl_battle_state_has_busy_battle()
-        → 检查**任何**战场在 PROCESSING 状态（不只当前玩家所在战场）
-        → 配合 obl_command_advances_tick()：PROCESSING 时拒绝推进 tick 的命令
-        → emit 'command.rejected' (reason=battle_busy)
-        → 与前端 commandQueue 第 5 层 PROCESSING 锁对应（仅拦截 `advancesTick=true` 命令，详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
-  [D]  if (!$command_rejected && $pdata['hp'] > 0):
-        require oblivions_router.php
-        oblivions_cmd_dispatch($command, $pdata, $post)
-          → obl_command_allowed_by_state → cmd_handle_obl_xxx($params, $pdata)
-            → explore.func.php / battle.func.php: obl_xxx($params, $pdata)  // &$pdata 引用传递
-      所有函数库由 obl_bootstrap.php 统一加载，handler 不再 include
-   [C2d] 命令执行完后：PLAYER_TURN → PROCESSING（状态机过渡 'player_acted'）
-  [E]   obl_log_persist($obl_log, $groomid, $pdata['pid'])  // 持久化结构化日志
-  [E1b] obl_error_log_persist($obl_error_log, $groomid, $pdata['pid'])  // 持久化错误日志
-  [E2]  obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid'])  // 持久化战斗日志（played=0）
-  [F-pre] 处理 escape_skip_tick 标志（逃跑成功时跳过本次 tick 推进）
-  [G]   obl_save_player($pdata)                             // 写回 oblplayers
-  [F]   if obl_command_advances_tick($command) && !escape_skip_tick:
-        obl_tick_advance()             // obl_tick++ + 标记 $ginfochange
-        [F-bs] PROCESSING 下刷新时间戳（obl_battle_state_refresh）
-        save_gameinfo()                // 命令路径需显式持久化
-  [H]   echo compatible_json_encode(array())                // 返回空 JSON {}
-       （flock 在进程结束/脚本结束时由 OS 自动释放）
+```txt
+POST /phpdts/oblivions/api/command.php
+Content-Type: application/json
 ```
 
-**关键设计**：
-- **不使用 `extract($pdata, EXTR_REFS)`**：直接操作 `$pdata` 数组，避免全局变量污染
-- **跳过传统预检查**：眩晕/冷却/对话框/追击/物品索引等预检查全部跳过
-- **跳过模板渲染**：SPA 前端不需要 HTML 模板，响应只返回最小确认 `{}`
-- **使用 `obl_save_player()`** 替代 `player_save()`，仅写 `bra_oblplayers`
-- **前端通过 `api_v2.php` 获取业务数据**，命令响应不再包含 `$gamedata` 或 `battlelog` 字段
+请求 envelope：
+
+```json
+{
+  "command": "map.explore",
+  "request_id": "client-generated-id",
+  "payload": {},
+  "expected": {}
+}
+```
+
+### 6.2 新命令名
+
+| command | 说明 |
+|---|---|
+| `map.move` | 移动到目标格 |
+| `map.explore` | 探索当前格 |
+| `poi.search` | 搜索 POI |
+| `item.pickup` | 拾取道具 |
+| `item.discard` | 丢弃道具 |
+| `item.use` | 使用道具 |
+| `inventory.organize` | 整理背包 / 处理 itm0 |
+| `craft.execute` | 执行合成 |
+| `battle.start` | 开始战斗 |
+| `battle.submit_turn` | 提交玩家回合战斗动作队列 |
+
+### 6.3 Command API 执行流程
+
+```
+oblivions/api/command.php
+  → require include/api/obl_command_api_bootstrap.php
+  → obl_runtime_boot('command')
+  → method / mode / envelope 检查
+  → obl_runtime_acquire_room_lock()         // 房间级 DB lock
+  → obl_runtime_reload_tick_globals()
+  → obl_command_api_handle($envelope)       // Command Bus
+      → contract + payload 校验
+      → player auth + player flock lock
+      → 状态门控 / itm0 门控 / expected 冲突检查
+      → obl_command_handler_dispatch()      // 调用 domain 函数
+      → 日志持久化 + save + tick lifecycle
+  → obl_runtime_release_room_lock()
+  → JSON response
+```
+
+### 6.4 当前架构边界
+
+- 根目录旧 `command.php` 不升级为 JSON，只作为旧核心入口/兼容路径保留。
+- `oblivions/include/core/obl_command.php` 已标记为 deprecated，仅服务旧根 `command.php` 的兼容处理器。
+- 新写操作统一走 `oblivions/api/command.php` + `include/command/obl_command_bus.php`。
+- 前端通过 `oblivions/api/state.php` 获取业务数据，命令响应只返回统一 Command API 结果与刷新建议。
 
 ### 6.4.1 战斗状态机三态与转换触发点
 
@@ -704,7 +711,7 @@ obl_command.php 内部流程：
 | # | 转换 | 触发位置 | 触发时机 |
 |---|------|---------|---------|
 | 1 | (创建) → PROCESSING | [`battle.queue.func.php:154`](../include/game/battle/battle.queue.func.php#L154) `obl_battle_state_create($qid, OBL_BS_PROCESSING)` | `battle_queue_create_and_init` 创建先攻队列后 |
-| 2 | PLAYER_TURN → PROCESSING | [`obl_command.php:111`](../include/core/obl_command.php#L111) `obl_battle_state_transition($qid, 'player_acted')` [C2d] | 玩家提交推进 tick 命令后 |
+| 2 | PLAYER_TURN → PROCESSING | `obl_command_after_dispatch()` / Command Bus tick lifecycle 触发 `obl_battle_state_transition($qid, 'player_acted')` | 玩家提交推进 tick 命令后 |
 | 3 | PROCESSING → PLAYER_TURN | [`battle.queue.main.php:172`](../include/game/battle/battle.queue.main.php#L172) `obl_battle_state_transition($qid, 'player_turn')` | `battle_manage_queue` 检测下一顺位是玩家时 |
 | 4 | PROCESSING → PLAYER_TURN | [`enemy_ai.func.php:81`](../include/game/enemy_ai.func.php#L81) `obl_battle_state_transition($qid, 'player_turn')` | `obl_tick_phase_battle_npc` 调度 NPC 行动时，发现下一顺位是玩家 |
 | 5 | PROCESSING → PROCESSING | `obl_battle_state_refresh($qid)` | NPC 持续行动（self_loop 转换的轻量替代，仅刷新时间戳） |
@@ -737,15 +744,13 @@ PROCESSING  + self_loop    → PROCESSING（仅刷新时间戳）
 
 **后端锁实现**：
 ```php
-$obl_lock_file = GAME_ROOT . './oblivions/cache/locks/obl_lock_' . $groomid . '_' . $pdata['pid'] . '.php';
-$obl_lock_dir = dirname($obl_lock_file);
-if (!is_dir($obl_lock_dir)) @mkdir($obl_lock_dir, 0755, true);
-$obl_lock_fp = fopen($obl_lock_file, 'w');
-if (!$obl_lock_fp || !flock($obl_lock_fp, LOCK_EX | LOCK_NB)) {
-    echo compatible_json_encode(array('error' => 'COMMAND_IN_PROGRESS'));
-    exit;
+$lock_name = obl_runtime_acquire_room_lock(5);
+// ...
+$lock = obl_command_acquire_lock($groomid, $pdata['pid']);
+if (!$lock['ok']) {
+    return obl_command_response_error('COMMAND_IN_PROGRESS', '上一个命令仍在处理中');
 }
-// 锁在进程结束/脚本 exit 时由 OS 自动释放，无需显式释放
+// 房间锁由入口显式 release；玩家 flock 在进程结束/脚本 exit 时由 OS 自动释放
 ```
 
 ---
@@ -1014,7 +1019,7 @@ return [
 | `obl_resolve_tick_events` | `($delta): void` | tick 事件处理入口（由 common.inc.php 调用，抓取玩家+构造上下文+调度） |
 | `obl_tick_has_busy_battle` | `(): bool` | 检查是否有战场在 PROCESSING 状态（委托 obl_battle_state_has_busy_battle） |
 
-> **tick 推进驱动机制**：前端心跳 200ms fire-and-forget 调用 `api_v2.php?action=heartbeat`，触发 common.inc.php 末尾检测 `obl_pretick < obl_tick` 并调用 `obl_resolve_tick_events`。详见 [DESIGN.md §2.16](./DESIGN.md#216-前端守护进程模型心跳)。
+> **tick 推进驱动机制**：前端显式调用 `oblivions/api/heartbeat.php`，由 Oblivions Tick Orchestrator 处理 pending tick 与 NPC 行动。详见 [DESIGN.md §2.16](./DESIGN.md#216-前端守护进程模型心跳)。
 > **battle_npc phase 监听器**：`obl_tick_phase_battle_npc` 位于 [§8.7 enemy_ai.func.php](#87-enemy_aifuncphp--npc-敌人-ai)，负责调度 NPC 行动并触发战斗状态机转换（详见 [§6.4.1](#641-战斗状态机三态与转换触发点)）。
 
 ### 8.3 explore.func.php
@@ -1361,7 +1366,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 - **迷雾写入**: `INSERT ... ON DUPLICATE KEY UPDATE fog=1` 幂等操作
 - **日志写入**: `file_put_contents` 加 `LOCK_EX`，多请求并发写入不丢数据
 - **战斗日志写入**: `obl_battle_log_persist()` 加 `LOCK_EX`，多请求并发写入不丢数据
-- **命令并发锁**: `obl_command.php` 使用 `flock(LOCK_EX|LOCK_NB)`，同一玩家同时只能处理一个命令（详见 [§6.5](#65-并发锁机制)）
+- **命令并发锁**: 新 Command API 先使用房间级 DB lock，再由 Command Bus 使用玩家级 `flock(LOCK_EX|LOCK_NB)`，同一玩家同时只能处理一个命令（详见 [§6.5](#65-并发锁机制)）
 
 ### 9.4 itmpara 约定
 
@@ -1519,3 +1524,80 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 ---
 
 **文档结束。** 概念定义与设计原则见 [DESIGN.md](./DESIGN.md)，结构化日志系统的完整 ID 清单见 `vex-vue/src/data/log-templates.ts`，Toast 即时反馈机制详见 [vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md)。
+
+---
+
+## 近期变更：Oblivions JSON Command API（2026-07-08）
+
+> 设计案：[`oblivions/docs/OBL_COMMAND_API_DESIGN.md`](./docs/OBL_COMMAND_API_DESIGN.md)
+
+Oblivions 玩家写操作已新增独立 JSON Command API，前端新写路径不再依赖根目录旧 `command.php`。
+
+### 新写入口
+
+```txt
+POST /phpdts/oblivions/api/command.php
+Content-Type: application/json
+```
+
+请求 envelope：
+
+```json
+{
+  "command": "battle.submit_turn",
+  "request_id": "client-generated-id",
+  "payload": {
+    "actions": [{ "act_id": "unarmed_strike", "target": 101, "params": {} }]
+  },
+  "expected": {
+    "action": "battle",
+    "battle_state": "PLAYER_TURN",
+    "bid": 42
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "status": "success",
+  "code": "OK",
+  "request_id": "client-generated-id",
+  "data": {
+    "command": "battle.submit_turn",
+    "tick_advanced": true,
+    "refresh": ["player_info", "battle_log"],
+    "server_state": { "action": "battle", "bid": 42, "battle_state": "PROCESSING" }
+  }
+}
+```
+
+### 新后端文件
+
+| 文件 | 职责 |
+|---|---|
+| `oblivions/api/command.php` | JSON Command API HTTP 入口，只做请求/响应层 |
+| `oblivions/include/core/obl_json_request.php` | 读取并解析 JSON body |
+| `oblivions/include/core/obl_command_response.php` | 统一 success/error 响应与 HTTP 状态码 |
+| `oblivions/include/command/obl_command_contract.php` | 新命令 contract、payload schema、envelope 校验 |
+| `oblivions/include/command/obl_command_bus.php` | 认证、flock、状态门控、itm0 门控、dispatch、日志/保存/tick lifecycle |
+| `oblivions/include/command/obl_command_handlers.php` | 新命令到现有 domain 函数的适配 |
+
+### 新命令名
+
+| 旧命令 | 新命令 |
+|---|---|
+| `move` | `map.move` |
+| `obl_explore` | `map.explore` |
+| `obl_search` | `poi.search` |
+| `obl_pickup` | `item.pickup` |
+| `obl_discard` | `item.discard` |
+| `obl_use_item` | `item.use` |
+| `obl_organize` | `inventory.organize` |
+| `obl_craft` | `craft.execute` |
+| `obl_battle_start` | `battle.start` |
+| `obl_battle_action` | `battle.submit_turn` |
+
+注意：旧 `command.php` 没有升级为 JSON；它只作为旧核心入口保留。Oblivions 后续写操作应专注新 API。
+

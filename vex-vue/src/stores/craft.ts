@@ -9,7 +9,7 @@
 //   - openModal/closeModal/toggleBackpackSlot/toggleWbMaterial
 //   - adjustBackpackCount（[-][+] 按钮）
 //   - refreshPreview（防抖 200ms leading+trailing）
-//   - doCraft（提交 obl_craft 命令）
+//   - doCraft（提交 craft.execute 命令）
 //   - quickCraft（按配方自动选材）
 //
 // 事件：无监听（合成是用户主动触发的临时交互，不需要响应外部事件）
@@ -323,14 +323,14 @@ export const useCraftStore = defineStore('craft', () => {
   // ═══ 合成命令 ═══
 
   /**
-   * 提交 obl_craft 命令
+   * 提交 craft.execute 命令
    *
    * 成功路径（业务结果通过日志反馈）：
    *   - invalidate player_inventory + 广播 + 等待背包刷新
    *   - itm0Locked=true（产物卡 itm0）→ closeModal，交背包界面处理
    *   - itm0Locked=false（产物入背包）→ 清空素材池保持打开，支持连续合成
    *
-   * itm0 锁定由 execute() 内部 _checkLocks 第 3 层拦截（obl_craft itm0Allowed=false）。
+   * itm0 锁定由 execute() 内部 _checkLocks 第 3 层拦截（craft.execute itm0Allowed=false）。
    *
    * result.success 不反映业务失败（后端命令处理无 return，HTTP 响应恒为 {}）。
    */
@@ -345,9 +345,11 @@ export const useCraftStore = defineStore('craft', () => {
     let result;
     try {
       result = await commandQueue.execute({
-        command: 'obl_craft',
-        slots: slotsStr,
-        workbench_materials: wbStr,
+        command: 'craft.execute',
+        payload: {
+          slots: backpackSlots.value.map(s => ({ slot: Number(s.slot), count: Number(s.count) })),
+          workbench_materials: wbMaterialIds.value,
+        },
       });
     } catch (e) {
       debugBus.emit('error', 'craft:doCraftError', {

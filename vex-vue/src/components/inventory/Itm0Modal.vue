@@ -75,17 +75,17 @@ function slotMeta(item: InventoryItem): string {
           <button
             v-if="itm0.usable"
             class="term-btn"
-            :disabled="!commandQueue.canExecute('obl_use_item')"
+            :disabled="!commandQueue.canExecute('item.use')"
             @click="onUseItm0"
           >[使用]</button>
           <button
             class="term-btn"
-            :disabled="!commandQueue.canExecute('obl_organize')"
+            :disabled="!commandQueue.canExecute('inventory.organize')"
             @click="onOrganize"
           >[尝试堆叠合并]</button>
           <button
             class="term-btn"
-            :disabled="!commandQueue.canExecute('obl_discard')"
+            :disabled="!commandQueue.canExecute('item.discard')"
             @click="onDiscardItm0"
           >[丢到地上]</button>
         </div>

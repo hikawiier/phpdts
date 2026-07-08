@@ -14,7 +14,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // - tick 是时间驱动层，与玩家数据层（player.func.php）正交
 // - 推进策略（何时推进）与推进机制（如何推进）分离
 // - 监听器机制：业务系统注册监听器，tick 模块不硬编码业务分支
-// - 持久化统一由调用方负责（common.inc.php 末尾 / obl_command.php 显式调用）
+// - 持久化统一由调用方负责（Command API / Heartbeat Tick Orchestrator 显式调用）
 //   tick 模块只修改内存中的 $gamevars，通过 $ginfochange 标记通知调用方
 // ================================================================
 // 依赖：player.func.php + enemy_ai.func.php（由 obl_bootstrap.php 统一加载）
@@ -72,7 +72,7 @@ function obl_tick_reset_advance() {
  *
  * 调用场景：
  * - obl_tick_dispatch() 末尾：NPC 回合执行后推进
- * - obl_command.php [F] 段：玩家行为推进
+ * - Tick Orchestrator after-command：玩家行为推进
  *
  * @return void
  */
@@ -80,13 +80,13 @@ function obl_tick_advance() {
     global $gamevars, $ginfochange;
     if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
     $gamevars['obl_tick']++;
-    $ginfochange = true;  // 通知 common.inc.php 末尾持久化
+    $ginfochange = true;  // 通知调用方需要持久化 tick/gamevars
 }
 
 /**
  * 同步 obl_pretick = obl_tick（标记已处理的游戏刻）
  *
- * 由 common.inc.php 在调用 obl_resolve_tick_events() 之前调用。
+ * 由 Tick Orchestrator 在调用 obl_resolve_tick_events() 之前调用。
  *
  * @return void
  */
@@ -269,7 +269,7 @@ function obl_tick_dispatch($delta, &$ctx) {
                 'file'  => $e->getFile(),
                 'line'  => $e->getLine(),
                 'delta' => $delta,
-            ), 'api');  // request 来源：tick 事件处理通常在 api_v2.php 请求中触发
+            ), 'api');  // request 来源：tick 事件处理通常在 oblivions/api/heartbeat.php 请求中触发
         }
         return;  // 异常时不推进 tick，直接返回
     }
@@ -281,15 +281,15 @@ function obl_tick_dispatch($delta, &$ctx) {
 }
 
 /**
- * tick 事件处理入口（由 common.inc.php 调用）
+ * tick 事件处理入口（由 Tick Orchestrator 调用）
  *
  * 流程：
  *   1. 抓取当前玩家数据（MVP 策略：只有 1 名玩家，从 $cuser 抓取）
  *   2. 构造调度上下文
  *   3. 调用 obl_tick_dispatch() 执行三阶段处理
  *
- * 调用前已由 common.inc.php 同步 obl_pretick = obl_tick。
- * 调用后由 common.inc.php 末尾根据 $ginfochange 持久化 gamevars。
+ * 调用前已由 Tick Orchestrator 同步 obl_pretick = obl_tick。
+ * 调用后由 Tick Orchestrator 根据 $ginfochange 持久化 gamevars。
  *
  * @param int $delta 待处理的 tick 差值（obl_tick - obl_pretick 同步前的值）
  * @return void

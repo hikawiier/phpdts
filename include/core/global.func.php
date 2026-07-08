@@ -338,6 +338,13 @@ function save_gameinfo()
 	global $groomid,$gamenum,$gamestate,$lastupdate,$starttime,$winmode,$winner,$arealist,$areanum,$areatime,$areawarn,$validnum,$alivenum,$deathnum,$afktime,$optime,$weather,$hack,$combonum,$gamevars;
 	if(!isset($gamenum)||!isset($gamestate)){return;}
 
+	// Oblivions 阶段一：{$tablepre}oblgame 是 tick/gamevars 主存储；
+	// 旧 game.gamevars 仅保留过渡期兼容镜像。
+	if (function_exists('oblivions_is_active') && oblivions_is_active()
+		&& function_exists('obl_gamevars_sync_from_globals')) {
+		obl_gamevars_sync_from_globals();
+	}
+
 	if($gamestate > 10)
 	{
 		// OBLIVIONS 模式：不依赖 bra_players 查询，alivenum/deathnum/validnum 直接默认 0

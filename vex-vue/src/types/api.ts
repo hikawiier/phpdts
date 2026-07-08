@@ -7,7 +7,7 @@
 // 3. 存在未记录字段：tacpara / skillpara / obl_tick / obl_pretick
 // ══════════════════════════════════════════════════
 
-/** 玩家信息（api_v2.php?action=player_info） */
+/** 玩家信息（oblivions/api/state.php?scope=player_info） */
 export interface PlayerInfo {
   pid: string;
   type: string;
@@ -102,7 +102,7 @@ export interface EquipmentSlot {
   [key: string]: unknown;
 }
 
-/** 敌人信息（api_v2.php?action=enemies） */
+/** 敌人信息（oblivions/api/state.php?scope=enemies） */
 export interface Enemy {
   pid: string | number;
   type: string | number;
@@ -118,7 +118,7 @@ export interface Enemy {
   discovered: string | number;
 }
 
-/** 地图数据（api_v2.php?action=game_map） */
+/** 地图数据（oblivions/api/state.php?scope=game_map） */
 export interface GameMap {
   currentLocation: string | number;
   currentRegion: string | number;
@@ -138,7 +138,7 @@ export interface TileInfo {
   [key: string]: unknown;
 }
 
-/** 地格交互（api_v2.php?action=tile_actions） */
+/** 地格交互（oblivions/api/state.php?scope=tile_actions） */
 export interface TileActions {
   pois: Poi[];
   ground_items: GroundItem[];
@@ -181,7 +181,7 @@ export interface Poi {
   [key: string]: unknown;
 }
 
-/** 玩家背包（api_v2.php?action=player_inventory） */
+/** 玩家背包（oblivions/api/state.php?scope=player_inventory） */
 export interface PlayerInventory {
   slots: InventoryItem[];
   num: number;
@@ -214,7 +214,7 @@ export interface InventoryItem {
   [key: string]: unknown;
 }
 
-/** 技能列表（api_v2.php?action=skill_list） */
+/** 技能列表（oblivions/api/state.php?scope=skill_list） */
 export interface SkillList {
   skills: Skill[];
   player_ap: string | number;
@@ -222,7 +222,7 @@ export interface SkillList {
 }
 
 /**
- * 技能对象（api_v2.php?action=skill_list 返回的 skills 数组元素）
+ * 技能对象（oblivions/api/state.php?scope=skill_list 返回的 skills 数组元素）
  *
  * 字段名以原前端 battle-preload.js 实际使用为准（act_id 而非 skill_id）。
  */
@@ -256,7 +256,7 @@ export interface Skill {
   [key: string]: unknown;
 }
 
-/** 结构化日志条目（api_v2.php?action=obl_log） */
+/** 结构化日志条目（oblivions/api/state.php?scope=obl_log） */
 export interface LogEntry {
   id: string; // {logcategory}.{subevent}
   logcategory:
@@ -274,13 +274,13 @@ export interface LogEntry {
   ts: number;
 }
 
-/** 日志响应（api_v2.php?action=obl_log） */
+/** 日志响应（oblivions/api/state.php?scope=obl_log） */
 export interface OblLogResponse {
   entries: LogEntry[];
   total: number;
 }
 
-/** 错误日志条目（api_v2.php?action=obl_error） */
+/** 错误日志条目（oblivions/api/state.php?scope=obl_error） */
 export interface ErrorLogEntry {
   /** 错误 ID，命名规则 {模块}.{错误类型}，如 'tick.dispatch.error' */
   id: string;
@@ -292,7 +292,7 @@ export interface ErrorLogEntry {
   request: string;
 }
 
-/** 错误日志响应（api_v2.php?action=obl_error） */
+/** 错误日志响应（oblivions/api/state.php?scope=obl_error） */
 export interface OblErrorLogResponse {
   entries: ErrorLogEntry[];
   total: number;
@@ -309,7 +309,7 @@ export interface RollData {
 }
 
 /**
- * 战斗日志条目（api_v2.php?action=battle_log）
+ * 战斗日志条目（oblivions/api/state.php?scope=battle_log）
  *
  * 字段对应后端 BattleLogCollector::emit() 的实际输出（设计案2 v3）。
  * 后端 obl_battle_log_load 默认过滤 debug=true，前端拿到的全是 debug=false 原料。
@@ -369,13 +369,13 @@ export interface BattleLogEntry {
   bl_segment_flag: 'round_start' | 'turn_start' | 'battle_end' | 'ambush_battle_end' | null;
 }
 
-/** 战斗日志响应（api_v2.php?action=battle_log） */
+/** 战斗日志响应（oblivions/api/state.php?scope=battle_log） */
 export interface BattleLogResponse {
   entries: BattleLogEntry[];
   total: number;
 }
 
-/** 敌人列表响应（api_v2.php?action=enemies） */
+/** 敌人列表响应（oblivions/api/state.php?scope=enemies） */
 export interface EnemiesResponse {
   enemies: Enemy[];
 }
@@ -384,7 +384,7 @@ export interface EnemiesResponse {
 // 合成系统类型（v2.2 新增，依赖契约补丁设计案 C1/C2）
 // ══════════════════════════════════════════════════
 
-/** craft_preview 响应（api_v2.php?action=craft_preview） */
+/** craft_preview 响应（oblivions/api/state.php?scope=craft_preview） */
 export interface CraftPreviewResult {
   /** 匹配配方数（0=不匹配，1=可合成，≥2=指向不明确） */
   match_count: number;
@@ -407,7 +407,7 @@ export interface PreviewLog {
 export interface WorkbenchMaterial {
   /** 来源类型（'cat'=猫身上 / 'poi'=地图格 POI） */
   source: 'cat' | 'poi';
-  /** 工作台素材唯一标识（用于 obl_craft 和 craft_preview 的 workbench_materials 参数） */
+  /** 工作台素材唯一标识（用于 craft.execute 和 craft_preview 的 workbench_materials 参数） */
   id: string;
   /** 关联的 item_table 道具 ID */
   item_id: string;

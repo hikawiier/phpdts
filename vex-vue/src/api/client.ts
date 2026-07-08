@@ -1,19 +1,77 @@
-import { API_ACTIONS, type ApiAction } from './endpoints';
+import type { ApiAction } from './endpoints';
 import { perf } from '@/utils/perf';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
+export const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
+
+function buildReadApiUrl(action: ApiAction, params: Record<string, string> = {}): string {
+  const query = new URLSearchParams({ ...params, scope: action }).toString();
+  return `${API_BASE}/oblivions/api/state.php?${query}`;
+}
+
+let oblHeartbeatInFlight: Promise<unknown> | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
- * 只读 API：GET api_v2.php?action=xxx
+ * Oblivions 显式 tick 心跳。
  *
- * 与现有 vex/js/utils.js 的 gameApi() 语义一致：返回完整响应对象
- * `{status: 'success'|'error', data, ...}`，调用方负责检查 status。
+ * 阶段三后 State API 纯读，不再通过读请求隐式推进 tick，
+ * 战斗状态机和 battlelog 导演在读取状态前必须显式等待 heartbeat 完成。
+ * 这里做前端侧请求去重，避免 daemon 与 refreshBattle 同时抢房间锁。
+ */
+export async function oblHeartbeat(): Promise<unknown> {
+  if (oblHeartbeatInFlight) return oblHeartbeatInFlight;
+
+  oblHeartbeatInFlight = perf.spanAsync('oblHeartbeat', 'api', async () => {
+    let lastLockResponse: unknown = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(`${API_BASE}/oblivions/api/heartbeat.php`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        throw new Error('heartbeat 返回格式错误（非 JSON）');
+      }
+      const data = await res.json();
+
+      // heartbeat 与 command 共享房间锁。daemon / refreshBattle / command 临界区偶发重叠时，
+      // 后端会返回 COMMAND_IN_PROGRESS；短重试可恢复“读状态前已结算”的确定性。
+      const code = typeof data?.code === 'string' ? data.code : '';
+      if (!res.ok && res.status === 409 && code === 'COMMAND_IN_PROGRESS') {
+        lastLockResponse = data;
+        await sleep(80 + attempt * 120);
+        continue;
+      }
+
+      if (!res.ok) {
+        const message = typeof data?.message === 'string' ? data.message : res.statusText;
+        throw new Error(`heartbeat HTTP ${res.status}: ${message}`);
+      }
+      return data;
+    }
+
+    // 锁持续占用时软返回，避免导演刷新链路直接报错；下一轮刷新会继续推进。
+    return lastLockResponse;
+  }).finally(() => {
+    oblHeartbeatInFlight = null;
+  });
+
+  return oblHeartbeatInFlight;
+}
+
+
+/**
+ * Oblivions 只读 State API：GET oblivions/api/state.php?scope=xxx。
+ *
+ * 返回完整响应对象 `{status: 'success'|'error', data, ...}`，调用方负责检查 status。
  * 仅在 HTTP 错误或网络异常时抛出（这些是真正的异常情况）。
- *
- * 注意：实际 API 返回 status: 'success'（非 'ok'），见迁移计划 2.9 节。
  */
 export async function gameApi(action: ApiAction): Promise<ApiResponse> {
-  const url = `${API_BASE}/api_v2.php?action=${action}`;
+  const url = buildReadApiUrl(action);
   return perf.spanAsync(`gameApi(${action})`, 'api', async () => {
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) {
@@ -28,7 +86,7 @@ export async function gameApi(action: ApiAction): Promise<ApiResponse> {
 }
 
 /**
- * 带参只读 API：GET api_v2.php?action=xxx&key=val&...
+ * 带参 Oblivions 只读 State API：GET state.php?scope=xxx&key=val&...。
  *
  * 供 craft_preview 等需要查询参数的端点使用（gameApi 不带参数，无法覆盖）。
  * 不走 dataManager 缓存（参数化端点每次实时拉取）。
@@ -40,8 +98,7 @@ export async function gameApiWithParams(
   action: ApiAction,
   params: Record<string, string>,
 ): Promise<ApiResponse> {
-  const query = new URLSearchParams({ action, ...params }).toString();
-  const url = `${API_BASE}/api_v2.php?${query}`;
+  const url = buildReadApiUrl(action, params);
   return perf.spanAsync(`gameApi(${action})`, 'api', async () => {
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) {
@@ -70,55 +127,6 @@ export async function gameApiData<T = unknown>(action: ApiAction): Promise<T> {
 }
 
 /**
- * 写入 API：POST command.php（Oblivions 模式）
- *
- * 与现有 vex/js/utils.js 的 submitCommand() 语义一致：
- * 返回 `{success, gamedata, redirect, timer, error, message}`。
- * Oblivions 模式后端返回空对象（无 gamedata），此时 success=true。
- */
-export async function submitCommand(
-  params: Record<string, string>,
-): Promise<CommandResult> {
-  const body = new URLSearchParams({ mode: 'command', ...params });
-  return perf.spanAsync(`submitCommand(${params.command || 'unknown'})`, 'api', async () => {
-    try {
-      const res = await fetch(`${API_BASE}/command.php`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        return { success: false, error: 'HTTP_ERROR', status: res.status };
-      }
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
-        console.error('[submitCommand] non-JSON response — PHP crash or access denied:', await res.text().catch(() => '(empty)'));
-        return { success: false, error: 'SERVER_ERROR', message: '服务器内部错误' };
-      }
-      const gamedata = await res.json();
-      // P2 修复：gamedata.error 存在时（如 COMMAND_IN_PROGRESS）不应误判为成功
-      const hasError = !!gamedata.error;
-      return {
-        success: !hasError,
-        gamedata,
-        redirect: gamedata.redirect || null,
-        timer: gamedata.timer || null,
-        error: gamedata.error || null,
-        message: hasError ? '命令执行中，请稍候' : null,
-      };
-    } catch (e) {
-      // 网络错误（断网/CORS/DNS 失败）返回错误对象，不抛异常（与原 vex/js/utils.js 一致）
-      return {
-        success: false,
-        error: 'NETWORK_ERROR',
-        message: e instanceof Error ? e.message : String(e),
-      };
-    }
-  });
-}
-
-/**
  * 零依赖接口：标记战斗日志已播放
  * POST oblivions/mark_battle_log_played.php（groomid/pid/log_ids）
  */
@@ -144,31 +152,9 @@ export async function markBattleLogPlayed(
   return res.json();
 }
 
-/**
- * 调试用：批量写入 AI dump（JSON Lines 格式）
- * POST api_v2.php?action=ai_dump_save
- *
- * 注意：现有 debug.js 使用 Content-Type: text/plain，这里保持一致。
- */
-export async function aiDumpSave(jsonLines: string): Promise<unknown> {
-  const res = await fetch(
-    `${API_BASE}/api_v2.php?action=${API_ACTIONS.AI_DUMP_SAVE}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: jsonLines,
-      credentials: 'include',
-    },
-  );
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-  }
-  return res.json();
-}
-
 // ─── 响应类型定义 ───
 
-/** API 通用响应结构（api_v2.php 所有只读端点共用） */
+/** API 通用响应结构（Oblivions State API） */
 export interface ApiResponse {
   status: 'success' | 'error';
   data?: unknown;
@@ -177,7 +163,7 @@ export interface ApiResponse {
   [key: string]: unknown;
 }
 
-/** command.php 提交结果（与现有 utils.js submitCommand 返回结构一致） */
+/** 命令提交结果（JSON Command API 适配旧调用语义） */
 export interface CommandResult {
   success: boolean;
   gamedata?: Record<string, unknown>;

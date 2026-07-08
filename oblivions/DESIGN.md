@@ -80,13 +80,13 @@
 ### 1.7 游戏刻 (tick) 与推进驱动
 
 - 游戏刻存储在 `$gamevars['obl_tick']`，`$gamevars['obl_pretick']` 标记已处理到的刻
-- **前端心跳是后端 tick 推进的唯一驱动力**：前端守护进程 200ms fire-and-forget 调用 `api_v2.php?action=heartbeat`，触发 common.inc.php 末尾检测 `obl_pretick < obl_tick` 并执行 `obl_resolve_tick_events($delta)` 调度 NPC 敌人行动
+- **前端心跳是后端 tick 推进的唯一驱动力**：前端显式调用 `oblivions/api/heartbeat.php`，由 Oblivions Tick Orchestrator 检测 pending tick 并调度 NPC 敌人行动
 - **tick 推进的两种触发源**：
   - 玩家提交推进 tick 的命令（`move` / `obl_explore` / `obl_search` / `obl_battle_start` / `obl_battle_action`）→ `obl_command.php` [F] 段 `obl_tick_advance()`
   - NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`，下次心跳继续处理
 - **玩家操作与 NPC 回合互斥**：由战斗状态机管辖，PROCESSING 状态时拒绝推进 tick 的命令（[C2b]，防止玩家在 NPC 行动期间重复提交）
 
-> 完整链路（heartbeat → common.inc.php → tick 推进）与 PROCESSING 实际生命周期详见 [§2.16 前端守护进程模型](#216-前端守护进程模型心跳)。
+> 完整链路（heartbeat.php → Oblivions Runtime → Tick Orchestrator）与 PROCESSING 实际生命周期详见 [§2.16 前端守护进程模型](#216-前端守护进程模型心跳)。
 
 ### 1.8 回合 (Turn) vs 轮 (Round)
 
@@ -475,34 +475,39 @@ Oblivions 有三套独立的日志系统，后端 emit 的每个 ID 必须在前
 
 前端是后端游戏刻推进的唯一驱动力。
 
-**两个独立定时器，职责分离**：
+**两个独立后台节拍，职责分离**：
 
 | 定时器 | 职责 | 间隔 | 与前端业务耦合 |
 |--------|------|------|--------------|
-| 心跳守护进程 | 纯 tick 激活，fire-and-forget | 200ms | **零耦合** — 不读响应 body，不触发任何 store |
+| 心跳守护进程 | 纯 tick 激活，fire-and-forget | PROCESSING 300ms；其他状态 1000ms | 只读取 `playerStore.oblBattleState` 选择快/慢档，不触发业务 store 刷新 |
 | NPC 状态轮询 | 前端状态同步（`refreshBattle`） | 1000ms | 无改动，沿用原有逻辑 |
 
 **设计原则**：
-- 心跳与前端业务数据同步彻底解耦，心跳不做任何"帮后端判断是否推进"的逻辑
-- 原有 NPC 轮询定时器的隐含双重职责（tick 激活 + 状态同步）被心跳剥离后，变为纯粹的"状态发现"
+- heartbeat 是状态推进接口，必须使用 `POST /phpdts/oblivions/api/heartbeat.php`；后端拒绝 GET
+- 心跳与前端业务数据同步解耦：心跳只推进 tick，不组装 state 数据
+- 频率只做两档：`PROCESSING` 快速推进 NPC / battlelog，其他状态降到 1000ms 减少空转请求
+- 守护进程使用 `setTimeout` 串行调度，避免上一次 heartbeat 未结束时下一次请求重叠
+- 原有 NPC 轮询定时器的隐含双重职责（tick 激活 + 状态同步）被心跳剥离后，变为纯粹的“状态发现”
 - 动画播放期间心跳持续不受影响，`refreshBattle` 由 `isProcessingBattle` 锁保护
 
-**入口**：`api_v2.php?action=heartbeat`，响应仅 `{"status":"success"}`，不进业务字段组装。
+**入口**：`oblivions/api/heartbeat.php`，响应 Tick Orchestrator 的 JSON 结果，不进 State API 业务字段组装。
 
 **实施**：`battle.ts` 新增 `startDaemonPoll/stopDaemonPoll`，`App.vue` `onMounted` 启动。
 
 #### 2.16.1 heartbeat → tick 推进完整链路
 
-heartbeat 之所以能驱动后端 tick 推进，是因为 `api_v2.php` 第 11 行 `require_once './include/core/common.inc.php'`——**所有 API 请求（含 heartbeat）都会加载 common.inc.php**，而 common.inc.php 末尾会检测并处理未消费的 tick 差值：
+heartbeat 由 `oblivions/api/heartbeat.php` 显式驱动。该入口加载 Oblivions Runtime 与 Tick Orchestrator，不依赖 `common.inc.php` 的旧请求生命周期：
 
 ```
-前端 _daemonBeat（200ms 周期）
+前端 _daemonBeat（PROCESSING 300ms；其他状态 1000ms）
   ↓
-fetch('/api_v2.php?action=heartbeat')
+POST /phpdts/oblivions/api/heartbeat.php
   ↓
-api_v2.php 加载 common.inc.php
+heartbeat.php 加载 Oblivions Runtime 与 Tick Orchestrator
   ↓
-common.inc.php 末尾检测：obl_pretick < obl_tick ?
+obl_tick_orchestrator_heartbeat()
+  ↓
+检测 obl_pretick < obl_tick ?
   ↓ 是
 obl_tick_synchronize()      // 标记已处理（obl_pretick = obl_tick）
   ↓
@@ -514,34 +519,34 @@ obl_resolve_tick_events()   // 触发 NPC 行动
   ↓
 NPC 行动后 obl_tick_request_advance() → 末尾 obl_tick_advance()（obl_tick++）
   ↓
-$ginfochange = true → save_gameinfo() 持久化 obl_tick/obl_pretick
+oblgame 持久化 obl_tick/obl_pretick
   ↓
 下次 heartbeat 检测 obl_pretick < obl_tick 仍成立 → 继续 NPC 行动循环
 ```
 
 **关键设计点**：
-- 心跳请求**不携带任何业务参数**，仅触发 common.inc.php 的末尾逻辑
-- 后端通过 `obl_pretick < obl_tick` 判断是否有未处理 tick，与请求来源无关——任何请求（含 command.php 命令提交）都会触发同样的处理
+- 心跳请求**不携带任何业务参数**，只通过 POST 触发 Tick Orchestrator
+- 后端通过 `obl_pretick < obl_tick` 判断是否有未处理 tick，与请求来源无关
 - NPC 多回合连击时，每次心跳推进一个 NPC 行动，通过 `obl_tick_request_advance` 自驱动下次心跳继续
 
 #### 2.16.2 PROCESSING 的实际生命周期
 
-由于心跳 200ms 高频驱动，PROCESSING 通常在 **200-400ms 内**（一个心跳周期）被处理完：
+由于 PROCESSING 下心跳以 300ms 快速驱动，PROCESSING 通常在 **300-600ms 内**（一到两个心跳周期）被处理完：
 
 | 场景 | PROCESSING 持续时间 | 前端感知 |
 |------|---------------------|---------|
-| 单次 NPC 行动 | 200-400ms | 1 秒轮询大概率看不到，已切回 PLAYER_TURN |
-| NPC 多回合连击（self_loop） | N × 200ms | 1 秒轮询可能看到 PROCESSING |
+| 单次 NPC 行动 | 300-600ms | 1 秒轮询大概率看不到，已切回 PLAYER_TURN |
+| NPC 多回合连击（self_loop） | N × 300ms | 1 秒轮询可能看到 PROCESSING |
 | 服务器高负载 / 数据库慢 | 不定 | 1 秒轮询看到 PROCESSING，启动轮询循环 |
 
 **前端实际感知 PROCESSING 的场景**：
-1. 玩家执行 `obl_battle_action` 后 `_checkBattleState` 立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
+1. 玩家执行 `battle.submit_turn` 后立即拉取 `player_info`——可能在守护进程推动 NPC 行动前看到 PROCESSING（这是 PROCESSING 锁的主要触发场景）
 2. NPC 多回合连击时 1 秒轮询拉取到 PROCESSING
 
 **设计含义**：
 - 前端 PROCESSING 锁（`commandQueue` 第 5 层，仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令）实际是兜底机制，触发概率低但必要
-- 前端 1 秒轮询拉取 player_info 是"状态发现"，不是"驱动后端"——这是常见误解
-- 真正驱动后端 NPC 行动的是 200ms 心跳，而非 1 秒轮询
+- 前端 1 秒轮询拉取 player_info 是“状态发现”，不是“驱动后端”——这是常见误解
+- 真正驱动后端 NPC 行动的是 heartbeat，而非 1 秒轮询
 
 ### 2.17 Phase 0 vs Phase 1 — 两阶段战斗执行分离
 

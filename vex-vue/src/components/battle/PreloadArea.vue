@@ -7,8 +7,8 @@
 // - 下半区：AP 进度条（预测扣除段）+ 装填队列 + 执行/清空按钮
 //
 // 两种模式：
-// - 'pre-battle'：玩家点击敌人后、战斗开始前。执行 → obl_battle_start
-// - 'in-battle'：战斗中玩家回合。执行 → obl_battle_action
+// - 'pre-battle'：玩家点击敌人后、战斗开始前。执行 → battle.start
+// - 'in-battle'：战斗中玩家回合。执行 → battle.submit_turn
 //
 // 瞄准模式（target=enemy 且无 enemyPid 时触发）：
 // - 进入瞄准 → broadcast 'battle:aim-mode' → AimMode 组件接管地图选目标
@@ -292,6 +292,15 @@ function getTargetDisplayText(targetPid: number): string {
   return `目标${pid}`;
 }
 
+
+function normalizeActions(actions: QueueItem[]): Array<{ act_id: string; target: number; params: Record<string, unknown> }> {
+  return actions.map((action) => ({
+    act_id: action.act_id,
+    target: Number(action.target),
+    params: {},
+  }));
+}
+
 // ══════════════════════════════════════════════════
 // 执行装填队列
 // ══════════════════════════════════════════════════
@@ -304,13 +313,13 @@ async function onExecute(): Promise<void> {
   let result;
   if (mode.value === 'pre-battle') {
     result = await commandQueue.execute({
-      command: 'obl_battle_start',
-      actions: JSON.stringify(actions),
+      command: 'battle.start',
+      payload: { actions: normalizeActions(actions) },
     });
   } else {
     result = await commandQueue.execute({
-      command: 'obl_battle_action',
-      actions: JSON.stringify(actions),
+      command: 'battle.submit_turn',
+      payload: { actions: normalizeActions(actions) },
     });
   }
 

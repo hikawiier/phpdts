@@ -410,19 +410,19 @@ onUnmounted(() => {
                 <template v-if="itm0Locked">
                   <button
                     class="term-btn block"
-                    :disabled="!commandQueue.canExecute('obl_organize')"
+                    :disabled="!commandQueue.canExecute('inventory.organize')"
                     @click="onOrganize"
                   >[尝试堆叠合并]</button>
                   <button
                     class="term-btn block"
-                    :disabled="!commandQueue.canExecute('obl_discard')"
+                    :disabled="!commandQueue.canExecute('item.discard')"
                     @click="onDiscardItm0"
                   >[丢到地上]</button>
                 </template>
                 <template v-else>
                   <button
                     class="term-btn block craft-submit"
-                    :disabled="!craftStore.isCraftable || !commandQueue.canExecute('obl_craft')"
+                    :disabled="!craftStore.isCraftable || !commandQueue.canExecute('craft.execute')"
                     @click="onCraft"
                   >[合成]</button>
                 </template>

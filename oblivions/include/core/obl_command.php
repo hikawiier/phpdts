@@ -1,21 +1,15 @@
 <?php
 /**
- * Oblivions 模式命令入口
+ * @deprecated 根目录旧 command.php 的 Oblivions 兼容处理器。
  *
- * 由 command.php 在 Oblivions 模式下 require，处理全部 Oblivions 命令流程：
- * 认证 → 路由分发 → 日志持久化 → tick 推进 → 保存 → 响应
- *
- * 设计原则：
- * - 不使用 extract，直接操作 $pdata
- * - 跳过传统预检查/模板渲染（SPA 前端不需要）
- * - 前端通过 api_v2.php 获取业务数据，本文件只返回最小确认
+ * 当前前端运行期已经改用 oblivions/api/command.php + Command Bus。
+ * 本文件仅保留给旧 command.php 路径兜底，不应作为新功能入口。
  */
 
-// obl_bootstrap.php 已由 command.php 在 require 本文件之前加载
+// 兼容路径：obl_bootstrap.php 由根目录旧 command.php 在 require 本文件之前加载
 // player.func.php / tick.func.php 等所有函数库均已可用
 
-// $obl_log 已在 common.inc.php 中初始化（核心机制，放全局入口）
-// 此处无需重复初始化
+// 兼容路径：日志收集器通常由旧入口初始化；新 Command API 由 obl_runtime_boot() 初始化
 
 // [A0] 兜底关闭函数：PHP 崩溃时仍输出 JSON 错误
 // 注册在 [H] 输出之前，只在真正发生 fatal error 时触发
@@ -56,7 +50,7 @@ $cmd = $main = '';
 $cmdnum = 0;
 $gamedata = array();
 
-// $command/$mode 来自 common.inc.php 的 POST extract（POST 参数）
+// 兼容路径：$command/$mode 来自旧入口的 POST extract（POST 参数）
 if (!isset($mode)) $mode = '';
 if (!isset($command)) $command = '';
 $cmdcdtime = 0;
@@ -124,7 +118,7 @@ if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) {
 
 // [E2] 战斗日志持久化
 // 所有 battlelog（含玩家命令 obl_battle_start/obl_battle_action 和遭遇战）都持久化到文件，
-// 前端通过 api_v2.php handle_battle_log 拉取 played=0 的条目播放，
+// 前端通过 oblivions/api/state.php?scope=battle_log 拉取 played=0 的条目播放，
 // 播完后调 mark_battle_log_played.php 标记 played=1。
 if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
 	obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
@@ -166,8 +160,8 @@ if (!$command_rejected && !$escape_skip_tick
     save_gameinfo();                // 命令路径需显式持久化（无 common 末尾兜底）
 }
 
-// [H] 响应（前端通过 api_v2.php 获取数据，本文件返回最小确认）
-// battlelog 不再随响应返回：所有 battlelog 持久化到文件，前端统一通过 api_v2.php 拉取 played=0 的条目。
+// [H] 响应（前端通过 oblivions/api/state.php 获取数据，本文件返回最小确认）
+// battlelog 不再随响应返回：所有 battlelog 持久化到文件，前端统一通过 oblivions/api/state.php?scope=battle_log 拉取 played=0 的条目。
 ob_clean();
 header('Content-Type: application/json');
 echo compatible_json_encode(array());

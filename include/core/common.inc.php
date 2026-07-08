@@ -94,7 +94,7 @@ if (!in_array(CURSCRIPT, array('chat', 'install'))) {
 	}));
 
 	if (count($rate_data['requests']) >= $rate_cfg['max_requests']) {
-		if (CURSCRIPT === 'command' || isset($_GET['is_new']) || isset($_GET['vex_api'])) {
+		if (CURSCRIPT === 'command' || isset($_GET['is_new'])) {
 			ob_clean();
 			echo compatible_json_encode(array('error' => 'Rate limit exceeded'));
 			exit();
@@ -279,6 +279,14 @@ if(CURSCRIPT !== 'chat')
 	$lock_acquired = ($lock_row && $lock_row['lock_acquired'] == 1);
 	
 	load_gameinfo();
+	// Oblivions 阶段一：加载旧 game 行后，立刻用 {$tablepre}oblgame 覆盖 $gamevars tick 兼容镜像；$gamestate 仍以旧 game 表为准。
+	if (function_exists('oblivions_is_active') && oblivions_is_active()) {
+		require_once GAME_ROOT.'./oblivions/include/core/obl_bootstrap.php';
+		if (function_exists('obl_gamevars_sync_to_globals')) {
+			// 只有拿到房间锁时才允许自动创建缺失的 oblgame 行；未拿到锁时只读现有行。
+			obl_gamevars_sync_to_globals($lock_acquired);
+		}
+	}
 	$lostfocus = false;
 	$ginfochange = false;
 
@@ -316,7 +324,7 @@ if(CURSCRIPT !== 'chat')
 			$obl_log = new OblivionsLogger();
 		}
 		// 错误日志收集器初始化（与 $obl_log 物理隔离，独立持久化）
-		// 后端异常捕获时 emit 到 $obl_error_log，前端通过 api_v2.php ?action=obl_error 拉取
+		// 后端异常捕获时 emit 到 $obl_error_log，前端通过 oblivions/api/state.php?scope=obl_error 拉取
 		if (!isset($obl_error_log)) {
 			$obl_error_log = new OblivionsErrorLogger();
 		}
@@ -327,37 +335,11 @@ if(CURSCRIPT !== 'chat')
 		}
 	}
 
-		// Oblivions 游戏刻事件处理（在锁内，确保原子性）
-	// 模型：obl_tick_synchronize() 同步 obl_pretick = obl_tick（标记已处理），
-	// 再执行 tick 事件处理。tick 事件处理内部如果 NPC 先攻轮执行了，
-	// 会通过 obl_tick_advance() 推进 obl_tick++（产生新的未处理游戏刻），
-	// 下次请求 obl_pretick < obl_tick 仍成立，前端自动刷新循环。
-	// obl_tick 唯两处增加：NPC 先攻轮（obl_tick_dispatch 末尾）/ 玩家先攻轮（obl_command [F] 段），互斥。
-	// tick.func.php 已由 obl_bootstrap.php 加载，无需条件 include
-	if (function_exists('oblivions_is_active') && oblivions_is_active()
-		&& isset($gamevars['obl_tick']) && isset($gamevars['obl_pretick'])
-		&& $gamevars['obl_pretick'] < $gamevars['obl_tick'])
-	{
-		$delta = (int)$gamevars['obl_tick'] - (int)$gamevars['obl_pretick'];
-		// 先同步 obl_pretick（标记已处理的游戏刻）
-		obl_tick_synchronize();
-		// 再执行 tick 事件处理（内部可能推进 obl_tick，产生新的未处理游戏刻）
-		obl_resolve_tick_events($delta);
-
-		// 战斗状态机超时恢复：检测卡在 PROCESSING 状态超过 30 秒的战场
-		// 场景：NPC 行动已完成但状态未更新（如异常退出、逻辑遗漏）
-		// 恢复策略：降级到 PLAYER_TURN（假设处理已完成）
-		if (function_exists('obl_battle_state_find_stale')) {
-			$stale_qids = obl_battle_state_find_stale(30, OBL_BS_PROCESSING);
-			foreach ($stale_qids as $stale_qid) {
-				if (function_exists('obl_battle_state_reset')) {
-					obl_battle_state_reset($stale_qid, OBL_BS_PLAYER_TURN);
-				}
-			}
-		}
-
-		$ginfochange = true;  // 触发 save_gameinfo() 持久化 obl_tick/obl_pretick
-	}
+		// Oblivions 阶段三：common.inc.php 不再承担 tick 解析职责。
+	// pending tick / NPC / battle PROCESSING 恢复统一由：
+	//   D:\wamp64\www\phpdts\oblivions\api\heartbeat.php
+	//   -> obl_tick_orchestrator_heartbeat()
+	// 显式触发。旧 api_v2.php 等只读请求不得再隐式推进世界。
 
 		if($ginfochange || $lostfocus){
 			save_gameinfo();

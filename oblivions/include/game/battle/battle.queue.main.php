@@ -224,7 +224,7 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
     // ── 5. 确定下一顺位 + 状态转换 ──
     // 注意：玩家回合中的 battle_manage_queue 调用时状态为 PLAYER_TURN，
     // 此时不应重复触发 player_turn（PROCESSING → PLAYER_TURN），
-    // 由 obl_command.php [C2d] 在返回后执行 PLAYER_TURN → PROCESSING。
+    // 由 Command Bus / Tick Orchestrator 在玩家行动完成后执行 PLAYER_TURN → PROCESSING。
     $next = $undone[0] ?? null;
     $result['next'] = $next;
     obl_battle_state_set_next_pid($qid, $next ? (int)$next['pid'] : 0);

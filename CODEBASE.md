@@ -15,7 +15,7 @@
                 ├── admin.php      → 后台管理
                 ├── index.php      → 首页/房间列表
                 ├── chat.php       → 聊天轮询（跳过锁检查）
-                ├── api_v2.php     → API v2
+                ├── oblivions/api/state.php → Oblivions State API（api_v2.php 已移除）
                 └── 其他入口       → end.php, winner.php, record.php...
                 │
                 └── require './include/core/common.inc.php'

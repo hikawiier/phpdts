@@ -113,13 +113,13 @@ export const useTileActionStore = defineStore('tileAction', () => {
    * 探索周围
    *
    * 迁移自现有 tile-action.js handleExplore()：
-   *   - commandQueue.execute(obl_explore)
+   *   - commandQueue.execute(map.explore)
    *   - 成功后失效 tile_actions/player_inventory/game_map + loadMap + 广播
    */
   async function handleExplore(): Promise<void> {
     debugBus.emit('action', 'explore:trigger', {});
     try {
-      const result = await commandQueue.execute({ command: 'obl_explore' });
+      const result = await commandQueue.execute({ command: 'map.explore', payload: {} });
       if (result.success) {
         dataManager.invalidate('tile_actions');
         dataManager.invalidate('player_inventory');
@@ -145,15 +145,15 @@ export const useTileActionStore = defineStore('tileAction', () => {
    * 搜索 POI
    *
    * 迁移自现有 tile-action.js handleSearch()：
-   *   - commandQueue.execute(obl_search)
+   *   - commandQueue.execute(poi.search)
    *   - 成功后失效 tile_actions/player_inventory + 广播 + 重新打开该 POI 模态框
    */
   async function handleSearch(iaid: string | number): Promise<void> {
     debugBus.emit('action', 'search:trigger', { iaid });
     try {
       const result = await commandQueue.execute({
-        command: 'obl_search',
-        iaid: String(iaid),
+        command: 'poi.search',
+        payload: { iaid: Number(iaid) },
       });
       if (result.success) {
         dataManager.invalidate('tile_actions');
@@ -179,15 +179,15 @@ export const useTileActionStore = defineStore('tileAction', () => {
    * 拾取单个道具
    *
    * 迁移自现有 tile-action.js handlePickup()：
-   *   - commandQueue.execute(obl_pickup)
+   *   - commandQueue.execute(item.pickup)
    *   - 成功后失效 tile_actions/player_inventory + 广播 + 重新拉取刷新模态框
    */
   async function handlePickup(iid: string | number): Promise<void> {
     debugBus.emit('action', 'pickup:trigger', { iid });
     try {
       const result = await commandQueue.execute({
-        command: 'obl_pickup',
-        iid: String(iid),
+        command: 'item.pickup',
+        payload: { iid: Number(iid) },
       });
       if (result.success) {
         dataManager.invalidate('player_inventory');
@@ -212,7 +212,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
    * 批量拾取
    *
    * 迁移自现有 tile-action.js handlePickupAll()：
-   *   - 逐个执行 obl_pickup
+   *   - 逐个执行 item.pickup
    *   - 背包已满时提前终止
    *   - 完成后失效缓存 + 广播 + 关闭模态框
    */
@@ -222,8 +222,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
       let bagFull = false;
       for (let i = 0; i < items.length; i++) {
         const result = await commandQueue.execute({
-          command: 'obl_pickup',
-          iid: String(items[i].iid),
+          command: 'item.pickup',
+          payload: { iid: Number(items[i].iid) },
         });
         if (!result.success) {
           failCount++;
@@ -261,7 +261,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
    *
    * 迁移自现有 tile-action.js handleSwitchRegion()：
    *   - 判断当前格是否为出口/入口
-   *   - commandQueue.execute(move)
+   *   - commandQueue.execute(map.move)
    *   - 成功后失效缓存 + loadMap + 广播
    */
   async function handleSwitchRegion(): Promise<void> {
@@ -287,8 +287,8 @@ export const useTileActionStore = defineStore('tileAction', () => {
     debugBus.emit('action', 'switchRegion:trigger', { targetPls });
     try {
       const result = await commandQueue.execute({
-        command: 'move',
-        moveto: String(targetPls),
+        command: 'map.move',
+        payload: { to: Number(targetPls) },
       });
       if (result.success) {
         dataManager.invalidate('game_map');

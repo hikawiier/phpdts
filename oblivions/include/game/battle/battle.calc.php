@@ -11,14 +11,14 @@ if (!defined('IN_GAME')) {
 /**
  * 获取对象的基本攻击射程
  *
- * 阶段一固定返回 1（近战）。未来由武器类型决定。
+ * 当前固定返回 1（近战）。TODO：未来由武器类型决定。
  *
  * @param array &$actor_data 对象数据
  * @return int 射程（BFS 跳数）
  */
 function obl_get_range(&$actor_data)
 {
-    $basic_range = 1; //基础射程，阶段一固定为1（近战），未来由武器类型决定
+    $basic_range = 1; //基础射程，当前固定为1（近战）；TODO：未来由武器类型决定
     $fix_range = obl_get_range_fix($actor_data,$basic_range);
     return $fix_range;
 }
@@ -119,7 +119,7 @@ function obl_get_action_range_meta(&$actor_data, $act_id)
 /**
  * 获取对象的先攻属性
  *
- * 阶段一：返回 50。
+ * 当前：返回 50。TODO：未来接入命中公式。
  * 未来可扩展：技能补正。
  *
  * @param array &$actor_data 对象数据
