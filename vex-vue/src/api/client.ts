@@ -3,9 +3,28 @@ import { perf } from '@/utils/perf';
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
 
+const DEFAULT_FETCH_TIMEOUT = 15000;
+
 function buildReadApiUrl(action: ApiAction, params: Record<string, string> = {}): string {
   const query = new URLSearchParams({ ...params, scope: action }).toString();
   return `${API_BASE}/oblivions/api/state.php?${query}`;
+}
+
+/**
+ * 带超时的 fetch 封装：超时后 abort，避免网络挂起永久阻塞调用方。
+ * dataManager 去重会让一个挂起的 Promise 阻塞后续同 action 的所有 fetch，
+ * 因此所有 API 调用必须经过此封装。
+ */
+export function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_FETCH_TIMEOUT,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 let oblHeartbeatInFlight: Promise<OblHeartbeatResponse> | null = null;
@@ -30,7 +49,7 @@ export async function oblHeartbeat(): Promise<OblHeartbeatResponse> {
     let lastLockResponse: unknown = null;
 
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(`${API_BASE}/oblivions/api/heartbeat.php`, {
+      const res = await fetchWithTimeout(`${API_BASE}/oblivions/api/heartbeat.php`, {
         method: 'POST',
         credentials: 'include',
       });
@@ -81,6 +100,14 @@ export function getHeartbeatChangedScopes(response: unknown): ApiAction[] {
   return scopes;
 }
 
+/**
+ * 判断 heartbeat 是否软失败（3 次锁冲突后未推进 tick）。
+ * 软失败时调用方不应继续读取 player_info，否则会基于旧状态决策。
+ */
+export function isHeartbeatSoftFailed(heartbeat: OblHeartbeatResponse): boolean {
+  return heartbeat.ok === false || heartbeat.code === 'COMMAND_IN_PROGRESS';
+}
+
 
 /**
  * Oblivions 只读 State API：GET oblivions/api/state.php?scope=xxx。
@@ -91,7 +118,7 @@ export function getHeartbeatChangedScopes(response: unknown): ApiAction[] {
 export async function gameApi(action: ApiAction): Promise<ApiResponse> {
   const url = buildReadApiUrl(action);
   return perf.spanAsync(`gameApi(${action})`, 'api', async () => {
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await fetchWithTimeout(url, { credentials: 'include' });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
@@ -118,7 +145,7 @@ export async function gameApiWithParams(
 ): Promise<ApiResponse> {
   const url = buildReadApiUrl(action, params);
   return perf.spanAsync(`gameApi(${action})`, 'api', async () => {
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await fetchWithTimeout(url, { credentials: 'include' });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
@@ -158,7 +185,7 @@ export async function markBattleLogPlayed(
     pid: String(pid),
     log_ids: logIds.join(','),
   });
-  const res = await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
+  const res = await fetchWithTimeout(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,

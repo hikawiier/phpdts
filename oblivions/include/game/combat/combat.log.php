@@ -46,7 +46,7 @@ function combat_log_v2_combatant_snapshot($data): ?array {
         'type'    => (int)($data['type'] ?? 0),
         'name'    => (string)($data['name'] ?? ''),
         'hp'      => (int)($data['hp'] ?? 0),
-        'max_hp'  => (int)($data['mhp'] ?? 0),
+        'mhp'     => (int)($data['mhp'] ?? 0),
         'ap'      => (int)($data['ap'] ?? 0),
         'max_ap'  => (int)($data['max_ap'] ?? 0),
         'pgroup'  => (int)($data['pgroup'] ?? 0),

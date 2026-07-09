@@ -19,34 +19,40 @@
 
 import { computed } from 'vue';
 import { usePlayerStore } from '@/stores/player';
+import { useCharacterStore } from '@/stores/character';
 import { useUiStore } from '@/stores/ui';
 import { getPlaceName, getGenderText } from '@/utils/format';
 
 const playerStore = usePlayerStore();
+const characterStore = useCharacterStore();
 const uiStore = useUiStore();
 
 // ── 进度条百分比 ──
 const hpPct = computed(() => {
-  const mhp = playerStore.mhp || 1;
-  return playerStore.mhp ? (playerStore.hp / mhp) * 100 : 0;
+  const player = characterStore.player;
+  const mhp = player?.mhp ?? 1;
+  return mhp ? ((player?.hp ?? 0) / mhp) * 100 : 0;
 });
 
 const spPct = computed(() => {
-  const msp = playerStore.msp || 1;
-  return playerStore.msp ? (playerStore.sp / msp) * 100 : 0;
+  const player = characterStore.player;
+  const msp = player?.msp ?? 1;
+  return msp ? ((player?.sp ?? 0) / msp) * 100 : 0;
 });
 
 const apPct = computed(() => {
-  const maxAp = playerStore.maxAp || 1;
-  return playerStore.maxAp ? (playerStore.ap / maxAp) * 100 : 0;
+  const player = characterStore.player;
+  const maxAp = player?.max_ap ?? 1;
+  return maxAp ? ((player?.ap ?? 0) / maxAp) * 100 : 0;
 });
 
 const expPct = computed(() => {
+  const player = characterStore.player;
   const d = playerStore.playerInfo;
-  if (!d || !d.upexp) return 0;
+  if (!player || !d || !d.upexp) return 0;
   const upexp = Number(d.upexp);
   if (!upexp) return 0;
-  return (Number(d.exp) / upexp) * 100;
+  return (player.exp / upexp) * 100;
 });
 
 // ── oblpara.killnum ──
@@ -55,15 +61,15 @@ const killnum = computed(() => {
   return d?.oblpara?.killnum || 0;
 });
 
-const lvl = computed(() => playerStore.playerInfo?.lvl || '0');
-const exp = computed(() => playerStore.playerInfo?.exp || '0');
+const lvl = computed(() => characterStore.player?.lvl ?? 0);
+const exp = computed(() => characterStore.player?.exp ?? 0);
 const upexp = computed(() => playerStore.playerInfo?.upexp || '100');
-const att = computed(() => playerStore.playerInfo?.att || '0');
-const def = computed(() => playerStore.playerInfo?.def || '0');
-const state = computed(() => playerStore.playerInfo?.state || '0');
-const pls = computed(() => playerStore.playerInfo?.pls || '0');
-const name = computed(() => playerStore.playerInfo?.name || '');
-const gd = computed(() => playerStore.playerInfo?.gd || '');
+const att = computed(() => characterStore.player?.att ?? 0);
+const def = computed(() => characterStore.player?.def ?? 0);
+const state = computed(() => characterStore.player?.state ?? 0);
+const pls = computed(() => characterStore.player?.pls ?? 0);
+const name = computed(() => characterStore.player?.name ?? '');
+const gd = computed(() => characterStore.player?.gd ?? '');
 
 const placeName = computed(() => getPlaceName(pls.value));
 const genderText = computed(() => getGenderText(gd.value));
@@ -91,14 +97,14 @@ const genderText = computed(() => getGenderText(gd.value));
     </div>
     <!-- 内容 -->
     <div class="flex-1 overflow-y-auto p-4 space-y-3 text-[11px]">
-      <template v-if="playerStore.playerInfo">
+      <template v-if="characterStore.player">
         <!-- VITALITY -->
         <div>
           <div class="drawer-section-title">├─ VITALITY</div>
           <div class="stat-bar">
             <div class="stat-fill hp" :style="{ width: hpPct + '%' }"></div>
           </div>
-          <div class="drawer-stat-line">{{ playerStore.hp }} / {{ playerStore.mhp }}</div>
+          <div class="drawer-stat-line">{{ characterStore.player?.hp ?? 0 }} / {{ characterStore.player?.mhp ?? 0 }}</div>
         </div>
         <!-- STAMINA -->
         <div>
@@ -106,7 +112,7 @@ const genderText = computed(() => getGenderText(gd.value));
           <div class="stat-bar">
             <div class="stat-fill sp" :style="{ width: spPct + '%' }"></div>
           </div>
-          <div class="drawer-stat-line">{{ playerStore.sp }} / {{ playerStore.msp }}</div>
+          <div class="drawer-stat-line">{{ characterStore.player?.sp ?? 0 }} / {{ characterStore.player?.msp ?? 0 }}</div>
         </div>
         <!-- ACTION POINTS -->
         <div>
@@ -114,7 +120,7 @@ const genderText = computed(() => getGenderText(gd.value));
           <div class="stat-bar">
             <div class="stat-fill" style="background:#888;" :style="{ width: apPct + '%' }"></div>
           </div>
-          <div class="drawer-stat-line">{{ playerStore.ap }} / {{ playerStore.maxAp }}</div>
+          <div class="drawer-stat-line">{{ characterStore.player?.ap ?? 0 }} / {{ characterStore.player?.max_ap ?? 0 }}</div>
         </div>
         <!-- EXPERIENCE -->
         <div>

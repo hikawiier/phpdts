@@ -63,7 +63,7 @@
 
 **战斗执行当前结构**：`include/game/combat/` 是唯一战斗执行主流程；`include/game/battle/` 只保留数值、队列、状态机 hook、battle log 等 shared combat infrastructure。旧 `battle.entry.php` / `battle.main.php` 已删除，运行时不加载。
 
-**前端战斗播放当前结构**：战斗日志先由 `battle-director-v2.ts` 转成语义脚本，再由 `planPlaybackV2()` 编排为 `BattlePlaybackPlan`，最后交给 `battle-playback-runner.ts` 顺序/并发执行，单 actor 动画由 `battle-actor-executor.ts` 负责。
+**前端战斗播放当前结构（四层架构）**：战斗日志先由 `battle-director-v2.ts::directV2()` 转成语义脚本 `BattlePlayScriptV2`（导演层），再由 `planPlaybackV2()` 编排为 `BattlePlaybackPlan` / `PlaybackStep[]`（计划层，同文件），最后交给 `battle-playback-runner.ts::runBattlePlaybackPlan()` 顺序/并发执行（执行器），单 actor 动画由 `battle-actor-executor.ts` 负责（演员）。
 
 **核心目录补充**：
 - `include/core/` 共 8 个文件：`obl_bootstrap.php` / `obl_runtime.php` / `obl_command.php`（@deprecated） / `obl_command_response.php` / `obl_json_request.php` / `obl_tick_orchestrator.php` / `obl_game_repository.php` / `obl_gamevars.php`
@@ -1843,7 +1843,7 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **地块描述生成**: 无名格描述由前端 `vex-vue/src/data/terrain-desc.ts` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
 - **战斗上下文数据源**: `battle.ts` 保存 `combatContext`，`entities.ts` 在 battle mode 下优先用 `combatContext.combatants` 生成地图实体，`PreloadArea.vue` 用 `validTargets/defaultTargetPid` 做目标选择
-- **战斗日志播放 V2**: `battle-director-v2.ts::directV2()` 将 battlelog.v2 事件转语义脚本，`planPlaybackV2()` 转 `BattlePlaybackPlan` / `PlaybackStep[]`，`battle-playback-runner.ts::runBattlePlaybackPlan()` 执行步骤，`battle-actor-executor.ts` 负责单 actor 动画
+- **战斗日志播放 V2（四层架构）**: 导演层 `battle-director-v2.ts::directV2()` 将 battlelog.v2 事件转语义脚本 `BattlePlayScriptV2`；计划层 `planPlaybackV2()` 转 `BattlePlaybackPlan` / `PlaybackStep[]`（同文件）；执行器 `battle-playback-runner.ts::runBattlePlaybackPlan()` 按 step 顺序执行（含 `withTimeout` 超时兜底）；演员 `battle-actor-executor.ts` 负责单 actor 动画（`prepareBattlefield` / `playActionAnimation` / `playCombatantCleared`）
 - **Heartbeat 精准刷新**: `client.ts::getHeartbeatChangedScopes()` 读取 `heartbeat.data.changed_scopes`，`command-queue.ts` / `battle.ts` 按 scope 调 `dataManager.invalidate()`；包含 `game_map` / `enemies` 时刷新地图实体
 - **战斗状态过滤**: `action='battle'` 时前端只允许提交 `battle.submit_turn`；非战斗状态不允许提交 `battle.submit_turn`（`battle.start` 在 action='normal' 时仍允许；后端 Command Bus `obl_command_allowed_by_contract` 强制，返回 `COMMAND_NOT_ALLOWED`）
 - **战斗处理中锁**: 前端 `commandQueue` 采用 5 层锁架构（HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING），其中 PROCESSING 层仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令，`isLocked` 仅包含 HTTP/演出两层全局锁；详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)

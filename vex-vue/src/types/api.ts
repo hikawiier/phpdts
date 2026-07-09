@@ -34,6 +34,8 @@ export interface PlayerInfo {
   upexp: string | null;
   state: string;
   itemmaxslots: string;
+  /** 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽） */
+  itemIds: string[];
   // ── M0 发现的未记录字段（2.9 节） ──
   tacpara: Tacpara;
   skillpara: Skillpara;
@@ -90,9 +92,9 @@ export interface CombatantViewModel {
   type: number;
   name: string;
   hp: number;
-  maxHp: number;
+  mhp: number;
   ap: number;
-  maxAp: number;
+  max_ap: number;
   pgroup: number;
   pls: number;
   state: number;
@@ -108,7 +110,7 @@ export interface CombatTargetViewModel {
   pgroup: number;
   pls: number;
   hp: number;
-  maxHp: number;
+  mhp: number;
   state: number;
 }
 
@@ -143,19 +145,45 @@ export interface EquipmentSlot {
   [key: string]: unknown;
 }
 
-/** 敌人信息（oblivions/api/state.php?scope=enemies） */
+/**
+ * 敌人信息（oblivions/api/state.php?scope=enemies）
+ *
+ * enemies scope 返回完整标准标量字段（与 player_info 一致）+ 装备索引。
+ * 不含装备运行时参数 JSON（wep/wepk/wepe/weps/wepsk/weppara 各槽同理）和
+ * 完整 itempara/tacpara/skillpara/oblpara JSON 大字段——这些按需通过 player_info scope 加载。
+ */
 export interface Enemy {
   pid: string | number;
   type: string | number;
   name: string;
-  icon: string;
   gd: string;
-  pgroup: string | number;
-  pls: string | number;
+  icon: string;
+  action: '' | 'battle' | string;
+  bid: string | number;
   hp: string | number;
   mhp: string | number;
+  sp: string | number;
+  msp: string | number;
+  att: string | number;
+  def: string | number;
+  ap: string | number;
+  max_ap: string | number;
+  pgroup: string | number;
+  pls: string | number;
   lvl: string | number;
+  exp: string | number;
   state: string | number;
+  itemmaxslots: string | number;
+  // 装备索引（7 槽模板 ID，轻量级标量）
+  wepid: string;
+  wep2id: string;
+  arbid: string;
+  arhid: string;
+  araid: string;
+  arfid: string;
+  artid: string;
+  // 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）
+  itemIds: string[];
   discovered: string | number;
 }
 
@@ -367,7 +395,7 @@ export interface CombatantSnapshot {
   type: number;
   name: string;
   hp: number;
-  max_hp: number;
+  mhp: number;
   ap?: number;
   max_ap?: number;
   pgroup?: number;

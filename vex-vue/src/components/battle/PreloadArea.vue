@@ -20,10 +20,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { useMapStore } from '@/stores/map';
+import { useCharacterStore } from '@/stores/character';
 import { useToastStore } from '@/stores/toast';
 import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
 import type { Skill, CombatViewModel, CombatTargetViewModel, CombatantViewModel } from '@/types/api';
+import type { Character } from '@/types/character';
 import type { PreloadInitEventData } from '@/types/events';
 
 // ── 状态 ──
@@ -54,6 +56,7 @@ const playerPid = ref<number>(0);
 const combatContext = ref<CombatViewModel | null>(null);
 
 const mapStore = useMapStore();
+const characterStore = useCharacterStore();
 
 // ══════════════════════════════════════════════════
 // 初始化（监听 battle:preload-init 事件）
@@ -140,22 +143,39 @@ function normalizePls(pls: string | number | null | undefined): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function getCombatPlayer(): CombatantViewModel | null {
+/**
+ * 获取战斗中玩家自身信息
+ *
+ * 数据源：CharacterHub（characterStore.player）。
+ * 未加载时回退到 combatContext.combatants 中的玩家元素，保留原逻辑兜底。
+ */
+function getCombatPlayer(): Character | CombatantViewModel | null {
+  const player = characterStore.player;
+  if (player) return player;
+  // 回退：CharacterHub 未加载时（初始化时序差），从 combatContext 找玩家
   const ctx = combatContext.value;
   if (!ctx) return null;
   return ctx.combatants.find((c) => Number(c.pid) === Number(ctx.playerPid)) || null;
 }
 
-function getCombatTarget(pid: number): CombatTargetViewModel | CombatantViewModel | null {
+/**
+ * 获取目标信息（用于射程判断和目标显示）
+ *
+ * 数据源：combatContext.validTargets（保留，战斗规则过滤后的合法目标集合）
+ * → characterStore.getCharacter(pid)（回退，角色完整状态）
+ */
+function getCombatTarget(pid: number): CombatTargetViewModel | Character | null {
   const ctx = combatContext.value;
-  if (!ctx) return null;
-  return ctx.validTargets.find((target) => Number(target.pid) === Number(pid))
-    || ctx.combatants.find((combatant) => Number(combatant.pid) === Number(pid))
-    || null;
+  if (ctx) {
+    const validTarget = ctx.validTargets.find((target) => Number(target.pid) === Number(pid));
+    if (validTarget) return validTarget;
+  }
+  // 回退：从 CharacterHub 查询（覆盖非战斗 NPC、战斗中但不在 validTargets 的目标等场景）
+  return characterStore.getCharacter(pid) || null;
 }
 
 function getActorBasePls(): number | null {
-  return normalizePls(getCombatPlayer()?.pls ?? mapStore.curLoc);
+  return normalizePls(characterStore.player?.pls ?? getCombatPlayer()?.pls ?? mapStore.curLoc);
 }
 
 function getTileAimRange(skill: Skill | undefined): number {
@@ -228,7 +248,7 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
 
   const combatTarget = getCombatTarget(targetPid);
   if (combatTarget) {
-    const actorRegion = getCombatPlayer()?.pgroup ?? mapStore.curRegion;
+    const actorRegion = characterStore.player?.pgroup ?? getCombatPlayer()?.pgroup ?? mapStore.curRegion;
     if (String(combatTarget.pgroup) !== String(actorRegion)) return false;
     const path = findPath(originPls, combatTarget.pls);
     if (!path) return false;
@@ -236,15 +256,8 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
     return distance <= getSkillActionRange(skill);
   }
 
-  if (mapStore.curRegion === null) return false;
-  const enemy = mapStore.enemies.find(
-    (e) => Number(e.pid) === Number(targetPid) && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
-  );
-  if (!enemy) return false;
-  const path = findPath(originPls, enemy.pls);
-  if (!path) return false;
-  const distance = Math.max(0, path.length - 1);
-  return distance <= getSkillActionRange(skill);
+  // 兜底：getCombatTarget 已回退到 CharacterHub，此处不再需要 mapStore.enemies
+  return false;
 }
 
 function skillRangeText(skill: Skill): string {
@@ -421,15 +434,10 @@ function getTargetDisplayText(target: TargetIntent): string {
   const pid = parseInt(String(target.id));
   if (pid === parseInt(String(playerPid.value))) return '自己';
 
-  const enemy = mapStore.enemies.find(
-    (e) => parseInt(String(e.pid)) === pid && parseInt(String(e.state)) === 0,
-  );
+  // 优先查 validTargets（战斗规则过滤后的合法目标），回退到 CharacterHub
   const combatTarget = getCombatTarget(pid);
   if (combatTarget && Number(combatTarget.state) === 0) {
     return `位于位置${combatTarget.pls}的 ${combatTarget.name}`;
-  }
-  if (enemy) {
-    return `位于位置${enemy.pls}的 ${enemy.name}`;
   }
   return `目标${pid}`;
 }

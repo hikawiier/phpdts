@@ -1,4 +1,4 @@
-import { API_BASE, type CommandResult } from './client';
+import { API_BASE, fetchWithTimeout, type CommandResult } from './client';
 import { renderCommandFeedback } from '@/data/command-feedback';
 import { perf } from '@/utils/perf';
 
@@ -45,7 +45,7 @@ export async function sendOblCommand<TPayload = unknown>(
 
   return perf.spanAsync(`sendOblCommand(${body.command})`, 'api', async () => {
     try {
-      const res = await fetch(`${API_BASE}/oblivions/api/command.php`, {
+      const res = await fetchWithTimeout(`${API_BASE}/oblivions/api/command.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

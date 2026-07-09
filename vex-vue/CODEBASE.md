@@ -54,7 +54,7 @@ interface OblCommandEnvelope {
 
 **三套日志系统的前端用途**：
 - `obl_log` → 日志区 + Toast（按白名单，`src/data/log-templates.ts` 渲染）
-- `obl_battle_log` → battlelog.v2 战斗演出（`stores/battle-director-v2.ts` 编排，`BattleModal.vue` 播放）
+- `obl_battle_log` → battlelog.v2 战斗演出四层架构（`battle-director-v2.ts` 导演+计划，`battle-playback-runner.ts` 执行计划，`battle-actor-executor.ts` 单 actor 动画，`BattleModal.vue` 模态框播放）
 - `obl_error_log` → 诊断流，默认不提示；仅 `?debug=ai`/`?poll_error=1` 弹 Toast（`src/stores/error-log.ts`）
 
 ---
@@ -167,8 +167,10 @@ vex-vue/
     ├── stores/
     │   ├── entities.ts             # 实体层数据（entities computed 派生自 mapStore，不依赖 isDown）
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog.v2 播放 + NPC 刷新）
-    │   ├── battle-director-v2.ts   # battlelog.v2 导演模块（raw events → BattlePlayScriptV2）
+    │   ├── battle-director-v2.ts   # battlelog.v2 导演+计划模块（directV2 → BattlePlayScriptV2，planPlaybackV2 → BattlePlaybackPlan）
     │   ├── battle-director-v2.fixture.ts # DirectorV2 回归样例
+    │   ├── battle-playback-runner.ts # 播放计划执行器（runBattlePlaybackPlan 按 PlaybackStep 顺序执行 + 超时兜底）
+    │   ├── battle-actor-executor.ts  # 单 actor 动画执行器（prepareBattlefield / playActionAnimation / playCombatantCleared）
     │   ├── command-registry.ts     # 命令三维度分类（mode/advancesTick/itm0Allowed）单一真值源
     │   ├── command-queue.ts        # 命令队列（5 层锁 + canExecute + 冷却）
     │   ├── craft.ts                # 合成系统（配方发现 + 素材校验 + craft.execute 提交）
@@ -688,28 +690,30 @@ class CommandQueue {
 
 ## 八、战斗演出系统
 
-> 这是前端最复杂的子系统，采用**三层架构**（后端给全原料 → 导演集中编排 → 演员纯执行）。
+> 这是前端最复杂的子系统，采用**四层架构**（后端给全原料 → 导演集中编排 → 计划层编排播放步骤 → 演员纯执行）。
 
 ### 8.1 架构总览
 
 ```
-后端（原料层）              前端导演（编排层）             前端演员（执行层）
-BattleLogCollector          battle-director-v2.ts         battle.ts / BattleModal.vue
-  emit() battlelog.v2          directV2(events)              playScriptV2(script)
-  channel=render/debug         ├─ group by action_uid        ├─ process action animation
-  event_type                   ├─ build effects              ├─ play BattleSegmentV2
-  payload(action/effect)       └─→ BattlePlayScriptV2        ├─ update HP from effect delta
-  → JSON 文件                    { segments[] }               └─ play effect visual plan
-                                  ├─ round_intro
-                                  ├─ turn
-                                  ├─ battle_end
-                                  └─ system
+后端（原料层）         前端导演（编排层）         前端计划（步骤层）            前端演员（执行层）
+BattleLogCollector     battle-director-v2.ts     battle-director-v2.ts        battle-playback-runner.ts
+  emit() battlelog.v2    directV2(events)          planPlaybackV2(script)       runBattlePlaybackPlan(plan)
+  channel=render/debug   ├─ group by action_uid    ├─ segment → PlaybackStep[]  ├─ 按 step 顺序执行
+  event_type             ├─ build effects          ├─ awaitPolicy + timeout     ├─ 调用 actor-executor
+  payload(action/effect) └─→ BattlePlayScriptV2    └─→ BattlePlaybackPlan       ├─ 调用 BattleModal
+  → JSON 文件              { segments[] }             { script, steps[] }       └─ 超时兜底
+                           ├─ round_intro
+                           ├─ turn
+                           ├─ battle_end
+                           └─ system
 ```
 
-**导演 vs 演员职责分离**：
-- `battle-director-v2.ts`：同步纯函数，输入 `BattleLogV2Event[]` → 输出 `BattlePlayScriptV2`，不做 DOM 操作
-- `battle.ts`：播放器，按 `BattleSegmentV2` 逐段执行（动作动画 → 模态框 → effect visual）
-- `BattleModal.vue`：模态框演出组件，直接播放 v2 text cue，并按 effect delta 更新 HP 条
+**四层职责分离**：
+- `battle-director-v2.ts` **导演层**：同步纯函数 `directV2(events)`，输入 `BattleLogV2Event[]` → 输出 `BattlePlayScriptV2`，不做 DOM 操作
+- `battle-director-v2.ts` **计划层**：同步纯函数 `planPlaybackV2(script)`，输入 `BattlePlayScriptV2` → 输出 `BattlePlaybackPlan`（含 `PlaybackStep[]` + `awaitPolicy` + `timeout`），与导演同文件
+- `battle-playback-runner.ts` **执行器**：`runBattlePlaybackPlan(plan, runtime)` 按 `PlaybackStep` 顺序执行，提供超时兜底，调用 actor-executor 和模态框
+- `battle-actor-executor.ts` **演员**：单 actor 动画执行（`prepareBattlefield` / `playActionAnimation` / `playCombatantCleared`），不涉及文案或 HP 更新
+- `BattleModal.vue` **模态框**：演出组件，直接播放 v2 text cue，并按 effect delta 更新 HP 条
 
 ### 8.2 三类核心输出类型
 
@@ -718,6 +722,8 @@ BattleLogCollector          battle-director-v2.ts         battle.ts / BattleModa
 **DirectedActionV2**：包含 `actionUid/actionId/actor/targets/effects/success/animation/text`，演员层不再读旧 phase。
 
 **DirectedEffectV2**：包含 `effectUid/type/source/target/value/delta/visual/text`，伤害数字和 HP 更新均从 effect 读取。
+
+**PlaybackStep.kind**（计划层产物）：`prepare_map`（等地图就绪）| `segment_context`（更新敌人名/位置）| `action_animation`（单动作动画）| `combatant_cleared`（参战者退场）| `modal_text`（模态框文本）| `damage_linger`（残留伤害数字）。每个 step 携带 `awaitPolicy`（`none`/`completion`/`duration`）和 `timeout`。
 
 ### 8.3 整体流程（新版）
 
@@ -739,13 +745,18 @@ battleStore.onPreloadExecuted()
        └─ fetchAndPlayBattleLog()
             ├─ 拉取 battle_log（played=0）
             ├─ filter battlelog.v2 render events
-            ├─ directV2(events) → 编排为 BattlePlayScriptV2
+            ├─ directV2(events) → 编排为 BattlePlayScriptV2（导演层）
             ├─ extractNpcPidFromScriptV2(script)
-            ├─ playScriptV2(script, npcPid) → 逐段执行
-            │    各段播放：
-            │      round_intro → 模态框段分隔符
-            │      turn        → 更新敌人名称 → 动作动画 → 模态框（含 HP 条）→ 伤害数字
-            │      battle_end → 模态框（战斗结束文字）
+            ├─ playScriptV2(script, npcPid)
+            │    ├─ planPlaybackV2(script) → BattlePlaybackPlan（计划层）
+            │    └─ runBattlePlaybackPlan(plan, runtime)（执行器）
+            │         按 PlaybackStep 顺序执行：
+            │           segment_context → 更新敌人名称/位置
+            │           prepare_map     → 等待 mapGrid + player actor 就绪
+            │           action_animation → playActionAnimation（actor-executor）
+            │           combatant_cleared → playCombatantCleared（actor-executor）
+            │           modal_text       → playSegmentInModal（BattleModal.vue）
+            │           damage_linger    → broadcast('battle:play-damage-numbers')
             └─ markBattleLogPlayed() 标记所有原始 log_id
        ↓
        播放完成后根据 action 决定后续
@@ -763,10 +774,10 @@ async function fetchAndPlayBattleLog(): Promise<void> {
   isPlayingBattleLog.value = true;
   try {
     const v2Events = entries.filter(isBattleLogV2Event);
-    const script = directV2(v2Events);          // 导演：同步编排
+    const script = directV2(v2Events);          // 导演层：同步编排
     if (script.segments.length > 0) {
       const npcPid = extractNpcPidFromScriptV2(script);
-      await playScriptV2(script, npcPid);       // 演员：逐段执行
+      await playScriptV2(script, npcPid);       // 串联计划层+执行器
     }
     await markBattleLogPlayed(groomid, pid, collectAllLogIds(entries));
   } finally {
@@ -775,27 +786,63 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 }
 ```
 
-开发模式下会挂载 `window.__battleScriptV2` 和 `window.__battleRawEventsV2`，可在浏览器控制台直接检查导演编排结果。
+开发模式下会挂载 `window.__battleScriptV2`、`window.__battleRawEventsV2` 和 `window.__battlePlaybackPlanV2`，可在浏览器控制台直接检查导演编排与播放计划结果。
 
-### 8.5 playScriptV2 逐段执行
+### 8.5 playScriptV2：串联计划层与执行器
 
-`playScriptV2` 按 `segment.kind` 分发。每段通过 `playSegmentInModal` 统一处理模态框流程：
+`battle.ts` 的 `playScriptV2` 是四层架构的串联入口，把导演产物交给计划层，再把计划交给执行器：
 
-- **round_intro 段**：`alwaysShowHeader: true` 确保段分隔符可见
-- **turn 段**：执行 action animation plan，播放模态框后发 effect visual plan 伤害数字事件
-- **battle_end 段**：`isBattleEnd: true` 确保模态框打开显示结束文字
+```typescript
+async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise<void> {
+  const plan = planPlaybackV2(script);          // 计划层：script → PlaybackStep[]
+  await runBattlePlaybackPlan(plan, {           // 执行器：按 step 顺序执行
+    currentPid: currentPid.value,
+    npcPid,
+    updateSegmentContext,
+    playSegmentInModal,
+  });
+}
+```
+
+**planPlaybackV2 按 segment.kind 生成 PlaybackStep 序列**：
+- `round_intro` 段：单个 `modal_text` step（`alwaysShowHeader: true`）
+- `battle_end` 段：单个 `modal_text` step（`isBattleEnd: true`）
+- `turn` 段：`segment_context` → `prepare_map` → 每个 action 一个 `action_animation` step → 每个 `combatant_cleared` notice 一个 step → `modal_text` → `damage_linger`
+
+**runBattlePlaybackPlan 执行策略**：
+- `awaitPolicy: 'none'`：fire-and-forget（如 `damage_linger`）
+- `awaitPolicy: 'completion'` + `timeout`：用 `withTimeout` 包裹，超时则 console.warn 并继续下一步，避免单步卡死阻塞整个播放
+- 每个 step 调用 actor-executor 的对应函数或 `runtime.playSegmentInModal`
 
 `BattleModal.vue` 直接消费 `segment.notices`、`segment.actions[].text`、`segment.actions[].effects[].text`，不再通过 `renderDirectedEntryHtml()` 或旧 `DirectedEntry`。
 
 ### 8.6 battle-director-v2.ts 核心函数
 
+| 函数 | 层 | 说明 |
+|------|----|------|
+| `directV2(events)` | 导演层 | 主入口：按 `action_uid` 聚合 action/effects，构建 `BattlePlayScriptV2` |
+| `planPlaybackV2(script)` | 计划层 | 主入口：把 script 拆解为 `PlaybackStep[]`，附 `awaitPolicy` 和 `timeout` |
+| `isBattleLogV2Event(entry)` | 导演层 | v2 raw event 类型守卫 |
+| `decideActionAnimation(actionId, actor, targets)` | 导演层 | 生成 `ActionAnimationPlan` |
+| `deriveActionAnimationFromEffects(action)` | 导演层 | 根据 effects 修正动画（move/area_burst/heal-only） |
+| `decideEffectVisual(type, target, value)` | 导演层 | 生成 `EffectVisualPlan` |
+| `buildActionText/buildEffectText` | 导演层 | 生成已转义的前端 text cue |
+| `extractNpcPidFromScriptV2(script)` | battle.ts | 从 script 中提取 NPC pid（供敌人位置刷新） |
+
+**battle-playback-runner.ts 核心函数**：
+
 | 函数 | 说明 |
 |------|------|
-| `directV2(events)` | 主入口：按 `action_uid` 聚合 action/effects，构建 `BattlePlayScriptV2` |
-| `isBattleLogV2Event(entry)` | v2 raw event 类型守卫 |
-| `decideActionAnimation(actionId, actor, targets)` | 生成 `ActionAnimationPlan` |
-| `decideEffectVisual(type, target, value)` | 生成 `EffectVisualPlan` |
-| `buildActionText/buildEffectText` | 生成已转义的前端 text cue |
+| `runBattlePlaybackPlan(plan, runtime)` | 按 `PlaybackStep` 顺序执行，提供 `withTimeout` 超时兜底 |
+| `BattlePlaybackRuntime` | 接口：`currentPid` / `npcPid` / `updateSegmentContext` / `playSegmentInModal` |
+
+**battle-actor-executor.ts 核心函数**：
+
+| 函数 | 说明 |
+|------|------|
+| `prepareBattlefield()` | 等待 `mapGrid` 和 player actor 就绪（最多 10 次重试） |
+| `playActionAnimation(action, currentPid)` | 按 `action.animation.kind` 分发：melee_hit/projectile/area_burst/move/escape/none |
+| `playCombatantCleared(notice, currentPid)` | 参战者退场动画：玩家调 `onDie`/`onFlee`，NPC 调 `playFadeOut` |
 
 `battle-director-v2.fixture.ts` 提供最小回归样例，覆盖 `round_start/turn_start/action_start/effect_applied/action_end/action_failed/combatant_cleared/battle_end`。
 
@@ -823,7 +870,7 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 | 函数/状态 | 替代方案 |
 |----------|---------|
 | `groupByEncounter` | `extractNpcPidFromScriptV2` + `BattleSegmentV2` |
-| `playBattleLogGroup` | `playScriptV2` 逐段执行 |
+| `playBattleLogGroup` | `playScriptV2` → `planPlaybackV2` + `runBattlePlaybackPlan` |
 | `buildPlayContext` | `BattleSegmentV2` / `DirectedActionV2` / `DirectedEffectV2` |
 | `refreshContextFromApi` | `updateEnemyNameFromSegment` + `refreshEnemyLocation` |
 | `rebuildInitialHpFromEntries` | `initHpFromSegment`（从首个 HP effect delta 读） |
@@ -841,18 +888,16 @@ async function fetchAndPlayBattleLog(): Promise<void> {
 
 ### 8.9 战斗事件 → 玩家小人意图接入
 
-`battle.ts` 在播放流程中调用 `playerAvatarStore` 的 action 驱动玩家立绘动画，共 6 处接入点：
+玩家立绘动画接入点分布在两个文件，共 4 处：
 
-| 接入点 | 调用 | 触发时机 |
-|--------|------|---------|
-| `enterBattleMode` | `onBattleStart()` | 被动遭遇战（敌人发现玩家） |
-| `startBattle` | `onBattleStart()` | 主动攻击 |
-| `exitBattleMode` | `onBattleEnd()` | 战斗结束 |
-| `playTurnSegment` | `onHit()` | 玩家受击（hpSnapshot 过滤：仅真实掉血触发） |
-| `playTurnSegment` | `onDie()` | 玩家死亡主判定（combatant_cleared + reason='death'） |
-| `playBattleEndSegment` | `onDie()` | 玩家死亡兜底判定（winnerPid !== currentPid） |
+| 接入点文件 | 接入点函数 | 调用 | 触发时机 |
+|-----------|-----------|------|---------|
+| `battle.ts` | `enterBattleMode` | `onBattleStart()` | 被动遭遇战（敌人发现玩家） |
+| `battle.ts` | `startBattle` | `onBattleStart()` | 主动攻击 |
+| `battle.ts` | `exitBattleMode` | `onBattleEnd()` | 战斗结束 |
+| `battle-actor-executor.ts` | `playCombatantCleared` | `onDie()` / `onFlee()` | 玩家退场（`combatant_cleared` + reason='death'/'escaped'） |
 
-受击判定用 `hpSnapshot.targetHpAfter < targetHpBefore` 过滤未命中/0 伤害；死亡主判定用 `combatant_cleared` 条目实时触发（不等 battle_end 段），兜底判定用 `segment.meta.winnerPid` 补判。store 内 50ms 防抖 + isDown 状态机保证重复调用安全。
+旧版 `playTurnSegment` 中基于 `hpSnapshot` 的 `onHit()` 受击立绘已移除——受击反馈现在由 actor-executor 的 `defender.playHit(dir)` 在地图 sprite 层处理，不再触发立绘动画。`playBattleEndSegment` 的死亡兜底判定也已由 `playCombatantCleared` 在 `combatant_cleared` step 实时触发替代。
 
 ---
 
@@ -1275,9 +1320,9 @@ perf.clear();
 | `vex/js/log.js` | `stores/log.ts` + `components/log/*` + `composables/useLogScroll.ts` |
 | `vex/js/toast-position.js` | `composables/useToastPosition.ts` |
 | `vex/js/battle.js` | `stores/battle.ts` |
-| —（新增） | `stores/battle-director-v2.ts` |
+| —（新增） | `stores/battle-director-v2.ts`（导演+计划）+ `stores/battle-playback-runner.ts`（执行器）+ `stores/battle-actor-executor.ts`（演员） |
 | `vex/js/battle-modal.js` | `components/battle/BattleModal.vue` |
-| `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` |
+| `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` + `stores/battle-actor-executor.ts` |
 | `vex/js/battle-render.js` | `stores/battle-director-v2.ts` text cue + `BattleModal.vue` |
 | `vex/js/battle-preload.js` | `components/battle/PreloadArea.vue` |
 | `vex/js/utils.js` | `api/client.ts` + `utils/format.ts` |

@@ -119,9 +119,9 @@ function obl_state_combatant_view($pdata, $qrow = null) {
         'type' => (int)$pdata['type'],
         'name' => isset($pdata['name']) ? (string)$pdata['name'] : '',
         'hp' => isset($pdata['hp']) ? (int)$pdata['hp'] : 0,
-        'maxHp' => isset($pdata['mhp']) ? (int)$pdata['mhp'] : 0,
+        'mhp' => isset($pdata['mhp']) ? (int)$pdata['mhp'] : 0,
         'ap' => isset($pdata['ap']) ? (int)$pdata['ap'] : 0,
-        'maxAp' => isset($pdata['max_ap']) ? (int)$pdata['max_ap'] : 0,
+        'max_ap' => isset($pdata['max_ap']) ? (int)$pdata['max_ap'] : 0,
         'pgroup' => isset($pdata['pgroup']) ? (int)$pdata['pgroup'] : 0,
         'pls' => isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
         'state' => isset($pdata['state']) ? (int)$pdata['state'] : 0,
@@ -139,7 +139,7 @@ function obl_state_target_view($combatant) {
         'pgroup' => (int)$combatant['pgroup'],
         'pls' => (int)$combatant['pls'],
         'hp' => (int)$combatant['hp'],
-        'maxHp' => (int)$combatant['maxHp'],
+        'mhp' => (int)$combatant['mhp'],
         'state' => (int)$combatant['state'],
     );
 }
@@ -284,6 +284,11 @@ function obl_state_handle_player_info($ctx) {
 
         // 道具栏 / Inventory
         'itemmaxslots' => $pdata['itemmaxslots'],
+        // 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）
+        // 与 enemies scope 的 itemIds 字段保持一致，供 CharacterHub 统一消费
+        'itemIds' => isset($pdata['itempara']) && is_array($pdata['itempara'])
+                    ? array_values(array_filter(array_column($pdata['itempara'], 'itmid')))
+                    : array(),
 
         // Oblivions 专属 JSON 字段 / Oblivions JSON fields
         'tacpara'   => $pdata['tacpara'],
@@ -530,18 +535,42 @@ function obl_state_fetch_discovered_enemies($pgroup) {
 
 function obl_state_simplify_enemy_data(&$enemy) {
     return array(
-        'pid'        => $enemy['pid'],
-        'type'       => $enemy['type'],
-        'name'       => $enemy['name'],
-        'icon'       => $enemy['icon'],
-        'gd'         => $enemy['gd'],
-        'pgroup'     => $enemy['pgroup'],
-        'pls'        => $enemy['pls'],
-        'hp'         => $enemy['hp'],
-        'mhp'        => $enemy['mhp'],
-        'lvl'        => $enemy['lvl'],
-        'state'      => $enemy['state'],
-        'discovered' => $enemy['discovered'],
+        'pid'          => $enemy['pid'],
+        'type'         => $enemy['type'],
+        'name'         => $enemy['name'],
+        'gd'           => $enemy['gd'],
+        'icon'         => $enemy['icon'],
+        'action'       => $enemy['action'],
+        'bid'          => $enemy['bid'],
+        'hp'           => $enemy['hp'],
+        'mhp'          => $enemy['mhp'],
+        'sp'           => $enemy['sp'],
+        'msp'          => $enemy['msp'],
+        'att'          => $enemy['att'],
+        'def'          => $enemy['def'],
+        'ap'           => $enemy['ap'],
+        'max_ap'       => $enemy['max_ap'],
+        'pgroup'       => $enemy['pgroup'],
+        'pls'          => $enemy['pls'],
+        'lvl'          => $enemy['lvl'],
+        'exp'          => $enemy['exp'],
+        'state'        => $enemy['state'],
+        'itemmaxslots' => $enemy['itemmaxslots'],
+        // 装备索引（7 槽模板 ID，轻量级）
+        'wepid'        => $enemy['wepid'],
+        'wep2id'       => $enemy['wep2id'],
+        'arbid'        => $enemy['arbid'],
+        'arhid'        => $enemy['arhid'],
+        'araid'        => $enemy['araid'],
+        'arfid'        => $enemy['arfid'],
+        'artid'        => $enemy['artid'],
+        // 道具索引（从 itempara 提取 itmid 列表）
+        // itempara 是 JSON 数组，下标 0 = itm0 手持缓存槽，1~itemmaxslots = 普通槽
+        // array_filter 过滤空槽位（itmid 为空字符串/null），itemIds 含所有有道具的槽位（含 itm0）
+        'itemIds'      => isset($enemy['itempara']) && is_array($enemy['itempara'])
+                        ? array_values(array_filter(array_column($enemy['itempara'], 'itmid')))
+                        : array(),
+        'discovered'   => $enemy['discovered'],
     );
 }
 

@@ -13,6 +13,7 @@
 
 import { computed, ref, watch } from 'vue';
 import { usePlayerStore } from '@/stores/player';
+import { useCharacterStore } from '@/stores/character';
 import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
 import { useBattleStore } from '@/stores/battle';
@@ -22,6 +23,7 @@ import { getPlaceName } from '@/utils/format';
 import type { BattleState } from '@/types/api';
 
 const playerStore = usePlayerStore();
+const characterStore = useCharacterStore();
 const mapStore = useMapStore();
 const uiStore = useUiStore();
 const battleStore = useBattleStore();
@@ -60,18 +62,21 @@ const locationName = computed(() => {
 
 // ── HP/SP 条 ──
 const hpPct = computed(() => {
-  const mhp = playerStore.mhp || 1;
-  return Math.max(0, Math.min(100, (playerStore.hp / mhp) * 100));
+  const player = characterStore.player;
+  const mhp = player?.mhp ?? 1;
+  return Math.max(0, Math.min(100, ((player?.hp ?? 0) / mhp) * 100));
 });
 
 const spPct = computed(() => {
-  const msp = playerStore.msp || 1;
-  return Math.max(0, Math.min(100, (playerStore.sp / msp) * 100));
+  const player = characterStore.player;
+  const msp = player?.msp ?? 1;
+  return Math.max(0, Math.min(100, ((player?.sp ?? 0) / msp) * 100));
 });
 
 const hpDanger = computed(() => {
-  const mhp = playerStore.mhp || 1;
-  return playerStore.hp / mhp < 0.3;
+  const player = characterStore.player;
+  const mhp = player?.mhp ?? 1;
+  return (player?.hp ?? 0) / mhp < 0.3;
 });
 
 // ── tick 调试 ──
@@ -144,7 +149,7 @@ function onAvatarError(): void {
           ></div>
         </div>
         <span class="bar-text" :class="{ danger: hpDanger }">
-          HP {{ playerStore.hp }}/{{ playerStore.mhp }}
+          HP {{ characterStore.player?.hp ?? 0 }}/{{ characterStore.player?.mhp ?? 0 }}
         </span>
       </div>
       <!-- 第二行：位置名 + SP -->
@@ -156,7 +161,7 @@ function onAvatarError(): void {
             :style="{ width: spPct + '%' }"
           ></div>
         </div>
-        <span class="bar-text">SP {{ playerStore.sp }}/{{ playerStore.msp }}</span>
+        <span class="bar-text">SP {{ characterStore.player?.sp ?? 0 }}/{{ characterStore.player?.msp ?? 0 }}</span>
       </div>
       <!-- 第三行：按钮 -->
       <div class="status-bar-row">

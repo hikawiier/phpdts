@@ -242,15 +242,15 @@ function initHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): v
 
   if (target.type === 0) {
     playerHp.value = before;
-    playerMaxHp.value = target.maxHp || 1;
+    playerMaxHp.value = target.mhp || 1;
     setEnemyHpFromCombatant(source);
   } else {
     enemyName.value = target.name || enemyName.value || '敌人';
     enemyHp.value = before;
-    enemyMaxHp.value = target.maxHp || 1;
+    enemyMaxHp.value = target.mhp || 1;
     if (source.type === 0) {
       playerHp.value = source.hp;
-      playerMaxHp.value = source.maxHp || 1;
+      playerMaxHp.value = source.mhp || 1;
     }
   }
 }
@@ -263,12 +263,12 @@ function updateHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2):
   const after = effect.delta?.hp_after ?? target.hp;
   if (target.type === 0) {
     playerHp.value = after;
-    playerMaxHp.value = target.maxHp || 1;
+    playerMaxHp.value = target.mhp || 1;
     setEnemyHpFromCombatant(effect.source ?? action.actor);
   } else {
     enemyName.value = target.name || enemyName.value || '敌人';
     enemyHp.value = after;
-    enemyMaxHp.value = target.maxHp || 1;
+    enemyMaxHp.value = target.mhp || 1;
   }
 }
 
@@ -276,7 +276,7 @@ function setEnemyHpFromCombatant(combatant: CombatantView | null | undefined): v
   if (!combatant || combatant.type === 0) return;
   enemyName.value = combatant.name || enemyName.value || '敌人';
   enemyHp.value = combatant.hp;
-  enemyMaxHp.value = combatant.maxHp || 1;
+  enemyMaxHp.value = combatant.mhp || 1;
 }
 
 /** 获取当前段的分隔符（无则返回 null） */

@@ -21,6 +21,7 @@
 
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
 import { useMapStore } from '@/stores/map';
+import { useCharacterStore } from '@/stores/character';
 import {
   cells,
   gridStyle,
@@ -37,14 +38,15 @@ import { initMapInteraction, centerOnPlayer } from '@/composables/useMapInteract
 import { setupMapCallbacks } from '@/composables/useMapBusiness';
 import { dataManager } from '@/stores/data-manager';
 import { useMapEntities } from '@/composables/useMapEntities';
+import { useBattleStore } from '@/stores/battle';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
-import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import type { MapEntity } from '@/types/map-entity';
 
 const mapStore = useMapStore();
+const characterStore = useCharacterStore();
+const battleStore = useBattleStore();
 const playerAvatarStore = usePlayerAvatarStore();
-const playerStore = usePlayerStore();
 const uiStore = useUiStore();
 
 // ─── DOM 引用（供布局计算 + 交互事件使用） ───
@@ -74,6 +76,25 @@ const placeholderText = computed<string>(() => {
 function imgStyle(entity: MapEntity): Record<string, string> {
   const ratio = entity.imgHeightRatio ?? 1;
   return { height: `${ratio * 100}%` };
+}
+
+// ─── 实体 class 计算（含战斗中非活跃实体半透明） ───
+// inCombat === true：正常不透明
+// inCombat === false 且 currentMode === 'battle' 且 hasActiveCombat：半透明
+// 预装填阶段（currentMode='battle' 但 combatContext 未加载）：hasActiveCombat=false，不半透明
+// 探索模式：忽略 inCombat，全部正常显示
+const hasActiveCombat = computed(() =>
+  characterStore.aliveList.some(c => c.combat?.inCombat === true),
+);
+
+function entityClass(entity: MapEntity): Record<string, boolean> {
+  const inBattle = battleStore.currentMode === 'battle';
+  const dimmed = inBattle && hasActiveCombat.value && entity.inCombat === false;
+  return {
+    [`entity-${entity.kind}`]: true,
+    'entity-player': entity.id === 'player',
+    'entity-dimmed': dimmed,
+  };
 }
 
 // ─── 单元格事件处理 ───
@@ -113,8 +134,9 @@ function onCellLeave(cell: CellData): void {
 // 注意：watch(curLoc) 已迁入 useMapEntities（移动后需先 syncAllPositions 再触发 onMove）
 watch(
   () => {
-    const mhp = playerStore.mhp || 1;
-    return playerStore.hp / mhp;
+    const player = characterStore.player;
+    const mhp = player?.mhp ?? 1;
+    return (player?.hp ?? 0) / mhp;
   },
   (ratio) => {
     playerAvatarStore.setHpRatio(ratio);
@@ -129,7 +151,7 @@ watch(
 // ─── 监听 mapStore 数据变化 → 重新应用布局 + 居中 ───
 // cells computed 会自动重新计算（响应式），这里只需处理布局 + 居中
 watch(
-  () => [mapStore.links, mapStore.enemies, mapStore.curLoc, mapStore.curRegion],
+  () => [mapStore.links, characterStore.enemyList, mapStore.curLoc, mapStore.curRegion],
   () => {
     if (!initialized) return;
     if (!gridRef.value || !containerRef.value) return;
@@ -249,12 +271,13 @@ onUnmounted(() => {
       <!-- 可见性由 useMapEntities 通过 GSAP alpha 控制（z-index 固定 10，不再切换） -->
       <!-- 角色投影由 .entity-img 的 CSS filter: drop-shadow 提供，无需独立阴影元素 -->
       <!-- displayEntities 中间层：新敌人立即渲染，消失的敌人保留直到淡出动画完成 -->
+      <!-- entity-dimmed：战斗中非活跃实体半透明（inCombat === false 且 currentMode === 'battle'） -->
       <div
         v-for="entity in displayEntities"
         :key="entity.id"
         :ref="el => setEntityRef(entity.id, el as HTMLElement | null)"
         class="entity"
-        :class="[`entity-${entity.kind}`, { 'entity-player': entity.id === 'player' }]"
+        :class="entityClass(entity)"
         :data-entity-id="entity.id"
       >
         <img class="entity-img" :src="entity.img" :alt="entity.id" :style="imgStyle(entity)" />
@@ -271,5 +294,14 @@ onUnmounted(() => {
   background: #2a2a2a;
   outline: 1px solid rgba(255, 255, 255, 0.4);
   outline-offset: -1px;
+}
+
+/* ═══ 战斗中非活跃实体半透明 ═══ */
+/* inCombat === false 且 currentMode === 'battle' 时应用（非战斗 NPC 在战斗中视觉降级） */
+/* 用 filter: opacity() 而非 CSS opacity 属性：GSAP alpha 直接设置 inline opacity，
+   会覆盖 class 上的 opacity；filter 是独立属性，不被 GSAP 覆盖。
+   最终效果 = GSAP opacity × filter opacity（正常 1×1=1，半透明 1×0.5=0.5，死亡淡出 0×0.5=0） */
+.entity.entity-dimmed {
+  filter: opacity(0.5);
 }
 </style>

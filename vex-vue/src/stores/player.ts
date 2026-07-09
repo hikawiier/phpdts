@@ -14,6 +14,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { dataManager } from '@/stores/data-manager';
+import { useCharacterStore } from '@/stores/character';
 import type { PlayerInfo, BattleState, CombatViewModel } from '@/types/api';
 
 export const usePlayerStore = defineStore('player', () => {
@@ -23,14 +24,8 @@ export const usePlayerStore = defineStore('player', () => {
   const error = ref<string>('');
 
   // ── 计算属性（方便 UI 访问，自动处理 null） ──
-  const hp = computed(() => Number(playerInfo.value?.hp ?? 0));
-  const mhp = computed(() => Number(playerInfo.value?.mhp ?? 0));
-  const sp = computed(() => Number(playerInfo.value?.sp ?? 0));
-  const msp = computed(() => Number(playerInfo.value?.msp ?? 0));
-  const ap = computed(() => Number(playerInfo.value?.ap ?? 0));
-  const maxAp = computed(() => Number(playerInfo.value?.max_ap ?? 0));
-  const name = computed(() => playerInfo.value?.name ?? '');
-  const pls = computed(() => Number(playerInfo.value?.pls ?? 0));
+  // 标准标量字段（hp/mhp/sp/msp/ap/max_ap/pls/name 等）已迁移到 CharacterHub（characterStore.player）。
+  // playerStore 保留 UI 派生状态 + JSON 大字段解析。
   const action = computed(() => playerInfo.value?.action ?? '');
   const isInBattle = computed(() => action.value === 'battle');
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
@@ -67,8 +62,13 @@ export const usePlayerStore = defineStore('player', () => {
     try {
       const result = await dataManager.fetch('player_info', forceRefresh);
       if (result.status === 'success' && result.data) {
-        playerInfo.value = result.data as PlayerInfo;
-        return playerInfo.value;
+        const info = result.data as PlayerInfo;
+        playerInfo.value = info;
+        // 同步写入 CharacterHub（玩家自身 + 战斗上下文）
+        const characterStore = useCharacterStore();
+        characterStore.mergePlayer(info);
+        characterStore.mergeCombatContext(info.combat_context);
+        return info;
       }
       error.value = result.msg || '拉取玩家信息失败';
       return null;
@@ -78,6 +78,22 @@ export const usePlayerStore = defineStore('player', () => {
     } finally {
       loading.value = false;
     }
+  }
+
+  /**
+   * 直接设置玩家信息（供 battleStore.refreshBattle 等已自行拉取数据的场景使用）
+   *
+   * 与 loadPlayerInfo 的区别：不走 dataManager，不管理 loading 状态。
+   * 仅清空 error（数据已成功获取才会调用此方法）。
+   *
+   * 同步写入 CharacterHub（玩家自身 + 战斗上下文），与 loadPlayerInfo 保持一致。
+   */
+  function setPlayerInfo(info: PlayerInfo): void {
+    playerInfo.value = info;
+    error.value = '';
+    const characterStore = useCharacterStore();
+    characterStore.mergePlayer(info);
+    characterStore.mergeCombatContext(info.combat_context);
   }
 
   /** 重置为初始状态 */
@@ -93,14 +109,6 @@ export const usePlayerStore = defineStore('player', () => {
     loading,
     error,
     // 计算属性
-    hp,
-    mhp,
-    sp,
-    msp,
-    ap,
-    maxAp,
-    name,
-    pls,
     action,
     isInBattle,
     oblTick,
@@ -112,6 +120,7 @@ export const usePlayerStore = defineStore('player', () => {
     isNpcActing,
     // actions
     loadPlayerInfo,
+    setPlayerInfo,
     reset,
   };
 });

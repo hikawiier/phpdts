@@ -27,7 +27,7 @@ import { debugBus } from '@/composables/useDebugBus';
 import { setRenderCallbacks, getZoomLevel } from '@/composables/useMapRender';
 import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer } from '@/composables/useMapInteraction';
 import { perf } from '@/utils/perf';
-import type { Enemy } from '@/types/api';
+import type { Character } from '@/types/character';
 
 /**
  * 点击移动 / 点击当前格探索
@@ -105,7 +105,7 @@ export async function clickMove(areaId: string | number): Promise<void> {
  * 替代旧的硬编码 distance!==1 前端校验。后端 combat.can_engage 命令基于
  * actor 的 max_attack_range + move_power 判断目标是否可达。
  */
-export async function handleEnemyClick(enemy: Enemy): Promise<void> {
+export async function handleEnemyClick(enemy: Character): Promise<void> {
   const mapStore = useMapStore();
   if (mapStore.curLoc === null) return;
 

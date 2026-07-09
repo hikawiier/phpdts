@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 // ══════════════════════════════════════════════════
 // 瞄准模式 / Aim Mode
 //
@@ -18,6 +18,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { useMapStore } from '@/stores/map';
+import { useCharacterStore } from '@/stores/character';
 import { findPath } from '@/composables/useMapReachability';
 
 // ── 状态 ──
@@ -26,6 +27,7 @@ const aimActionRange = ref<number>(1);
 const aimTargetMode = ref<'enemy' | 'tile'>('enemy');
 const aimOriginPls = ref<number | null>(null);
 const mapStore = useMapStore();
+const characterStore = useCharacterStore();
 
 // ── SVG 路径线数据 ──
 interface AimLineData {
@@ -84,8 +86,8 @@ function getAimStartElement(): HTMLElement | null {
 
 function isEnemyInActionRange(pid: number): boolean {
   const range = Math.max(0, Number(aimActionRange.value || 1));
-  const enemy = mapStore.enemies.find(
-    (e) => Number(e.pid) === pid && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
+  const enemy = characterStore.enemyList.find(
+    (c) => c.pid === pid && String(c.pgroup) === String(mapStore.curRegion),
   );
   const originPls = aimOriginPls.value ?? mapStore.curLoc;
   if (!enemy || originPls === null) return false;

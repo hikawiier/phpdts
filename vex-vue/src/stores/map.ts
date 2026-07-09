@@ -25,6 +25,7 @@ import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import { computeReachableMap } from '@/composables/useMapReachability';
 import { perf } from '@/utils/perf';
+import { useCharacterStore } from '@/stores/character';
 import type { GameMap, Enemy } from '@/types/api';
 
 export const useMapStore = defineStore('map', () => {
@@ -40,12 +41,18 @@ export const useMapStore = defineStore('map', () => {
 
   /**
    * 统一更新 mapData 属性（P10：集中修改权）
+   *
+   * enemies 变更时同步写入 CharacterHub（mergeEnemies），这样 mapStore.loadMap
+   * 和 battleStore.refreshMapEnemies（内部调 updateMapData）两个写入点都会自动触发 merge。
    */
   function updateMapData(patch: Partial<MapPatch>): void {
     if (patch.curLoc !== undefined) curLoc.value = patch.curLoc;
     if (patch.curRegion !== undefined) curRegion.value = patch.curRegion;
     if (patch.links !== undefined) links.value = patch.links;
-    if (patch.enemies !== undefined) enemies.value = patch.enemies;
+    if (patch.enemies !== undefined) {
+      enemies.value = patch.enemies;
+      useCharacterStore().mergeEnemies(patch.enemies);
+    }
   }
 
   /**

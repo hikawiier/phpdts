@@ -21,17 +21,19 @@
 
 import { ref, computed, type ComputedRef } from 'vue';
 import { useMapStore } from '@/stores/map';
+import { useCharacterStore } from '@/stores/character';
 import { isFalsy } from '@/utils/format';
 import { isReachable } from '@/composables/useMapReachability';
 import { createZoomState, ZOOM_STEP } from '@/composables/useMapZoom';
-import type { Enemy, TileInfo } from '@/types/api';
+import type { TileInfo } from '@/types/api';
+import type { Character } from '@/types/character';
 
 // ─── 渲染回调类型（由 useMapBusiness 注入） ───
 export interface RenderCallbacks {
   /** 点击可达格 → 移动 */
   onCellClick: (pls: string | number) => void;
   /** 点击敌人格 → 战斗确认 */
-  onEnemyClick: (enemy: Enemy) => void;
+  onEnemyClick: (enemy: Character) => void;
   /** 悬停可达格 → 路径预览 */
   onCellHover: (pls: string | number) => void;
   /** 离开可达格 → 清除预览 */
@@ -75,7 +77,7 @@ export interface CellData {
   isSafe: boolean;
 
   /** 敌人对象（无则 null） */
-  enemy: Enemy | null;
+  enemy: Character | null;
   /** 是否有敌人 */
   hasEnemy: boolean;
   /** 敌人名（预计算，避免模板重复访问） */
@@ -153,6 +155,7 @@ function buildCoordIndex(
  */
 const cells: ComputedRef<CellData[]> = computed(() => {
   const mapStore = useMapStore();
+  const characterStore = useCharacterStore();
   if (!mapStore.links || mapStore.curRegion === null) return [];
 
   const regionGrid = (mapStore.links.grids as Record<string, { cols?: number; rows?: number }>)[String(mapStore.curRegion)];
@@ -233,7 +236,7 @@ const cells: ComputedRef<CellData[]> = computed(() => {
       const prefix = isExit ? '▸' : (isEntrance ? '◂' : '');
 
       let displayLabel = '';
-      let enemy: Enemy | null = null;
+      let enemy: Character | null = null;
       let hasEnemy = false;
       let enemyName = '';
       let cellReachable = false;
@@ -262,8 +265,8 @@ const cells: ComputedRef<CellData[]> = computed(() => {
 
         displayLabel = name;
 
-        // 查找敌人（state=0 表示存活且未战斗）
-        enemy = mapStore.enemies.find(e => Number(e.pls) === Number(pls) && Number(e.state) === 0) || null;
+        // 查找敌人（enemyList 已过滤 state===0，存活敌人）
+        enemy = characterStore.enemyList.find(e => Number(e.pls) === Number(pls)) || null;
         if (enemy) {
           hasEnemy = true;
           enemyName = enemy.name;
@@ -313,7 +316,7 @@ export function triggerCellClick(pls: string | number): void {
   _callbacks.onCellClick(pls);
 }
 
-export function triggerEnemyClick(enemy: Enemy): void {
+export function triggerEnemyClick(enemy: Character): void {
   _callbacks.onEnemyClick(enemy);
 }
 

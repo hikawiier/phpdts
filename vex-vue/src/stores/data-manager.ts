@@ -53,19 +53,23 @@ class DataManager {
   async fetch(action: ApiAction, forceRefresh = false): Promise<ApiResponse> {
     const ttl = this._cacheable.get(action);
 
-    // ── 非白名单 action：不缓存，但保留去重 ──
+    // ── 非白名单 action：不缓存，但保留去重（forceRefresh=true 时跳过去重） ──
     if (ttl === undefined) {
-      if (this._pending.has(action)) {
+      if (!forceRefresh && this._pending.has(action)) {
         perf.mark(`fetch(${action}) → 去重命中`, 'store');
         return this._pending.get(action)!;
       }
       const promise = gameApi(action)
         .then((result) => {
-          this._pending.delete(action);
+          if (this._pending.get(action) === promise) {
+            this._pending.delete(action);
+          }
           return result;
         })
         .catch((err) => {
-          this._pending.delete(action);
+          if (this._pending.get(action) === promise) {
+            this._pending.delete(action);
+          }
           throw err;
         });
       this._pending.set(action, promise);

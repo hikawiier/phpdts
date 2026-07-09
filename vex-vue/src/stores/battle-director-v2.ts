@@ -15,9 +15,9 @@ export interface CombatantView {
   type: number;
   name: string;
   hp: number;
-  maxHp: number;
+  mhp: number;
   ap?: number;
-  maxAp?: number;
+  max_ap?: number;
 }
 
 export interface CombatTargetView {
@@ -496,9 +496,9 @@ function toCombatantView(snapshot: unknown): CombatantView | null {
     type,
     name: String(s.name ?? ''),
     hp: Number(s.hp) || 0,
-    maxHp: Number(s.max_hp) || 0,
+    mhp: Number(s.mhp) || 0,
     ap: s.ap !== undefined ? Number(s.ap) : undefined,
-    maxAp: s.max_ap !== undefined ? Number(s.max_ap) : undefined,
+    max_ap: s.max_ap !== undefined ? Number(s.max_ap) : undefined,
   };
 }
 

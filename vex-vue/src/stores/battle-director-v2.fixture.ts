@@ -6,7 +6,7 @@ const PLAYER = {
   type: 0,
   name: '测试玩家',
   hp: 40,
-  max_hp: 40,
+  mhp: 40,
   ap: 3,
   max_ap: 3,
 };
@@ -16,7 +16,7 @@ const ENEMY = {
   type: 1,
   name: '测试敌人',
   hp: 20,
-  max_hp: 20,
+  mhp: 20,
   ap: 2,
   max_ap: 2,
 };

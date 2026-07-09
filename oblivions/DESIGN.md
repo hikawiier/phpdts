@@ -35,7 +35,7 @@
 
 **战斗 UI 数据源**：前端战斗态优先相信后端 `player_info.combat_context`，而不是从敌人列表或本地状态拼战斗视图。地图实体、预装填目标和是否可提交回合都从 Combat ViewModel 派生。
 
-**前端战斗播放边界**：battlelog.v2 是语义事件流；Director 负责把事件转脚本，PlaybackPlan 负责排序/并发/等待策略，Runner/ActorExecutor 负责真实动画执行。不要把动画时序散落回组件事件里。
+**前端战斗播放边界（四层架构）**：battlelog.v2 是语义事件流；后端原料层 emit 事件，Director（`directV2`）负责把事件转脚本，PlaybackPlan（`planPlaybackV2`）负责排序/并发/等待策略，Runner/ActorExecutor（`battle-playback-runner.ts` / `battle-actor-executor.ts`）负责真实动画执行。不要把动画时序散落回组件事件里。
 
 **Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback: { id, params }, refresh, server_state } }`。`feedback.id + params` 复用 `log-templates.ts` 模板，由前端 `command-feedback.ts` 渲染文案。后端不输出用户可见文案。
 
@@ -208,9 +208,9 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 | **API 端点** | `obl_log` | `battle_log` |
 | **前端用途** | 日志区渲染 + Toast 触发 | 战斗模态框播放 + 碰撞动画 |
 
-**phase 细分与原料补全**：
+**event_type 细分与原料补全**：
 
-后端 emit 已从粗粒度 4-phase 细分为 12+ 事件类型 phase（`initiative_roll` / `once_execute_pre` / `once_execute_post` / `flee` / `combatant_cleared` / `battle_end` / `ambush_battle_end` 等）。每个 phase 对应明确的最小参数集：消除占位符（未提供字段记为 null）、消除 extra 滥用（所有字段为正式字段）、补全名称和 HP 快照（前端无需查 API）。
+后端 emit 的 battlelog.v2 事件按 `event_type` 分为 9 种（`round_start` / `turn_start` / `action_start` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice`）。每个 event_type 对应明确的最小参数集：消除占位符（未提供字段记为 null）、消除 extra 滥用（所有字段为正式字段）、补全名称和 HP 快照（前端无需查 API）。
 
 **render/debug 分离**：
 
@@ -221,9 +221,8 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 每个条目自动附加三个边界标记字段：
 - `bl_turn_num` — Turn 计数（null=Phase 0/尚未开始，1+=第 N turn），由 `battle_hook_turn_start` 递增
 - `bl_round_num` — Round 计数（null=Phase 0 无队列，0+=第 N round），从 DB `oblbattle_state.round_num` 同步
-- `bl_segment_flag` — 段边界信号（`round_start`/`turn_start`/`battle_end`/`ambush_battle_end`/null），由 phase 自动映射
 
-这些字段供前端导演系统进行分层分段编排，不依赖 phase 字符串推断。
+这些字段供前端导演系统进行分层分段编排。v2 不再依赖 `bl_segment_flag` 字段——边界信号直接由 `event_type` 本身表达（`round_start` / `turn_start` / `battle_end` 即边界）。
 
 **played 标记机制**：
 
@@ -234,8 +233,8 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 前端 fetchAndPlayBattleLog()
   → gameApi('battle_log') → 返回 played=0 的条目（已过滤 debug=true）
-  → BattleDirector.direct(entries) → 编排为 PlayScript
-  → playScript(script) → 逐段执行
+  → directV2(events) → 编排为 BattlePlayScriptV2（导演层）
+  → playScriptV2(script, npcPid) → planPlaybackV2 + runBattlePlaybackPlan（计划层+执行器）
   → POST mark_battle_log_played.php 标记 played=1
 ```
 
@@ -341,11 +340,12 @@ function skill_xxx_execute(CombatContext $ctx): void {
 
 ### 1.18 BattlePlaybackPlan
 
-前端战斗播放分三层：
+前端战斗播放分四层（详见 §2.7）：
 
 | 层 | 产物 | 职责 |
 |----|------|------|
-| Director | `BattlePlayScriptV2` | 把 battlelog.v2 语义事件分段、整理成动作/提示/效果 |
+| 后端原料层 | battlelog.v2 语义事件 | emit 时补全名称、HP 快照、边界标记，不预判前端如何消费 |
+| Director | `BattlePlayScriptV2` | 把 battlelog.v2 语义事件按 `action_uid` 聚合，分段（round_intro/turn/battle_end/system） |
 | Planner | `BattlePlaybackPlan` / `PlaybackStep[]` | 决定准备地图、动作动画、清场、文本、伤害残留等步骤的顺序和等待策略 |
 | Runner / ActorExecutor | 实际动画 promise | 执行 plan，等待 completion/duration，驱动 actor 动画 |
 
@@ -458,13 +458,13 @@ $obl_log->emit('move.success', 'move', [
 战斗日志从产出到消费经历四层，每层职责独立：
 
 1. **后端原料层**（PHP `BattleLogCollector`）
-   - emit 时补全名称、HP 快照、边界标记字段（`bl_turn_num`/`bl_round_num`/`bl_segment_flag`）
-   - 按 phase 精细区分事件类型，设置默认 `debug` 标记控制前端可见性
+   - emit 时补全名称、HP 快照、边界标记字段（`bl_turn_num`/`bl_round_num`）
+   - 按 `event_type` 精细区分事件类型（9 种），设置默认 `debug` 标记控制前端可见性
    - 不预判前端如何消费，专注提供完整的原始事件结构
 
 2. **前端导演层**（`battle-director-v2.ts`）
    - 同步纯函数，输入 battlelog.v2 events → 输出 `BattlePlayScriptV2`
-   - 配对 pre/post → 构建分层段（Phase 0/Round/Turn/BattleEnd）
+   - 按 `action_uid` 聚合 `action_start`/`effect_applied`/`action_end` 三元组 → 构建分层段（round_intro/turn/battle_end/system）
    - 不涉及网络、不涉及 DOM、不涉及组件状态
 
 3. **前端播放计划层**（`planPlaybackV2()`）
@@ -601,7 +601,7 @@ Oblivions 有三套独立的日志系统。普通日志仍按 ID 映射模板；
 | 日志系统 | 后端 emit 位置 | 前端消费位置 | 契约格式 |
 |---------|---------------|------------|---------|
 | `obl_log`（结构化日志） | `$obl_log->emit($id, ...)` | `vex-vue/src/data/log-templates.ts` | `{ id: { render(params) { return '...' } } }` |
-| `obl_battle_log`（战斗日志） | `combat_log_v2_*()` / `$obl_battle_log->emit(...)` | `vex-vue/src/stores/battle-director-v2.ts` + `BattleModal.vue` | `battlelog.v2 event -> BattlePlayScriptV2 -> TextCue/AnimationPlan/EffectVisualPlan` |
+| `obl_battle_log`（战斗日志） | `combat_log_v2_*()` / `$obl_battle_log->emit(...)` | `vex-vue/src/stores/battle-director-v2.ts`（导演+计划）+ `battle-playback-runner.ts`（执行器）+ `battle-actor-executor.ts`（演员）+ `BattleModal.vue`（模态框） | `battlelog.v2 event -> BattlePlayScriptV2 -> BattlePlaybackPlan -> PlaybackStep -> TextCue/AnimationPlan/EffectVisualPlan` |
 | `obl_error_log`（错误日志） | `$obl_error_log->emit($id, ...)` | 前端错误渲染逻辑 | 按 ID 分发渲染 |
 
 **强制约定**：
@@ -702,13 +702,13 @@ oblgame 持久化 obl_tick/obl_pretick
 | **触发条件** | `battle.start` 时立即执行 | 玩家/敌人队列存在后执行 |
 | **队列** | 无队列（不创建 `oblbattle_queue`） | 有队列，按先攻排序 |
 | **Turn/Round** | 无 Turn/Round（`bl_turn_num=null`） | 有 Turn/Round 递增 |
-| **边界信号** | 达到 `ambush_battle_end` 条件（被攻击者全死/全逃）→ `ambush_battle_end` 段 | `round_start` / `turn_start` / `battle_end` |
+| **边界信号** | 被攻击者全死/全逃 → `battle_end` / `combatant_cleared` | `round_start` / `turn_start` / `battle_end` |
 | **可以执行的动作** | 仅无队列的动作（如先攻回合、逃跑检测） | 队列中任意动作 |
-| **战斗日志** | `bl_segment_flag` 固定为 `null`，自动归入 `phase0` 段 | `bl_segment_flag` 携带 `round_start`/`turn_start` |
+| **战斗日志** | `bl_turn_num`/`bl_round_num` 均为 null，导演层归入 `system` 或 `turn` 段 | `bl_turn_num`/`bl_round_num` 递增，导演层按 `round_start`/`turn_start` 分段 |
 
 **设计理由**：
 - Phase 0 本质是一个"战斗预热"阶段——先处理先攻掷骰、确认双方能否进入标准战斗。Phase 1 才是真正的回合制战斗
-- 两阶段分离后，导演系统可以按段类型渲染不同 UI（Phase 0 显示"突袭"头，Phase 1 显示"第N轮/第N回合"头）
+- 两阶段分离后，导演系统可通过 `bl_turn_num`/`bl_round_num` 是否为 null 区分阶段归属（Phase 0 归入 `system` 或无 round/turn 编号的 `turn` 段，Phase 1 按 `round_start`/`turn_start` 分段显示"第N轮/第N回合"头）
 - 旧版将 Phase 0 和 Phase 1 混在一起 emit，前端通过 `turn=0` 和 `action_id` 猜测阶段归属，导致渲染逻辑复杂且脆弱
 
 **实施**：`BuildLogCollector` 自动管理 `bl_turn_num`/`bl_round_num`：Phase 0 期间两者均为 `null`；队列首次创建时 `setRoundNum(0)+nextTurn()` 触发 `round_start+turn_start` 进入 Phase 1。`battle_queue_rebuild` 也会调 `setRoundNum` 同步 DB 的 `round_num`。
@@ -717,7 +717,7 @@ oblgame 持久化 obl_tick/obl_pretick
 
 **为什么需要导演层**：
 - 后端 emit 的事件是扁平的（按执行顺序排列的日志条目列表），每个条目只携带当前事件的信息
-- 前端播放需要"上下文"——需要知道哪些条目属于同一个回合、哪些是 pre/post 配对、战斗何时开始何时结束
+- 前端播放需要"上下文"——需要知道哪些条目属于同一个回合、哪些 effects 归属同一个 action、战斗何时开始何时结束
 - 旧方案是播放器兼任导编职责：在播放过程中实时判断 `action_id=xxx` 来决定渲染方式，导致 `BattleModal.vue` 逻辑膨胀
 
 **导演层与后端原料层的契约**：
@@ -725,26 +725,40 @@ oblgame 持久化 obl_tick/obl_pretick
 后端负责提供"足够原始且完整"的原料（名称、HP 快照、边界标记），导演层负责将这些原料排列成具有层次结构的"剧本"（PlayScript）。
 
 ```
-后端 emit 3 条：
-  [once_execute_pre, actor="玩家", target="野狼A", hp=30→25]
-  [queue_create, ...]                           ← debug=true（前端不可见）
-  [once_execute_post, actor="玩家", target="野狼A", dmg=5]  
+后端 emit battlelog.v2 render 事件序列：
+  round_start        ← 一轮开始边界
+  turn_start         ← 一回合开始边界（含 actor 快照）
+  action_start       ← 动作开始（含 action_uid / actor / targets）
+  effect_applied     ← 效果应用（含 action_uid / effect_type / target / delta）
+  action_end         ← 动作结束（含 action_uid / success / reason）
+  combatant_cleared  ← 参战者退场
+  battle_end         ← 战斗结束
 
-导演编排为 1 条 DirectedEntry（kind=action）：
-  玩家 → 野狼A: 5点伤害 [HP: 30→25]
+导演 directV2() 按 action_uid 聚合为 BattlePlayScriptV2：
+  segments:
+    - round_intro 段（round_start）
+    - turn 段（turn_start + 聚合的 actions[] + notices[]）
+    - battle_end 段（battle_end）
 ```
 
 **关键设计决策**：
-1. **导演层是纯同步函数**：不涉及网络请求、不涉及 DOM。`direct(entries) → PlayScript` 的纯函数签名使其可测试、可复播、可调试
-2. **段 (Segment) 是播放的最小组织单位**：每个段包含一个段类型（phase0/round/turn/battle_end/ambush_battle_end）、段元数据（轮数/回合数/行动者/胜利者）、以及该段内的有序列队条目
-3. **配对的 pre/post 合并为 action**：`pairPrePost` 用栈算法匹配 `once_execute_pre` 和 `once_execute_post`。pre 记录动作执行前的全部状态快照，post 记录执行结果（伤害值/是否成功）。配对后合并为单条 `action` 条目供前端渲染
-4. **边界信号驱动分段**：不依赖 phase 字符串理解，而是依赖 `bl_segment_flag` 驱动。`round_start` → 截断当前段并开始新 round；`turn_start` → 截断并开始新 turn。这降低了后端 phase 变动时导演层需要调整的风险
-5. **异常健壮性**：悬空 pre（无 post 配对）降级为 `display` 渲染；孤儿 post（无 pre）直接渲染；尾部未配对条目自动归入当前段
-6. **段元数据完整**：每个段携带 `roundNum`/`turnNum`/`actorPid`/`actorName`/`initiatorOrder` 等，演员层无需回溯上一个条目
+1. **导演层是纯同步函数**：不涉及网络请求、不涉及 DOM。`directV2(events) → BattlePlayScriptV2` 的纯函数签名使其可测试、可复播、可调试
+2. **段 (Segment) 是播放的最小组织单位**：每个段包含段类型（`round_intro`/`turn`/`battle_end`/`system`）、段元数据（轮数/回合数/行动者）、以及该段内的有序 actions 和 notices
+3. **action_uid 驱动聚合**：`action_start` 创建 pending action，`effect_applied` 按 `action_uid` 归属效果，`action_end` 完成聚合并 flush 到段。悬空 pending（无 `action_end`）在循环结束后按顺序归入对应 turn 段
+4. **边界信号驱动分段**：`round_start` → 创建 round_intro 段；`turn_start` → 创建/复用 turn 段；`battle_end` → 创建 battle_end 段。不依赖 phase 字符串理解
+5. **动画/视觉由导演层预决策**：`decideActionAnimation()` 在 `action_start` 时生成 `ActionAnimationPlan`，`deriveActionAnimationFromEffects()` 在 `effect_applied` 时根据效果修正（如 move 效果改写为 move 动画、多目标 damage 改写为 area_burst）。演员层只执行预决策结果
+6. **文本由导演层预生成**：`buildActionText()` / `buildEffectText()` 生成已转义的 `TextCue`（含 html + tone），组件直接渲染不再做字符串拼接
+7. **计划层独立于导演层**：`planPlaybackV2(script)` 把 script 拆解为 `PlaybackStep[]`，每个 step 携带 `awaitPolicy`（none/completion/duration）和 `timeout`。计划层与导演层同文件但职责独立
 
-**调试便利**：`direct()` 运行时自动挂载 `window.__battleScript` 和 `window.__battleRawEntries`，浏览器控制台直接检查编排结果。`exportScriptToJson()` 可将脚本导出为 JSON 文件下载，方便离线分析。
+**与旧 v1 导演的差异**：
+- 旧 v1 用 `pairPrePost` 栈算法匹配 `once_execute_pre` / `once_execute_post`；v2 用 `action_uid` 直接聚合 `action_start` / `effect_applied` / `action_end` 三元组
+- 旧 v1 段类型含 `phase0` / `ambush_battle_end`；v2 段类型精简为 `round_intro` / `turn` / `battle_end` / `system`
+- 旧 v1 依赖 `bl_segment_flag` 驱动分段；v2 依赖 `event_type` 本身（`round_start` / `turn_start` / `battle_end` 即边界信号）
+- 旧 v1 无独立计划层；v2 引入 `planPlaybackV2` + `battle-playback-runner.ts` + `battle-actor-executor.ts` 三件套，把时序推理从组件中彻底剥离
 
-**旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPid`+`buildSegments` 替代）、`playBattleLogGroup`（由 `playScript` 替代）、`buildPlayContext`（后端 pre emit 已带名称/HP）、`BATTLE_TEMPLATES` 按 action_id 索引（由 `KIND_TEMPLATES` 按 directedKind 分发替代）。
+**调试便利**：开发模式下 `fetchAndPlayBattleLog` 自动挂载 `window.__battleScriptV2`（导演产物）、`window.__battleRawEventsV2`（原始事件）、`window.__battlePlaybackPlanV2`（播放计划），浏览器控制台可直接检查三层产物。
+
+**旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPidFromScriptV2` + `BattleSegmentV2` 替代）、`playBattleLogGroup`（由 `playScriptV2` → `planPlaybackV2` + `runBattlePlaybackPlan` 替代）、`buildPlayContext`（后端 v2 emit 已带名称/HP 快照）、`BATTLE_TEMPLATES` / `KIND_TEMPLATES`（由导演层 `buildActionText` / `buildEffectText` 生成的 `TextCue` 替代）、`renderBattleLogEntryHtml` / `renderDirectedEntryHtml`（由 `BattleModal.vue` 直接播放 text cue 替代）。
 
 ### 2.19 道具 Tag 系统（性质描述 Tag + 系统钩子 Tag）
 

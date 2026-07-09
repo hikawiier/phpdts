@@ -20,7 +20,7 @@
 // 实际执行判断完全一致——避免重蹈 isLocked 与 execute 行为分叉的隐性 bug。
 // ══════════════════════════════════════════════════
 
-import { getHeartbeatChangedScopes, oblHeartbeat, type CommandResult } from '@/api/client';
+import { getHeartbeatChangedScopes, isHeartbeatSoftFailed, oblHeartbeat, type CommandResult } from '@/api/client';
 import { sendOblCommand, type OblCommandEnvelope } from '@/api/obl-command';
 import { dataManager } from '@/stores/data-manager';
 import { usePlayerStore } from '@/stores/player';
@@ -120,26 +120,33 @@ class CommandQueue {
   /**
    * 推进 tick 后检查战斗状态
    *
-   * 阶段三后 player_info 不再隐式推进 tick；先显式等待 heartbeat，
-   * 再拉取 player_info，最后广播 game:tick-advanced 事件，
-   * 由 battle.ts 响应并决定是否启动/停止轮询。
+   * 显式等待 heartbeat 推进 tick + 失效受影响缓存，然后广播 game:tick-advanced
+   * 事件（携带 heartbeat 结果），由 battleStore.refreshBattle 复用该结果拉取
+   * player_info 并决定轮询行为——避免 commandQueue 与 refreshBattle 各自重复
+   * 调用 oblHeartbeat + loadPlayerInfo。
+   *
+   * heartbeat 软失败（锁持续占用）时仅广播事件，不刷新地图/状态——下一轮
+   * daemon 心跳或 NPC 轮询会重试。
    */
   private async _checkBattleState(): Promise<void> {
     try {
       const heartbeat = await oblHeartbeat();
       const changedScopes = getHeartbeatChangedScopes(heartbeat);
-      for (const scope of changedScopes) {
-        dataManager.invalidate(scope);
-      }
-      if (changedScopes.includes('game_map') || changedScopes.includes('enemies')) {
-        try {
-          await useMapStore().loadMap();
-        } catch (e) {
-          console.error('[CommandQueue] map refresh after heartbeat error:', e);
+
+      if (!isHeartbeatSoftFailed(heartbeat)) {
+        for (const scope of changedScopes) {
+          dataManager.invalidate(scope);
+        }
+        if (changedScopes.includes('game_map') || changedScopes.includes('enemies')) {
+          try {
+            await useMapStore().loadMap();
+          } catch (e) {
+            console.error('[CommandQueue] map refresh after heartbeat error:', e);
+          }
         }
       }
-      await usePlayerStore().loadPlayerInfo(true);
-      // 广播事件，由 battle.ts 监听并调用 refreshBattle 决定轮询行为
+
+      // 广播事件，battleStore.refreshBattle 会复用 heartbeat 结果跳过重复心跳
       dataManager.broadcast('game:tick-advanced', { heartbeat, changedScopes });
     } catch (e) {
       console.error('[CommandQueue] checkBattleState error:', e);

@@ -29,7 +29,7 @@
 import { defineStore } from 'pinia';
 import { ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import { getHeartbeatChangedScopes, markBattleLogPlayed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
+import { getHeartbeatChangedScopes, isHeartbeatSoftFailed, markBattleLogPlayed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
@@ -101,15 +101,14 @@ export const useBattleStore = defineStore('battle', () => {
   const isPlayerTurn = ref<boolean>(false);
   /** 敌人名称（供 BattleHeader 显示） */
   const enemyName = ref<string>('');
-  /** 敌人位置（供 BattleHeader 显示） */
-  const enemyLocation = ref<string | number | null>(null);
   /** 战斗模态框是否打开 */
   const battleModalOpen = ref<boolean>(false);
   /** 当前正在播放的 v2 段（供 BattleModal 读取 text cues/actions/notices） */
   const currentSegment = ref<BattleSegmentV2 | null>(null);
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
-  let npcTurnRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let npcTurnRefreshRunning = false;
+  let npcTurnRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── 守护进程定时器（不响应式，仅内部使用） ──
   let daemonTimer: ReturnType<typeof setTimeout> | null = null;
@@ -182,27 +181,40 @@ export const useBattleStore = defineStore('battle', () => {
    *
    * NPC 顺位时，后端由 oblivions/api/heartbeat.php 显式执行 NPC 先攻轮。
    * 前端轮询 refreshBattle() 会先 await heartbeat，再拉取 player_info/battle_log。
+   *
+   * 使用 setTimeout 递归调度（与 scheduleDaemonBeat 一致）：await refreshBattle()
+   * 完成后再安排下一次，避免 refreshBattle 耗时 >1s 时 interval tick 空转。
    */
   function startNpcTurnRefresh(): void {
-    if (npcTurnRefreshTimer !== null) return;
-    npcTurnRefreshTimer = setInterval(() => {
+    if (npcTurnRefreshRunning) return;
+    npcTurnRefreshRunning = true;
+    scheduleNpcTurnRefresh();
+  }
+
+  function scheduleNpcTurnRefresh(): void {
+    if (!npcTurnRefreshRunning) return;
+    npcTurnRefreshTimer = setTimeout(async () => {
+      npcTurnRefreshTimer = null;
+      if (!npcTurnRefreshRunning) return;
       dataManager.invalidate('player_info');
       dataManager.invalidate('battle_log');
-      refreshBattle();
+      await refreshBattle();
+      scheduleNpcTurnRefresh();
     }, NPC_TURN_REFRESH_INTERVAL);
   }
 
   /** 停止 NPC 回合自动刷新循环 */
   function stopNpcTurnRefresh(): void {
+    npcTurnRefreshRunning = false;
     if (npcTurnRefreshTimer !== null) {
-      clearInterval(npcTurnRefreshTimer);
+      clearTimeout(npcTurnRefreshTimer);
       npcTurnRefreshTimer = null;
     }
   }
 
   /** 是否有 NPC 自动刷新定时器在运行 */
   function hasNpcTurnRefreshTimer(): boolean {
-    return npcTurnRefreshTimer !== null;
+    return npcTurnRefreshRunning;
   }
 
   // ══════════════════════════════════════════════════
@@ -274,7 +286,6 @@ export const useBattleStore = defineStore('battle', () => {
 
     // 敌人名称暂空，等 playback segment_context step 从 battlelog 提取后更新
     enemyName.value = '';
-    enemyLocation.value = null;
 
     updateActionPanel(playerTurn, context);
 
@@ -294,7 +305,6 @@ export const useBattleStore = defineStore('battle', () => {
     currentEnemyPid.value = 0;
     combatContext.value = null;
     enemyName.value = '';
-    enemyLocation.value = null;
     isPlayerTurn.value = false;
     battleModalOpen.value = false;
     currentSegment.value = null;
@@ -341,7 +351,6 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayerTurn.value = true;
 
     enemyName.value = enemyPid > 0 ? '' : '瞄准模式';
-    enemyLocation.value = null;
 
     nextTick(() => {
       dataManager.broadcast('battle:preload-init', {
@@ -363,11 +372,12 @@ export const useBattleStore = defineStore('battle', () => {
   // ══════════════════════════════════════════════════
 
   /**
-   * 刷新战斗状态：检测 action 变化，进入/退出战斗模式
+   * 刷新战斗状态：拉取 player_info，进入/维持战斗模式，触发 battlelog 播放
    *
    * 职责分工：
-   * - 本函数负责状态管理（进入/退出战斗模式、启停 NPC 刷新、玩家回合 toast）
-   * - fetchAndPlayBattleLog 只负责拉取-播放-标记，不涉及状态判断
+   * - 本函数负责拉取数据 + 进入/维持战斗模式 + 启停 NPC 刷新
+   * - 退出战斗模式的判断不在本函数，由 fetchAndPlayBattleLog 播完后调
+   *   verifyBattleStateAndDecide 触发后端校验决定
    *
    * 状态机驱动（3 态）：
    *  - 用 obl_battle_state 作为单一数据源决定轮询行为
@@ -375,20 +385,26 @@ export const useBattleStore = defineStore('battle', () => {
    *  - PLAYER_TURN → 停止轮询，启用玩家操作
    *  - IDLE → 停止轮询
    */
-  async function refreshBattle(): Promise<void> {
+  async function refreshBattle(prefetchedHeartbeat?: OblHeartbeatResponse): Promise<void> {
     if (isProcessingBattle.value) return;
     isProcessingBattle.value = true;
 
     try {
       // 阶段三后只读 API 不再隐式推进世界；战斗刷新必须显式等待 tick 结算，
       // 否则可能读到旧的 PROCESSING 状态或拿不到刚生成的 battlelog。
-      const heartbeat = await oblHeartbeat();
-      await applyHeartbeatChangedScopes(heartbeat);
+      //
+      // 若调用方已通过 commandQueue._checkBattleState 拿到 heartbeat 结果
+      // （经 game:tick-advanced 事件传入），直接复用，避免重复 POST heartbeat。
+      const heartbeat = prefetchedHeartbeat ?? await oblHeartbeat();
+      if (isHeartbeatSoftFailed(heartbeat)) return; // tick 未推进，等下一轮
+      if (!prefetchedHeartbeat) {
+        await applyHeartbeatChangedScopes(heartbeat);
+      }
       const result = await dataManager.fetch('player_info', true);
       if (result.status !== 'success' || !result.data) return;
 
       const playerInfo = result.data as PlayerInfo;
-      usePlayerStore().playerInfo = playerInfo;
+      usePlayerStore().setPlayerInfo(playerInfo);
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
       const nextCombatContext = playerInfo.combat_context || null;
@@ -412,32 +428,9 @@ export const useBattleStore = defineStore('battle', () => {
         stopNpcTurnRefresh();
       }
 
-      // 独立播放积压的 battlelog
+      // 拉取并播放 battlelog —— 播完钩子内部触发后端校验
+      // fetchAndPlayBattleLog 播完后会调 verifyBattleStateAndDecide，由后端校验决定退出还是继续
       await fetchAndPlayBattleLog();
-
-      // 播放完成后，根据 action 决定后续状态
-      if (action === 'battle') {
-        const afterHeartbeat = await oblHeartbeat();
-        await applyHeartbeatChangedScopes(afterHeartbeat);
-        const afterResult = await dataManager.fetch('player_info', true);
-        if (afterResult.status === 'success' && afterResult.data) {
-          const afterInfo = afterResult.data as PlayerInfo;
-          usePlayerStore().playerInfo = afterInfo;
-          combatContext.value = afterInfo.combat_context || null;
-          const afterAction = afterInfo.action || '';
-          if (afterAction === 'battle') {
-            currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
-            if (afterInfo.obl_battle_state === 'PLAYER_TURN') {
-              const toastStore = useToastStore();
-              toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
-            }
-          } else {
-            exitBattleMode();
-          }
-        }
-      } else {
-        exitBattleMode();
-      }
     } catch (e) {
       console.error('[Battle] refreshBattle error:', e);
       useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
@@ -447,34 +440,71 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   // ══════════════════════════════════════════════════
-  // battlelog 拉取 + 导演编排 + 播放 + 标记
+  // 后端校验
   // ══════════════════════════════════════════════════
 
   /**
-   * 拉取未播放的 battlelog，导演编排后播放，播完标记
+   * 后端校验：拉取最新 player_info，根据 action 决定退出还是继续战斗
    *
-   * 纯粹的"拉取-播放-标记"播放器，不涉及状态管理逻辑：
-   * - 不判断 action（由 refreshBattle 负责）
-   * - 不调用 exitBattleMode（由 refreshBattle 负责）
-   * - 不显示 toast（由 refreshBattle 负责）
+   * 触发时机：
+   * - 导演播完所有动画后（fetchAndPlayBattleLog 末尾）
+   * - F5 刷新页面初始化时（App.vue onMounted，已有逻辑）
+   *
+   * 设计原则：退出战斗页面唯一判据是后端校验，前端不维护战斗状态机。
+   */
+  async function verifyBattleStateAndDecide(): Promise<void> {
+    // 不在战斗模式，无需校验（避免正常探索态下的无谓拉取）
+    if (currentMode.value !== 'battle') return;
+
+    const afterHeartbeat = await oblHeartbeat();
+    if (isHeartbeatSoftFailed(afterHeartbeat)) return; // 锁忙，等下一轮
+    await applyHeartbeatChangedScopes(afterHeartbeat);
+
+    const afterResult = await dataManager.fetch('player_info', true);
+    if (afterResult.status !== 'success' || !afterResult.data) return;
+
+    const afterInfo = afterResult.data as PlayerInfo;
+    usePlayerStore().setPlayerInfo(afterInfo);
+    combatContext.value = afterInfo.combat_context || null;
+
+    const afterAction = afterInfo.action || '';
+    if (afterAction === 'battle') {
+      // 继续战斗
+      currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
+      if (afterInfo.obl_battle_state === 'PLAYER_TURN') {
+        const toastStore = useToastStore();
+        toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
+      }
+    } else {
+      // 后端校验说"不在战斗了"，退出
+      exitBattleMode();
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // battlelog 拉取 + 导演编排 + 播放 + 标记 + 后端校验
+  // ══════════════════════════════════════════════════
+
+  /**
+   * 拉取未播放的 battlelog，导演编排后播放，播完标记并触发后端校验
+   *
+   * 职责：
+   * - 拉取 battlelog，交给导演编排并播放
+   * - 播完后触发后端校验（verifyBattleStateAndDecide），由后端 action 决定退出还是继续
    */
   async function fetchAndPlayBattleLog(): Promise<void> {
     if (isPlayingBattleLog.value) return;
     if (!currentGroomid.value || !currentPid.value) return;
 
+    isPlayingBattleLog.value = true;
     try {
       dataManager.invalidate('battle_log');
       const result = await dataManager.fetch('battle_log', true);
       if (result.status !== 'success' || !result.data) return;
 
       const entries = (result.data as { entries?: BattleLogRawEntry[] }).entries || [];
-      if (entries.length === 0) return;
-
-      isPlayingBattleLog.value = true;
-
       const v2Events = entries.filter(isBattleLogV2Event);
 
-      // battlelog.v2 是唯一播放协议。历史 v1 条目只标记已播，避免阻塞队列。
       if (v2Events.length > 0) {
         const scriptV2 = directV2(v2Events);
         if (import.meta.env.DEV) {
@@ -486,29 +516,22 @@ export const useBattleStore = defineStore('battle', () => {
           const npcPid = extractNpcPidFromScriptV2(scriptV2);
           await playScriptV2(scriptV2, npcPid);
         }
+      } else if (entries.length > 0 && import.meta.env.DEV) {
+        console.warn('[Battle] ignored non-v2 battlelog entries; battlelog.v2 is now required.', entries);
+      }
 
+      if (entries.length > 0) {
         const markResult = await markBattleLogPlayed(
           currentGroomid.value,
           currentPid.value,
           collectAllLogIds(entries),
         );
         if (!markResult.success) {
-          console.warn('[Battle] markBattleLogPlayed(v2 path) returned failure:', markResult);
+          console.warn('[Battle] markBattleLogPlayed returned failure:', markResult);
         }
-        return;
       }
 
-      if (import.meta.env.DEV) {
-        console.warn('[Battle] ignored non-v2 battlelog entries; battlelog.v2 is now required.', entries);
-      }
-      const markResult = await markBattleLogPlayed(
-        currentGroomid.value,
-        currentPid.value,
-        collectAllLogIds(entries),
-      );
-      if (!markResult.success) {
-        console.warn('[Battle] markBattleLogPlayed(non-v2 ignored) returned failure:', markResult);
-      }
+      await verifyBattleStateAndDecide();
     } catch (e) {
       console.error('[Battle] fetchAndPlayBattleLog error:', e);
       useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
@@ -536,9 +559,10 @@ export const useBattleStore = defineStore('battle', () => {
     });
   }
 
-  async function updateSegmentContext(segment: BattleSegmentV2, npcPid: number): Promise<void> {
+  async function updateSegmentContext(segment: BattleSegmentV2, _npcPid: number): Promise<void> {
     updateEnemyNameFromSegment(segment);
-    await refreshEnemyLocation(npcPid);
+    // 敌人位置不再需要主动刷新——CharacterHub 已通过 mergeEnemies 持有最新 pls，
+    // BattleHeader 响应式派生。参数 _npcPid 保留以兼容 runBattlePlaybackPlan 调用签名。
   }
 
   /**
@@ -621,22 +645,6 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  /** 从 enemies API 获取敌人位置（替代旧 refreshContextFromApi 的位置部分） */
-  async function refreshEnemyLocation(npcPid: number): Promise<void> {
-    if (npcPid <= 0) return;
-    try {
-      const enemies = await refreshMapEnemies();
-      for (const enemy of enemies) {
-        if (parseInt(String(enemy.pid)) === npcPid) {
-          enemyLocation.value = enemy.pls ?? null;
-          return;
-        }
-      }
-    } catch (e) {
-      console.error('[Battle] refreshEnemyLocation error:', e);
-    }
-  }
-
   // ══════════════════════════════════════════════════
   // 装填区执行完成后的刷新处理
   // ══════════════════════════════════════════════════
@@ -650,7 +658,6 @@ export const useBattleStore = defineStore('battle', () => {
   async function onPreloadExecuted(): Promise<void> {
     dataManager.invalidate('player_info');
     dataManager.invalidate('enemies');
-    dataManager.invalidate('battle_log');
 
     await refreshBattle();
   }
@@ -676,8 +683,9 @@ export const useBattleStore = defineStore('battle', () => {
     dataManager.listen('preload:executed', () => {
       onPreloadExecuted();
     });
-    dataManager.listen('game:tick-advanced', () => {
-      refreshBattle();
+    dataManager.listen('game:tick-advanced', (data) => {
+      const d = data as { heartbeat?: OblHeartbeatResponse } | undefined;
+      refreshBattle(d?.heartbeat);
     });
   }
 
@@ -692,7 +700,6 @@ export const useBattleStore = defineStore('battle', () => {
     isProcessingBattle.value = false;
     isPlayerTurn.value = false;
     enemyName.value = '';
-    enemyLocation.value = null;
     battleModalOpen.value = false;
     currentSegment.value = null;
     stopNpcTurnRefresh();
@@ -713,7 +720,6 @@ export const useBattleStore = defineStore('battle', () => {
     isProcessingBattle,
     isPlayerTurn,
     enemyName,
-    enemyLocation,
     battleModalOpen,
     currentSegment,
     // 定时器管理
