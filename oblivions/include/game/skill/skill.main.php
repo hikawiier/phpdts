@@ -157,13 +157,22 @@ function skill_format_skillpara(&$skillpara) {
 /**
  * 确保默认技能存在（由 skill_format_skillpara 调用）
  *
- * MVP 默认技能：unarmed_strike、escape
+ * 测试默认技能：Phase 6 验收基线中非装备来源的玩家技能。
  * 若 skillpara 中不存在这些 key，则初始化为 {"lstact": 0}
  *
  * @param array &$skillpara
  */
 function skill_ensure_defaults(&$skillpara) {
-    $defaults = array('unarmed_strike', 'escape');
+    $defaults = array(
+        'unarmed_strike',
+        'escape',
+        'move',
+        'heal',
+        'whirlwind',
+        'execute',
+        'vampiric_bite',
+        'grenade',
+    );
     foreach ($defaults as $skill_id) {
         if (!isset($skillpara[$skill_id]) || !is_array($skillpara[$skill_id])) {
             $skillpara[$skill_id] = array('lstact' => 0);

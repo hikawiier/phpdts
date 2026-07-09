@@ -55,6 +55,9 @@ function obl_command_api_handle($envelope) {
             $response = obl_command_response_error('COMMAND_NOT_ALLOWED', '', null, $request_id);
         } else {
             $feedback_snapshot = obl_command_feedback_snapshot();
+            if (!empty($contract['advances_tick']) && function_exists('obl_tick_prepare_pending_battle_actor_scope')) {
+                obl_tick_prepare_pending_battle_actor_scope($command, isset($pdata['pid']) ? (int)$pdata['pid'] : 0);
+            }
             $dispatch = obl_command_handler_dispatch($command, $payload, $pdata);
             $feedback = obl_command_feedback_result($command, $feedback_snapshot);
             if (!$dispatch['ok']) {
@@ -144,6 +147,20 @@ function obl_command_gate($command, $contract, $payload, $envelope, &$pdata) {
         $state = $qid > 0 ? obl_battle_state_get($qid) : (defined('OBL_BS_IDLE') ? OBL_BS_IDLE : 'IDLE');
         if ($state !== $contract['battle_state_required']) {
             return array('ok' => false, 'code' => 'STATE_CONFLICT', 'details' => array('battle_state' => $state));
+        }
+    }
+
+    if (!empty($contract['queue_actor_required'])) {
+        $qid = isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
+        $current = $qid > 0 && function_exists('obl_fetch_queue_current_initiator')
+            ? obl_fetch_queue_current_initiator($qid)
+            : false;
+        $current_pid = $current ? (int)$current['pid'] : 0;
+        if ($contract['queue_actor_required'] === 'self' && $current_pid !== (int)$pdata['pid']) {
+            return array('ok' => false, 'code' => 'STATE_CONFLICT', 'details' => array(
+                'current_pid' => $current_pid,
+                'pid' => (int)$pdata['pid'],
+            ));
         }
     }
 

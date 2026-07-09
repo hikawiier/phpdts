@@ -295,6 +295,14 @@ function combat_stage_persist(CombatContext $ctx): void {
         if ($pid > 0) {
             $pids_to_save[$pid] = true;
         }
+
+        foreach (($target['effect_targets'] ?? []) as $effect_target) {
+            if (!is_array($effect_target)) continue;
+            $ep = (int)($effect_target['pid'] ?? 0);
+            if ($ep > 0) {
+                $pids_to_save[$ep] = true;
+            }
+        }
     }
 
     foreach ($ctx->targets as $target) {
@@ -413,6 +421,13 @@ function combat_persist_find_data_in_memory(CombatContext $ctx, int $pid): ?arra
         if (!is_array($target_data)) continue;
         if ((int)($target_data['pid'] ?? 0) === $pid) {
             return $target_data;
+        }
+
+        foreach (($target['effect_targets'] ?? []) as $effect_target) {
+            if (!is_array($effect_target)) continue;
+            if ((int)($effect_target['pid'] ?? 0) === $pid) {
+                return $effect_target;
+            }
         }
     }
 

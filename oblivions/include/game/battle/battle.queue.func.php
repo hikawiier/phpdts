@@ -4,10 +4,14 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 先攻队列原语层
+// Shared combat infrastructure — 先攻队列原语层
 //
 // 职责：先攻队列的原子操作（先攻计算、创建、加入、退出、更新、解散、重建）。
 // 不含编排逻辑，编排层在 battle.queue.main.php。
+//
+// 说明：
+// - 本文件现在是 new combat 复用的共享基础设施。
+// - `battle_queue_*` 命名保留，仅因当前活代码引用面较广。
 // ================================================================
 
 // 依赖声明（由 obl_bootstrap.php 统一加载，此处 require_once 仅作自文档化）
@@ -154,7 +158,8 @@ function battle_queue_create_and_init(&$actor_data, array $pids, &$obl_battle_lo
     obl_battle_state_create($qid, OBL_BS_PROCESSING);
 
     if ($obl_battle_log) {
-        // 队列新建 = Round 1（0-indexed），同步到 collector 后再 emit initiative_roll
+        // 队列新建 = Round 1（0-indexed）；render 层输出 round_start，
+        // collector 内部仍复用历史 initiative 语义做边界管理。
         $obl_battle_log->setRoundNum(0);
         $obl_battle_log->setPhase('queue_create');
         $obl_battle_log->emit([

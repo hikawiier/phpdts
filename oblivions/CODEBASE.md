@@ -57,6 +57,14 @@
 1. **玩家命令路径**：Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（仅 `advancesTick=true` 的命令）
 2. **心跳路径**：`obl_tick_orchestrator_heartbeat()` → `obl_tick_orchestrator_resolve_pending()` → `obl_resolve_tick_events()`（处理 NPC 行动）
 
+**TickFrame 行为互斥**：同一 TickFrame 内同一 actor 最多执行一个主动行为。`tick.func.php` 维护 `ActorBehaviorLedger` 与 `BattleActorScope`；`enemy_ai.func.php` 的 world AI 必须先通过 `obl_actor_can_world_ai()`，禁止本 tick 战斗成员在同 tick 再执行非战斗 AI。
+
+**战斗结束后的下一 tick**：NPC 战斗回合结束会通过 `obl_tick_request_advance()` 自驱动下一 pending tick。若战斗已完全 disband，下一 TickFrame 的 `BattleActorScope` 为空，原战斗 actor 恢复普通 NPC 后执行 world AI 属于当前预期行为，不是同 tick 双行动 bug。
+
+**战斗执行当前结构**：`include/game/combat/` 是唯一战斗执行主流程；`include/game/battle/` 只保留数值、队列、状态机 hook、battle log 等 shared combat infrastructure。旧 `battle.entry.php` / `battle.main.php` 已删除，运行时不加载。
+
+**前端战斗播放当前结构**：战斗日志先由 `battle-director-v2.ts` 转成语义脚本，再由 `planPlaybackV2()` 编排为 `BattlePlaybackPlan`，最后交给 `battle-playback-runner.ts` 顺序/并发执行，单 actor 动画由 `battle-actor-executor.ts` 负责。
+
 **核心目录补充**：
 - `include/core/` 共 8 个文件：`obl_bootstrap.php` / `obl_runtime.php` / `obl_command.php`（@deprecated） / `obl_command_response.php` / `obl_json_request.php` / `obl_tick_orchestrator.php` / `obl_game_repository.php` / `obl_gamevars.php`
 - `include/command/` 共 5 个文件：`obl_command_bus.php` / `obl_command_contract.php` / `obl_command_handlers.php`（新路径）+ `oblivions_router.php` / `oblivions_commands.php`（旧 deprecated 路径）
@@ -132,19 +140,36 @@ oblivions/
 │       ├── explore.func.php      # 探索/搜索核心逻辑（详见 §8.3）
 │       ├── enemy_ai.func.php     # NPC 敌人 AI 行为（10 函数：tick 监听器/决策/移动，详见 §8.7）
 │       ├── tick.func.php         # 游戏刻核心（推进控制/监听器注册/事件调度，详见 §8.2）
-│           ├── battle_state_machine.func.php  # 战斗状态机（PLAYER_TURN/PROCESSING 状态转换）
-│           ├── item/
-│           │   ├── item.tag.func.php       # 道具 Tag 系统（tags/itmk/tool_level 查询，详见 §8.14.1）
-│           │   ├── item.basic.func.php     # 道具库存基础操作（堆叠/itm0/拾取/丢弃/整理，详见 §8.14.0）
-│           │   ├── item.use.func.php       # 道具使用系统（use_effect 分发框架，详见 §8.14.2）
-│           │   └── item.craft.func.php     # 合成系统（匹配算法/素材消耗/已发现配方，详见 §8.14.3）
-│           └── battle/
-│           ├── battle.func.php       # 战斗功能函数（Tag/规则/状态管理，详见 §8.8）
-│           ├── battle.calc.php       # 伤害计算
-│           ├── battle.main.php       # 战斗执行（verify→sort→execute→end，详见 §8.9）
-│           ├── battle.entry.php      # 战斗入口（battle_entry_dispatch 唯一入口，详见 §8.11）
-│           ├── battle.queue.func.php # 战斗队列管理接口（详见 §8.13）
-│           └── battle.queue.main.php # 队列管理实现
+│       ├── battle_state_machine.func.php  # 战斗状态机（PLAYER_TURN/PROCESSING 状态转换）
+│       ├── combat/
+│       │   ├── README.md                 # new combat 模块边界说明
+│       │   ├── combat.runtime.php        # battle log 初始化 + battle_cache
+│       │   ├── combat.context.php        # CombatContext 单 action 执行上下文
+│       │   ├── combat.planned_state.php  # 动作链 dry-run 计划状态
+│       │   ├── combat.core.php           # 唯一战斗入口与主循环
+│       │   ├── combat.pipeline.php       # action 执行管道阶段
+│       │   ├── combat.effect.php         # damage/heal/move/escape/ap_change 实际应用
+│       │   ├── combat.target.php         # enemy/tile/self/none/all 目标解析
+│       │   ├── combat.skill.php          # 战斗技能配置与 hook 加载
+│       │   ├── combat.ap.php             # AP 计算器注册与消费
+│       │   ├── combat.tag.php            # 目标 Tag 派生与规则匹配
+│       │   ├── combat.queue.php          # 对 battle.queue 的 combat 适配层
+│       │   ├── combat.state.php          # combatants/tag_mutations/清场
+│       │   ├── combat.effect_projector.php # dry-run effect 投影
+│       │   ├── combat.chain.php          # 动作链 verify/preview 投影
+│       │   ├── combat.preview.php        # engage/single/chain 预览
+│       │   └── combat.log.php            # battlelog.v2 日志适配
+│       ├── battle/
+│       │   ├── README.md             # shared combat infrastructure 边界说明
+│       │   ├── battle.func.php       # 共享战斗函数（规则/AP/turn hook，详见 §8.8）
+│       │   ├── battle.calc.php       # 共享数值计算（伤害/先攻/射程）
+│       │   ├── battle.queue.func.php # 共享先攻队列原语层（详见 §8.13）
+│       │   └── battle.queue.main.php # 共享队列编排 / battle_manage_queue
+│       └── item/
+│           ├── item.tag.func.php       # 道具 Tag 系统（tags/itmk/tool_level 查询，详见 §8.14.1）
+│           ├── item.basic.func.php     # 道具库存基础操作（堆叠/itm0/拾取/丢弃/整理，详见 §8.14.0）
+│           ├── item.use.func.php       # 道具使用系统（use_effect 分发框架，详见 §8.14.2）
+│           └── item.craft.func.php     # 合成系统（匹配算法/素材消耗/已发现配方，详见 §8.14.3）
 ├── gamedata/
 │   ├── obl_config.php          # 可调参数配置
 │   ├── item_table.php          # 道具模板表
@@ -214,13 +239,16 @@ Oblivions 运行期采用两层 bootstrap：
 | 层 | 文件/模块 | 说明 |
 |----|----------|------|
 | 0 | `obl_global.func.php` | 公共函数，最先加载 |
-| 1 | `log` / `battle_log` / `sql` / `player` / `move` / `generate` / `battle.calc` / `skill` | 基础模块 |
+| 0.5 | `obl_game_repository.php` / `obl_gamevars.php` | 单局状态仓储与 gamevars 兼容镜像 |
+| 1 | `log` / `battle_log` / `sql` / `player` / `move` / `generate` / `battle.calc` / `item.tag` / `skill` | 基础模块 |
 | 2 | `vision` | 依赖 obl_global + player + move + log |
-| 3 | `battle.func` | 依赖第 1-2 层 |
-| 4 | `battle.main` / `battle.entry` / `battle.queue` | 依赖第 1-3 层 |
+| 2.5 | `battle_state_machine.func.php` | 战斗状态机，供队列推进 / NPC 回合 / Tick Orchestrator 使用 |
+| 3-4.5 | `battle.func` / `battle.queue.func` / `battle.queue.main` | shared combat infrastructure；旧主执行链已删除 |
+| 4.7 | `combat/*` | new combat 唯一战斗执行模块，按 runtime/context/planned_state/core/pipeline/effect/target/skill/ap/tag/queue/state/projector/chain/preview/log 顺序加载 |
 | 5 | `explore` / `enemy_ai` | 依赖 vision + battle |
 | 5.5 | `item.tag` / `item.basic` / `item.use` / `item.craft` | 道具系统（依赖 log + player + explore，无循环依赖；加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）） |
-| 6 | `tick` / `obl_tick_orchestrator.php` | tick engine + tick 推进编排器 |
+| 6 | `tick` | tick engine；末尾注册 tick 监听器 |
+| 6.5 | `obl_tick_orchestrator.php` | command/heartbeat/state 的 tick 策略编排器 |
 | 7 | `gamectl/init.func.php` | 游戏初始化 |
 | 8 | `gamectl/state.func.php` | 游戏状态机 |
 
@@ -597,9 +625,9 @@ $oblpara['battle'] = [
 - 若玩家处于战斗状态（`action='battle'`），确保返回战斗对象（即使 `discovered=0`）
 - 字段由 `obl_simplify_enemy_data()` 精简，仅返回前端渲染所需字段
 
-### 5.7 `player_info` — 玩家信息（含 groomid）
+### 5.7 `player_info` — 玩家信息（含 groomid / combat_context）
 
-Oblivions 模式下 `player_info` 额外返回 `groomid` 字段，供前端调用零依赖接口（如 `mark_battle_log_played.php`）：
+Oblivions 模式下 `player_info` 额外返回 `groomid` 字段，供前端调用零依赖接口（如 `mark_battle_log_played.php`）。处于战斗或存在战斗队列时，响应同时返回 `battle_queue` 与 `combat_context`，前端以 `combat_context` 作为战斗 UI / 目标选择 / 地图实体的权威视图：
 
 ```php
 api_response('success', array(
@@ -607,9 +635,27 @@ api_response('success', array(
     'groomid' => $groomid,  // 房间 ID（供前端调用零依赖接口）
     'action'  => $pdata['action'],
     'bid'     => $pdata['bid'],
+    'battle_queue' => $queue,
+    'combat_context' => $combatContext,
     // ... 其他字段
 ));
 ```
+
+**CombatViewModel 字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `qid` | number | 战场 / 先攻队列 ID |
+| `state` | `IDLE\|PLAYER_TURN\|PROCESSING` | 当前战斗状态机状态 |
+| `playerPid` | number | 当前玩家 PID |
+| `roundNum` | number | 当前队列 round_num |
+| `currentActorPid` / `currentActorType` | number\|null | 当前顺位 actor |
+| `canSubmitTurn` | bool | 当前玩家是否可提交 `battle.submit_turn` |
+| `combatants[]` | CombatantViewModel[] | 战斗成员快照（pid/type/name/hp/ap/pgroup/pls/active/done/myorder） |
+| `validTargets[]` | CombatTargetViewModel[] | 前端预装填可选目标 |
+| `defaultTargetPid` | number\|null | 默认目标 PID |
+
+前端类型定义位于 `vex-vue/src/types/api.ts`：`CombatViewModel` / `CombatantViewModel` / `CombatTargetViewModel`。
 
 ### 5.9 `craft_preview` — 合成预判（前端用）
 
@@ -693,6 +739,35 @@ api_response('success', array(
 ```
 
 **零依赖设计**：详见 [DESIGN.md §2.5](./DESIGN.md#25-零依赖接口设计)。
+
+### 5.13 Heartbeat `tick_frame` / `changed_scopes`
+
+`oblivions/api/heartbeat.php` 返回 Command-style JSON。`data.tick_frame` 是本次 pending tick 的 TickFrameResult，`data.changed_scopes` 是从 TickFrameResult 汇总出的前端刷新范围。
+
+```json
+{
+  "status": "success",
+  "data": {
+    "resolved": true,
+    "advanced": true,
+    "tick": 42,
+    "processed_tick": 41,
+    "pending_tick": true,
+    "tick_frame": {
+      "delta": 1,
+      "phases": [
+        {"name": "combat_domain", "changed_scopes": ["player_info", "battle_log"]},
+        {"name": "world_ai_domain", "changed_scopes": ["game_map", "enemies"]}
+      ],
+      "actor_behaviors": {},
+      "changed_scopes": ["player_info", "battle_log", "game_map", "enemies"]
+    },
+    "changed_scopes": ["player_info", "battle_log", "game_map", "enemies"]
+  }
+}
+```
+
+前端 `vex-vue/src/api/client.ts::getHeartbeatChangedScopes()` 兼容读取 `changed_scopes` / `changedScopes`。`command-queue.ts` 与 `battle.ts` 使用该列表触发 `dataManager.invalidate(scope)`，并在包含 `game_map` / `enemies` 时刷新地图实体。
 
 ---
 
@@ -1078,7 +1153,7 @@ return [
 
 ### 8.2 tick.func.php
 
-游戏刻核心模块：标记管理 + 推进控制 + 监听器注册 + 事件调度 + 命令推进判定。
+游戏刻核心模块：标记管理 + 推进控制 + TickFrame 行为账本 + BattleActorScope + 监听器注册 + 事件调度 + 命令推进判定。
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -1090,14 +1165,27 @@ return [
 | `obl_tick_get` | `(): int` | 获取当前游戏刻 |
 | `obl_tick_get_pretick` | `(): int` | 获取已处理到的游戏刻 |
 | `obl_command_advances_tick` | `($command): bool` | 命令是否推进游戏刻（白名单：`map.move`/`map.explore`/`poi.search`/`battle.start`/`battle.submit_turn`；contract 用 `advances_tick` 字段声明） |
+| `obl_tick_ctx_actor_has_behavior` | `(&$ctx, $pid): bool` | 查询 actor 在当前 TickFrame 是否已执行过主动行为 |
+| `obl_tick_ctx_claim_actor_behavior` | `(&$ctx, $pid, $domain, $behavior, $meta = array()): bool` | 登记 actor 本 TickFrame 的主动行为；同一 actor 同 tick 只能登记一次，domain 限 `combat` / `world` |
+| `obl_tick_ctx_mark_battle_actor` | `(&$ctx, $pid): void` | 将 actor 标记为当前 TickFrame 的战斗域成员 |
+| `obl_tick_ctx_merge_battle_actor_scope` | `(&$ctx, $pids): void` | 合并一组 BattleActorScope pid |
+| `obl_tick_ctx_actor_in_battle_scope` | `(&$ctx, $pid): bool` | 查询 actor 在当前 TickFrame 入口是否属于战斗域 |
+| `obl_tick_collect_battle_actor_ids` | `(): array` | 从 `oblplayers` 收集当前 `action='battle' OR bid>0` 的 actor pid |
+| `obl_tick_ctx_snapshot_battle_actors` | `(&$ctx): void` | 初始化 TickFrame 实时 BattleActorScope |
+| `obl_tick_prepare_pending_battle_actor_scope` | `($command = '', $actor_pid = 0): void` | 会推进 tick 的玩家命令在 handler 执行前记录命令前战斗域快照，供后续 TickFrame 合并 |
+| `obl_tick_frame_result_init` | `($delta): array` | 初始化 TickFrameResult（phases / actor_behaviors / changed_scopes） |
+| `obl_tick_frame_result_finalize` | `(&$ctx): array` | 归集 TickFrameResult，输出 actor_behaviors 与 changed_scopes |
 | `obl_tick_register_listener` | `($phase, $cb): void` | 注册 tick 事件监听器（phase: battle_npc/idle_npc/post） |
 | `obl_tick_get_listeners` | `($phase): array` | 获取指定阶段的所有监听器 |
-| `obl_tick_dispatch` | `($delta, &$ctx): void` | 调度 tick 事件（三阶段：battle_npc 串行/idle_npc 并行/post 后处理） |
-| `obl_resolve_tick_events` | `($delta): void` | tick 事件处理入口（由 Tick Orchestrator `obl_tick_orchestrator_resolve_pending()` / `obl_tick_orchestrator_heartbeat()` 调用，抓取玩家+构造上下文+调度） |
+| `obl_tick_dispatch` | `($delta, &$ctx): void` | 调度 TickFrame（三阶段：combat_domain/battle_npc → world_ai_domain/idle_npc → post_domain/post） |
+| `obl_resolve_tick_events` | `($delta): array` | tick 事件处理入口（由 Tick Orchestrator 调用，抓取玩家+构造 TickFrame 上下文+合并 pending BattleActorScope+调度+返回 TickFrameResult） |
 | `obl_tick_has_busy_battle` | `(): bool` | 检查是否有战场在 PROCESSING 状态（委托 obl_battle_state_has_busy_battle） |
+| `obl_tick_debug_log` | `($tag, $data = array()): void` | 诊断桩子，优先写入 `combat_debug.log`，用于复盘 tick/world AI 时序 |
 
 > **tick 推进驱动机制**：前端显式调用 `oblivions/api/heartbeat.php`，由 Oblivions Tick Orchestrator 处理 pending tick 与 NPC 行动。详见 [DESIGN.md §2.16](./DESIGN.md#216-前端守护进程模型心跳)。
 > **battle_npc phase 监听器**：`obl_tick_phase_battle_npc` 位于 [§8.7 enemy_ai.func.php](#87-enemy_aifuncphp--npc-敌人-ai)，负责调度 NPC 行动并触发战斗状态机转换（详见 [§6.4.1](#641-战斗状态机三态与转换触发点)）。
+> **同 tick 行为互斥**：world AI 不只看实时 `action/bid`，还必须检查 TickFrame 入口 BattleActorScope 与 ActorBehaviorLedger。战斗成员在本 TickFrame 内即使被 combat cleanup 清空 `action/bid`，也不能进入 world AI。
+> **战斗结束后移动语义**：若最后一个 NPC 战斗回合结束后自驱动出下一 pending tick，且下一 TickFrame 的 BattleActorScope 已为空，原战斗 actor 作为普通 NPC 参与 world AI 是当前预期行为。
 
 ### 8.3 explore.func.php
 
@@ -1155,7 +1243,7 @@ return [
 
 ### 8.7 enemy_ai.func.php — NPC 敌人 AI
 
-NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
+NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplayers`，`type>0` 区分），AI 不依赖当前请求的玩家，在 tick 结算入口自行从数据库查询。
 
 > **模块迁移说明**：NPC 生成（`obl_init_enemies` / `obl_create_enemy_record` / `obl_get_occupied_positions` / `obl_pick_available_tile`）已迁至 `gamectl/init.func.php`；discovered 状态管理（`obl_discover_enemies` / `obl_update_enemy_discovered` / `obl_get_player_vision_range`）已迁至 `vision.func.php`。本文件仅保留 AI 行为逻辑。
 >
@@ -1165,23 +1253,30 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_tick_phase_battle_npc` | `($delta, &$ctx): void` | battle_npc phase 监听器：查询活跃先攻队列，当前顺位者是 NPC 时执行 NPC 回合（`obl_ai_select_combat_action` → `battle_entry_dispatch('npc_turn')`），最多处理 1 个回合 |
-| `obl_tick_phase_idle_npc` | `($delta, &$ctx): void` | idle_npc phase 监听器：结算当前玩家所在区域的非战斗敌人 AI（`obl_enemy_tick`），战斗中的敌人跳过 |
+| `obl_tick_phase_battle_npc` | `($delta, &$ctx): void` | battle_npc phase 监听器：查询活跃先攻队列，当前顺位者是 NPC 时执行 NPC 回合（`obl_ai_select_combat_action` → `combat_dispatch('npc_turn')`），最多处理 1 个回合 |
+| `obl_tick_phase_idle_npc` | `($delta, &$ctx): void` | idle_npc/world_ai phase 监听器：结算当前玩家所在区域的非战斗敌人 AI；每个 actor 先通过 `obl_actor_world_ai_block_reason()` 判定，跳过 BattleActorScope / 已行动 actor |
+
+**模块 1.5：world AI 行动资格**（2 函数）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `obl_actor_can_world_ai` | `(&$actor, &$ctx): bool` | 判断 actor 是否可在当前 TickFrame 执行非战斗 AI |
+| `obl_actor_world_ai_block_reason` | `(&$actor, &$ctx): string` | 返回 world AI 阻断原因：`battle_scope` / `action_battle` / `bid_present` / `actor_behavior_claimed` 等；空字符串表示可行动 |
 
 **模块 2：AI 决策**（2 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_enemy_tick` | `(&$enemy, &$player): void` | 单敌人 AI 决策：死亡/战斗中跳过 → 行动意愿门控 → 按 `ai_type` 行动（patrol/aggressive/idle）。追击/突袭/碰撞战斗待 tick 框架重构后实现 |
-| `obl_ai_select_combat_action` | `(&$npc_data, $target_pid): array` | 战斗技能选择：从 `oblpara['combat_skills']` 选第一个可用技能（CD/AP 检查），无可用时回退 `unarmed_strike`。按技能配置 `target` 字段决定目标（self→自身 pid，其他→传入 target_pid） |
+| `obl_enemy_tick` | `(&$enemy, &$player, &$ctx = null): bool` | 单敌人 world AI 决策：world AI 资格检查 → 行动意愿门控 → 按 `ai_type` claim `world` 行为并行动（patrol/aggressive/idle）。追击/突袭/碰撞战斗待 tick 框架重构后实现 |
+| `obl_ai_select_combat_action` | `(&$npc_data, $target_pid): array` | NPC 战斗技能选择：从 `oblpara['combat_skills']` 选第一个可用技能（含目标/射程/AP 检查），无可用攻击时尝试 `escape`，再兜底 `idle` |
 
 **模块 3：移动逻辑**（3 函数）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_enemy_move` | `(&$enemy, $target_pls, &$player): bool` | 敌人移动（可在雾中移动）：校验 passable/占用/玩家格 → 更新 pls → 更新 discovered → save。在玩家视野内时 emit 移动日志 |
-| `obl_enemy_patrol` | `(&$enemy, &$player): void` | 巡逻：随机选邻居格移动 |
-| `obl_enemy_hunt` | `(&$enemy, &$player): void` | 主动搜寻（MVP 简化为巡逻） |
+| `obl_enemy_move` | `(&$enemy, $target_pls, &$player, &$ctx = null, $reason = ''): bool` | 敌人移动（可在雾中移动）：校验 passable/占用/玩家格 → 更新 pls → 更新 discovered → save。在玩家视野内时 emit 移动日志；诊断模式写 world AI move 成败桩 |
+| `obl_enemy_patrol` | `(&$enemy, &$player, &$ctx = null): bool` | 巡逻：随机选邻居格移动 |
+| `obl_enemy_hunt` | `(&$enemy, &$player, &$ctx = null): bool` | 主动搜寻（MVP 简化为巡逻） |
 
 **模块 4：占用检查与辅助函数**（3 函数）
 
@@ -1191,9 +1286,39 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 | `obl_calc_next_step_towards` | `($pgroup, $from_pls, $to_pls): int\|false` | 计算向目标移动的下一步（选距离最近的邻居格） |
 | `obl_get_tile_neighbors` | `($pgroup, $pls): array` | 获取地图格的邻居列表 |
 
+### 8.7.1 combat/ 子文件夹 — 战斗执行系统
+
+`oblivions/include/game/combat/` 是当前唯一战斗执行主流程。`combat_start_battle()` 负责首次建队列，`combat_dispatch()` 负责已有队列中的玩家 / NPC 回合推进；旧 `battle.entry.php` / `battle.main.php` 不再加载。
+
+| 文件 | 关键函数 / 类型 | 说明 |
+|------|----------------|------|
+| `combat.runtime.php` | `combat_ensure_battle_log` / `combat_cache_create` | 初始化全局 battle log 与 battle_cache |
+| `combat.context.php` | `CombatContext` | 单 action 执行上下文，承载 actor、target、effects、snapshot 与 planned state |
+| `combat.core.php` | `combat_start_battle` / `combat_dispatch` / `combat_main` / `combat_verify` / `combat_execute` | 战斗入口、action normalize、AP wallet 校验、主循环与收尾 |
+| `combat.pipeline.php` | `combat_pipeline_run` | 按阶段执行 target resolve / rules / start / snapshot / execute / effects / react / post_check / persist |
+| `combat.skill.php` | `combat_skill_get_config` / `combat_skill_load_module` / `combat_skill_verify` | 读取 `gamedata/combat_skill_config.php` 并加载 `combat_skills/skill_{act_id}.php` |
+| `combat.target.php` | `combat_target_resolve_all` | 支持 `enemy` / `tile` / `self` / `none` / `all` 目标类型 |
+| `combat.tag.php` | `combat_tag_build` / `combat_check_target_rules` | 构建目标标签并按 `target_rules.require/forbid` 判定 |
+| `combat.ap.php` | `combat_ap_register` / `combat_ap_calculate` | AP 计算器注册与动态消耗 |
+| `combat.effect.php` | `combat_effect_apply_all` | 实际应用 `damage` / `heal` / `move` / `escape` / `ap_change` |
+| `combat.state.php` | `combat_state_post_check` / `combat_state_clear` / `combat_state_check_end` | 管理 `combatants` 与 `tag_mutations`，处理死亡 / 逃跑 / 清场 |
+| `combat.queue.php` | `combat_queue_create_and_init` / `combat_queue_exit` | combat 层队列适配，内部复用 `battle.queue.*` |
+| `combat.planned_state.php` | `combat_planned_state_*` | dry-run/verify/preview 的计划状态读写 |
+| `combat.effect_projector.php` | `combat_effect_project_all` | 在 planned state 上投影效果，不写 DB |
+| `combat.chain.php` | `combat_chain_project` | 动作链 verify / preview 共用投影入口，返回每个 action 的成功/失败与 effects |
+| `combat.preview.php` | `combat_can_engage` / `combat_preview_single` / `combat_preview_chain` | 战斗可达性、单技能预览、动作链预览 |
+| `combat.log.php` | `combat_log_v2_*` | battlelog.v2 事件适配 |
+
+**战斗技能配置**：
+
+- 主配置：`oblivions/gamedata/combat_skill_config.php`
+- 技能 hook：`oblivions/gamedata/combat_skills/skill_{act_id}.php`
+- hook 签名：`skill_{act_id}_execute(CombatContext $ctx): void`
+- 已接入 hook：`unarmed_strike` / `throw` / `escape` / `move` / `heal` / `execute` / `grenade` / `vampiric_bite` / `whirlwind`
+
 ### 8.8 battle.func.php — 战斗功能函数
 
-战斗系统基础功能。NPC 与玩家共用同一套战斗逻辑，通过 `actor['type']` 区分。
+`battle/` 目录当前是 shared combat infrastructure，不再承载旧战斗主执行链。`battle.func.php` 保留轻量状态切换、AP 恢复、目标规则与 turn hook，供 `combat/` 与队列编排复用。
 
 **模块 1：战斗状态管理**（2 函数）
 
@@ -1210,12 +1335,11 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 | `battle_act_verify` | `(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache): bool` | 单动作校验：委托 skill_act_verify 查配置/拥有/CD/AP/扣 AP |
 | `battle_apply_damage` | `(&$actor_data, &$target_data, $damage, &$obl_battle_log, &$battle_cache): void` | 扣除目标 HP，保底 0 |
 
-**模块 3：目标状态检测**（2 函数，旧接口，逐步被 tag 系统替代）
+**模块 3：目标状态检测**（1 函数，旧接口，逐步被 combat tag 系统替代）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `battle_target_alive_check` | `(&$target_data, &$obl_battle_log, &$battle_cache): bool` | 存活检测：hp<=0 且 state=0 → 设 state=1 + state_clear；state=1 → 返回 false |
-| `battle_target_distance_check` | `(&$actor_data, &$target_data, &$battle_cache): bool` | 射程检测（阶段一恒返回 true） |
+| `battle_target_distance_check` | `(&$actor_data, &$target_data, $act_id, &$battle_cache): bool` | 射程检测：委托共享射程计算，供旧规则层兼容使用 |
 
 **模块 4：Tag 系统**（4 函数）
 
@@ -1238,20 +1362,16 @@ NPC 敌人 AI 行为核心，10 个函数。NPC 数据与玩家同构（统一�
 |------|------|------|
 | `battle_actor_can_act` | `(&$actor_data, &$obl_battle_log, &$battle_cache = null): bool` | Actor 行动资格检查（state>0 或 hp<=0 视为不能行动），失败时 emit + 写 combatants 缓存 |
 
-### 8.9 battle.main.php — 战斗执行模块
+### 8.9 battle.main.php — 已删除
 
-verify（校验）→ sort（终结技排序）→ execute（执行+后检）→ end（集中 cleanup）四阶段分离。
+旧 battle engine 的动作执行模块 `battle.main.php` 已下线，运行时不再加载。
 
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `battle_main` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 回合主函数：verify → sort_actions → execute → main_end。队列管理由调用方在返回后调 `battle_manage_queue` |
-| `battle_verify` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 回合校验：遍历 atk_act 调用 battle_act_verify，失败的 unset |
-| `battle_execute` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): void` | 遍历 atk_act：actor_can_act → 对每个 target 调 execute_verify → once_execute |
-| `battle_once_execute` | `(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache): void` | 单次受击：state_init → skill_execute → calc_damage → apply_damage → middle_check → save(both) |
-| `battle_execute_verify` | `(&$actor_data, $act, &$obl_battle_log, &$battle_cache): ?array` | 单 action-target 校验：fetch target → build_tags → check target_rules，返回 `['target_data','tags']` 或 null |
-| `battle_state_middle_check` | `(&$actor_data, &$target_data, $act_id, &$obl_battle_log, &$battle_cache): void` | 伤害结算后写缓存（combatants + tag_mutations），不改 DB。三路：存活→1，逃跑→0不改dead，死→0+dead=true |
-| `battle_main_end` | `(&$actor_data, &$atk_act, &$obl_battle_log, &$battle_cache): ?string` | 集中 cleanup：对 combatants[pid]=0 执行清理；ambush 下 actor quit 时返回 'dead'|'escaped'，不清理 actor |
-| `battle_sort_actions` | `(array &$atk_act): void` | 终结技排序：普通技在前，finisher 在后；多终结技只保留最后一个 |
+替代关系：
+
+- 新入口：`combat/combat.core.php::combat_dispatch`
+- 新执行主流程：`combat/combat.core.php::combat_main`
+- 新管道：`combat/combat.pipeline.php`
+- 共享队列出口：`battle.queue.main.php::battle_manage_queue`
 
 ### 8.10 battle_log.func.php — 战斗日志系统
 
@@ -1267,7 +1387,7 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
-| `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。由 `battle_entry_ensure_battle_log` 统一初始化为全局 `$obl_battle_log` |
+| `BattleLogCollector` | 类 | 战斗日志收集器，单次请求内累积。由 `combat_ensure_battle_log()` 统一初始化为全局 `$obl_battle_log` |
 | `BattleLogCollector::setPhase` | `($phase): void` | 设置当前 phase（12 个事件类型之一），emit 时自动附加 |
 | `BattleLogCollector::nextTurn` | `(): void` | Turn 计数递增（由 `battle_hook_turn_start` 调用） |
 | `BattleLogCollector::setRoundNum` | `(int $num): void` | 设置 Round 计数（由队列创建/重建调用） |
@@ -1280,16 +1400,16 @@ verify（校验）→ sort（终结技排序）→ execute（执行+后检）→
 | `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
 | `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `oblivions/cache/battles/obl_battle_log*.json`） |
 
-### 8.11 battle.entry.php — 战斗入口
+### 8.11 battle.entry.php — 已删除
 
-唯一战斗入口 `battle_entry_dispatch`，与 `battle.main.php`（执行）+ `battle.queue.*.php`（队列）三层分离。3 种触发模式：`ambush`（突袭，后补票建队列）/ `player_turn`（玩家回合）/ `npc_turn`（NPC 回合，允许空动作）。所有触发源不做合法性判断，只传 raw `$actions`，解析/校验统一由 dispatch 内部完成。
+旧入口 `battle_entry_dispatch` 已下线，运行时不再加载。
 
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `battle_entry_dispatch` | `($mode, &$actor, $actions = null, $extra = []): array\|void` | 唯一战斗入口。`$mode`：`'ambush' \| 'player_turn' \| 'npc_turn'`。ambush/player_turn 无返回值，npc_turn 返回 `battle_manage_queue` 结果 |
-| `battle_entry_ensure_battle_log` | `(): void` | 确保 `$obl_battle_log` 已初始化（dispatch 统一调用） |
-| `battle_cache_create` | `(&$initiator_data, $is_ambush = false, $combatants = null): array` | 统一构建战斗上下文。有队列→载入全部成员，无队列→仅自己。初始化 `combatants` + `tag_mutations` |
-| `battle_entry_parse_actions` | `($actions, $actor_pid, $entry, $allow_empty = false): array` | 解析 actions 合集为 `$atk_act` 格式。空动作且 `$allow_empty=false` 时 emit 错误日志 |
+替代关系：
+
+- `battle_entry_dispatch` → `combat/combat.core.php::combat_dispatch`
+- `battle_entry_ensure_battle_log` → `combat/combat.runtime.php::combat_ensure_battle_log`
+- `battle_cache_create` → `combat/combat.runtime.php::combat_cache_create`
+- actions 解析 / normalize → `combat/combat.core.php` 内的 `combat_action_normalize_*`
 
 ### 8.12 skill.main.php — 技能系统核心
 
@@ -1430,13 +1550,13 @@ Oblivions 三个 HTTP 入口（command / state / heartbeat）的共用运行期�
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `obl_tick_orchestrator_after_command` | `(): void` | 玩家命令路径：Command Bus 保存后调用，推进 tick + 结算 pending |
-| `obl_tick_orchestrator_heartbeat` | `(): void` | 心跳路径：前端 heartbeat.php 调用，检测 pending tick 并结算 NPC 行动 |
-| `obl_tick_orchestrator_resolve_pending` | `(): void` | 结算 pending tick（`processed_tick < tick` 时调 `obl_resolve_tick_events()`） |
-| `obl_tick_orchestrator_recover_stale_battles` | `(): void` | 恢复卡死的 PROCESSING 战斗（超时阈值后强制推进） |
-| `obl_tick_orchestrator_status` | `(): array` | 返回 tick 状态（tick / processed_tick / pending_tick） |
+| `obl_tick_orchestrator_after_command` | `($ctx, $command, $contract, &$pdata, $dispatched): array` | 玩家命令路径：Command Bus 保存后调用，推进 tick + 结算 pending，返回 tick 生命周期信息 |
+| `obl_tick_orchestrator_heartbeat` | `($ctx = null): array` | 心跳路径：前端 heartbeat.php 调用，检测 pending tick 并结算 NPC 行动，返回 `tick_frame` / `changed_scopes` |
+| `obl_tick_orchestrator_resolve_pending` | `($ctx = null, $reason = 'heartbeat'): array` | 结算 pending tick（`processed_tick < tick` 时调 `obl_resolve_tick_events()`），汇总 TickFrameResult |
+| `obl_tick_orchestrator_recover_stale_battles` | `($ctx = null, $ttl = 30): array` | 恢复卡死的 PROCESSING 战斗（超时阈值后强制推进） |
+| `obl_tick_orchestrator_status` | `($ctx = null): array` | 返回 tick 状态（tick / processed_tick / pending_tick） |
 | `obl_tick_orchestrator_now` | `(): int` | 当前时间戳 |
-| `obl_tick_orchestrator_persist` | `(): void` | 持久化 tick 状态到 oblgame 表 |
+| `obl_tick_orchestrator_persist` | `($extra = array()): void` | 持久化 tick 状态到 oblgame 表 |
 | `obl_tick_orchestrator_reload` | `(): void` | 从 oblgame 表重新加载 tick 状态 |
 
 ### 8.17 obl_game_repository.php — 单房间 Game State 表
@@ -1496,7 +1616,11 @@ State API 的 scope 分发器与 14 个 handler。所有 handler 纯读，不推
 |------|------|------|
 | `obl_state_dispatch` | `($scope, $ctx): array` | scope 分发（空/runtime → runtime_status，其他 → 对应 handler） |
 | `obl_state_handle_runtime_status` | `($ctx): array` | tick / processed_tick / pending_tick 状态 |
-| `obl_state_handle_player_info` | `($ctx): array` | 玩家状态栏 + 战斗状态 + 装备 |
+| `obl_state_handle_player_info` | `($ctx): array` | 玩家状态栏 + 战斗状态 + 装备 + `battle_queue` + `combat_context` |
+| `obl_state_build_battle_queue` | `($pdata): array\|null` | 构建当前玩家所在战场的队列视图 |
+| `obl_state_build_combat_context` | `($pdata): array\|null` | 构建 CombatViewModel（combatants / validTargets / defaultTargetPid） |
+| `obl_state_combatant_view` | `($pdata, $qrow = null): array` | 单 combatant 视图 |
+| `obl_state_target_view` | `($combatant): array` | 单可选目标视图 |
 | `obl_state_handle_player_inventory` | `($ctx): array` | 背包列表 |
 | `obl_state_handle_game_map` | `($ctx): array` | 当前区域地图 |
 | `obl_state_handle_tile_actions` | `($ctx): array` | 当前格可执行动作 |
@@ -1590,10 +1714,10 @@ State API 的 scope 分发器与 14 个 handler。所有 handler 纯读，不推
    → 阶段 2 idle_npc：obl_tick_phase_idle_npc（非战斗敌人 AI）
      → 逐个当前区域敌人执行 obl_enemy_tick() → 按 ai_type 行动（patrol/aggressive/idle）
    → 阶段 3 post：tick 后处理（预留扩展）
-8. 战斗流程（统一入口 battle_entry_dispatch）:
-   8.1 玩家突袭：`battle.start` 命令 → battle_entry_dispatch('ambush')（执行动作 + 后补票建队列）
-   8.2 玩家回合：`battle.submit_turn` 命令 → battle_entry_dispatch('player_turn')（在已有队列中推进）
-   8.3 NPC 回合：tick 结算 → battle_entry_dispatch('npc_turn')（AI 决策 + 队列推进）
+8. 战斗流程（统一入口 `combat_start_battle` / `combat_dispatch`）:
+   8.1 首次进入战斗：`battle.start` 命令 → `combat_start_battle()`（建队列 + 进入战斗）
+   8.2 玩家回合：`battle.submit_turn` 命令 → `combat_dispatch('player_turn')`（在已有队列中推进）
+   8.3 NPC 回合：tick 结算 → `combat_dispatch('npc_turn')`（AI 决策 + 队列推进）
    8.4 战斗结束：battle_manage_queue 内部 try_end 检测（队列解散 + 状态清理）
 ```
 
@@ -1617,6 +1741,7 @@ Oblivions 模式下 `game.php` 重定向到 `vex-vue/dist/index.html`（生产�
 | 地图网格+连通性 | `game_map` | `links.tiles[pgroup][pls].neighbors`, `links.grids[pgroup]` |
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
 | 玩家位置 + 房间ID | `player_info` | `pgroup`(区域), `pls`(格子), `groomid`(房间ID, 供 mark 接口用) |
+| 战斗上下文视图 | `player_info.combat_context` | `qid/state/canSubmitTurn/combatants/validTargets/defaultTargetPid` |
 | 玩家背包详情 | `player_inventory` | `items[]`（含 usable/tags/itmk 字段，供前端判断可使用/可装备道具） |
 | 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
 | 战斗日志（未播放） | `battle_log` | `entries[]`（BattleLogEntry 数组，played=0）, `total` |
@@ -1624,6 +1749,7 @@ Oblivions 模式下 `game.php` 重定向到 `vex-vue/dist/index.html`（生产�
 | 合成预判 | `craft_preview` | `match_count`, `craftable`, `is_new_recipe` |
 | 可用工作台素材 | `craft_workbench_materials` | `workbench_materials[]`（含 source/id/item_id/tool_level） |
 | 已发现配方列表 | `craft_recipes` | `recipes[]`（含 recipe_id/category/materials/results） |
+| tick 后刷新范围 | `heartbeat.changed_scopes` | `player_info/game_map/enemies/battle_log/...`，由前端用于精准 invalidate |
 
 ### 11.3 命令提交
 
@@ -1716,7 +1842,9 @@ await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
 - **结构化日志渲染**: 前端按 `entry.id` 查 `vex-vue/src/data/log-templates.ts` 模板渲染，后端不参与视觉呈现
 - **地块描述生成**: 无名格描述由前端 `vex-vue/src/data/terrain-desc.ts` 的 `generateTerrainDesc()` 随机组合，后端只传 floor/tide/passable 属性
 - **敌人可见性**: 仅 `discovered=1` 的敌人返回（由 `enemies` API 过滤），敌人移动超出玩家视野后自动从列表移除
-- **战斗日志播放**: 前端按 `enemy_pid` 分组，每组按 `log_id` 排序，三阶段播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 mark 接口
+- **战斗上下文数据源**: `battle.ts` 保存 `combatContext`，`entities.ts` 在 battle mode 下优先用 `combatContext.combatants` 生成地图实体，`PreloadArea.vue` 用 `validTargets/defaultTargetPid` 做目标选择
+- **战斗日志播放 V2**: `battle-director-v2.ts::directV2()` 将 battlelog.v2 事件转语义脚本，`planPlaybackV2()` 转 `BattlePlaybackPlan` / `PlaybackStep[]`，`battle-playback-runner.ts::runBattlePlaybackPlan()` 执行步骤，`battle-actor-executor.ts` 负责单 actor 动画
+- **Heartbeat 精准刷新**: `client.ts::getHeartbeatChangedScopes()` 读取 `heartbeat.data.changed_scopes`，`command-queue.ts` / `battle.ts` 按 scope 调 `dataManager.invalidate()`；包含 `game_map` / `enemies` 时刷新地图实体
 - **战斗状态过滤**: `action='battle'` 时前端只允许提交 `battle.submit_turn`；非战斗状态不允许提交 `battle.submit_turn`（`battle.start` 在 action='normal' 时仍允许；后端 Command Bus `obl_command_allowed_by_contract` 强制，返回 `COMMAND_NOT_ALLOWED`）
 - **战斗处理中锁**: 前端 `commandQueue` 采用 5 层锁架构（HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING），其中 PROCESSING 层仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令，`isLocked` 仅包含 HTTP/演出两层全局锁；详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)
 - **技能渲染**: 前端按 `skill_id` 查 `vex-vue/src/data/skill-templates.ts` 渲染名称/描述/动作描述，未注册的 skill_id 回退到以 skillId 作为 name 的默认模板

@@ -14,16 +14,35 @@
 import { defineStore } from 'pinia';
 import { computed } from 'vue';
 import { useMapStore } from '@/stores/map';
+import { useBattleStore } from '@/stores/battle';
 import type { MapEntity } from '@/types/map-entity';
 
 export const useEntitiesStore = defineStore('entities', () => {
   const mapStore = useMapStore();
+  const battleStore = useBattleStore();
 
   // ── 所有地图实体（响应式，从 mapStore 派生） ──
   // 注：不依赖 playerAvatarStore.isDown，避免 isDown 变化触发 entities 重算
   // 玩家 actor 的 isDown 在 useMapEntities.updateEntityZIndex 中实时读取
   const entities = computed<MapEntity[]>(() => {
     const list: MapEntity[] = [];
+    const combatContext = battleStore.combatContext;
+
+    if (battleStore.currentMode === 'battle' && combatContext) {
+      for (const combatant of combatContext.combatants) {
+        if (!combatant.active || Number(combatant.state) > 0) continue;
+        const isPlayer = Number(combatant.type) === 0;
+        list.push({
+          id: isPlayer ? 'player' : `enemy-${combatant.pid}`,
+          kind: 'actor',
+          actorKind: isPlayer ? 'player' : 'enemy',
+          pls: combatant.pls,
+          img: isPlayer ? '/img/1.png' : `/img/n_${combatant.type}.png`,
+          imgHeightRatio: 1.25,
+        });
+      }
+      return list;
+    }
 
     // 玩家 actor
     if (mapStore.curLoc !== null && mapStore.curRegion !== null) {

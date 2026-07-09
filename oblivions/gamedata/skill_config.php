@@ -22,6 +22,21 @@ if (!defined('IN_GAME')) {
 # @see combat_skill_config.php
 # 新系统技能钩子目录：oblivions/gamedata/combat_skills/
 return [
+    # ── 战斗移动（新系统测试入口；旧配置仅供前端技能列表展示）────
+    'move' => [
+        'apcost'        => 1,
+        'cd'            => 0,
+        'target'        => 'tiles',
+        'range_mode'    => 'fixed',
+        'range_max'     => 3,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'utility',
+        'target_rules'  => [
+            'forbid'  => ['tile_impassable', 'tile_occupied', 'tile_unreachable', 'tile_out_of_range'],
+        ],
+    ],
+
     # ── 攻击类 ──────────────────────────────
     'unarmed_strike' => [
         'apcost'        => 1,
@@ -87,10 +102,78 @@ return [
     ],
     # ── 工具类 ──────────────────────────────
     'heal' => [
-        'maxlvl'        => 7,
-        'effect'        => [1,2,3,4,5,6,7],
+        'apcost'        => 1,
+        'cd'            => 0,
+        'target'        => 'self',
+        'range_mode'    => 'fixed',
+        'range_max'     => 0,
+        'range_bonus'   => 0,
         'lifetime'      => 'permanent',
         'category'      => 'utility',
+        'target_rules'  => [
+            'forbid'  => ['dead'],
+        ],
+    ],
+    'whirlwind' => [
+        'apcost'        => 2,
+        'cd'            => 0,
+        'target'        => 'all',
+        'range_mode'    => 'fixed',
+        'range_max'     => 1,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'attack',
+        'damage_type'   => 'physical',
+        'damage_factor' => 0.8,
+        'target_rules'  => [
+            'forbid'  => ['self', 'dead', 'out_of_range'],
+        ],
+    ],
+    'execute' => [
+        'apcost'        => 1,
+        'cd'            => 0,
+        'finisher'      => 1,
+        'target'        => 'enemy',
+        'range_mode'    => 'fixed',
+        'range_max'     => 1,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'attack',
+        'damage_type'   => 'physical',
+        'damage_factor' => 1.0,
+        'target_rules'  => [
+            'forbid'  => ['self', 'dead', 'out_of_range'],
+        ],
+    ],
+    'vampiric_bite' => [
+        'apcost'        => 2,
+        'cd'            => 0,
+        'target'        => 'enemy',
+        'range_mode'    => 'fixed',
+        'range_max'     => 1,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'attack',
+        'damage_type'   => 'physical',
+        'damage_factor' => 0.8,
+        'target_rules'  => [
+            'forbid'  => ['self', 'dead', 'out_of_range'],
+        ],
+    ],
+    'grenade' => [
+        'apcost'        => 2,
+        'cd'            => 0,
+        'target'        => 'tiles',
+        'range_mode'    => 'fixed',
+        'range_max'     => 3,
+        'range_bonus'   => 0,
+        'lifetime'      => 'permanent',
+        'category'      => 'attack',
+        'damage_type'   => 'physical',
+        'damage_factor' => 1.2,
+        'target_rules'  => [
+            'forbid'  => ['tile_impassable', 'tile_out_of_range'],
+        ],
     ],
     # ── 被动类 ──────────────────────────────  
     'wep_range' => [

@@ -4,10 +4,14 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 先攻队列编排层
+// Shared combat infrastructure — 先攻队列编排层
 //
 // 职责：先攻队列的编排逻辑（setup/manage_queue/rebuild）。
 // 依赖 battle.queue.func.php 中的原语函数。
+//
+// 说明：
+// - `battle_manage_queue()` 仍是 new combat 的共享出口。
+// - 这里不再代表旧 battle engine 主执行流程，而是队列/状态/AP 的共享编排层。
 // ================================================================
 
 /**
@@ -54,15 +58,15 @@ function battle_queue_rebuild($qid, &$actor_data, &$obl_battle_log): array
 
     obl_queue_reset_done_by_qid($qid);
 
-    // ── Round 边界：先递增 DB round_num → 同步到 collector → 再 emit initiative_roll
-    //    确保 initiative_roll 条目的 bl_round_num 为新轮次编号（0-indexed）──
+    // ── Round 边界：先递增 DB round_num → 同步到 collector → 再 emit round_start
+    //    确保 render 事件携带的新轮次编号正确（0-indexed）──
     obl_battle_state_increment_round($qid);
     if ($obl_battle_log) {
         $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
     }
 
     // 重建时无突袭，ambush_pid = 0
-    // battle_queue_set_initiative 内部会 emit initiative_roll（携带新 bl_round_num）
+    // battle_queue_set_initiative 内部会 emit round_start（携带新 bl_round_num）
     $result = battle_queue_set_initiative($qid, $actor_data, $obl_battle_log, 0);
 
     if ($obl_battle_log) {

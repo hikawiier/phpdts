@@ -60,6 +60,12 @@ function combat_target_register(string $type, callable $resolver): void {
 function combat_target_resolve_pid(CombatContext $ctx, $target_id): ?array {
     $pid = (int)$target_id;
     if ($pid <= 0) return null;
+
+    if (function_exists('combat_planned_state_get_player')) {
+        $planned = combat_planned_state_get_player($ctx->battle_cache, $pid);
+        if (is_array($planned)) return $planned;
+    }
+
     $pdata = obl_fetch_playerdata_by_pid($pid);
     if (!$pdata) return null;
     return $pdata;

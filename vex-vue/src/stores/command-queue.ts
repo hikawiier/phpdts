@@ -20,12 +20,13 @@
 // 实际执行判断完全一致——避免重蹈 isLocked 与 execute 行为分叉的隐性 bug。
 // ══════════════════════════════════════════════════
 
-import { oblHeartbeat, type CommandResult } from '@/api/client';
+import { getHeartbeatChangedScopes, oblHeartbeat, type CommandResult } from '@/api/client';
 import { sendOblCommand, type OblCommandEnvelope } from '@/api/obl-command';
 import { dataManager } from '@/stores/data-manager';
 import { usePlayerStore } from '@/stores/player';
 import { useBattleStore } from '@/stores/battle';
 import { useInventoryStore } from '@/stores/inventory';
+import { useMapStore } from '@/stores/map';
 import { COMMAND_REGISTRY } from '@/stores/command-registry';
 
 class CommandQueue {
@@ -125,10 +126,21 @@ class CommandQueue {
    */
   private async _checkBattleState(): Promise<void> {
     try {
-      await oblHeartbeat();
+      const heartbeat = await oblHeartbeat();
+      const changedScopes = getHeartbeatChangedScopes(heartbeat);
+      for (const scope of changedScopes) {
+        dataManager.invalidate(scope);
+      }
+      if (changedScopes.includes('game_map') || changedScopes.includes('enemies')) {
+        try {
+          await useMapStore().loadMap();
+        } catch (e) {
+          console.error('[CommandQueue] map refresh after heartbeat error:', e);
+        }
+      }
       await usePlayerStore().loadPlayerInfo(true);
       // 广播事件，由 battle.ts 监听并调用 refreshBattle 决定轮询行为
-      dataManager.broadcast('game:tick-advanced');
+      dataManager.broadcast('game:tick-advanced', { heartbeat, changedScopes });
     } catch (e) {
       console.error('[CommandQueue] checkBattleState error:', e);
     }

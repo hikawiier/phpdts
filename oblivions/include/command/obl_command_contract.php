@@ -94,6 +94,7 @@ function obl_command_contracts() {
             'ui_mode' => 'battle',
             'allowed_actions' => array('battle'),
             'battle_state_required' => defined('OBL_BS_PLAYER_TURN') ? OBL_BS_PLAYER_TURN : 'PLAYER_TURN',
+            'queue_actor_required' => 'self',
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),

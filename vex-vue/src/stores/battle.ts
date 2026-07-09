@@ -10,13 +10,13 @@
 // battlelog 数据流（played 标记机制 + v2 导演编排）：
 // - 后端所有 battlelog 持久化到文件，每条带 log_id + played=0
 // - 前端拉取 played=0 的 v2 event → DirectorV2.directV2() 编排为脚本
-// - playScriptV2() 按 BattleSegmentV2 分段执行 → BattleModal 逐段播放
+// - DirectorV2.planPlaybackV2() 把语义脚本编排为 playback steps
+// - BattlePlaybackRunner 按 steps 执行动作动画、文本模态框、残留反馈
 // - 播完调 mark_battle_log_played.php 标记 played=1
 //
 // 演出事件转发（store → 组件单向触发）：
 // - battle:preload-init → PreloadArea 组件初始化装填区
-// - battle:play-action-animation → CollisionAnimation 组件播放动作动画计划
-// - battle:play-damage-numbers → DamageNumber 组件播放 effect visual plan
+// - battle:play-damage-numbers → DamageNumber 组件播放残留数字
 //
 // 模态框播放完成机制：
 // - store 设置 currentSegment + battleModalOpen=true，返回 Promise
@@ -29,23 +29,20 @@
 import { defineStore } from 'pinia';
 import { ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import { markBattleLogPlayed, oblHeartbeat } from '@/api/client';
+import { getHeartbeatChangedScopes, markBattleLogPlayed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
-import { getActorById } from '@/composables/actorRegistry';
-import { resolveActionSpec } from '@/animations/action-specs';
-import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy } from '@/types/api';
+import { useMapStore } from '@/stores/map';
+import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy, CombatViewModel } from '@/types/api';
 import {
   directV2,
   isBattleLogV2Event,
+  planPlaybackV2,
   type BattlePlayScriptV2,
   type BattleSegmentV2,
-  type CombatantView,
-  type DirectedActionV2,
-  type DirectedEffectV2,
-  type DirectedNoticeV2,
 } from './battle-director-v2';
+import { runBattlePlaybackPlan, type SegmentPlayOptions } from './battle-playback-runner';
 
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
@@ -56,19 +53,11 @@ const DAEMON_BEAT_FAST_INTERVAL = 300;
 /** 守护进程慢心跳间隔（毫秒）— 非 PROCESSING 时降低空转请求 */
 const DAEMON_BEAT_IDLE_INTERVAL = 1000;
 
-/** 清场动画时长（毫秒）— playFadeOut 0.35s + 缓冲 */
-const CLEARED_ANIM_DURATION = 450;
-
 /** "你的回合" Toast 显示时长（毫秒） */
 const YOUR_TURN_TOAST_DURATION = 2000;
 
 /** 模态框播放超时兜底（毫秒）— 防止组件异常卸载未通知导致 Promise 永久挂起 */
 const MODAL_TIMEOUT = 30000;
-
-/** sleep 辅助函数 */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function collectAllLogIds(entries: BattleLogRawEntry[]): number[] {
   return entries.map(e => Number(e.log_id)).filter(id => id > 0);
@@ -103,6 +92,7 @@ export const useBattleStore = defineStore('battle', () => {
   const currentEnemyPid = ref<number>(0);
   const currentGroomid = ref<number>(0);
   const currentPid = ref<number>(0);
+  const combatContext = ref<CombatViewModel | null>(null);
   const isPlayingBattleLog = ref<boolean>(false);
   const isProcessingBattle = ref<boolean>(false);
 
@@ -146,6 +136,41 @@ export const useBattleStore = defineStore('battle', () => {
       }
     }
     return 0;
+  }
+
+  function resolveEnemyPid(battleQueue: BattleQueue | null, context: CombatViewModel | null): number {
+    if (context?.defaultTargetPid && context.defaultTargetPid > 0) {
+      return context.defaultTargetPid;
+    }
+    return extractEnemyPid(battleQueue);
+  }
+
+  async function refreshMapEnemies(): Promise<Enemy[]> {
+    const enemiesResult = await dataManager.fetch('enemies', true);
+    const enemies = enemiesResult.status === 'success' && enemiesResult.data
+      ? ((enemiesResult.data as { enemies?: Enemy[] }).enemies || [])
+      : [];
+    useMapStore().updateMapData({ enemies });
+    return enemies;
+  }
+
+  async function applyHeartbeatChangedScopes(heartbeat: OblHeartbeatResponse): Promise<void> {
+    const changedScopes = getHeartbeatChangedScopes(heartbeat);
+    if (changedScopes.length === 0) return;
+
+    for (const scope of changedScopes) {
+      dataManager.invalidate(scope);
+    }
+
+    try {
+      if (changedScopes.includes('game_map')) {
+        await useMapStore().loadMap();
+      } else if (changedScopes.includes('enemies')) {
+        await refreshMapEnemies();
+      }
+    } catch (e) {
+      console.error('[Battle] map sync after heartbeat error:', e);
+    }
   }
 
   // ══════════════════════════════════════════════════
@@ -194,7 +219,8 @@ export const useBattleStore = defineStore('battle', () => {
   /** 心跳拍：fire-and-forget，成功/失败都不影响前端业务 */
   async function _daemonBeat(): Promise<void> {
     try {
-      await oblHeartbeat();
+      const heartbeat = await oblHeartbeat();
+      await applyHeartbeatChangedScopes(heartbeat);
     } catch {
       // 静默失败，下次心跳重试
     }
@@ -237,7 +263,7 @@ export const useBattleStore = defineStore('battle', () => {
    * 只负责状态切换和首次进入的初始化。
    * battlelog 的拉取播放由 refreshBattle() 独立调用。
    */
-  function enterBattleMode(enemyPid: number, playerTurn: boolean): void {
+  function enterBattleMode(enemyPid: number, playerTurn: boolean, context: CombatViewModel | null = combatContext.value): void {
     if (currentMode.value === 'battle' && currentEnemyPid.value === enemyPid) {
       updateActionPanel(playerTurn);
       return;
@@ -246,11 +272,11 @@ export const useBattleStore = defineStore('battle', () => {
     currentMode.value = 'battle';
     currentEnemyPid.value = enemyPid;
 
-    // 敌人名称暂空，等 playTurnSegment/playPhase0Segment 从 battlelog 提取后更新
+    // 敌人名称暂空，等 playback segment_context step 从 battlelog 提取后更新
     enemyName.value = '';
     enemyLocation.value = null;
 
-    updateActionPanel(playerTurn);
+    updateActionPanel(playerTurn, context);
 
     // 玩家小人：被动遭遇战也触发战斗开始意图
     usePlayerAvatarStore().onBattleStart();
@@ -266,6 +292,7 @@ export const useBattleStore = defineStore('battle', () => {
 
     currentMode.value = 'normal';
     currentEnemyPid.value = 0;
+    combatContext.value = null;
     enemyName.value = '';
     enemyLocation.value = null;
     isPlayerTurn.value = false;
@@ -282,14 +309,15 @@ export const useBattleStore = defineStore('battle', () => {
   /**
    * 更新动作面板：玩家顺位时显示装填区，否则显示等待提示
    */
-  function updateActionPanel(playerTurn: boolean): void {
+  function updateActionPanel(playerTurn: boolean, context: CombatViewModel | null = combatContext.value): void {
     isPlayerTurn.value = playerTurn;
     if (playerTurn) {
       nextTick(() => {
         dataManager.broadcast('battle:preload-init', {
           mode: 'in-battle',
-          enemyPid: currentEnemyPid.value,
+          enemyPid: context?.defaultTargetPid || currentEnemyPid.value,
           playerPid: currentPid.value,
+          combatContext: context,
         });
       });
     }
@@ -309,6 +337,7 @@ export const useBattleStore = defineStore('battle', () => {
 
     currentMode.value = 'battle';
     currentEnemyPid.value = enemyPid;
+    combatContext.value = null;
     isPlayerTurn.value = true;
 
     enemyName.value = enemyPid > 0 ? '' : '瞄准模式';
@@ -319,6 +348,7 @@ export const useBattleStore = defineStore('battle', () => {
         mode: 'pre-battle',
         enemyPid,
         playerPid: currentPid.value,
+        combatContext: null,
       });
     });
 
@@ -352,7 +382,8 @@ export const useBattleStore = defineStore('battle', () => {
     try {
       // 阶段三后只读 API 不再隐式推进世界；战斗刷新必须显式等待 tick 结算，
       // 否则可能读到旧的 PROCESSING 状态或拿不到刚生成的 battlelog。
-      await oblHeartbeat();
+      const heartbeat = await oblHeartbeat();
+      await applyHeartbeatChangedScopes(heartbeat);
       const result = await dataManager.fetch('player_info', true);
       if (result.status !== 'success' || !result.data) return;
 
@@ -360,15 +391,17 @@ export const useBattleStore = defineStore('battle', () => {
       usePlayerStore().playerInfo = playerInfo;
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
+      const nextCombatContext = playerInfo.combat_context || null;
       const battleState = playerInfo.obl_battle_state;
 
       currentGroomid.value = parseInt(String(playerInfo.groomid)) || 0;
       currentPid.value = parseInt(String(playerInfo.pid)) || 0;
+      combatContext.value = nextCombatContext;
 
       if (action === 'battle') {
-        const enemyPid = extractEnemyPid(battleQueue);
+        const enemyPid = resolveEnemyPid(battleQueue, nextCombatContext);
         const playerTurn = battleState === 'PLAYER_TURN';
-        enterBattleMode(enemyPid, playerTurn);
+        enterBattleMode(enemyPid, playerTurn, nextCombatContext);
 
         if (battleState === 'PROCESSING') {
           startNpcTurnRefresh();
@@ -384,13 +417,16 @@ export const useBattleStore = defineStore('battle', () => {
 
       // 播放完成后，根据 action 决定后续状态
       if (action === 'battle') {
-        await oblHeartbeat();
+        const afterHeartbeat = await oblHeartbeat();
+        await applyHeartbeatChangedScopes(afterHeartbeat);
         const afterResult = await dataManager.fetch('player_info', true);
         if (afterResult.status === 'success' && afterResult.data) {
           const afterInfo = afterResult.data as PlayerInfo;
           usePlayerStore().playerInfo = afterInfo;
+          combatContext.value = afterInfo.combat_context || null;
           const afterAction = afterInfo.action || '';
           if (afterAction === 'battle') {
+            currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
             if (afterInfo.obl_battle_state === 'PLAYER_TURN') {
               const toastStore = useToastStore();
               toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
@@ -482,150 +518,27 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   /**
-   * 战斗播放器：按 BattlePlayScriptV2 分段执行。
+   * 战斗播放器：由 Director 生成 playback plan，再交给 Runner 执行。
    *
-   * 不做任何业务判断，只读 DirectorV2 产出的 action/effect/notice。
+   * battle.ts 只提供状态更新和模态框播放能力，不再内联动作动画编排。
    */
   async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise<void> {
-    for (const segment of script.segments) {
-      switch (segment.kind) {
-        case 'round_intro':
-          await playRoundSegment(segment);
-          break;
-        case 'turn':
-        case 'system':
-          await playTurnSegment(segment, npcPid);
-          break;
-        case 'battle_end':
-          await playBattleEndSegment(segment);
-          break;
-      }
-    }
-  }
-
-  /**
-   * 处理段内 actions 的动作动画 + notices 的清场动画。
-   */
-  async function processSegmentEvents(segment: BattleSegmentV2, npcPid: number): Promise<void> {
-    for (const action of segment.actions) {
-      await processActionAnimation(action, npcPid);
+    const plan = planPlaybackV2(script);
+    if (import.meta.env.DEV) {
+      (globalThis as Record<string, unknown>).__battlePlaybackPlanV2 = plan;
     }
 
-    for (const notice of segment.notices) {
-      if (notice.type === 'combatant_cleared') {
-        await processCombatantCleared(notice);
-      }
-    }
-  }
-
-  async function processActionAnimation(action: DirectedActionV2, npcPid: number): Promise<void> {
-    if (action.animation.kind !== 'none') {
-      dataManager.broadcast('battle:play-action-animation', {
-        action,
-        plan: action.animation,
-        npcPid,
-      });
-    }
-
-    const damageEffect = action.effects.find(isDamageHpDrop);
-    if (!damageEffect) return;
-
-    const target = damageEffect.target.snapshot;
-    if (!target) return;
-
-    const spec = resolveActionSpec(action.actionId);
-    const attackerId = combatantEntityId(action.actor);
-    const targetId = combatantEntityId(target);
-
-    if (action.actor.type === 0 && action.actor.pid === currentPid.value) {
-      usePlayerAvatarStore().onAttack(targetId, spec.attacker.kind);
-    } else if (action.actor.type !== 0) {
-      const targetPos = getActorById(targetId)?.getPosition();
-      getActorById(attackerId)?.playAttack(targetPos, spec.attacker.kind);
-    }
-
-    await sleep(action.animation.impactAt ?? spec.attacker.impactAt);
-
-    if (target.type === 0 && target.pid === currentPid.value) {
-      usePlayerAvatarStore().onHit();
-    } else if (target.type !== 0) {
-      const attackerPos = getActorById(attackerId)?.getPosition();
-      const targetPos = getActorById(targetId)?.getPosition();
-      const dir: 1 | -1 | 0 = attackerPos && targetPos
-        ? (attackerPos.x < targetPos.x ? 1 : -1)
-        : 0;
-      getActorById(targetId)?.playHit(dir);
-    }
-
-    await sleep(spec.target.duration);
-  }
-
-  async function processCombatantCleared(notice: DirectedNoticeV2): Promise<void> {
-    const combatant = notice.combatant;
-    if (!combatant) return;
-
-    const reason = notice.reason;
-    if (combatant.pid === currentPid.value && combatant.type === 0) {
-      if (reason === 'death') {
-        usePlayerAvatarStore().onDie();
-      } else if (reason === 'escaped') {
-        usePlayerAvatarStore().onFlee();
-      }
-    } else if (combatant.type !== 0) {
-      const actor = getActorById(combatantEntityId(combatant));
-      if (reason === 'death' || reason === 'escaped') {
-        // 死亡和逃跑都走 playFadeOut（与 entities watch 一致，无时序冲突）
-        // playFall 留给未来 POI 转换（后端保留尸体时不触发 entities watch）
-        actor?.playFadeOut();
-      }
-    }
-
-    await sleep(CLEARED_ANIM_DURATION);
-  }
-
-  function isDamageHpDrop(effect: DirectedEffectV2): boolean {
-    if (effect.type !== 'damage') return false;
-    if (!effect.target.snapshot) return false;
-    const before = Number(effect.delta?.hp_before ?? effect.target.snapshot.hp);
-    const after = Number(effect.delta?.hp_after ?? effect.target.snapshot.hp);
-    return after < before;
-  }
-
-  function combatantEntityId(combatant: CombatantView): string {
-    return combatant.type === 0 ? 'player' : `enemy-${combatant.pid}`;
-  }
-
-  /** Round 段：即使没有正文也显示段分隔符 */
-  async function playRoundSegment(segment: BattleSegmentV2): Promise<void> {
-    await playSegmentInModal(segment, { alwaysShowHeader: true });
-  }
-
-  /** Turn 段：播放动作动画、模态框、残留数字 */
-  async function playTurnSegment(segment: BattleSegmentV2, npcPid: number): Promise<void> {
-    updateEnemyNameFromSegment(segment);
-    await refreshEnemyLocation(npcPid);
-
-    await processSegmentEvents(segment, npcPid);
-
-    await playSegmentInModal(segment, {});
-
-    const effects = segment.actions.flatMap(action => action.effects);
-    dataManager.broadcast('battle:play-damage-numbers', {
-      effects,
+    await runBattlePlaybackPlan(plan, {
+      currentPid: currentPid.value,
       npcPid,
+      updateSegmentContext,
+      playSegmentInModal,
     });
   }
 
-  /** Battle End 段：标准战斗终结 */
-  async function playBattleEndSegment(segment: BattleSegmentV2): Promise<void> {
-    await playSegmentInModal(segment, { isBattleEnd: true });
-  }
-
-  interface SegmentPlayOptions {
-    /** 即使正文为空也打开模态框（显示段分隔符） */
-    alwaysShowHeader?: boolean;
-    /** 战斗结束段（即使无正文也打开） */
-    isBattleEnd?: boolean;
+  async function updateSegmentContext(segment: BattleSegmentV2, npcPid: number): Promise<void> {
+    updateEnemyNameFromSegment(segment);
+    await refreshEnemyLocation(npcPid);
   }
 
   /**
@@ -712,14 +625,11 @@ export const useBattleStore = defineStore('battle', () => {
   async function refreshEnemyLocation(npcPid: number): Promise<void> {
     if (npcPid <= 0) return;
     try {
-      const enemiesResult = await dataManager.fetch('enemies', true);
-      if (enemiesResult.status === 'success' && enemiesResult.data) {
-        const enemies = (enemiesResult.data as { enemies?: Enemy[] }).enemies || [];
-        for (const enemy of enemies) {
-          if (parseInt(String(enemy.pid)) === npcPid) {
-            enemyLocation.value = enemy.pls ?? null;
-            return;
-          }
+      const enemies = await refreshMapEnemies();
+      for (const enemy of enemies) {
+        if (parseInt(String(enemy.pid)) === npcPid) {
+          enemyLocation.value = enemy.pls ?? null;
+          return;
         }
       }
     } catch (e) {
@@ -777,6 +687,7 @@ export const useBattleStore = defineStore('battle', () => {
     currentEnemyPid.value = 0;
     currentGroomid.value = 0;
     currentPid.value = 0;
+    combatContext.value = null;
     isPlayingBattleLog.value = false;
     isProcessingBattle.value = false;
     isPlayerTurn.value = false;
@@ -795,6 +706,7 @@ export const useBattleStore = defineStore('battle', () => {
     // 状态
     currentMode,
     currentEnemyPid,
+    combatContext,
     currentGroomid,
     currentPid,
     isPlayingBattleLog,

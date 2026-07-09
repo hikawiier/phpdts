@@ -4,14 +4,20 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 战斗系统功能文件 / Oblivions battle system
-// 功能函数负责实现战斗系统的具体功能
+// Shared combat infrastructure — 轻量状态 / 规则 / turn hook
 //
-// @deprecated 1.0 部分函数被 combat/ 模块替代：
-//   - battle_state_clear → combat_state_clear (combat.state.php)
-//   - battle_state_init → combat_state_init (combat.state.php)
-// 共享函数不标记：battle_queue_* / battle_calc_initiative
-// @see combat.state.php
+// 说明：
+// - 旧 battle engine 的主执行链已下线，但本文件不是死代码。
+// - 当前仍由 new combat / queue 层复用：
+//   - 轻量 action= battle/'' 切换
+//   - AP 恢复
+//   - 目标规则匹配
+//   - actor 可行动检查
+//   - turn 生命周期 hook
+//
+// 已被 combat/ 替代的职责：
+//   - `battle_state_clear` 的主要退出清理由 `combat_state_clear` 接管
+//   - `battle_state_init` 的完整语义由 `combat_start_battle` / `combat_dispatch` 驱动
 // ================================================================
 
 // 依赖声明（由 obl_bootstrap.php 统一加载，此处 require_once 仅作自文档化）
@@ -313,7 +319,7 @@ function battle_hook_turn_start(&$actor_data, &$obl_battle_log, &$battle_cache):
 /**
  * Turn end hook
  *
- * 在 battle_main_end 入口（step 4.5）调用，"当前 combatant 的行动已全部执行完毕"。
+ * 在共享回合收尾入口调用，"当前 combatant 的行动已全部执行完毕"。
  * 仅 Phase 1 时触发（有先攻队列），Phase 0（Ambush）不触发。
  *
  * 不操作计数器（Turn end 不递增，Turn start 才递增——turn_num 标识"当前回合"）。

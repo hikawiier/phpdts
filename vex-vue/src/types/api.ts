@@ -18,6 +18,7 @@ export interface PlayerInfo {
   action: '' | 'battle' | string;
   bid: string;
   battle_queue: BattleQueue | null;
+  combat_context: CombatViewModel | null;
   hp: string;
   mhp: string;
   sp: string;
@@ -69,6 +70,46 @@ export interface BattleQueueEntry {
   type: string | number; // 0=玩家，>0=敌人类型
   myorder: string | number;
   done: string | number; // 0=未完成，1=已完成
+}
+
+export interface CombatViewModel {
+  qid: number;
+  state: BattleState;
+  playerPid: number;
+  roundNum: number;
+  currentActorPid: number | null;
+  currentActorType: number | null;
+  canSubmitTurn: boolean;
+  combatants: CombatantViewModel[];
+  validTargets: CombatTargetViewModel[];
+  defaultTargetPid: number | null;
+}
+
+export interface CombatantViewModel {
+  pid: number;
+  type: number;
+  name: string;
+  hp: number;
+  maxHp: number;
+  ap: number;
+  maxAp: number;
+  pgroup: number;
+  pls: number;
+  state: number;
+  active: boolean;
+  done: number;
+  myorder: number;
+}
+
+export interface CombatTargetViewModel {
+  pid: number;
+  type: number;
+  name: string;
+  pgroup: number;
+  pls: number;
+  hp: number;
+  maxHp: number;
+  state: number;
 }
 
 /** 战术参数（player_info.tacpara） */

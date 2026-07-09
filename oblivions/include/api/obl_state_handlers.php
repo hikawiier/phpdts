@@ -113,6 +113,101 @@ function obl_state_build_battle_queue($pdata) {
     return $battle_queue;
 }
 
+function obl_state_combatant_view($pdata, $qrow = null) {
+    return array(
+        'pid' => (int)$pdata['pid'],
+        'type' => (int)$pdata['type'],
+        'name' => isset($pdata['name']) ? (string)$pdata['name'] : '',
+        'hp' => isset($pdata['hp']) ? (int)$pdata['hp'] : 0,
+        'maxHp' => isset($pdata['mhp']) ? (int)$pdata['mhp'] : 0,
+        'ap' => isset($pdata['ap']) ? (int)$pdata['ap'] : 0,
+        'maxAp' => isset($pdata['max_ap']) ? (int)$pdata['max_ap'] : 0,
+        'pgroup' => isset($pdata['pgroup']) ? (int)$pdata['pgroup'] : 0,
+        'pls' => isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
+        'state' => isset($pdata['state']) ? (int)$pdata['state'] : 0,
+        'active' => $qrow ? ((int)(isset($qrow['active']) ? $qrow['active'] : 1) === 1) : ((int)$pdata['state'] === 0),
+        'done' => $qrow ? (int)$qrow['done'] : 0,
+        'myorder' => $qrow ? (int)$qrow['myorder'] : 0,
+    );
+}
+
+function obl_state_target_view($combatant) {
+    return array(
+        'pid' => (int)$combatant['pid'],
+        'type' => (int)$combatant['type'],
+        'name' => (string)$combatant['name'],
+        'pgroup' => (int)$combatant['pgroup'],
+        'pls' => (int)$combatant['pls'],
+        'hp' => (int)$combatant['hp'],
+        'maxHp' => (int)$combatant['maxHp'],
+        'state' => (int)$combatant['state'],
+    );
+}
+
+function obl_state_build_combat_context($pdata) {
+    if (!isset($pdata['action']) || $pdata['action'] !== 'battle' || empty($pdata['bid'])) {
+        return null;
+    }
+
+    $qid = (int)$pdata['bid'];
+    if ($qid <= 0) return null;
+
+    $queue_rows = obl_fetch_queue_all_by_qid($qid);
+    if (empty($queue_rows)) return null;
+
+    $pids = array();
+    foreach ($queue_rows as $qrow) {
+        $pid = (int)$qrow['pid'];
+        if ($pid <= 0) continue;
+        $pids[] = $pid;
+    }
+
+    $players = obl_fetch_playerdata_batch($pids);
+    $combatants = array();
+    foreach ($queue_rows as $qrow) {
+        $pid = (int)$qrow['pid'];
+        if (!isset($players[$pid])) continue;
+        $combatants[] = obl_state_combatant_view($players[$pid], $qrow);
+    }
+
+    $current = obl_fetch_queue_current_initiator($qid);
+    $current_pid = $current ? (int)$current['pid'] : null;
+    $battle_state = function_exists('obl_battle_state_get')
+        ? obl_battle_state_get($qid)
+        : 'IDLE';
+    $round_num = function_exists('obl_battle_state_get_round_num')
+        ? obl_battle_state_get_round_num($qid)
+        : 0;
+
+    $player_pid = (int)$pdata['pid'];
+    $valid_targets = array();
+    foreach ($combatants as $combatant) {
+        if ((int)$combatant['pid'] === $player_pid) continue;
+        if ((int)$combatant['type'] <= 0) continue;
+        if ((int)$combatant['state'] > 0) continue;
+        if (empty($combatant['active'])) continue;
+        $valid_targets[] = obl_state_target_view($combatant);
+    }
+
+    $default_target_pid = null;
+    if (!empty($valid_targets)) {
+        $default_target_pid = (int)$valid_targets[0]['pid'];
+    }
+
+    return array(
+        'qid' => $qid,
+        'state' => $battle_state,
+        'playerPid' => $player_pid,
+        'roundNum' => $round_num,
+        'currentActorPid' => $current_pid,
+        'currentActorType' => $current ? (int)$current['type'] : null,
+        'canSubmitTurn' => $battle_state === 'PLAYER_TURN' && $current_pid === $player_pid,
+        'combatants' => $combatants,
+        'validTargets' => $valid_targets,
+        'defaultTargetPid' => $default_target_pid,
+    );
+}
+
 function obl_state_handle_runtime_status($ctx) {
     global $cuser;
 
@@ -145,6 +240,7 @@ function obl_state_handle_player_info($ctx) {
 
     $pdata = obl_state_require_player();
     $battle_queue = obl_state_build_battle_queue($pdata);
+    $combat_context = obl_state_build_combat_context($pdata);
 
     return obl_state_response_success(array(
         // 基本信息 / Basic info
@@ -163,6 +259,8 @@ function obl_state_handle_player_info($ctx) {
 
         // 先攻队列数据（新框架：从 bra_oblqueue 表查询）
         'battle_queue' => $battle_queue,
+        // 战斗上下文视图：战斗 UI 的统一只读投影。
+        'combat_context' => $combat_context,
 
         // 战斗属性 / Combat stats
         'hp'  => $pdata['hp'],

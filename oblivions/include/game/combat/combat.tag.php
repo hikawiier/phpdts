@@ -195,9 +195,10 @@ function combat_tag_derive_tile_unreachable(CombatContext $ctx): bool {
 }
 
 /**
- * tile_out_of_range：目标图格距离 > move_power（tile 目标专用）
+ * tile_out_of_range：目标图格距离 > 技能射程（tile 目标专用）
  *
- * move 技能用此标签拦截超距移动。不可达也视为超距。
+ * move 技能的 range.mode=move_power，因此仍按移动力拦截；grenade 等
+ * tile 技能可使用 fixed/additive 等射程配置。不可达也视为超距。
  *
  * @param CombatContext $ctx
  * @return bool
@@ -215,8 +216,16 @@ function combat_tag_derive_tile_out_of_range(CombatContext $ctx): bool {
     );
     if ($distance < 0) return true;
 
-    $move_power = obl_get_move_power($ctx->actor_data);
-    return $distance > $move_power;
+    if (($ctx->config['ap_calc'] ?? '') === 'move_distance') {
+        $move_power = max(1, obl_get_move_power($ctx->actor_data));
+        $apcost = max(1, (int)($ctx->config['apcost'] ?? 1));
+        $actor_ap = max(0, (int)($ctx->actor_data['ap'] ?? 0));
+        $range = $move_power * (int)floor($actor_ap / $apcost);
+        return $distance > $range;
+    }
+
+    $range = combat_tag_compute_range($ctx);
+    return $distance > $range;
 }
 
 // ================================================================

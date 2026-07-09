@@ -23,7 +23,7 @@ import { useMapStore } from '@/stores/map';
 import { useToastStore } from '@/stores/toast';
 import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
-import type { Skill } from '@/types/api';
+import type { Skill, CombatViewModel, CombatTargetViewModel, CombatantViewModel } from '@/types/api';
 import type { PreloadInitEventData } from '@/types/events';
 
 // ── 状态 ──
@@ -48,8 +48,10 @@ const queue = ref<QueueItem[]>([]);
 let queueIdSeed = 0;
 const aimMode = ref<boolean>(false);
 const pendingActId = ref<string | null>(null);
+const pendingTargetMode = ref<'enemy' | 'tile'>('enemy');
 const enemyPid = ref<number>(0);
 const playerPid = ref<number>(0);
+const combatContext = ref<CombatViewModel | null>(null);
 
 const mapStore = useMapStore();
 
@@ -59,11 +61,13 @@ const mapStore = useMapStore();
 
 async function initPreloadArea(data: PreloadInitEventData): Promise<void> {
   mode.value = data.mode;
-  enemyPid.value = data.enemyPid || 0;
+  combatContext.value = data.combatContext || null;
+  enemyPid.value = combatContext.value?.defaultTargetPid || data.enemyPid || 0;
   playerPid.value = data.playerPid || 0;
   queue.value = [];
   aimMode.value = false;
   pendingActId.value = null;
+  pendingTargetMode.value = 'enemy';
 
   await fetchSkillList();
 }
@@ -100,10 +104,7 @@ async function fetchSkillList(): Promise<void> {
 
 /** 队列累计 AP 消耗 */
 const queueCost = computed<number>(() => {
-  return queue.value.reduce((sum, item) => {
-    const skill = skills.value.find((s) => s.act_id === item.act_id);
-    return sum + (skill ? Number(skill.apcost || 0) : 0);
-  }, 0);
+  return estimateQueueCost(queue.value);
 });
 
 /** 预测剩余 AP */
@@ -133,13 +134,114 @@ function getSkillActionRange(skill: Skill | undefined): number {
   return Number.isFinite(n) ? Math.max(0, n) : 1;
 }
 
-function isEnemyInSkillRange(skill: Skill, targetPid: number): boolean {
-  if (mapStore.curLoc === null || mapStore.curRegion === null) return false;
+function normalizePls(pls: string | number | null | undefined): number | null {
+  if (pls === null || pls === undefined) return null;
+  const n = Number(pls);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function getCombatPlayer(): CombatantViewModel | null {
+  const ctx = combatContext.value;
+  if (!ctx) return null;
+  return ctx.combatants.find((c) => Number(c.pid) === Number(ctx.playerPid)) || null;
+}
+
+function getCombatTarget(pid: number): CombatTargetViewModel | CombatantViewModel | null {
+  const ctx = combatContext.value;
+  if (!ctx) return null;
+  return ctx.validTargets.find((target) => Number(target.pid) === Number(pid))
+    || ctx.combatants.find((combatant) => Number(combatant.pid) === Number(pid))
+    || null;
+}
+
+function getActorBasePls(): number | null {
+  return normalizePls(getCombatPlayer()?.pls ?? mapStore.curLoc);
+}
+
+function getTileAimRange(skill: Skill | undefined): number {
+  const baseRange = getSkillActionRange(skill);
+  if (!skill || skill.act_id !== 'move') return baseRange;
+
+  const baseCost = Math.max(1, Number(skill.apcost || 1));
+  const usableAp = Math.max(0, predictedAp.value);
+  return baseRange * Math.floor(usableAp / baseCost);
+}
+
+function getTileDistanceFrom(fromPls: number | null, targetPls: number): number | null {
+  if (fromPls === null) return null;
+  const path = findPath(fromPls, targetPls);
+  if (!path) return null;
+  return Math.max(0, path.length - 1);
+}
+
+function estimateActionCostFrom(item: QueueItem, fromPls: number | null): number {
+  const skill = skills.value.find((s) => s.act_id === item.act_id);
+  if (!skill) return 0;
+
+  if (skill.act_id === 'move' && item.target.type === 'tile') {
+    const distance = getTileDistanceFrom(fromPls, item.target.id);
+    if (distance === null) return Number(skill.apcost || 0);
+    const movePower = Math.max(1, getSkillActionRange(skill));
+    return Math.max(Number(skill.apcost || 1), Math.ceil(distance / movePower));
+  }
+
+  return Number(skill.apcost || 0);
+}
+
+function estimateQueueCost(items: QueueItem[]): number {
+  let total = 0;
+  let plannedLoc = getActorBasePls();
+  for (const item of items) {
+    total += estimateActionCostFrom(item, plannedLoc);
+    if (item.act_id === 'move' && item.target.type === 'tile') {
+      plannedLoc = item.target.id;
+    }
+  }
+  return total;
+}
+
+function getPlannedActorPls(): number | null {
+  let plannedLoc = getActorBasePls();
+  for (const item of queue.value) {
+    if (item.act_id === 'move' && item.target.type === 'tile') {
+      plannedLoc = item.target.id;
+    }
+  }
+  return plannedLoc;
+}
+
+function estimateActionCost(item: QueueItem): number {
+  let plannedLoc = getActorBasePls();
+  for (const queued of queue.value) {
+    if (queued.id === item.id) {
+      return estimateActionCostFrom(item, plannedLoc);
+    }
+    if (queued.act_id === 'move' && queued.target.type === 'tile') {
+      plannedLoc = queued.target.id;
+    }
+  }
+  return estimateActionCostFrom(item, plannedLoc);
+}
+
+function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number | null = getActorBasePls()): boolean {
+  if (originPls === null) return false;
+
+  const combatTarget = getCombatTarget(targetPid);
+  if (combatTarget) {
+    const actorRegion = getCombatPlayer()?.pgroup ?? mapStore.curRegion;
+    if (String(combatTarget.pgroup) !== String(actorRegion)) return false;
+    const path = findPath(originPls, combatTarget.pls);
+    if (!path) return false;
+    const distance = Math.max(0, path.length - 1);
+    return distance <= getSkillActionRange(skill);
+  }
+
+  if (mapStore.curRegion === null) return false;
   const enemy = mapStore.enemies.find(
     (e) => Number(e.pid) === Number(targetPid) && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
   );
   if (!enemy) return false;
-  const path = findPath(mapStore.curLoc, enemy.pls);
+  const path = findPath(originPls, enemy.pls);
   if (!path) return false;
   const distance = Math.max(0, path.length - 1);
   return distance <= getSkillActionRange(skill);
@@ -176,20 +278,21 @@ function onSkillClick(actId: string): void {
     addToQueue(actId, { type: 'none' });
   } else if (skill.target === 'self') {
     addToQueue(actId, { type: 'self' });
+  } else if (skill.target === 'all') {
+    addToQueue(actId, { type: 'all' });
   } else if (skill.target === 'tiles' || skill.target === 'tile') {
-    if (mapStore.curLoc === null) return;
-    addToQueue(actId, { type: 'tile', id: Number(mapStore.curLoc) });
+    enterAimMode(actId, 'tile');
   } else {
     // enemy 目标：MVP 单敌人战斗，直接使用当前敌人 PID
     // 未来多敌人时可启用瞄准模式：enterAimMode(actId)
     if (enemyPid.value > 0) {
-      if (!isEnemyInSkillRange(skill, enemyPid.value)) {
+      if (!isEnemyInSkillRange(skill, enemyPid.value, getPlannedActorPls())) {
         useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
         return;
       }
       addToQueue(actId, { type: 'pid', id: enemyPid.value });
     } else {
-      enterAimMode(actId);
+      enterAimMode(actId, 'enemy');
     }
   }
 }
@@ -217,27 +320,46 @@ function skillCdText(skill: Skill): string {
 // 瞄准模式
 // ══════════════════════════════════════════════════
 
-function enterAimMode(actId: string): void {
+function enterAimMode(actId: string, targetMode: 'enemy' | 'tile' = 'enemy'): void {
   const skill = skills.value.find((s) => s.act_id === actId);
   aimMode.value = true;
   pendingActId.value = actId;
-  dataManager.broadcast('battle:aim-mode', { actId, actionRange: getSkillActionRange(skill) });
+  pendingTargetMode.value = targetMode;
+  const actionRange = targetMode === 'tile' ? getTileAimRange(skill) : getSkillActionRange(skill);
+  dataManager.broadcast('battle:aim-mode', {
+    actId,
+    actionRange,
+    targetMode,
+    originPls: getPlannedActorPls(),
+  });
 }
 
 function exitAimMode(): void {
   aimMode.value = false;
   pendingActId.value = null;
+  pendingTargetMode.value = 'enemy';
   dataManager.broadcast('battle:aim-exit');
 }
 
 /** 瞄准模式下选择目标（监听 battle:aim-target-selected 事件） */
 function onTargetSelect(data: unknown): void {
   if (!aimMode.value || !pendingActId.value) return;
+  if (pendingTargetMode.value === 'tile') {
+    const pls = typeof data === 'number'
+      ? data
+      : (data as { pls?: number; id?: number })?.pls ?? (data as { id?: number })?.id;
+    if (typeof pls !== 'number' || pls <= 0) return;
+
+    addToQueue(pendingActId.value, { type: 'tile', id: pls });
+    exitAimMode();
+    return;
+  }
+
   const pid = typeof data === 'number' ? data : (data as { pid?: number })?.pid;
   if (typeof pid !== 'number') return;
 
   const skill = skills.value.find((s) => s.act_id === pendingActId.value);
-  if (skill && !isEnemyInSkillRange(skill, pid)) {
+  if (skill && !isEnemyInSkillRange(skill, pid, getPlannedActorPls())) {
     useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
     return;
   }
@@ -253,6 +375,7 @@ function onAimExit(): void {
   // 同步重置瞄准状态（AimMode 组件已广播 battle:aim-exit，本组件需同步状态）
   aimMode.value = false;
   pendingActId.value = null;
+  pendingTargetMode.value = 'enemy';
 }
 
 // ══════════════════════════════════════════════════
@@ -301,6 +424,10 @@ function getTargetDisplayText(target: TargetIntent): string {
   const enemy = mapStore.enemies.find(
     (e) => parseInt(String(e.pid)) === pid && parseInt(String(e.state)) === 0,
   );
+  const combatTarget = getCombatTarget(pid);
+  if (combatTarget && Number(combatTarget.state) === 0) {
+    return `位于位置${combatTarget.pls}的 ${combatTarget.name}`;
+  }
   if (enemy) {
     return `位于位置${enemy.pls}的 ${enemy.name}`;
   }
@@ -372,14 +499,24 @@ function onBattleEnded(): void {
   queue.value = [];
   aimMode.value = false;
   pendingActId.value = null;
+  pendingTargetMode.value = 'enemy';
   enemyPid.value = 0;
   playerPid.value = 0;
+  combatContext.value = null;
+}
+
+function onPreloadClear(): void {
+  queue.value = [];
+  if (aimMode.value) {
+    exitAimMode();
+  }
 }
 
 onMounted(() => {
   dataManager.listen('battle:preload-init', onPreloadInit);
   dataManager.listen('battle:aim-target-selected', onTargetSelect);
   dataManager.listen('battle:aim-exit', onAimExit);
+  dataManager.listen('battle:preload-clear', onPreloadClear);
   dataManager.listen('battle:ended', onBattleEnded);
 });
 
@@ -387,6 +524,7 @@ onUnmounted(() => {
   dataManager.unlisten('battle:preload-init', onPreloadInit);
   dataManager.unlisten('battle:aim-target-selected', onTargetSelect);
   dataManager.unlisten('battle:aim-exit', onAimExit);
+  dataManager.unlisten('battle:preload-clear', onPreloadClear);
   dataManager.unlisten('battle:ended', onBattleEnded);
 });
 
@@ -469,6 +607,7 @@ defineExpose({
       >
         <span class="text-fg-mid text-[11px]">
           [{{ getSkillTemplate(item.act_id).name }}] → {{ getTargetDisplayText(item.target) }}
+          <span class="text-fg-dim ml-1">AP:{{ estimateActionCost(item) }}</span>
         </span>
         <button
           class="text-fg-dim hover:text-red text-[11px] px-1 transition-colors"

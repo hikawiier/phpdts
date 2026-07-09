@@ -24,15 +24,45 @@ export const SKILL_TEMPLATES: Record<string, SkillTemplate> = {
     desc: '徒手攻击敌人',
     action_desc: '空手击打了',
   },
+  move: {
+    name: '战斗移动',
+    desc: '在战斗中移动到指定位置',
+    action_desc: '移动到了',
+  },
   escape: {
     name: '逃跑',
     desc: '50% 概率逃离战斗',
     action_desc: '尝试逃跑',
   },
+  heal: {
+    name: '治疗',
+    desc: '恢复自身生命值',
+    action_desc: '治疗了自己',
+  },
   throw: {
     name: '投掷',
     desc: '使用投掷武器攻击中距离敌人',
     action_desc: '投掷武器',
+  },
+  whirlwind: {
+    name: '旋风斩',
+    desc: '攻击战斗中的所有敌人',
+    action_desc: '横扫了',
+  },
+  execute: {
+    name: '处决',
+    desc: '终结低生命值敌人',
+    action_desc: '尝试处决',
+  },
+  vampiric_bite: {
+    name: '吸血撕咬',
+    desc: '伤害敌人并恢复自身生命',
+    action_desc: '撕咬了',
+  },
+  grenade: {
+    name: '手雷',
+    desc: '攻击指定位置内的目标',
+    action_desc: '投掷手雷',
   },
 };
 

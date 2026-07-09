@@ -8,9 +8,8 @@ if (!defined('IN_GAME')) {
 //
 // 验收点：utility 管道 + tile 目标 + 动态 AP + move 特例副作用
 //
-// move 是特例：execute 阶段调 obl_perform_move_core 有副作用（改 actor.pls）。
-// 原因：位置必须原子化更新，避免并发占用（resolve_effects 阶段才改太晚）。
-// 效果只声明 move 日志（from_pls / to_pls / distance），不改位置。
+// move 在真实 execute 阶段调 obl_perform_move_core 原子化改 actor.pls。
+// dry_run / verify 阶段只声明 move effect，由 effect projector 投影 planned state。
 // ================================================================
 
 /**
@@ -28,16 +27,25 @@ function skill_move_execute(CombatContext $ctx): void {
     $to_pls = (int)($target_data['pls'] ?? 0);
     $from_pls = (int)($ctx->actor_data['pls'] ?? 0);
 
-    $result = obl_perform_move_core($ctx->actor_data, $to_pls);
-    if (!$result['success']) {
-        $ctx->success = false;
-        $ctx->failure_reason = 'move_failed:' . $result['reason'];
-        return;
+    if ($ctx->dry_run) {
+        $distance = obl_get_distance(
+            (int)($ctx->actor_data['pgroup'] ?? 0),
+            $from_pls,
+            $to_pls
+        );
+    } else {
+        $result = obl_perform_move_core($ctx->actor_data, $to_pls);
+        if (!$result['success']) {
+            $ctx->success = false;
+            $ctx->failure_reason = 'move_failed:' . $result['reason'];
+            return;
+        }
+        $distance = (int)($result['distance'] ?? 0);
     }
 
     $ctx->declareEffect('move', [
         'from_pls' => $from_pls,
         'to_pls'   => $to_pls,
-        'distance' => $result['distance'],
+        'distance' => $distance,
     ]);
 }

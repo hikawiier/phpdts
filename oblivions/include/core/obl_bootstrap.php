@@ -35,20 +35,20 @@ skill_load_modules();
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
 
-// 第 2.5 层：战斗状态机（独立模块，被 battle.func.php / enemy_ai.func.php / Tick Orchestrator 依赖）
+// 第 2.5 层：共享战斗状态机（new combat 的队列推进 / NPC 回合 / Tick Orchestrator 依赖）
 require_once GAME_ROOT . './oblivions/include/game/battle_state_machine.func.php';
 
-// 第 3 层：依赖第 1-2 层
+// 第 3-4.5 层：shared combat infrastructure。
+// 说明：battle/ 目录中的旧主执行链已删除；保留下来的 battle.* 文件现在只承担
+// 数值、队列原语、队列编排、轻量状态切换等共享职责，供 combat/ 复用。
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.func.php';
-
-// 第 4 层：先攻队列原语（依赖 battle.func.php 和 sql.func.php）
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.func.php';
-// 第 4.5 层：先攻队列编排（依赖原语层）
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.main.php';
 
 // 第 4.7 层：新战斗系统 combat/ 模块（唯一战斗执行入口）
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.runtime.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.context.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.planned_state.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.core.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.pipeline.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect.php';
@@ -58,6 +58,8 @@ require_once GAME_ROOT . './oblivions/include/game/combat/combat.ap.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.tag.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.queue.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.state.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect_projector.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.chain.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.preview.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.log.php';
 

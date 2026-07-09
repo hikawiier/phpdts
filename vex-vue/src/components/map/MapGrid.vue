@@ -39,11 +39,13 @@ import { dataManager } from '@/stores/data-manager';
 import { useMapEntities } from '@/composables/useMapEntities';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
+import { useUiStore } from '@/stores/ui';
 import type { MapEntity } from '@/types/map-entity';
 
 const mapStore = useMapStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const playerStore = usePlayerStore();
+const uiStore = useUiStore();
 
 // ─── DOM 引用（供布局计算 + 交互事件使用） ───
 const gridRef = ref<HTMLElement | null>(null);
@@ -76,6 +78,7 @@ function imgStyle(entity: MapEntity): Record<string, string> {
 
 // ─── 单元格事件处理 ───
 function onCellClick(cell: CellData): void {
+  if (uiStore.mapInputMode === 'aim') return;
   if (cell.isEmpty) return;
   if (cell.hasEnemy && cell.enemy) {
     // 敌人格：触发战斗确认
@@ -91,6 +94,7 @@ function onCellClick(cell: CellData): void {
 }
 
 function onCellEnter(cell: CellData): void {
+  if (uiStore.mapInputMode === 'aim') return;
   if (cell.isEmpty || cell.isCurrent || cell.hasEnemy) return;
   if (cell.isReachable) {
     triggerCellHover(cell.pls);
@@ -98,6 +102,7 @@ function onCellEnter(cell: CellData): void {
 }
 
 function onCellLeave(cell: CellData): void {
+  if (uiStore.mapInputMode === 'aim') return;
   if (cell.isEmpty || cell.isCurrent || cell.hasEnemy) return;
   if (cell.isReachable) {
     triggerCellLeave();

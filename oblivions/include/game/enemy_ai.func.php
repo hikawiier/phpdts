@@ -60,8 +60,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 function obl_tick_phase_battle_npc($delta, &$ctx) {
 	global $db, $tablepre, $obl_battle_log;
 
-	# 加载战斗系统主文件
-	# battle_main 已由 obl_bootstrap.php 加载
+	# 共享队列 / combat 运行时已由 obl_bootstrap.php 统一加载
 
 	# 载入所有活跃的先攻队列 qid（DISTINCT 去重，避免同队列多记录重复处理）
 	# 加 active=1 过滤，避免扫到全员 active=0 的幽灵队列
@@ -71,6 +70,16 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$qid = (int)$qdata['qid'];
 		if ($qid <= 0) continue;
 
+		$processing_state = defined('OBL_BS_PROCESSING') ? OBL_BS_PROCESSING : 'PROCESSING';
+		$battle_state = function_exists('obl_battle_state_get') ? obl_battle_state_get($qid) : (defined('OBL_BS_IDLE') ? OBL_BS_IDLE : 'IDLE');
+		if ($battle_state !== $processing_state) {
+			obl_tick_ctx_add_domain_event($ctx, 'battle_queue_skipped_by_state', array(
+				'qid' => $qid,
+				'state' => $battle_state,
+			));
+			continue;
+		}
+
 		# 获取当前顺位者（myorder 最小且 done=0）
 		$current = obl_fetch_queue_current_initiator($qid);
 		if (!$current) continue;
@@ -78,9 +87,12 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		# 当前顺位者是玩家 → 不执行 NPC 回合（等待玩家提交 obl_battle_action）
 		if ($current['type'] == 0) {
 			# 战斗状态机：仅当状态为 PROCESSING 时触发 player_turn
-			if (obl_battle_state_get($qid) === OBL_BS_PROCESSING) {
-				obl_battle_state_transition($qid, 'player_turn');
-			}
+			obl_battle_state_transition($qid, 'player_turn');
+			obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'game_map'));
+			obl_tick_ctx_add_domain_event($ctx, 'player_turn_ready', array(
+				'qid' => $qid,
+				'pid' => (int)$current['pid'],
+			));
 			continue;
 		}
 
@@ -92,6 +104,16 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 
 		# 构造 NPC 动作（从 oblpara['combat_skills'] 中选择可用技能）
 		$atk_act = obl_ai_select_combat_action($npc_data, $ctx['player']['pid']);
+		$behavior = !empty($atk_act[0]['act_id']) ? (string)$atk_act[0]['act_id'] : 'npc_turn';
+		if (function_exists('obl_tick_ctx_claim_actor_behavior') && !obl_tick_ctx_claim_actor_behavior($ctx, (int)$npc_data['pid'], 'combat', $behavior, array('qid' => $qid))) {
+			obl_tick_ctx_add_domain_event($ctx, 'actor_behavior_claim_failed', array(
+				'qid' => $qid,
+				'pid' => (int)$npc_data['pid'],
+				'domain' => 'combat',
+				'behavior' => $behavior,
+			));
+			continue;
+		}
 
 		# 通过新 combat 入口调度 NPC 回合。
 		# 内部调用 battle_manage_queue，已包含：done → update → 确定 next + 状态转换 + try_end
@@ -99,6 +121,11 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$result = combat_dispatch('npc_turn', $npc_data, $atk_act, [
 			'allow_empty_actions' => true,
 		]);
+		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'battle_log', 'enemies', 'game_map'));
+		obl_tick_ctx_add_domain_event($ctx, 'npc_turn_resolved', array(
+			'qid' => $qid,
+			'pid' => (int)$npc_data['pid'],
+		));
 
 		# 请求推进 tick（由调度器末尾统一推进，替代旧的 $obl_tick_advanced 引用传递）
 		obl_tick_request_advance();
@@ -125,13 +152,79 @@ function obl_tick_phase_idle_npc($delta, &$ctx) {
 	$enemies = obl_fetch_enemies_by_region($group);
 	if (empty($enemies)) return;
 
+	if (function_exists('obl_tick_debug_log')) {
+		obl_tick_debug_log('WORLD_AI_PHASE_START', array(
+			'delta' => (int)$delta,
+			'pgroup' => $group,
+			'enemy_count' => count($enemies),
+			'battle_scope' => function_exists('obl_tick_ctx_battle_actor_scope_values') ? obl_tick_ctx_battle_actor_scope_values($ctx) : array(),
+			'actor_behaviors' => isset($ctx['actor_behaviors']) && is_array($ctx['actor_behaviors']) ? array_values($ctx['actor_behaviors']) : array(),
+		));
+	}
+
+	$moved = 0;
 	foreach ($enemies as &$enemy) {
-		# 战斗中的敌人跳过（由战斗系统接管）
-		if ($enemy['action'] === 'battle') continue;
+		$block_reason = obl_actor_world_ai_block_reason($enemy, $ctx);
+		if (function_exists('obl_tick_debug_log')) {
+			obl_tick_debug_log('WORLD_AI_ACTOR_CHECK', array(
+				'pid' => (int)($enemy['pid'] ?? 0),
+				'name' => (string)($enemy['name'] ?? ''),
+				'action' => (string)($enemy['action'] ?? ''),
+				'bid' => (int)($enemy['bid'] ?? 0),
+				'state' => (int)($enemy['state'] ?? 0),
+				'pgroup' => (int)($enemy['pgroup'] ?? 0),
+				'pls' => (int)($enemy['pls'] ?? 0),
+				'block_reason' => $block_reason,
+			));
+		}
+		if ($block_reason !== '') continue;
 		# 结算非战斗敌人 AI
-		obl_enemy_tick($enemy, $player);
+		if (obl_enemy_tick($enemy, $player, $ctx)) {
+			$moved++;
+		}
+	}
+
+	if ($moved > 0) {
+		obl_tick_ctx_add_changed_scopes($ctx, array('enemies', 'game_map'));
+		obl_tick_ctx_add_domain_event($ctx, 'idle_npc_moved', array(
+			'count' => $moved,
+			'pgroup' => $group,
+		));
+	}
+
+	if (function_exists('obl_tick_debug_log')) {
+		obl_tick_debug_log('WORLD_AI_PHASE_END', array(
+			'pgroup' => $group,
+			'moved' => $moved,
+		));
 	}
 }
+
+/**
+ * 判断 actor 是否可在当前 TickFrame 执行非战斗 AI 行为。
+ *
+ * 持久状态（action/bid/queue active）只能表达 actor 当前归属，不能替代
+ * TickFrame 行为账本；因此这里统一检查本 tick 是否已经执行过主动行为。
+ *
+ * @param array &$actor
+ * @param array &$ctx
+ * @return bool
+ */
+function obl_actor_can_world_ai(&$actor, &$ctx) {
+	return obl_actor_world_ai_block_reason($actor, $ctx) === '';
+}
+
+function obl_actor_world_ai_block_reason(&$actor, &$ctx) {
+	$pid = (int)($actor['pid'] ?? 0);
+	if ($pid <= 0) return 'invalid_pid';
+	if ((int)($actor['state'] ?? 0) > 0) return 'dead_or_inactive';
+	if (function_exists('obl_tick_ctx_actor_in_battle_scope') && obl_tick_ctx_actor_in_battle_scope($ctx, $pid)) return 'battle_scope';
+	if (($actor['action'] ?? '') === 'battle') return 'action_battle';
+	if (!empty($actor['bid'])) return 'bid_present';
+	if (function_exists('obl_tick_ctx_actor_has_behavior') && obl_tick_ctx_actor_has_behavior($ctx, $pid)) return 'actor_behavior_claimed';
+	return '';
+}
+
 /**
  * 单个敌人的 AI 决策和行动
  *
@@ -148,35 +241,61 @@ function obl_tick_phase_idle_npc($delta, &$ctx) {
  *
  * @param array &$enemy  敌人数据（已格式化）
  * @param array &$player 当前玩家数据
- * @return void
+ * @param array &$ctx    TickFrame 调度上下文
+ * @return bool 本 tick 是否移动
  */
-function obl_enemy_tick(&$enemy, &$player)
+function obl_enemy_tick(&$enemy, &$player, &$ctx = null)
 {
+	if (is_array($ctx) && !obl_actor_can_world_ai($enemy, $ctx)) return false;
+
 	// 死亡敌人不行动
-	if ($enemy['state'] > 0) return;
+	if ($enemy['state'] > 0) return false;
 
 	// 战斗中的敌人不参与 tick 结算（由战斗系统接管行动）
-	if ($enemy['action'] == 'battle') return;
+	if ($enemy['action'] == 'battle') return false;
 
 	// 行动意愿门控：随机数决定这个 tick 要不要行动
 	$action_chance = isset($enemy['oblpara']['action_chance'])
 		? (float)$enemy['oblpara']['action_chance'] : 0.5;
-	if (mt_rand() / mt_getrandmax() > $action_chance) return;
+	$roll = mt_rand() / mt_getrandmax();
+	if (function_exists('obl_tick_debug_log')) {
+		obl_tick_debug_log('WORLD_AI_ACTION_ROLL', array(
+			'pid' => (int)($enemy['pid'] ?? 0),
+			'name' => (string)($enemy['name'] ?? ''),
+			'ai_type' => (string)(isset($enemy['oblpara']['ai_type']) ? $enemy['oblpara']['ai_type'] : 'idle'),
+			'action_chance' => $action_chance,
+			'roll' => $roll,
+			'passes' => $roll <= $action_chance,
+		));
+	}
+	if ($roll > $action_chance) return false;
 
 	// 根据 AI 类型行动
 	// TODO: 追击/突袭/碰撞战斗机制待 tick 框架重构后重新实现
 	$ai_type = isset($enemy['oblpara']['ai_type']) ? $enemy['oblpara']['ai_type'] : 'idle';
 	switch ($ai_type) {
 		case 'patrol':
-			obl_enemy_patrol($enemy, $player);
-			break;
+			if (is_array($ctx) && function_exists('obl_tick_ctx_claim_actor_behavior')
+				&& !obl_tick_ctx_claim_actor_behavior($ctx, (int)$enemy['pid'], 'world', 'patrol')) {
+				return false;
+			}
+			return obl_enemy_patrol($enemy, $player, $ctx);
 		case 'aggressive':
-			obl_enemy_hunt($enemy, $player);  // MVP 简化为巡逻
-			break;
+			if (is_array($ctx) && function_exists('obl_tick_ctx_claim_actor_behavior')
+				&& !obl_tick_ctx_claim_actor_behavior($ctx, (int)$enemy['pid'], 'world', 'aggressive')) {
+				return false;
+			}
+			return obl_enemy_hunt($enemy, $player, $ctx);  // MVP 简化为巡逻
 		case 'idle':
 		default:
+			if (function_exists('obl_tick_debug_log')) {
+				obl_tick_debug_log('WORLD_AI_IDLE_NOOP', array(
+					'pid' => (int)($enemy['pid'] ?? 0),
+					'ai_type' => (string)$ai_type,
+				));
+			}
 			// 发呆，不行动
-			break;
+			return false;
 	}
 }
 
@@ -239,22 +358,52 @@ function obl_ai_select_combat_action(&$npc_data, $target_pid) {
  * @param array &$player    当前玩家数据
  * @return bool 移动是否成功
  */
-function obl_enemy_move(&$enemy, $target_pls, &$player) {
+function obl_enemy_move(&$enemy, $target_pls, &$player, &$ctx = null, $reason = '') {
+	$from_pls = (int)($enemy['pls'] ?? 0);
+	$pid = (int)($enemy['pid'] ?? 0);
+
 	// 校验目标格 passable
 	$map = obl_get_map_data($enemy['pgroup']);
 	$tiles = $map['tiles'][$enemy['pgroup']];
 	if (!isset($tiles[$target_pls]) || empty($tiles[$target_pls]['passable'])) {
+		if (function_exists('obl_tick_debug_log')) {
+			obl_tick_debug_log('WORLD_AI_MOVE_REJECT', array(
+				'pid' => $pid,
+				'reason' => 'not_passable',
+				'from_pls' => $from_pls,
+				'target_pls' => (int)$target_pls,
+				'behavior' => (string)$reason,
+			));
+		}
 		return false;
 	}
 
 	// 目标格是玩家所在格 → 不移动
 	// TODO: 碰撞战斗机制待 tick 框架重构后重新实现
 	if ($player['pgroup'] == $enemy['pgroup'] && $player['pls'] == $target_pls) {
+		if (function_exists('obl_tick_debug_log')) {
+			obl_tick_debug_log('WORLD_AI_MOVE_REJECT', array(
+				'pid' => $pid,
+				'reason' => 'player_occupied',
+				'from_pls' => $from_pls,
+				'target_pls' => (int)$target_pls,
+				'behavior' => (string)$reason,
+			));
+		}
 		return false;
 	}
 
 	// 校验目标格未被其他单位占用（一个格一个单位）
 	if (obl_is_tile_occupied_by_others($enemy['pgroup'], $target_pls, $enemy['pid'])) {
+		if (function_exists('obl_tick_debug_log')) {
+			obl_tick_debug_log('WORLD_AI_MOVE_REJECT', array(
+				'pid' => $pid,
+				'reason' => 'occupied',
+				'from_pls' => $from_pls,
+				'target_pls' => (int)$target_pls,
+				'behavior' => (string)$reason,
+			));
+		}
 		return false;
 	}
 
@@ -277,6 +426,19 @@ function obl_enemy_move(&$enemy, $target_pls, &$player) {
 		));
 	}
 
+	if (function_exists('obl_tick_debug_log')) {
+		obl_tick_debug_log('WORLD_AI_MOVE_SUCCESS', array(
+			'pid' => $pid,
+			'name' => (string)($enemy['name'] ?? ''),
+			'behavior' => (string)$reason,
+			'pgroup' => (int)($enemy['pgroup'] ?? 0),
+			'from_pls' => $from_pls,
+			'to_pls' => (int)$target_pls,
+			'action' => (string)($enemy['action'] ?? ''),
+			'bid' => (int)($enemy['bid'] ?? 0),
+		));
+	}
+
 	return true;
 }
 
@@ -285,14 +447,22 @@ function obl_enemy_move(&$enemy, $target_pls, &$player) {
  *
  * @param array &$enemy  敌人数据
  * @param array &$player 当前玩家数据（obl_enemy_move 签名需要）
- * @return void
+ * @return bool 是否移动成功
  */
-function obl_enemy_patrol(&$enemy, &$player) {
+function obl_enemy_patrol(&$enemy, &$player, &$ctx = null) {
 	$neighbors = obl_get_tile_neighbors($enemy['pgroup'], $enemy['pls']);
-	if (empty($neighbors)) return;
+	if (empty($neighbors)) return false;
 
 	$target_pls = $neighbors[array_rand($neighbors)];
-	obl_enemy_move($enemy, $target_pls, $player);
+	if (function_exists('obl_tick_debug_log')) {
+		obl_tick_debug_log('WORLD_AI_PATROL_TARGET', array(
+			'pid' => (int)($enemy['pid'] ?? 0),
+			'from_pls' => (int)($enemy['pls'] ?? 0),
+			'neighbors' => array_values($neighbors),
+			'target_pls' => (int)$target_pls,
+		));
+	}
+	return obl_enemy_move($enemy, $target_pls, $player, $ctx, 'patrol');
 }
 
 /**
@@ -300,10 +470,10 @@ function obl_enemy_patrol(&$enemy, &$player) {
  *
  * @param array &$enemy  敌人数据
  * @param array &$player 当前玩家数据
- * @return void
+ * @return bool 是否移动成功
  */
-function obl_enemy_hunt(&$enemy, &$player) {
-	obl_enemy_patrol($enemy, $player);
+function obl_enemy_hunt(&$enemy, &$player, &$ctx = null) {
+	return obl_enemy_patrol($enemy, $player, $ctx);
 }
 
 // ================================================================

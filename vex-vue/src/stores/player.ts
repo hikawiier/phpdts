@@ -14,7 +14,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import type { PlayerInfo, BattleState } from '@/types/api';
+import type { PlayerInfo, BattleState, CombatViewModel } from '@/types/api';
 
 export const usePlayerStore = defineStore('player', () => {
   // ── 状态 ──
@@ -35,6 +35,7 @@ export const usePlayerStore = defineStore('player', () => {
   const isInBattle = computed(() => action.value === 'battle');
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
+  const combatContext = computed<CombatViewModel | null>(() => playerInfo.value?.combat_context ?? null);
 
   // ── 战斗状态机（3 态） ──
   /** 当前玩家所在战场的状态 */
@@ -104,6 +105,7 @@ export const usePlayerStore = defineStore('player', () => {
     isInBattle,
     oblTick,
     oblPretick,
+    combatContext,
     oblBattleState,
     isBattleActive,
     isPlayerTurn,

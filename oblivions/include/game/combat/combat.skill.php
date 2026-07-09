@@ -110,8 +110,8 @@ function combat_skill_load_module(string $act_id): void {
  *   1. 技能存在性：combat_skill_get_config($ctx->act_id) 不为 null
  *   2. AP 足够性：调 combat_ap_calculate 得 ap_cost，
  *      检查 $ctx->actor_data['ap'] >= ap_cost
- *      （此处单 action 校验，wallet 预扣 pending_ap_spent 在 combat.core.php
- *      verify 阶段统一处理）
+ *      （此处单 action 校验；动作链 planned state / wallet 在 combat.chain.php
+ *      的 combat_chain_project 中处理）
  *   3. 规则匹配：调 combat_check_target_rules($ctx->config, $ctx->getCurrentTags())
  *
  * 全部通过返回 true 并写入 $ctx->ap_cost；失败设 $ctx->success=false +

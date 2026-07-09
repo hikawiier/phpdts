@@ -94,7 +94,7 @@ if (!$command_rejected && $pdata['hp'] > 0) {
 }
 
 // [C2d] 战斗状态机：命令执行完成后，从 PLAYER_TURN 过渡到 PROCESSING
-// 玩家动作已被 battle_main + battle_manage_queue 完整处理后才更新状态。
+// 玩家动作已被共享 combat 执行链 + battle_manage_queue 完整处理后才更新状态。
 if (!$command_rejected
     && function_exists('obl_command_advances_tick')
     && obl_command_advances_tick($command)) {

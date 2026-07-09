@@ -215,6 +215,279 @@ function obl_tick_get_listeners($phase) {
 #=============================================================================
 
 /**
+ * 向当前 TickFrame 记录需要刷新的前端 scope。
+ *
+ * @param array  &$ctx   tick 调度上下文
+ * @param string $scope  State API scope 名
+ * @return void
+ */
+function obl_tick_ctx_add_changed_scope(&$ctx, $scope) {
+    $scope = trim((string)$scope);
+    if ($scope === '') return;
+
+    if (!isset($ctx['changed_scopes']) || !is_array($ctx['changed_scopes'])) {
+        $ctx['changed_scopes'] = array();
+    }
+    if (!in_array($scope, $ctx['changed_scopes'], true)) {
+        $ctx['changed_scopes'][] = $scope;
+    }
+
+    $domain = isset($ctx['_current_domain']) ? (string)$ctx['_current_domain'] : '';
+    if ($domain !== '') {
+        if (!isset($ctx['_domain_changed_scopes']) || !is_array($ctx['_domain_changed_scopes'])) {
+            $ctx['_domain_changed_scopes'] = array();
+        }
+        if (!isset($ctx['_domain_changed_scopes'][$domain]) || !is_array($ctx['_domain_changed_scopes'][$domain])) {
+            $ctx['_domain_changed_scopes'][$domain] = array();
+        }
+        if (!in_array($scope, $ctx['_domain_changed_scopes'][$domain], true)) {
+            $ctx['_domain_changed_scopes'][$domain][] = $scope;
+        }
+    }
+}
+
+/**
+ * 批量记录需要刷新的前端 scope。
+ *
+ * @param array &$ctx
+ * @param array $scopes
+ * @return void
+ */
+function obl_tick_ctx_add_changed_scopes(&$ctx, $scopes) {
+    if (!is_array($scopes)) return;
+    foreach ($scopes as $scope) {
+        obl_tick_ctx_add_changed_scope($ctx, $scope);
+    }
+}
+
+/**
+ * 向当前 DomainPhase 记录结构化事件。
+ *
+ * @param array  &$ctx
+ * @param string $event
+ * @param array  $payload
+ * @return void
+ */
+function obl_tick_ctx_add_domain_event(&$ctx, $event, $payload = array()) {
+    $domain = isset($ctx['_current_domain']) ? (string)$ctx['_current_domain'] : '';
+    if ($domain === '') return;
+
+    if (!isset($ctx['_domain_events']) || !is_array($ctx['_domain_events'])) {
+        $ctx['_domain_events'] = array();
+    }
+    if (!isset($ctx['_domain_events'][$domain]) || !is_array($ctx['_domain_events'][$domain])) {
+        $ctx['_domain_events'][$domain] = array();
+    }
+    $ctx['_domain_events'][$domain][] = array(
+        'event' => (string)$event,
+        'payload' => is_array($payload) ? $payload : array(),
+    );
+}
+
+function obl_tick_debug_log($tag, $data = array()) {
+    if (function_exists('combat_debug_log')) {
+        combat_debug_log($tag, is_array($data) ? $data : array('value' => $data));
+        return;
+    }
+    error_log('[obl_tick_debug] ' . $tag . ' ' . json_encode($data, JSON_UNESCAPED_UNICODE));
+}
+
+function obl_tick_ctx_battle_actor_scope_values(&$ctx) {
+    if (!isset($ctx['battle_actor_scope']) || !is_array($ctx['battle_actor_scope'])) return array();
+    return array_map('intval', array_keys($ctx['battle_actor_scope']));
+}
+
+/**
+ * 查询 actor 在当前 TickFrame 是否已执行过主动行为。
+ *
+ * @param array &$ctx
+ * @param int   $pid
+ * @return bool
+ */
+function obl_tick_ctx_actor_has_behavior(&$ctx, $pid) {
+    $pid = (int)$pid;
+    if ($pid <= 0) return false;
+    return isset($ctx['actor_behaviors'][(string)$pid]);
+}
+
+/**
+ * 将 actor 标记为当前 TickFrame 的战斗域成员。
+ *
+ * 战斗域成员资格是 TickFrame 入口快照，不随 combat_domain 中 action/bid
+ * 清理而变化；world_ai_domain 必须用它排除本 tick 的战斗成员。
+ *
+ * @param array &$ctx
+ * @param int   $pid
+ * @return void
+ */
+function obl_tick_ctx_mark_battle_actor(&$ctx, $pid) {
+    $pid = (int)$pid;
+    if ($pid <= 0) return;
+    if (!isset($ctx['battle_actor_scope']) || !is_array($ctx['battle_actor_scope'])) {
+        $ctx['battle_actor_scope'] = array();
+    }
+    $ctx['battle_actor_scope'][(string)$pid] = true;
+}
+
+/**
+ * 批量合并 TickFrame 战斗域成员快照。
+ *
+ * @param array &$ctx
+ * @param array $pids
+ * @return void
+ */
+function obl_tick_ctx_merge_battle_actor_scope(&$ctx, $pids) {
+    if (!is_array($pids)) return;
+    foreach ($pids as $pid) {
+        obl_tick_ctx_mark_battle_actor($ctx, (int)$pid);
+    }
+}
+
+/**
+ * 查询 actor 在当前 TickFrame 入口是否属于战斗域。
+ *
+ * @param array &$ctx
+ * @param int   $pid
+ * @return bool
+ */
+function obl_tick_ctx_actor_in_battle_scope(&$ctx, $pid) {
+    $pid = (int)$pid;
+    if ($pid <= 0) return false;
+    return isset($ctx['battle_actor_scope'][(string)$pid]);
+}
+
+/**
+ * 初始化 TickFrame 战斗域成员快照。
+ *
+ * action='battle' 或 bid>0 都说明 actor 在本 tick 入口仍受战斗域管辖。
+ * 即使后续 combat_domain 因逃跑/死亡/解散清理了 action/bid，也不能在
+ * 同一 TickFrame 的 world_ai_domain 中重新执行非战斗 AI。
+ *
+ * @param array &$ctx
+ * @return void
+ */
+function obl_tick_ctx_snapshot_battle_actors(&$ctx) {
+    $pids = obl_tick_collect_battle_actor_ids();
+    obl_tick_ctx_merge_battle_actor_scope($ctx, $pids);
+    obl_tick_debug_log('TICK_SCOPE_REALTIME', array(
+        'pids' => array_values($pids),
+        'scope' => obl_tick_ctx_battle_actor_scope_values($ctx),
+    ));
+}
+
+/**
+ * 收集当前持久状态下的战斗域 actor。
+ *
+ * action='battle' 或 bid>0 都说明 actor 在本 tick 入口仍受战斗域管辖。
+ *
+ * @return array<int>
+ */
+function obl_tick_collect_battle_actor_ids() {
+    global $db, $tablepre;
+    $pids = array();
+    if (!isset($db) || !$db || !isset($tablepre)) return $pids;
+
+    $result = $db->query("SELECT pid FROM {$tablepre}oblplayers WHERE action='battle' OR bid > 0");
+    while ($row = $db->fetch_array($result)) {
+        $pids[] = (int)$row['pid'];
+    }
+    return $pids;
+}
+
+/**
+ * 在玩家命令执行前记录本 tick 的战斗域成员。
+ *
+ * 玩家命令本身可能在 handler 中结束战斗并清理 action/bid；该快照用于
+ * 后续 TickFrame 排除这些 actor 的 world AI。
+ *
+ * @return void
+ */
+function obl_tick_prepare_pending_battle_actor_scope($command = '', $actor_pid = 0) {
+    global $gamevars;
+    if (!isset($gamevars) || !is_array($gamevars)) $gamevars = array();
+    $gamevars['obl_pending_tick_battle_actor_scope'] = obl_tick_collect_battle_actor_ids();
+    obl_tick_debug_log('TICK_SCOPE_PRE_COMMAND', array(
+        'command' => (string)$command,
+        'actor_pid' => (int)$actor_pid,
+        'tick' => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
+        'processed_tick' => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
+        'pids' => array_values($gamevars['obl_pending_tick_battle_actor_scope']),
+    ));
+}
+
+/**
+ * 为 actor 登记当前 TickFrame 的主动行为。
+ *
+ * 同一 actor 在同一 tick 内只能登记一次；domain 只允许 combat/world。
+ *
+ * @param array  &$ctx
+ * @param int    $pid
+ * @param string $domain
+ * @param string $behavior
+ * @param array  $meta
+ * @return bool true=登记成功，false=本 tick 已有行为或参数非法
+ */
+function obl_tick_ctx_claim_actor_behavior(&$ctx, $pid, $domain, $behavior, $meta = array()) {
+    $pid = (int)$pid;
+    if ($pid <= 0) return false;
+
+    $domain = (string)$domain;
+    if ($domain !== 'combat' && $domain !== 'world') return false;
+
+    $behavior = trim((string)$behavior);
+    if ($behavior === '') $behavior = 'unknown';
+
+    if (!isset($ctx['actor_behaviors']) || !is_array($ctx['actor_behaviors'])) {
+        $ctx['actor_behaviors'] = array();
+    }
+    $key = (string)$pid;
+    if (isset($ctx['actor_behaviors'][$key])) {
+        obl_tick_debug_log('TICK_ACTOR_BEHAVIOR_CLAIM_FAIL', array(
+            'pid' => $pid,
+            'domain' => $domain,
+            'behavior' => $behavior,
+            'existing' => $ctx['actor_behaviors'][$key],
+            'meta' => is_array($meta) ? $meta : array(),
+        ));
+        return false;
+    }
+
+    $entry = array(
+        'pid' => $pid,
+        'domain' => $domain,
+        'behavior' => $behavior,
+    );
+    if (is_array($meta) && !empty($meta)) {
+        $entry['meta'] = $meta;
+    }
+    $ctx['actor_behaviors'][$key] = $entry;
+    obl_tick_debug_log('TICK_ACTOR_BEHAVIOR_CLAIM_OK', $entry);
+    return true;
+}
+
+function obl_tick_frame_result_init($delta) {
+    return array(
+        'delta' => (int)$delta,
+        'phases' => array(),
+        'actor_behaviors' => array(),
+        'changed_scopes' => array(),
+    );
+}
+
+function obl_tick_frame_result_finalize(&$ctx) {
+    if (!isset($ctx['frame_result']) || !is_array($ctx['frame_result'])) {
+        $ctx['frame_result'] = obl_tick_frame_result_init(0);
+    }
+    $ctx['frame_result']['actor_behaviors'] = isset($ctx['actor_behaviors']) && is_array($ctx['actor_behaviors'])
+        ? array_values($ctx['actor_behaviors'])
+        : array();
+    $ctx['frame_result']['changed_scopes'] = isset($ctx['changed_scopes']) && is_array($ctx['changed_scopes'])
+        ? array_values($ctx['changed_scopes'])
+        : array();
+    return $ctx['frame_result'];
+}
+
+/**
  * 调度 tick 事件（三阶段处理）
  *
  * 阶段顺序：
@@ -240,26 +513,68 @@ function obl_tick_dispatch($delta, &$ctx) {
     global $obl_error_log;
     obl_tick_reset_advance();
 
+    if (!isset($ctx['frame_result']) || !is_array($ctx['frame_result'])) {
+        $ctx['frame_result'] = obl_tick_frame_result_init($delta);
+    }
+    if (!isset($ctx['changed_scopes']) || !is_array($ctx['changed_scopes'])) {
+        $ctx['changed_scopes'] = array();
+    }
+    if (!isset($ctx['actor_behaviors']) || !is_array($ctx['actor_behaviors'])) {
+        $ctx['actor_behaviors'] = array();
+    }
+    if (!isset($ctx['battle_actor_scope']) || !is_array($ctx['battle_actor_scope'])) {
+        $ctx['battle_actor_scope'] = array();
+    }
+
+    $domains = array(
+        array('name' => 'combat_domain',   'legacy_phase' => 'battle_npc', 'stop_on_advance' => true),
+        array('name' => 'world_ai_domain', 'legacy_phase' => 'idle_npc',   'stop_on_advance' => false),
+        array('name' => 'post_domain',     'legacy_phase' => 'post',       'stop_on_advance' => false),
+    );
+
     try {
-        // 阶段 1：战斗 NPC 回合（串行，最多 1 个监听器请求推进）
-        $battle_npc_listeners = obl_tick_get_listeners('battle_npc');
-        foreach ($battle_npc_listeners as $cb) {
-            call_user_func_array($cb, array(&$delta, &$ctx));
-            if (obl_tick_consume_advance()) {
-                $ctx['advanced'] = true;
-                break;  // 最多处理 1 个 NPC 回合
+        foreach ($domains as $domain_spec) {
+            $domain = $domain_spec['name'];
+            $legacy_phase = $domain_spec['legacy_phase'];
+            $listeners = obl_tick_get_listeners($legacy_phase);
+
+            $ctx['_current_domain'] = $domain;
+            if (!isset($ctx['_domain_changed_scopes'][$domain])) {
+                $ctx['_domain_changed_scopes'][$domain] = array();
             }
-        }
+            if (!isset($ctx['_domain_events'][$domain])) {
+                $ctx['_domain_events'][$domain] = array();
+            }
 
-        // 阶段 2：非战斗 NPC AI 行为（并行，所有监听器都执行）
-        foreach (obl_tick_get_listeners('idle_npc') as $cb) {
-            call_user_func_array($cb, array(&$delta, &$ctx));
-        }
+            $phase_result = array(
+                'name' => $domain,
+                'legacy_phase' => $legacy_phase,
+                'listeners' => count($listeners),
+                'ran' => false,
+                'advanced_requested' => false,
+                'changed_scopes' => array(),
+                'events' => array(),
+            );
 
-        // 阶段 3：后处理（技能 CD 等，预留扩展）
-        foreach (obl_tick_get_listeners('post') as $cb) {
-            call_user_func_array($cb, array(&$delta, &$ctx));
+            foreach ($listeners as $cb) {
+                $phase_result['ran'] = true;
+                call_user_func_array($cb, array(&$delta, &$ctx));
+                if (!empty($domain_spec['stop_on_advance']) && obl_tick_consume_advance()) {
+                    $ctx['advanced'] = true;
+                    $phase_result['advanced_requested'] = true;
+                    break;  // 战斗域最多处理 1 个 NPC 回合
+                }
+            }
+
+            $phase_result['changed_scopes'] = isset($ctx['_domain_changed_scopes'][$domain])
+                ? array_values($ctx['_domain_changed_scopes'][$domain])
+                : array();
+            $phase_result['events'] = isset($ctx['_domain_events'][$domain])
+                ? array_values($ctx['_domain_events'][$domain])
+                : array();
+            $ctx['frame_result']['phases'][] = $phase_result;
         }
+        unset($ctx['_current_domain']);
     } catch (Throwable $e) {
         // 异常兜底：记录错误日志，前端可通过下次请求了解到错误
         // 战斗状态机保持当前状态，下一次 tick dispatch 会重试处理
@@ -271,6 +586,7 @@ function obl_tick_dispatch($delta, &$ctx) {
                 'delta' => $delta,
             ), 'api');  // request 来源：tick 事件处理通常在 oblivions/api/heartbeat.php 请求中触发
         }
+        obl_tick_frame_result_finalize($ctx);
         return;  // 异常时不推进 tick，直接返回
     }
 
@@ -278,6 +594,7 @@ function obl_tick_dispatch($delta, &$ctx) {
     if (!empty($ctx['advanced'])) {
         obl_tick_advance();
     }
+    obl_tick_frame_result_finalize($ctx);
 }
 
 /**
@@ -295,7 +612,7 @@ function obl_tick_dispatch($delta, &$ctx) {
  * @return void
  */
 function obl_resolve_tick_events($delta) {
-    global $cuser, $obl_error_log;
+    global $cuser, $obl_error_log, $gamevars;
 
     // 抓取当前玩家数据（MVP 策略：只有 1 名玩家）
     $player = obl_fetch_playerdata_by_name($cuser);
@@ -308,15 +625,51 @@ function obl_resolve_tick_events($delta) {
                 'delta' => $delta,
             ), 'api');
         }
-        return;
+        return obl_tick_frame_result_init($delta);
     }
 
     $ctx = array(
         'player'   => &$player,
         'advanced' => false,
+        'actor_behaviors' => array(),
+        'battle_actor_scope' => array(),
+        'changed_scopes' => array(),
+        'frame_result' => obl_tick_frame_result_init($delta),
     );
 
+    obl_tick_ctx_snapshot_battle_actors($ctx);
+
+    if (isset($gamevars['obl_pending_tick_battle_actor_scope']) && is_array($gamevars['obl_pending_tick_battle_actor_scope'])) {
+        obl_tick_debug_log('TICK_SCOPE_PENDING_MERGE', array(
+            'pids' => array_values($gamevars['obl_pending_tick_battle_actor_scope']),
+        ));
+        obl_tick_ctx_merge_battle_actor_scope($ctx, $gamevars['obl_pending_tick_battle_actor_scope']);
+        unset($gamevars['obl_pending_tick_battle_actor_scope']);
+    }
+
+    if (isset($gamevars['obl_pending_tick_actor_behavior']) && is_array($gamevars['obl_pending_tick_actor_behavior'])) {
+        $source = $gamevars['obl_pending_tick_actor_behavior'];
+        obl_tick_ctx_claim_actor_behavior(
+            $ctx,
+            isset($source['pid']) ? (int)$source['pid'] : 0,
+            isset($source['domain']) ? (string)$source['domain'] : '',
+            isset($source['behavior']) ? (string)$source['behavior'] : 'command',
+            array('source' => 'command')
+        );
+        unset($gamevars['obl_pending_tick_actor_behavior']);
+    }
+
+    obl_tick_debug_log('TICK_FRAME_READY', array(
+        'delta' => (int)$delta,
+        'player_pid' => (int)($player['pid'] ?? 0),
+        'tick' => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
+        'processed_tick' => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
+        'battle_scope' => obl_tick_ctx_battle_actor_scope_values($ctx),
+        'actor_behaviors' => array_values($ctx['actor_behaviors']),
+    ));
+
     obl_tick_dispatch($delta, $ctx);
+    return obl_tick_frame_result_finalize($ctx);
 }
 
 #=============================================================================

@@ -9,7 +9,6 @@
 // - BattleHeader：vs [敌人名] 标题
 // - BattleActionBar：动作按钮区（玩家回合嵌入 PreloadArea，NPC 回合显示等待提示）
 // - BattleModal：战斗演出模态框（Teleport to body，全屏覆盖）
-// - CollisionAnimation：碰撞动画（纯逻辑组件，监听事件触发）
 // - DamageNumber：残留伤害数字（Teleport to body）
 // - AimMode：瞄准模式（Teleport to body，SVG 路径线）
 // ══════════════════════════════════════════════════
@@ -17,7 +16,6 @@
 import BattleHeader from '@/components/battle/BattleHeader.vue';
 import BattleActionBar from '@/components/battle/BattleActionBar.vue';
 import BattleModal from '@/components/battle/BattleModal.vue';
-import CollisionAnimation from '@/components/battle/CollisionAnimation.vue';
 import DamageNumber from '@/components/battle/DamageNumber.vue';
 import AimMode from '@/components/battle/AimMode.vue';
 </script>
@@ -32,9 +30,6 @@ import AimMode from '@/components/battle/AimMode.vue';
 
     <!-- 战斗演出模态框（Teleport to body，全屏覆盖） -->
     <BattleModal />
-
-    <!-- 动作动画（纯逻辑组件，监听 battle:play-action-animation 事件） -->
-    <CollisionAnimation />
 
     <!-- 残留伤害数字（Teleport to body） -->
     <DamageNumber />

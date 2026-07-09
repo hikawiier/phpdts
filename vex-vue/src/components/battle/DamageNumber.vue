@@ -74,7 +74,7 @@ function getEnemyElement(enemyPid: number): HTMLElement | null {
  * 模态框关闭后，在地图格上淡入显示伤害数字（残留反馈）
  *
  * 遍历该组 v2 effect visual plan，在受击方格子上显示伤害数字。
- * 与 playCollisionAnimation 不同，这里只显示数字（不播冲刺/抖动），
+ * 动作动画已由 BattlePlaybackRunner 的 actor executor 执行；这里只显示数字，
  * 且使用淡入动画（damage-fade-in）而非浮起动画（damage-float）。
  *
  * 迁移自现有 vex/js/battle-animation.js playDamageNumbersAfterModal()。

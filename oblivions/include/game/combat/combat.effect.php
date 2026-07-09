@@ -46,6 +46,85 @@ function combat_effect_register(string $type, callable $applier): void {
     $GLOBALS['combat_effect_appliers'][$type] = $applier;
 }
 
+/**
+ * 按 effect.target_pid / payload.target_pid 解析真正受影响的数据引用。
+ *
+ * 默认效果作用于当前 target；若 payload 指定 target_pid，则允许作用到 actor、
+ * 其他已解析 target，或按需 fetch 后挂到当前 target.effect_targets，供后续
+ * post_check / persist 在内存中找到并保存。
+ *
+ * @param CombatContext $ctx
+ * @param array         $effect
+ * @return array
+ */
+function &combat_effect_resolve_target_data(CombatContext $ctx, array $effect): array {
+    static $missing_target = [];
+    $missing_target = [];
+
+    $payload = isset($effect['payload']) && is_array($effect['payload']) ? $effect['payload'] : [];
+    $target_pid = (int)($effect['target_pid'] ?? ($payload['target_pid'] ?? 0));
+
+    if ($target_pid <= 0) {
+        $target = &$ctx->getCurrentTarget();
+        if (isset($target['target_data']) && is_array($target['target_data'])) {
+            return $target['target_data'];
+        }
+        return $missing_target;
+    }
+
+    if ((int)($ctx->actor_data['pid'] ?? 0) === $target_pid) {
+        return $ctx->actor_data;
+    }
+
+    foreach ($ctx->targets as &$target) {
+        if (isset($target['target_data']) && is_array($target['target_data'])
+            && (int)($target['target_data']['pid'] ?? 0) === $target_pid) {
+            return $target['target_data'];
+        }
+        if (isset($target['effect_targets'][$target_pid]) && is_array($target['effect_targets'][$target_pid])) {
+            return $target['effect_targets'][$target_pid];
+        }
+    }
+    unset($target);
+
+    $current = &$ctx->getCurrentTarget();
+    if (!isset($current['effect_targets']) || !is_array($current['effect_targets'])) {
+        $current['effect_targets'] = [];
+    }
+
+    $fetched = function_exists('combat_planned_state_get_player')
+        ? combat_planned_state_get_player($ctx->battle_cache, $target_pid)
+        : null;
+    if (!$fetched) {
+        $fetched = obl_fetch_playerdata_by_pid($target_pid);
+    }
+    if (!$fetched) {
+        return $missing_target;
+    }
+
+    $current['effect_targets'][$target_pid] = $fetched;
+    return $current['effect_targets'][$target_pid];
+}
+
+function combat_effect_target_ref(CombatContext $ctx, array $target_data): array {
+    $pid = (int)($target_data['pid'] ?? 0);
+    if ($pid > 0 && $pid === (int)($ctx->actor_data['pid'] ?? 0)) {
+        return [
+            'kind' => 'self',
+            'pid' => $pid,
+            'snapshot' => combat_log_v2_combatant_snapshot($ctx->actor_data),
+        ];
+    }
+    if ($pid > 0) {
+        return [
+            'kind' => 'pid',
+            'pid' => $pid,
+            'snapshot' => combat_log_v2_combatant_snapshot($target_data),
+        ];
+    }
+    return ['kind' => 'none'];
+}
+
 // ================================================================
 // 内置应用器
 // ================================================================
@@ -63,10 +142,9 @@ function combat_effect_register(string $type, callable $applier): void {
  * @return bool
  */
 function combat_effect_damage(CombatContext $ctx, array $effect): bool {
-    $target = &$ctx->getCurrentTarget();
-    $target_data = &$target['target_data'];
+    $target_data = &combat_effect_resolve_target_data($ctx, $effect);
 
-    if (!is_array($target_data)) {
+    if ((int)($target_data['pid'] ?? 0) <= 0) {
         $ctx->success = false;
         $ctx->failure_reason = 'damage_target_missing';
         combat_debug_log('EFFECT_DAMAGE_FAIL', ['reason'=>'target_missing', 'act_id'=>$ctx->act_id]);
@@ -83,7 +161,7 @@ function combat_effect_damage(CombatContext $ctx, array $effect): bool {
     $is_counter = !empty($effect['is_counter']);
 
     combat_log_v2_effect_applied($ctx, 'damage', [
-        'target' => combat_log_v2_target_ref($ctx, $target),
+        'target' => combat_effect_target_ref($ctx, $target_data),
         'value' => $value,
         'delta' => [
             'hp_before' => $hp_before,
@@ -105,10 +183,9 @@ function combat_effect_damage(CombatContext $ctx, array $effect): bool {
  * @return bool
  */
 function combat_effect_heal(CombatContext $ctx, array $effect): bool {
-    $target = &$ctx->getCurrentTarget();
-    $target_data = &$target['target_data'];
+    $target_data = &combat_effect_resolve_target_data($ctx, $effect);
 
-    if (!is_array($target_data)) {
+    if ((int)($target_data['pid'] ?? 0) <= 0) {
         $ctx->success = false;
         $ctx->failure_reason = 'heal_target_missing';
         return false;
@@ -121,7 +198,7 @@ function combat_effect_heal(CombatContext $ctx, array $effect): bool {
     $hp_after = (int)$target_data['hp'];
 
     combat_log_v2_effect_applied($ctx, 'heal', [
-        'target' => combat_log_v2_target_ref($ctx, $target),
+        'target' => combat_effect_target_ref($ctx, $target_data),
         'value' => $value,
         'delta' => [
             'hp_before' => $hp_before,
@@ -196,7 +273,7 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
 /**
  * ap_change 应用器：改 actor AP + emit（预留注册位 + TODO）
  *
- * 当前不实现实际 AP 修改逻辑（AP 扣减由 wallet 预扣账本统一处理）。
+ * 当前不实现实际 AP 修改逻辑（AP 扣减由 planned wallet / persist 统一处理）。
  * 保留注册位以便未来 buff/debuff 修改 AP 时复用本应用器。
  *
  * @param CombatContext $ctx
@@ -205,7 +282,7 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
  */
 function combat_effect_ap_change(CombatContext $ctx, array $effect): bool {
     // TODO: 实现 AP 修改（buff/debuff 场景）
-    // AP 扣减由 wallet 预扣账本（combat.core.php verify 阶段）统一处理，不走本应用器
+    // AP 扣减由 planned wallet（combat.chain.php）+ persist 统一处理，不走本应用器
     $delta = (int)($effect['payload']['delta'] ?? 0);
     $target = &$ctx->getCurrentTarget();
     $ap_before = (int)($ctx->actor_data['ap'] ?? 0);

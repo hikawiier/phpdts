@@ -1,4 +1,4 @@
-import type { ApiAction } from './endpoints';
+import { API_ACTIONS, type ApiAction } from './endpoints';
 import { perf } from '@/utils/perf';
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
@@ -8,7 +8,9 @@ function buildReadApiUrl(action: ApiAction, params: Record<string, string> = {})
   return `${API_BASE}/oblivions/api/state.php?${query}`;
 }
 
-let oblHeartbeatInFlight: Promise<unknown> | null = null;
+let oblHeartbeatInFlight: Promise<OblHeartbeatResponse> | null = null;
+
+const API_ACTION_SET = new Set<string>(Object.values(API_ACTIONS));
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,7 +23,7 @@ function sleep(ms: number): Promise<void> {
  * 战斗状态机和 battlelog 导演在读取状态前必须显式等待 heartbeat 完成。
  * 这里做前端侧请求去重，避免 daemon 与 refreshBattle 同时抢房间锁。
  */
-export async function oblHeartbeat(): Promise<unknown> {
+export async function oblHeartbeat(): Promise<OblHeartbeatResponse> {
   if (oblHeartbeatInFlight) return oblHeartbeatInFlight;
 
   oblHeartbeatInFlight = perf.spanAsync('oblHeartbeat', 'api', async () => {
@@ -51,16 +53,32 @@ export async function oblHeartbeat(): Promise<unknown> {
         const message = typeof data?.message === 'string' ? data.message : res.statusText;
         throw new Error(`heartbeat HTTP ${res.status}: ${message}`);
       }
-      return data;
+      return data as OblHeartbeatResponse;
     }
 
     // 锁持续占用时软返回，避免导演刷新链路直接报错；下一轮刷新会继续推进。
-    return lastLockResponse;
+    return (lastLockResponse || { ok: false, code: 'COMMAND_IN_PROGRESS' }) as OblHeartbeatResponse;
   }).finally(() => {
     oblHeartbeatInFlight = null;
   });
 
   return oblHeartbeatInFlight;
+}
+
+export function getHeartbeatChangedScopes(response: unknown): ApiAction[] {
+  const data = (response as { data?: Record<string, unknown> } | null)?.data;
+  const raw = data?.changed_scopes ?? data?.changedScopes;
+  if (!Array.isArray(raw)) return [];
+
+  const scopes: ApiAction[] = [];
+  for (const scope of raw) {
+    if (typeof scope !== 'string') continue;
+    if (!API_ACTION_SET.has(scope)) continue;
+    if (!scopes.includes(scope as ApiAction)) {
+      scopes.push(scope as ApiAction);
+    }
+  }
+  return scopes;
 }
 
 
@@ -173,4 +191,47 @@ export interface CommandResult {
   message?: string | null;
   messageIsHtml?: boolean;
   status?: number;
+}
+
+export interface TickDomainPhaseResult {
+  name: string;
+  legacy_phase?: string;
+  listeners?: number;
+  ran?: boolean;
+  advanced_requested?: boolean;
+  changed_scopes?: string[];
+  events?: Array<{ event: string; payload?: Record<string, unknown> }>;
+  [key: string]: unknown;
+}
+
+export interface TickFrameResult {
+  delta: number;
+  tick?: number;
+  processed_tick?: number;
+  next_tick?: number;
+  phases: TickDomainPhaseResult[];
+  changed_scopes: string[];
+  [key: string]: unknown;
+}
+
+export interface OblHeartbeatData {
+  resolved?: boolean;
+  advanced?: boolean;
+  delta?: number;
+  tick?: number;
+  processed_tick?: number;
+  pending_tick?: boolean;
+  reason?: string;
+  recovered_battles?: number[];
+  tick_frame?: TickFrameResult | null;
+  changed_scopes?: string[];
+  [key: string]: unknown;
+}
+
+export interface OblHeartbeatResponse {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  data?: OblHeartbeatData;
+  [key: string]: unknown;
 }

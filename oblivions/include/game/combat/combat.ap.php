@@ -4,7 +4,7 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// 新战斗系统 — AP 系统（动态为基准 + wallet 预扣账本）
+// 新战斗系统 — AP 系统（动态为基准 + planned wallet）
 //
 // 职责：
 //   - 计算器注册表 $combat_ap_calculators：calc_id => 计算器函数
@@ -17,12 +17,12 @@ if (!defined('IN_GAME')) {
 //   - ap_calc 替代旧 ap_mode——标识计算器，而非模式分支
 //   - 留空默认 'fixed'：静态 AP 技能无需显式配置（向下兼容）
 //
-// wallet 预扣账本（spec §2）：
-//   - verify 阶段调 combat_ap_calculate 得 ap_cost
-//   - 检查 actor.ap - pending_ap_spent - ap_cost >= 0
-//   - 通过则写入 $action['_ap_cost'] + 累加 pending_ap_spent
+// wallet / planned state（spec §2）：
+//   - 动作链投影阶段调 combat_ap_calculate 得 ap_cost
+//   - 检查 planned actor.ap - ap_cost >= 0
+//   - 通过则写入 $action['_ap_cost']，并推进 planned actor.ap
 //   - persist 阶段从 $action['_ap_cost'] 读，不重算
-//   （wallet 逻辑在 combat.core.php 的 verify 阶段实现，本文件只提供计算器）
+//   （动作链逻辑在 combat.chain.php，本文件只提供计算器）
 //
 // 与旧系统边界：旧系统 AP 是静态配置字段（skill config.apcost），新系统
 //   支持动态计算 + 注册扩展（装备/标签修正 AP 消耗），fixed 是退化特例。

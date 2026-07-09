@@ -269,13 +269,11 @@ function combat_preview_single(array $actor_data, string $act_id, int $target_pi
 /**
  * L2 动作链模拟：模拟整条动作链的合法性 + AP 累计消耗
  *
- * 拷贝 $sim_actor + 局部 battle_cache，依次为每个 action 跑 resolve_target +
- * check_rules + AP 校验。不跑 execute / resolve_effects（不模拟效果应用）。
+ * 拷贝 actor + battle_cache，调用 combat_chain_project 依次为每个 action 跑
+ * resolve_target + check_rules + AP 校验 + skill effect 声明 + effect 投影。
  *
- * v1 用途：提交前过滤失败动作（内部使用，不暴露给玩家可见的"动作预判"功能）。
- * v1 限制：不模拟效果应用，$sim_actor 位置/HP 在遍历中不更新。
- *          move 后的 action（如 throw）用旧位置算距离/AP，可能误判 out_of_range 或 AP 不足（假阴性）。
- * v2 方向：真正模拟效果应用（前序动作的 HP/位置改动对后序可见）。
+ * 用途：提交前过滤失败动作或为前端提供动作链预判。与 combat_verify 共用
+ * PlannedState + Effect Projector 语义，前序动作的 HP/AP/位置/tag 变化对后序可见。
  *
  * @param array $actor_data  行动者数据（值传递）
  * @param array $actions     action 数组 [['act_id'=>..., 'target'=>...], ...]
@@ -288,71 +286,19 @@ function combat_preview_single(array $actor_data, string $act_id, int $target_pi
  * ]
  */
 function combat_preview_chain(array $actor_data, array $actions, array $battle_cache): array {
-    $sim_actor = $actor_data;
-    $sim_battle_cache = $battle_cache;
-
-    $pending_ap_spent = 0;
-    $results = [];
-    $total_ap_cost = 0;
-
-    foreach ($actions as $action) {
-        $act_id = (string)($action['act_id'] ?? '');
-        $config = combat_skill_get_config($act_id);
-        if ($config === null) {
-            $results[] = ['success' => false, 'reason' => 'skill_not_found', 'ap_cost' => 0, 'effects' => []];
-            continue;
-        }
-
-        $target_intent = combat_action_normalize_target(
-            array_key_exists('target', $action) ? $action['target'] : null,
-            $config,
-            (int)($sim_actor['pid'] ?? 0)
-        );
-        if ($target_intent === null) {
-            $results[] = ['success' => false, 'reason' => 'invalid_target', 'ap_cost' => 0, 'effects' => []];
-            continue;
-        }
-
-        $config_with_target = combat_action_config_with_target($config, ['target' => $target_intent]);
-
-        $ctx = new CombatContext($sim_actor, $act_id, $config_with_target, null, $sim_battle_cache);
-        $ctx->dry_run = true;
-
-        combat_skill_load_module($act_id);
-
-        combat_target_resolve_all($ctx);
-        if (!$ctx->success) {
-            $results[] = ['success' => false, 'reason' => $ctx->failure_reason ?? 'target_resolve_failed', 'ap_cost' => 0, 'effects' => []];
-            continue;
-        }
-
-        $ap_cost = combat_ap_calculate($ctx);
-        $actor_ap = (int)($sim_actor['ap'] ?? 0);
-
-        if ($actor_ap - $pending_ap_spent - $ap_cost < 0) {
-            $results[] = ['success' => false, 'reason' => 'ap_insufficient', 'ap_cost' => $ap_cost, 'effects' => []];
-            continue;
-        }
-
-        $tags = $ctx->getCurrentTags();
-        $rules_result = combat_check_target_rules($config, $tags);
-        if (!$rules_result['pass']) {
-            $results[] = ['success' => false, 'reason' => 'rule_failed:' . ($rules_result['reason'] ?? 'unknown'), 'ap_cost' => $ap_cost, 'effects' => []];
-            continue;
-        }
-
-        $pending_ap_spent += $ap_cost;
-        $total_ap_cost += $ap_cost;
-        $results[] = ['success' => true, 'reason' => null, 'ap_cost' => $ap_cost, 'effects' => []];
-    }
-
+    $null_log = null;
+    $projection = combat_chain_project($actor_data, $actions, $battle_cache, $null_log, [
+        'emit_failures' => false,
+        'check_ownership' => false,
+        'check_cd' => false,
+    ]);
     return [
-        'actions'          => $results,
-        'total_ap_cost'    => $total_ap_cost,
+        'actions'          => $projection['actions'] ?? [],
+        'total_ap_cost'    => (int)($projection['total_ap_cost'] ?? 0),
         'predicted_kills'  => 0,  // v1 不模拟伤害
-        'actor_final_state' => [
-            'ap' => (int)($sim_actor['ap'] ?? 0) - $total_ap_cost,
-            'hp' => (int)($sim_actor['hp'] ?? 0),
+        'actor_final_state' => $projection['actor_final_state'] ?? [
+            'ap' => (int)($actor_data['ap'] ?? 0),
+            'hp' => (int)($actor_data['hp'] ?? 0),
         ],
     ];
 }

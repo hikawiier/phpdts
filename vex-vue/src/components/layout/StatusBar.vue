@@ -98,13 +98,17 @@ const npcPending = computed(() => commandQueue.pendingNpc);
 
 // ── 战斗按钮点击处理（与现有 vex/js/app.js 一致） ──
 // normal 态：startBattle(0)（无指定敌人，进入战斗模式）
-// battle 态：exitBattleMode()（退出战斗模式）
+// battle 态：后端已在战斗中时只取消本地装填；预战斗阶段可退出本地 battle UI
 // aim 态：广播 battle:aim-exit（退出瞄准模式，PreloadArea 监听后清理）
 function onBattleBtnClick(): void {
   if (uiStore.battleBtnState === 'normal') {
     battleStore.startBattle(0);
   } else if (uiStore.battleBtnState === 'battle') {
-    battleStore.exitBattleMode();
+    if (playerStore.isInBattle) {
+      dataManager.broadcast('battle:preload-clear');
+    } else {
+      battleStore.exitBattleMode();
+    }
   } else if (uiStore.battleBtnState === 'aim') {
     dataManager.broadcast('battle:aim-exit');
   }

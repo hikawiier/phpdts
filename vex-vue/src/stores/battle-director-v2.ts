@@ -99,6 +99,74 @@ export interface BattlePlayScriptV2 {
   rawLogIds: number[];
 }
 
+export type PlaybackStepKind =
+  | 'prepare_map'
+  | 'segment_context'
+  | 'action_animation'
+  | 'combatant_cleared'
+  | 'modal_text'
+  | 'damage_linger';
+
+export type PlaybackAwaitPolicy = 'none' | 'completion' | 'duration';
+
+export interface PlaybackStepBase {
+  id: string;
+  kind: PlaybackStepKind;
+  awaitPolicy: PlaybackAwaitPolicy;
+  timeout?: number;
+}
+
+export interface PrepareMapStep extends PlaybackStepBase {
+  kind: 'prepare_map';
+  segment: BattleSegmentV2;
+}
+
+export interface SegmentContextStep extends PlaybackStepBase {
+  kind: 'segment_context';
+  segment: BattleSegmentV2;
+}
+
+export interface ActionAnimationStep extends PlaybackStepBase {
+  kind: 'action_animation';
+  segment: BattleSegmentV2;
+  action: DirectedActionV2;
+}
+
+export interface CombatantClearedStep extends PlaybackStepBase {
+  kind: 'combatant_cleared';
+  segment: BattleSegmentV2;
+  notice: DirectedNoticeV2;
+}
+
+export interface ModalTextStep extends PlaybackStepBase {
+  kind: 'modal_text';
+  segment: BattleSegmentV2;
+  options: {
+    alwaysShowHeader?: boolean;
+    isBattleEnd?: boolean;
+  };
+}
+
+export interface DamageLingerStep extends PlaybackStepBase {
+  kind: 'damage_linger';
+  segment: BattleSegmentV2;
+  effects: DirectedEffectV2[];
+}
+
+export type PlaybackStep =
+  | PrepareMapStep
+  | SegmentContextStep
+  | ActionAnimationStep
+  | CombatantClearedStep
+  | ModalTextStep
+  | DamageLingerStep;
+
+export interface BattlePlaybackPlan {
+  schema: 'battleplayback.v1';
+  script: BattlePlayScriptV2;
+  steps: PlaybackStep[];
+}
+
 interface PendingAction {
   action: DirectedActionV2;
   roundNum?: number;
@@ -211,6 +279,7 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
       if (!item) continue;
       const effect = toDirectedEffect(event);
       item.action.effects.push(effect);
+      item.action.animation = deriveActionAnimationFromEffects(item.action);
       continue;
     }
 
@@ -317,6 +386,104 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
   return { schema: 'battleplay.v2', segments, rawLogIds };
 }
 
+export function planPlaybackV2(script: BattlePlayScriptV2): BattlePlaybackPlan {
+  const steps: PlaybackStep[] = [];
+  let order = 0;
+  const nextId = (kind: PlaybackStepKind, segment: BattleSegmentV2): string => {
+    const segKey = [
+      segment.kind,
+      segment.roundNum ?? 'x',
+      segment.turnNum ?? 'x',
+      order++,
+    ].join('-');
+    return `${kind}-${segKey}`;
+  };
+
+  for (const segment of script.segments) {
+    if (segment.kind === 'round_intro') {
+      steps.push({
+        id: nextId('modal_text', segment),
+        kind: 'modal_text',
+        segment,
+        options: { alwaysShowHeader: true },
+        awaitPolicy: 'completion',
+        timeout: 30000,
+      });
+      continue;
+    }
+
+    if (segment.kind === 'battle_end') {
+      steps.push({
+        id: nextId('modal_text', segment),
+        kind: 'modal_text',
+        segment,
+        options: { isBattleEnd: true },
+        awaitPolicy: 'completion',
+        timeout: 30000,
+      });
+      continue;
+    }
+
+    steps.push({
+      id: nextId('segment_context', segment),
+      kind: 'segment_context',
+      segment,
+      awaitPolicy: 'completion',
+      timeout: 5000,
+    });
+
+    steps.push({
+      id: nextId('prepare_map', segment),
+      kind: 'prepare_map',
+      segment,
+      awaitPolicy: 'completion',
+      timeout: 1000,
+    });
+
+    for (const action of segment.actions) {
+      steps.push({
+        id: `${nextId('action_animation', segment)}-${action.actionUid}`,
+        kind: 'action_animation',
+        segment,
+        action,
+        awaitPolicy: action.animation.kind === 'none' ? 'none' : 'completion',
+        timeout: action.animation.kind === 'move' ? 2200 : 1400,
+      });
+    }
+
+    for (const notice of segment.notices) {
+      if (notice.type !== 'combatant_cleared') continue;
+      steps.push({
+        id: `${nextId('combatant_cleared', segment)}-${notice.rawLogId}`,
+        kind: 'combatant_cleared',
+        segment,
+        notice,
+        awaitPolicy: 'completion',
+        timeout: 1200,
+      });
+    }
+
+    steps.push({
+      id: nextId('modal_text', segment),
+      kind: 'modal_text',
+      segment,
+      options: {},
+      awaitPolicy: 'completion',
+      timeout: 30000,
+    });
+
+    steps.push({
+      id: nextId('damage_linger', segment),
+      kind: 'damage_linger',
+      segment,
+      effects: segment.actions.flatMap(action => action.effects),
+      awaitPolicy: 'none',
+    });
+  }
+
+  return { schema: 'battleplayback.v1', script, steps };
+}
+
 function toCombatantView(snapshot: unknown): CombatantView | null {
   if (!snapshot || typeof snapshot !== 'object') return null;
   const s = snapshot as CombatantSnapshot;
@@ -401,6 +568,57 @@ function decideActionAnimation(actionId: string, actor: CombatantView, targets: 
     return { kind: 'melee_hit', attackerId: actor.id, targetIds, impactAt: 260 };
   }
   return { kind: 'none', attackerId: actor.id, targetIds };
+}
+
+function deriveActionAnimationFromEffects(action: DirectedActionV2): ActionAnimationPlan {
+  const moveEffect = action.effects.find(effect =>
+    effect.type === 'move' &&
+    effect.target.kind === 'tile' &&
+    effect.target.id !== 'none',
+  );
+  if (moveEffect) {
+    return {
+      kind: 'move',
+      attackerId: action.actor.id,
+      targetIds: [moveEffect.target.id],
+      impactAt: 450,
+    };
+  }
+
+  const damageEffects = action.effects.filter(effect =>
+    effect.type === 'damage' &&
+    effect.target.id !== 'none',
+  );
+  if (damageEffects.length > 1 || (damageEffects.length > 0 && action.targets.some(target => target.kind === 'tile'))) {
+    return {
+      kind: 'area_burst',
+      attackerId: action.actor.id,
+      targetIds: uniqueIds(damageEffects.map(effect => effect.target.id)),
+      impactAt: 350,
+    };
+  }
+
+  if (damageEffects.length === 1 && action.animation.kind === 'melee_hit') {
+    return {
+      ...action.animation,
+      targetIds: [damageEffects[0].target.id],
+    };
+  }
+
+  const hasHealOnly = action.effects.some(effect => effect.type === 'heal') && damageEffects.length === 0;
+  if (hasHealOnly) {
+    return {
+      kind: 'none',
+      attackerId: action.actor.id,
+      targetIds: [],
+    };
+  }
+
+  return action.animation;
+}
+
+function uniqueIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.filter(id => id !== 'none')));
 }
 
 function decideEffectVisual(type: DirectedEffectV2['type'], target: CombatTargetView, value?: number): EffectVisualPlan {

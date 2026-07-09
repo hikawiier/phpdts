@@ -4,8 +4,13 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 战斗系统数值计算文件 / Oblivions battle system
-// 功能函数负责实现战斗系统的数值计算
+// Shared combat infrastructure — 数值计算层
+//
+// 说明：
+// - 本文件已不属于“旧 battle engine 主执行链”。
+// - 当前保留为 new combat 与共享队列层复用的数值原语：
+//   射程、先攻、伤害计算等。
+// - 现阶段不迁名，优先保持活代码引用稳定。
 // ================================================================
 
 /**
@@ -157,7 +162,7 @@ function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
  * 纯伤害计算函数（无副作用，可独立单测）
  * 与旧 obl_calc_damage 的差异：config 由调用方传入，不再内部调 skill_get_config
  * 调用方应通过 combat_skill_get_config 获取配置后传入
- * 保留旧 obl_calc_damage 不修改（旧系统仍在使用）
+ * 保留 obl_calc_damage 不修改（当前 battle/ 共享层仍有活代码引用）
  *
  * @param array $actor_data  攻击者数据
  * @param array $target_data 目标数据

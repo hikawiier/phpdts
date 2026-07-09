@@ -25,6 +25,18 @@
 
 > 旧 `obl_command.php` 的 [F] 段 `obl_tick_advance()` 仍存在于代码中，但该文件整体标记为 `@deprecated`，仅服务旧根 `command.php` 兼容路径。新前端走 Command API，不经过 [F] 段。
 
+**TickFrame 行为基准**：
+- 一个 TickFrame 内，同一 actor 最多执行一个主动行为。
+- 主动行为只属于两个域之一：`combat` 或 `world`。
+- TickFrame 初始化 `BattleActorScope`，world AI 必须排除本 TickFrame 战斗域成员。
+- 战斗结束后的下一 TickFrame 若 `BattleActorScope` 已为空，原战斗 actor 恢复普通 NPC 后可执行 world AI；这是当前预期行为，不是同 tick 双行动 bug。
+
+**战斗系统边界**：`combat/` 是唯一战斗执行主流程；`battle/` 是仍被复用的 shared combat infrastructure，负责队列、状态机 hook、共享数值与 battle log 持久化。旧 `battle.entry.php` / `battle.main.php` 不再存在于运行时心智模型里。
+
+**战斗 UI 数据源**：前端战斗态优先相信后端 `player_info.combat_context`，而不是从敌人列表或本地状态拼战斗视图。地图实体、预装填目标和是否可提交回合都从 Combat ViewModel 派生。
+
+**前端战斗播放边界**：battlelog.v2 是语义事件流；Director 负责把事件转脚本，PlaybackPlan 负责排序/并发/等待策略，Runner/ActorExecutor 负责真实动画执行。不要把动画时序散落回组件事件里。
+
 **Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback: { id, params }, refresh, server_state } }`。`feedback.id + params` 复用 `log-templates.ts` 模板，由前端 `command-feedback.ts` 渲染文案。后端不输出用户可见文案。
 
 **三套日志系统职责**（物理隔离）：
@@ -126,6 +138,8 @@
   2. **心跳路径**：前端显式 `POST oblivions/api/heartbeat.php` → `obl_tick_orchestrator_heartbeat()` → 检测 `obl_pretick < obl_tick` → `obl_tick_orchestrator_resolve_pending()` → `obl_resolve_tick_events()` 调度 NPC 行动
 - **NPC 行动自驱动**：NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`（`obl_tick++`），下次心跳检测到 pending tick 继续处理
 - **玩家操作与 NPC 回合互斥**：PROCESSING 状态时 Command Bus gate `BATTLE_BUSY` 拒绝推进 tick 的命令（防止玩家在 NPC 行动期间重复提交）
+- **同 tick 单 actor 单主动行为**：TickFrame 内每个 actor 只能执行一个主动行为；战斗行为与非战斗 world AI 共享同一个行为额度。后端通过 `ActorBehaviorLedger` 登记 `combat` / `world` 行为，通过 `BattleActorScope` 排除本 TickFrame 入口的战斗域成员。
+- **战斗结束后的下一 tick**：最后一个 NPC 战斗回合可能在 disband / battle_end 后继续请求推进 1 个 pending tick。该 NPC 在“执行 escape 的 TickFrame”内仍被 `BattleActorScope` 阻断 world AI；但下一 TickFrame 若战斗已清理且 `BattleActorScope=[]`，它恢复普通 NPC 身份并可执行 world AI。这是当前时间模型的预期行为。
 
 > 旧根 `command.php` → `obl_command.php` 的 [F] 段 `obl_tick_advance()` 仍存在于代码中，但该路径整体标记为 `@deprecated`。新前端走 Command API（`oblivions/api/command.php` → `obl_command_bus.php`），不经过 [F] 段。
 
@@ -247,17 +261,21 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 **Category B（绝对状态）**：`dead`（`state=1`）、`escaped`（已逃跑）、`hidden`（隐身）。通过 `$battle_cache['tag_mutations'][pid]` 缓存，同一 `battle_main` 调用内跨 action 可见，随 cache 销毁自动清零。
 
-**配置驱动规则匹配**：`target_rules.require`（白名单）和 `target_rules.forbid`（黑名单），在 `battle_execute_verify` 中对标签集做匹配，失败时 emit 日志不执行。
+**配置驱动规则匹配**：`target_rules.require`（白名单）和 `target_rules.forbid`（黑名单），由 `combat_check_target_rules()` 对标签集做匹配，失败时 emit 日志并跳过当前 action/target。
 
 ### 1.13 战斗入口 (Battle Entry)
 
-`battle_entry_dispatch` 是唯一战斗入口，采用三层分离：入口调度（`battle.entry.php`）→ 动作执行（`battle.main.php`）→ 队列管理（`battle.queue.*.php`）。
+当前运行入口分为两类：
 
-**3 种触发模式**：
+- `combat_start_battle`：首次建队列并进入战斗
+- `combat_dispatch`：已有队列中的玩家 / NPC 回合推进
+
+旧 `battle.entry.php` / `battle.main.php` 已删除；`battle.queue.*.php` 作为 shared combat infrastructure 保留，负责队列与状态推进。
+
+**当前回合推进模式**：
 
 | 模式 | 触发源 | 队列 |
 |------|--------|------|
-| `ambush` | 玩家/NPC 突袭 | 后补票建队列（先执行动作，后建队列） |
 | `player_turn` | 玩家命令 | 已有队列中推进 |
 | `npc_turn` | tick 结算 NPC 回合 | 已有队列中推进（允许空动作） |
 
@@ -267,6 +285,82 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 - 目标合法性（存在/射程/死亡等）由战斗执行阶段的 Tag 系统拦截
 
 **队列生命周期后处理**：`battle_manage_queue` 返回后，调用方通过 `result.disbanded` 区分两条清理路径——解散时调 `battle_state_clear`（退队列、清 bid/action、AP 回满），存活时由 step 6 prepare 为下一顺位者恢复 AP 并保存。前者是"战斗结束打扫干净"，后者是"下一个人准备上场"，互不重叠。
+
+### 1.14 战斗执行模块边界（Combat vs Battle）
+
+当前战斗系统分为两个层级：
+
+| 层级 | 目录 | 职责 |
+|------|------|------|
+| 战斗执行层 | `include/game/combat/` | 回合入口、动作链、管道执行、目标解析、效果应用、planned state、battlelog.v2 |
+| 共享基础设施层 | `include/game/battle/` | 队列原语、队列编排、状态机 hook、共享数值、AP 恢复、历史兼容函数 |
+
+设计判断：`battle/` 不是“旧系统死代码”，也不是新动作逻辑的放置点。新增技能、目标规则、效果类型、动作链能力应进入 `combat/`；只有队列/状态机/共享数学这类跨执行层基础设施才保留或调整在 `battle/`。
+
+### 1.15 配置驱动战斗技能
+
+战斗技能由 `gamedata/combat_skill_config.php` 声明静态规则，由 `gamedata/combat_skills/skill_{act_id}.php` 提供执行 hook。
+
+配置负责描述：
+- 技能身份、目标类型、射程、AP 消耗、排序权重
+- `target_rules.require/forbid` 等可验证规则
+- effect/preview 所需的参数
+
+hook 负责声明效果：
+
+```php
+function skill_xxx_execute(CombatContext $ctx): void {
+    $ctx->declareEffect('damage', array('value' => 10));
+}
+```
+
+核心约束：hook 不直接写 DB，不绕过 `CombatContext` 修改战斗状态；实际写入由 effect applier / pipeline persist 阶段统一处理。这样配置、校验、预览、执行可以共享同一套语义。
+
+### 1.16 PlannedState / Effect Projector / 动作链
+
+玩家一次提交的多个动作是一条动作链，整条动作链属于同一个回合、同一个 tick。动作链内部要能看到前序动作的计划结果，例如 AP 已消费、目标已受伤、角色已移动、目标已逃跑。
+
+因此 dry-run/verify/preview 不应重复读取 DB 当前态当作每一步的真相，而应使用 PlannedState：
+
+- `combat_planned_state_*` 保存 actor/target 的计划快照
+- `combat_effect_projector_*` 把 damage/heal/move/escape/ap_change 投影到计划快照
+- `combat_chain_project()` 统一驱动动作链投影，返回每个 action 的成功/失败与 effects
+
+设计基准：预览与校验必须尽量复用执行语义；差异只在“投影到内存”还是“持久化到 DB”。动作失败是具体规则综合判断结果，不应被压成单一“链失败”概念。
+
+### 1.17 Combat ViewModel
+
+`player_info.combat_context` 是战斗 UI 的后端权威视图。它把 `battle_queue`、战斗状态机、参战者快照和可选目标整理成一个前端可直接消费的结构。
+
+核心字段包括：
+- `state` / `currentActorPid` / `canSubmitTurn`：用于决定按钮与提交权限
+- `combatants`：用于战斗地图实体和血量/AP 展示
+- `validTargets` / `defaultTargetPid`：用于预装填目标选择
+
+设计理由：前端不能在 battle mode 下继续用“当前区域 enemies 列表”拼战斗视图。战斗成员可能未发现、已逃跑、刚清场或位置变化；这些都是战斗上下文问题，应由后端一次性给出当前可见真相。
+
+### 1.18 BattlePlaybackPlan
+
+前端战斗播放分三层：
+
+| 层 | 产物 | 职责 |
+|----|------|------|
+| Director | `BattlePlayScriptV2` | 把 battlelog.v2 语义事件分段、整理成动作/提示/效果 |
+| Planner | `BattlePlaybackPlan` / `PlaybackStep[]` | 决定准备地图、动作动画、清场、文本、伤害残留等步骤的顺序和等待策略 |
+| Runner / ActorExecutor | 实际动画 promise | 执行 plan，等待 completion/duration，驱动 actor 动画 |
+
+设计边界：组件只呈现状态，不承担时序推理；动画排序不应靠全局事件临时串联。战斗域动画和非战斗域动画都应进入明确的编排序列，避免同一帧内互相抢表现。
+
+### 1.19 TickFrameResult 与 changedScopes
+
+TickFrameResult 是一次 pending tick 结算的结构化结果。它记录：
+- phases：`combat_domain` / `world_ai_domain` / `post_domain` 的执行结果
+- actor_behaviors：本 TickFrame actor 行为账本
+- changed_scopes：本次 tick 影响了哪些前端读模型
+
+`changedScopes` 是 TickFrameResult 面向前端的刷新摘要。前端按 scope 精准 invalidate：例如战斗事件刷新 `player_info/battle_log`，world AI 移动刷新 `game_map/enemies`。
+
+设计理由：tick 推进是世界时间推进，不等于“全量刷新所有状态”。后端应把结算影响域显式暴露给前端，让前端既能即时同步地图，又不会把刷新策略和战斗播放时序混在一起。
 
 ---
 
@@ -359,25 +453,30 @@ $obl_log->emit('move.success', 'move', [
 - 单机部署足够，无需分布式锁
 - 性能优于 DB 锁
 
-### 2.7 三层战斗演出架构
+### 2.7 战斗演出架构
 
-战斗日志从产出到消费经历三层，每层职责独立：
+战斗日志从产出到消费经历四层，每层职责独立：
 
 1. **后端原料层**（PHP `BattleLogCollector`）
    - emit 时补全名称、HP 快照、边界标记字段（`bl_turn_num`/`bl_round_num`/`bl_segment_flag`）
    - 按 phase 精细区分事件类型，设置默认 `debug` 标记控制前端可见性
    - 不预判前端如何消费，专注提供完整的原始事件结构
 
-2. **前端导演层**（`battle-director.ts`）
-   - 同步纯函数，输入 raw entries → 输出 `PlayScript`
+2. **前端导演层**（`battle-director-v2.ts`）
+   - 同步纯函数，输入 battlelog.v2 events → 输出 `BattlePlayScriptV2`
    - 配对 pre/post → 构建分层段（Phase 0/Round/Turn/BattleEnd）
    - 不涉及网络、不涉及 DOM、不涉及组件状态
 
-3. **前端演员层**（`battle.ts` + `BattleModal.vue`）
-   - 按段播放：碰撞动画 → 模态框渲染 → 伤害数字
-   - 纯执行，不涉及编排逻辑
+3. **前端播放计划层**（`planPlaybackV2()`）
+   - 将语义脚本转成 `BattlePlaybackPlan` / `PlaybackStep[]`
+   - 明确准备地图、动作动画、清场、文本、伤害残留的顺序、并发与等待策略
 
-**约束**：生产端和消费端不互斥，同一文件可多次追加后一次性拉取播放。导演层与演员层均幂等——同名脚本可复播。
+4. **前端执行层**（`battle-playback-runner.ts` + `battle-actor-executor.ts` + 组件）
+   - Runner 执行 playback steps
+   - ActorExecutor 执行单 actor 动画 promise
+   - 组件只呈现状态，不承担时序推理
+
+**约束**：生产端和消费端不互斥，同一文件可多次追加后一次性拉取播放。导演、计划、执行层均应保持幂等；动画排序不靠组件临时事件串联。
 
 ### 2.8 区域切换日志拆分
 
@@ -974,9 +1073,9 @@ Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` �
 
 ### 入口与切换
 
-`combat_dispatch($mode, &$actor, $actions, $extra)` 是统一入口，3 种模式：ambush / player_turn / npc_turn。签名对齐旧 `battle_entry_dispatch`。
+已有队列中的统一推进入口是 `combat_dispatch($mode, &$actor, $actions, $extra)`，当前模式为 `player_turn` / `npc_turn`。首次进入战斗由 `combat_start_battle(&$actor, $actions)` 负责建队列。
 
-`obl_config.php` 的 `combat_engine` 字段控制新旧系统切换。出口调 `battle_manage_queue` 推进队列状态机（策略 B：复用不重写）。
+`obl_config.php` 的 `combat_engine` 字段仅作为历史键保留，不再控制新旧系统切换。出口调 `battle_manage_queue` 推进队列状态机（策略 B：复用不重写）。
 
 ### 技能钩子约定
 

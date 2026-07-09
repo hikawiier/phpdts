@@ -23,6 +23,8 @@ import { findPath } from '@/composables/useMapReachability';
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
 const aimActionRange = ref<number>(1);
+const aimTargetMode = ref<'enemy' | 'tile'>('enemy');
+const aimOriginPls = ref<number | null>(null);
 const mapStore = useMapStore();
 
 // ── SVG 路径线数据 ──
@@ -85,8 +87,18 @@ function isEnemyInActionRange(pid: number): boolean {
   const enemy = mapStore.enemies.find(
     (e) => Number(e.pid) === pid && Number(e.state) === 0 && String(e.pgroup) === String(mapStore.curRegion),
   );
-  if (!enemy || mapStore.curLoc === null) return false;
-  const path = findPath(mapStore.curLoc, enemy.pls);
+  const originPls = aimOriginPls.value ?? mapStore.curLoc;
+  if (!enemy || originPls === null) return false;
+  const path = findPath(originPls, enemy.pls);
+  if (!path) return false;
+  return Math.max(0, path.length - 1) <= range;
+}
+
+function isTileInActionRange(pls: number): boolean {
+  const range = Math.max(0, Number(aimActionRange.value || 1));
+  const originPls = aimOriginPls.value ?? mapStore.curLoc;
+  if (originPls === null) return false;
+  const path = findPath(originPls, pls);
   if (!path) return false;
   return Math.max(0, path.length - 1) <= range;
 }
@@ -95,6 +107,23 @@ function applyAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
 
+  if (aimTargetMode.value === 'tile') {
+    const cells = grid.querySelectorAll<HTMLElement>('[data-pls]');
+    cells.forEach((cell) => {
+      const pls = parseInt(cell.getAttribute('data-pls') || '0');
+      cell.classList.remove('aim-targetable', 'aim-out-of-range');
+      if (
+        pls > 0 &&
+        !cell.classList.contains('fogged') &&
+        !cell.classList.contains('blocked') &&
+        isTileInActionRange(pls)
+      ) {
+        cell.classList.add('aim-targetable');
+      } else {
+        cell.classList.add('aim-out-of-range');
+      }
+    });
+  } else {
   const enemyCells = grid.querySelectorAll<HTMLElement>('[data-enemy-pid]');
   enemyCells.forEach((cell) => {
     const pid = parseInt(cell.getAttribute('data-enemy-pid') || '0');
@@ -105,6 +134,7 @@ function applyAimTargetable(): void {
       cell.classList.add('aim-out-of-range');
     }
   });
+  }
 
   // 事件委托：在 mapGrid 上绑定 mousemove + click
   _onMouseMove = onAimMouseMove;
@@ -120,8 +150,8 @@ function clearAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
 
-  const enemyCells = grid.querySelectorAll<HTMLElement>('[data-enemy-pid]');
-  enemyCells.forEach((cell) => {
+  const markedCells = grid.querySelectorAll<HTMLElement>('.aim-targetable, .aim-hover, .aim-out-of-range');
+  markedCells.forEach((cell) => {
     cell.classList.remove('aim-targetable', 'aim-hover', 'aim-out-of-range');
   });
 
@@ -139,7 +169,10 @@ function clearAimTargetable(): void {
 
 function onAimMouseMove(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  const enemyCell = target?.closest?.('[data-enemy-pid].aim-targetable') as HTMLElement | null;
+  const selector = aimTargetMode.value === 'tile'
+    ? '[data-pls].aim-targetable'
+    : '[data-enemy-pid].aim-targetable';
+  const aimCell = target?.closest?.(selector) as HTMLElement | null;
 
   // 清除所有敌人格的 aim-hover，仅高亮当前
   const grid = getMapGrid();
@@ -147,9 +180,9 @@ function onAimMouseMove(e: MouseEvent): void {
     grid.querySelectorAll<HTMLElement>('.aim-hover').forEach((c) => c.classList.remove('aim-hover'));
   }
 
-  if (enemyCell) {
-    enemyCell.classList.add('aim-hover');
-    const rect = enemyCell.getBoundingClientRect();
+  if (aimCell) {
+    aimCell.classList.add('aim-hover');
+    const rect = aimCell.getBoundingClientRect();
     drawAimLine(rect.left + rect.width / 2, rect.top + rect.height / 2);
   } else {
     drawAimLine(e.clientX, e.clientY);
@@ -171,14 +204,24 @@ function onAimMouseLeave(): void {
 
 function onAimClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  const enemyCell = target?.closest?.('[data-enemy-pid].aim-targetable') as HTMLElement | null;
-  if (!enemyCell) return;
+  const selector = aimTargetMode.value === 'tile'
+    ? '[data-pls].aim-targetable'
+    : '[data-enemy-pid].aim-targetable';
+  const aimCell = target?.closest?.(selector) as HTMLElement | null;
+  if (!aimCell) return;
 
   e.stopPropagation();
-  const pid = parseInt(enemyCell.getAttribute('data-enemy-pid') || '0');
-  if (pid > 0) {
+  if (aimTargetMode.value === 'tile') {
+    const pls = parseInt(aimCell.getAttribute('data-pls') || '0');
+    if (pls > 0) {
+      dataManager.broadcast('battle:aim-target-selected', { pls });
+    }
+  } else {
+    const pid = parseInt(aimCell.getAttribute('data-enemy-pid') || '0');
+    if (pid > 0) {
     // 通知 PreloadArea 目标已选定
-    dataManager.broadcast('battle:aim-target-selected', { pid });
+      dataManager.broadcast('battle:aim-target-selected', { pid });
+    }
   }
 }
 
@@ -227,14 +270,25 @@ function exitAimMode(): void {
 // ══════════════════════════════════════════════════
 
 function onAimMode(data?: unknown): void {
-  const payload = (data || {}) as { actionRange?: number | string };
+  const payload = (data || {}) as {
+    actionRange?: number | string;
+    targetMode?: 'enemy' | 'tile';
+    originPls?: number | string | null;
+  };
   aimActionRange.value = Math.max(0, Number(payload.actionRange || 1));
+  aimTargetMode.value = payload.targetMode === 'tile' ? 'tile' : 'enemy';
+  const originPls = payload.originPls !== undefined && payload.originPls !== null
+    ? Number(payload.originPls)
+    : Number(mapStore.curLoc);
+  aimOriginPls.value = Number.isFinite(originPls) && originPls > 0 ? originPls : null;
   aimModeActive.value = true;
   applyAimTargetable();
 }
 
 function onAimExit(): void {
   aimModeActive.value = false;
+  aimTargetMode.value = 'enemy';
+  aimOriginPls.value = null;
   clearAimTargetable();
   clearAimLine();
 }

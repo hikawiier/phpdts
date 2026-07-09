@@ -301,6 +301,8 @@ export function initMapInteraction(
     // 模态框/抽屉打开时忽略（与现有 map-interaction.js 一致）
     const uiStore = useUiStore();
     if (uiStore.modalOpen || uiStore.playerDrawerOpen || uiStore.inventoryDrawerOpen) return;
+    // 瞄准模式下地图点击/键盘移动由 AimMode 独占消费，不能触发真实移动
+    if (uiStore.mapInputMode === 'aim') return;
     // 战斗演出播放期间禁止键盘操作
     const battleStore = useBattleStore();
     if (battleStore.battleModalOpen) return;

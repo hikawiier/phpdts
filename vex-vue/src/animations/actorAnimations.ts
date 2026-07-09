@@ -239,7 +239,7 @@ export function fadeOut(el: HTMLElement, onComplete?: () => void): void {
 /**
  * 受击摇晃动画（动漫感 3 段）：深压缩+侧倾 → 反向过头 → elastic 振荡回正
  * direction: 1 右偏（被左侧攻击者打中）/ -1 左偏（被右侧攻击者打中）/ 0 仅压缩无偏移
- * 总时长 ~0.42s，与 playTurnSegment 的 COLLISION_ANIM_DURATION(450ms) 对齐
+ * 总时长 ~0.42s，与 action-specs 的 target.duration(450ms) 对齐
  *
  * 段 1（0~0.10s）：scaleY 深压缩到 0.70 + scaleX 横向拉伸 1.15 + 朝受击方向侧倾 8° + 偏移 1.8dx
  * 段 2（0.10~0.22s）：scaleY 拉伸过头 1.18 + scaleX 压缩 0.92 + 反向侧倾 -6° + 反向偏移 2.4dx（动漫感核心：摆过头）

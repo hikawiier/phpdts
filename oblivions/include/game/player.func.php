@@ -503,6 +503,12 @@ function obl_create_player_record($ndata) {
 		'skillpara'    => json_encode(array(
 			'unarmed_strike' => array('lstact' => 0),
 			'escape'         => array('lstact' => 0),
+			'move'           => array('lstact' => 0),
+			'heal'           => array('lstact' => 0),
+			'whirlwind'      => array('lstact' => 0),
+			'execute'        => array('lstact' => 0),
+			'vampiric_bite'  => array('lstact' => 0),
+			'grenade'        => array('lstact' => 0),
 		), JSON_UNESCAPED_UNICODE),
 		'oblpara'      => json_encode(array(), JSON_UNESCAPED_UNICODE),
 		'discovered'   => 0,

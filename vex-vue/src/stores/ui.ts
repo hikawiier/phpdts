@@ -19,6 +19,7 @@ import { dataManager } from '@/stores/data-manager';
 
 export type BattleBtnState = 'normal' | 'battle' | 'aim';
 export type InvTab = 'inventory' | 'equipment';
+export type MapInputMode = 'normal' | 'aim';
 
 export const useUiStore = defineStore('ui', () => {
   // ── 抽屉开关 ──
@@ -32,6 +33,7 @@ export const useUiStore = defineStore('ui', () => {
 
   // ── 战斗按钮三态 ──
   const battleBtnState = ref<BattleBtnState>('normal');
+  const mapInputMode = ref<MapInputMode>('normal');
 
   // ── 右抽屉标签 ──
   const activeInvTab = ref<InvTab>('inventory');
@@ -109,12 +111,15 @@ export const useUiStore = defineStore('ui', () => {
   });
   dataManager.listen('battle:ended', () => {
     battleBtnState.value = 'normal';
+    mapInputMode.value = 'normal';
   });
   dataManager.listen('battle:aim-mode', () => {
     battleBtnState.value = 'aim';
+    mapInputMode.value = 'aim';
   });
   dataManager.listen('battle:aim-exit', () => {
     battleBtnState.value = 'battle';
+    mapInputMode.value = 'normal';
   });
 
   /** 战斗按钮文字（与现有 app.js updateBattleBtn 一致） */
@@ -132,6 +137,7 @@ export const useUiStore = defineStore('ui', () => {
     modalTitle,
     modalBodyHtml,
     battleBtnState,
+    mapInputMode,
     activeInvTab,
     toastPositionClass,
     // 抽屉操作

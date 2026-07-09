@@ -226,6 +226,19 @@ function combat_state_check_pid_in_memory(CombatContext $ctx, int $pid): void {
             );
             return;
         }
+
+        foreach (($target['effect_targets'] ?? []) as $effect_target) {
+            if (!is_array($effect_target)) continue;
+            if ((int)($effect_target['pid'] ?? 0) !== $pid) continue;
+
+            combat_state_apply_death_check(
+                $pid,
+                (int)($effect_target['hp'] ?? 0),
+                (int)($effect_target['state'] ?? 0),
+                $ctx->battle_cache
+            );
+            return;
+        }
     }
     // 未在内存中找到，跳过（no-fetch 约束）
 }

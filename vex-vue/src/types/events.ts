@@ -17,11 +17,11 @@ export type AppEvent =
   | 'battle:started'
   | 'battle:aim-mode'
   | 'battle:aim-exit'
+  | 'battle:preload-clear'
   | 'preload:executed'
   | 'log:force-scroll'
   | 'log:add-unread'
-  // ── M6 战斗演出事件（store → 组件单向触发） ──
-  | 'battle:play-action-animation'
+  // ── M6 战斗演出事件（Runner → 组件单向触发） ──
   | 'battle:play-damage-numbers'
   | 'battle:preload-init'
   // ── M6 瞄准模式事件（组件间通信） ──
@@ -52,6 +52,10 @@ export interface BattleStartedEventData {
 /** 瞄准模式事件数据（battle:aim-mode / battle:aim-exit） */
 export interface AimModeEventData {
   skillId?: string;
+  targetMode?: 'enemy' | 'tile';
+  actionRange?: number | string;
+  /** 瞄准射程的计算原点；缺省时使用当前地图位置 */
+  originPls?: number | string | null;
   [key: string]: unknown;
 }
 
@@ -63,16 +67,8 @@ export interface PreloadInitEventData {
   enemyPid: number;
   /** 玩家 PID（用于 self 目标） */
   playerPid: number;
-}
-
-/** 动作动画事件数据（battle:play-action-animation） */
-export interface PlayActionAnimationEventData {
-  /** v2 导演动作 */
-  action: import('@/stores/battle-director-v2').DirectedActionV2;
-  /** v2 动作动画计划 */
-  plan: import('@/stores/battle-director-v2').ActionAnimationPlan;
-  /** 敌人 PID（用于兜底定位敌人 DOM 元素） */
-  npcPid: number;
+  /** 战斗上下文视图；预战斗装填时为空 */
+  combatContext?: import('@/types/api').CombatViewModel | null;
 }
 
 /** 伤害数字事件数据（battle:play-damage-numbers） */

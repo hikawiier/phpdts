@@ -108,11 +108,20 @@ function combat_action_enemy_pids(array $actions): array {
     $pids = [];
     foreach ($actions as $action) {
         $config = combat_skill_get_config((string)($action['act_id'] ?? ''));
-        if ($config === null || ($config['target'] ?? 'none') !== 'enemy') continue;
+        if ($config === null) continue;
         $target = $action['target'] ?? null;
-        if (is_array($target) && ($target['type'] ?? '') === 'pid') {
+
+        if (($config['target'] ?? 'none') === 'enemy' && is_array($target) && ($target['type'] ?? '') === 'pid') {
             $pid = (int)($target['id'] ?? 0);
             if ($pid > 0) $pids[$pid] = true;
+        } elseif (($config['target'] ?? 'none') === 'tiles' && is_array($target) && ($target['type'] ?? '') === 'tile') {
+            $pgroup = (int)($action['_actor_pgroup'] ?? 0);
+            $pls = (int)($target['id'] ?? 0);
+            if ($pgroup <= 0 || $pls <= 0) continue;
+
+            foreach (obl_get_pids_in_tile($pgroup, $pls, (int)($action['_actor_pid'] ?? 0)) as $pid) {
+                if ((int)$pid > 0) $pids[(int)$pid] = true;
+            }
         }
     }
     return array_keys($pids);
@@ -198,9 +207,9 @@ function combat_emit_action_failure(&$log, array $actor_data, string $act_id, st
 //                                签名沿用旧入口形状，复用共享队列出口
 //                                battle_log/battle_cache/queue 基础设施
 //   - combat_main():             单回合主函数（sort → verify → execute）
-//   - combat_sort_actions():     终结技排序（sort 在 verify 前，保证 wallet 预扣
-//                                按最终执行顺序累计）
-//   - combat_verify():           遍历校验 + AP 预扣账本（wallet 模型 v1）
+//   - combat_sort_actions():     终结技排序（sort 在 verify 前，保证计划状态
+//                                按最终执行顺序推进）
+//   - combat_verify():           遍历校验 + 计划状态投影（wallet 模型 v2）
 //   - combat_execute():          遍历执行 + 强校验兜底（管道内 check_rules 阶段）
 //   - combat_main_end():         集中 cleanup（调 combat_state_clear 清理退出者）
 //   - combat_actor_terminated(): actor 级终止检测（5 个终止条件）
@@ -214,7 +223,7 @@ function combat_emit_action_failure(&$log, array $actor_data, string $act_id, st
 // 关键设计约束（spec §不可违反约束）：
 //   1. persist 从 ctx.ap_cost 读，不重算：execute 阶段把 action._ap_cost
 //      同步到 ctx.ap_cost，persist 不改
-//   2. sort 在 verify 前：保证 pending_ap_spent 按最终执行顺序累计
+//   2. sort 在 verify 前：保证计划 AP/位置按最终执行顺序投影
 //   3. 普通失败只跳过自己，actor 级终止中断后续全部
 //   4. combat_dispatch 签名沿用旧入口形状，便于调用方迁移
 //   5. 出口调 battle_manage_queue：状态机推进由它接管
@@ -249,8 +258,13 @@ function combat_start_battle(&$actor, $actions): array {
         return ['ok' => false, 'code' => $has_raw_actions ? 'INVALID_ACTIONS' : 'NO_ACTIONS'];
     }
 
-    $enemy_pids = combat_action_enemy_pids($atk_act);
     $actor_pid = (int)($actor['pid'] ?? 0);
+    foreach ($atk_act as &$action) {
+        $action['_actor_pid'] = $actor_pid;
+        $action['_actor_pgroup'] = (int)($actor['pgroup'] ?? 0);
+    }
+    unset($action);
+    $enemy_pids = combat_action_enemy_pids($atk_act);
     $enemy_pids = array_values(array_filter($enemy_pids, function($pid) use ($actor_pid) {
         return (int)$pid > 0 && (int)$pid !== $actor_pid;
     }));
@@ -345,9 +359,9 @@ function combat_dispatch($mode, &$actor, $actions = null, $extra = []) {
  *   sort → verify → execute
  *
  * 为什么 sort 在 verify 前（不是原 verify → sort → execute）：
- *   verify 的 pending_ap_spent 必须按最终执行顺序累计。如果先 verify 再 sort，
- *   finisher 可能被排到末尾，但其 AP 已在中间位置被预扣，导致中间动作因 AP 不足
- *   被错误移除。sort 在 verify 前保证 finisher 按"最后动作"占 AP。
+ *   verify 的计划状态必须按最终执行顺序推进。如果先 verify 再 sort，
+ *   finisher 可能被排到末尾，但其 AP/位置影响已在中间位置投影，导致中间动作
+ *   被错误移除。sort 在 verify 前保证 finisher 按"最后动作"占用计划状态。
  *
  * @param array  &$actor_data
  * @param array  &$atk_act     动作数组（引用，verify 会移除失败 action）
@@ -371,8 +385,8 @@ function combat_main(&$actor_data, &$atk_act, &$log, &$battle_cache): void {
  * 规则：normal 在前，finisher 在后，多个 finisher 只保留最后一个（后提交覆盖前面的）。
  *
  * 为什么 sort 在 verify 前：
- *   verify 维护 pending_ap_spent 按最终执行顺序累计。finisher 排末尾后，
- *   其 AP 占用最后计算，不会挤占前面 normal 动作的 AP 预扣额度。
+ *   verify 维护计划 AP/位置并按最终执行顺序推进。finisher 排末尾后，
+ *   其 AP 占用最后计算，不会挤占前面 normal 动作的计划 AP 额度。
  *
  * 为什么不信任前端顺序：
  *   前端可能因 bug/作弊提交错误顺序（如 finisher 在前），后端必须兜底。
@@ -404,19 +418,20 @@ function combat_sort_actions(&$atk_act): void {
 }
 
 /**
- * 遍历校验 + AP 预扣账本（wallet 模型 v1）
+ * 遍历校验 + 计划状态投影（wallet 模型 v2）
  *
- * 维护 $pending_ap_spent 计数器，按排序后顺序遍历 action：
+ * 维护 sim_actor，按排序后顺序遍历 action：
  *   - actor 级终止 → 停止验证，清空后续所有 action（已验证的保留）
  *   - 技能不存在 → 普通失败，跳过自己（continue）
- *   - AP 累计不足 → 普通失败，跳过自己（continue）
+ *   - 计划 AP 不足 → 普通失败，跳过自己（continue）
  *
- * 通过的 action 写入 _ap_cost 字段（wallet 预扣账本），execute 阶段读取。
+ * 通过的 action 写入 _ap_cost 字段（wallet），execute 阶段读取；同时投影到
+ * sim_actor，供后续 action 的目标/规则/AP 校验使用。
  *
  * 为什么不直接调 combat_skill_verify：
- *   combat_skill_verify 检查单 action AP（actor.ap >= ap_cost），但 wallet 需要
- *   检查累计 AP（actor.ap - pending_ap_spent >= ap_cost）。所以手动调
- *   combat_ap_calculate + 手动累计检查。
+ *   combat_skill_verify 检查单 action AP（actor.ap >= ap_cost），但队列验证需要
+ *   后续 action 读取前序 action 已投影后的 AP/位置等计划状态。所以手动调
+ *   combat_ap_calculate + 手动推进 sim_actor。
  *
  * 为什么不在 verify 做规则匹配（forbid 标签）：
  *   规则匹配需要 target 已解析（combat_check_target_rules 需要 tags，tags 依赖
@@ -429,88 +444,25 @@ function combat_sort_actions(&$atk_act): void {
  * @param array  &$battle_cache
  */
 function combat_verify(&$actor_data, &$atk_act, &$log, &$battle_cache): void {
-    $pending_ap_spent = 0;
-    $verified = [];
-    $pending_cd_usage = [];
-    combat_debug_log('VERIFY_ENTRY', ['atk_act_count'=>count($atk_act), 'actor_ap'=>(int)($actor_data['ap']??0)]);
+    combat_debug_log('VERIFY_ENTRY', [
+        'atk_act_count'=>count($atk_act),
+        'actor_ap'=>(int)($actor_data['ap']??0),
+        'actor_pls'=>(int)($actor_data['pls']??0),
+    ]);
 
-    foreach ($atk_act as $action) {
-        // actor 级终止检测：停止验证，清空后续（已验证的保留在 $verified）
-        if (combat_actor_terminated($actor_data, $battle_cache)) {
-            break;
-        }
-
-        $act_id = $action['act_id'];
-        $config = combat_skill_get_config($act_id);
-
-        // 技能不存在 → 普通失败，跳过自己
-        if ($config === null) {
-            combat_emit_action_failure($log, $actor_data, $act_id, "skill_not_found:{$act_id}");
-            continue;
-        }
-
-        if (!combat_skill_actor_owns($actor_data, $act_id, $config)) {
-            combat_emit_action_failure($log, $actor_data, $act_id, 'skill_not_owned');
-            continue;
-        }
-
-        $cd = (int)($config['cd'] ?? 0);
-        if ($cd > 0 && !empty($pending_cd_usage[$act_id])) {
-            combat_emit_action_failure($log, $actor_data, $act_id, 'cooldown_pending');
-            continue;
-        }
-
-        $cd_result = combat_skill_cd_check($actor_data, $act_id, $config);
-        if (empty($cd_result['pass'])) {
-            combat_emit_action_failure($log, $actor_data, $act_id, 'cooldown', $cd_result);
-            continue;
-        }
-
-        $ctx = combat_action_prepare_context($actor_data, $action, $log, $battle_cache, true);
-        if ($ctx === null) {
-            combat_emit_action_failure($log, $actor_data, $act_id, "skill_not_found:{$act_id}");
-            continue;
-        }
-        combat_debug_log('VERIFY_TARGET', ['act_id'=>$act_id, 'success'=>$ctx->success, 'failure_reason'=>$ctx->failure_reason, 'targets_count'=>count($ctx->targets)]);
-        if (!$ctx->success) {
-            combat_emit_action_failure($log, $actor_data, $act_id, 'target_resolve_failed:' . ($ctx->failure_reason ?? 'unknown'));
-            continue;
-        }
-
-        $rules_result = combat_action_check_rules($ctx);
-        combat_debug_log('VERIFY_RULES', ['act_id'=>$act_id, 'rules'=>$rules_result]);
-        if (empty($rules_result['pass'])) {
-            combat_emit_action_failure($log, $actor_data, $act_id, 'rule_failed:' . ($rules_result['reason'] ?? 'unknown'), $rules_result);
-            continue;
-        }
-
-        // 算 AP（wallet 预扣：检查累计 AP，不是单 action AP）
-        $ap_cost  = combat_ap_calculate($ctx);
-        $actor_ap = (int)($actor_data['ap'] ?? 0);
-        combat_debug_log('VERIFY_AP', ['act_id'=>$act_id, 'ap_cost'=>$ap_cost, 'actor_ap'=>$actor_ap, 'pending_ap_spent'=>$pending_ap_spent]);
-
-        if ($actor_ap - $pending_ap_spent - $ap_cost < 0) {
-            // AP 累计不足 → 普通失败，跳过自己（不级联，后续 action 仍可验证）
-            combat_emit_action_failure($log, $actor_data, $act_id, 'ap_insufficient', [
-                'ap_have'    => $actor_ap,
-                'ap_pending' => $pending_ap_spent,
-                'ap_cost'    => $ap_cost,
-            ]);
-            continue;
-        }
-
-        // 通过：写入 wallet 字段 _ap_cost（框架私有字段，前缀 _ 标识）
-        $action['_ap_cost'] = $ap_cost;
-        $pending_ap_spent += $ap_cost;
-        if ($cd > 0) {
-            $pending_cd_usage[$act_id] = true;
-        }
-        $verified[] = $action;
-    }
+    $projection = combat_chain_project($actor_data, $atk_act, $battle_cache, $log, [
+        'emit_failures' => true,
+        'check_ownership' => true,
+        'check_cd' => true,
+    ]);
 
     // 替换为已验证的（通过引用修改调用方的 $atk_act）
-    combat_debug_log('VERIFY_END', ['verified_count'=>count($verified), 'pending_ap_spent'=>$pending_ap_spent]);
-    $atk_act = $verified;
+    combat_debug_log('VERIFY_END', [
+        'verified_count'=>count($projection['verified_actions'] ?? []),
+        'sim_ap'=>(int)($projection['actor_final_state']['ap'] ?? 0),
+        'sim_pls'=>(int)($projection['actor_final_state']['pls'] ?? 0),
+    ]);
+    $atk_act = $projection['verified_actions'] ?? [];
 }
 
 /**

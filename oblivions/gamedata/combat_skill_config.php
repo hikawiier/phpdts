@@ -129,6 +129,60 @@ return [
         'finisher'      => false,
     ],
 
+    // ── execute：终结技排序 + 低血量倍率 ──
+    'execute' => [
+        'pipeline'      => 'attack',
+        'target'        => 'enemy',
+        'cd'            => 0,
+        'ap_calc'       => 'fixed',
+        'apcost'        => 1,
+        'range'         => ['mode' => 'fixed', 'max' => 1, 'bonus' => 0],
+        'rules'         => [
+            'forbid' => ['self', 'dead', 'escaped', 'out_of_range'],
+        ],
+        'effects'       => ['damage'],
+        'damage_type'   => 'physical',
+        'damage_factor' => 1.0,
+        'execute_threshold' => 0.3,
+        'execute_multiplier'=> 2.0,
+        'finisher'      => true,
+    ],
+
+    // ── vampiric_bite：damage + heal 多效果 FIFO ──
+    'vampiric_bite' => [
+        'pipeline'      => 'attack',
+        'target'        => 'enemy',
+        'cd'            => 0,
+        'ap_calc'       => 'fixed',
+        'apcost'        => 2,
+        'range'         => ['mode' => 'fixed', 'max' => 1, 'bonus' => 0],
+        'rules'         => [
+            'forbid' => ['self', 'dead', 'escaped', 'out_of_range'],
+        ],
+        'effects'       => ['damage', 'heal'],
+        'damage_type'   => 'physical',
+        'damage_factor' => 0.8,
+        'heal_ratio'    => 0.5,
+        'finisher'      => false,
+    ],
+
+    // ── grenade：tile 目标 + damage 多 pid 展开 ──
+    'grenade' => [
+        'pipeline'      => 'attack',
+        'target'        => 'tiles',
+        'cd'            => 0,
+        'ap_calc'       => 'fixed',
+        'apcost'        => 2,
+        'range'         => ['mode' => 'fixed', 'max' => 3, 'bonus' => 0],
+        'rules'         => [
+            'forbid' => ['tile_impassable', 'tile_out_of_range'],
+        ],
+        'effects'       => ['damage'],
+        'damage_type'   => 'physical',
+        'damage_factor' => 1.2,
+        'finisher'      => false,
+    ],
+
     // ── idle：NPC 专属发呆技能（玩家不可见）──
     'idle' => [
         'pipeline' => 'utility',
