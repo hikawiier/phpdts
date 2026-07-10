@@ -18,6 +18,8 @@ export interface CombatantView {
   mhp: number;
   ap?: number;
   max_ap?: number;
+  pgroup?: number;
+  pls?: number;
 }
 
 export interface CombatTargetView {
@@ -99,6 +101,8 @@ export interface DirectedNoticeV2 {
   actionId?: string | null;
   reason?: string | null;
   winnerPid?: number | null;
+  delta?: StateDelta;
+  detail?: Record<string, unknown>;
 }
 
 export interface BattleSegmentV2 {
@@ -123,6 +127,9 @@ export type PlaybackStepKind =
   | 'combatant_joined'
   | 'action_animation'
   | 'combatant_cleared'
+  | 'battle_end_overlay_enter'
+  | 'presentation_scene_handoff'
+  | 'battle_end_modal_content'
   | 'modal_text'
   | 'damage_linger';
 
@@ -180,6 +187,21 @@ export interface ModalTextStep extends PlaybackStepBase {
   };
 }
 
+export interface BattleEndOverlayEnterStep extends PlaybackStepBase {
+  kind: 'battle_end_overlay_enter';
+  segment: BattleSegmentV2;
+}
+
+export interface PresentationSceneHandoffStep extends PlaybackStepBase {
+  kind: 'presentation_scene_handoff';
+  segment: BattleSegmentV2;
+}
+
+export interface BattleEndModalContentStep extends PlaybackStepBase {
+  kind: 'battle_end_modal_content';
+  segment: BattleSegmentV2;
+}
+
 export interface DamageLingerStep extends PlaybackStepBase {
   kind: 'damage_linger';
   segment: BattleSegmentV2;
@@ -193,6 +215,9 @@ export type PlaybackStep =
   | CombatantJoinedStep
   | ActionAnimationStep
   | CombatantClearedStep
+  | BattleEndOverlayEnterStep
+  | PresentationSceneHandoffStep
+  | BattleEndModalContentStep
   | ModalTextStep
   | DamageLingerStep;
 
@@ -370,6 +395,8 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
         actor,
         actionId: String(payload.action_id ?? event.action_id ?? '动作'),
         reason: String(payload.reason ?? event.reason ?? 'unknown'),
+        delta: payload.delta,
+        detail: payload.detail,
         text: {
           html: `${htmlText(actor?.name ?? '行动者')}的${htmlText(payload.action_id ?? event.action_id ?? '动作')}失败：${htmlText(payload.reason ?? event.reason ?? 'unknown')}`,
           tone: 'danger',
@@ -386,6 +413,8 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
         rawLogId: event.log_id,
         combatant,
         reason: String(payload.reason ?? event.reason ?? 'unknown'),
+        delta: payload.delta,
+        detail: payload.detail,
         text: {
           html: `${htmlText(combatant?.name ?? event.cleared_name ?? '参战者')}已退出战斗（${htmlText(payload.reason ?? event.reason ?? 'unknown')}）`,
           tone: 'system',
@@ -479,10 +508,23 @@ export function planPlaybackV2(script: BattlePlayScriptV2): BattlePlaybackPlan {
 
     if (segment.kind === 'battle_end') {
       steps.push({
-        id: nextId('modal_text', segment),
-        kind: 'modal_text',
+        id: nextId('battle_end_overlay_enter', segment),
+        kind: 'battle_end_overlay_enter',
         segment,
-        options: { isBattleEnd: true },
+        awaitPolicy: 'completion',
+        timeout: 1500,
+      });
+      steps.push({
+        id: nextId('presentation_scene_handoff', segment),
+        kind: 'presentation_scene_handoff',
+        segment,
+        awaitPolicy: 'completion',
+        timeout: 20000,
+      });
+      steps.push({
+        id: nextId('battle_end_modal_content', segment),
+        kind: 'battle_end_modal_content',
+        segment,
         awaitPolicy: 'completion',
         timeout: 30000,
       });
@@ -588,6 +630,8 @@ function toCombatantView(snapshot: unknown): CombatantView | null {
     mhp: Number(s.mhp) || 0,
     ap: s.ap !== undefined ? Number(s.ap) : undefined,
     max_ap: s.max_ap !== undefined ? Number(s.max_ap) : undefined,
+    pgroup: s.pgroup !== undefined ? Number(s.pgroup) : undefined,
+    pls: s.pls !== undefined ? Number(s.pls) : undefined,
   };
 }
 

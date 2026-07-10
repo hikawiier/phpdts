@@ -121,7 +121,7 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$result = combat_dispatch('npc_turn', $npc_data, $atk_act, [
 			'allow_empty_actions' => true,
 		]);
-		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'battle_log', 'enemies', 'combat_targets', 'game_map'));
+		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'combat_targets', 'game_map'));
 		obl_tick_ctx_add_domain_event($ctx, 'npc_turn_resolved', array(
 			'qid' => $qid,
 			'pid' => (int)$npc_data['pid'],
@@ -218,6 +218,15 @@ function obl_actor_world_ai_block_reason(&$actor, &$ctx) {
 	$pid = (int)($actor['pid'] ?? 0);
 	if ($pid <= 0) return 'invalid_pid';
 	if ((int)($actor['state'] ?? 0) > 0) return 'dead_or_inactive';
+	$resume_tick = isset($actor['oblpara']['world_ai_resume_tick'])
+		? (int)$actor['oblpara']['world_ai_resume_tick']
+		: 0;
+	$current_tick = function_exists('obl_tick_get') ? obl_tick_get() : 0;
+	if ($resume_tick > 0) {
+		if ($current_tick <= $resume_tick) return 'post_combat_handoff';
+		unset($actor['oblpara']['world_ai_resume_tick']);
+		obl_save_player($actor);
+	}
 	if (function_exists('obl_tick_ctx_actor_in_battle_scope') && obl_tick_ctx_actor_in_battle_scope($ctx, $pid)) return 'battle_scope';
 	if (($actor['action'] ?? '') === 'battle') return 'action_battle';
 	if (!empty($actor['bid'])) return 'bid_present';

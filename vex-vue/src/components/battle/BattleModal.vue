@@ -31,9 +31,8 @@ import type {
 // ── 播放参数 ──
 const ENTRY_INTERVAL = 500;       // 条目间隔 ms
 const COMPLETE_HOLD = 1200;       // 播放完停留 ms
-const OVERLAY_FADE_IN = 250;      // 模态框淡入 ms
-const OVERLAY_FADE_OUT = 200;     // 模态框淡出 ms
 const ENTRY_FADE_DELAY = 20;      // 条目淡入前延迟 ms（触发 CSS transition）
+const TRANSITION_FALLBACK = 1000;
 
 // ── 模态框状态 ──
 const overlayOpen = ref<boolean>(false);
@@ -98,6 +97,7 @@ function hpPercent(hp: number, maxHp: number): string {
 
 // ── 正文容器 ref（用于自动滚动） ──
 const bodyRef = ref<HTMLElement | null>(null);
+const overlayRef = ref<HTMLElement | null>(null);
 
 function scrollToBottom(): void {
   if (bodyRef.value) {
@@ -120,22 +120,63 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function waitForOverlayTransition(): Promise<void> {
+  const overlay = overlayRef.value;
+  if (!overlay) return Promise.resolve();
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      overlay.removeEventListener('transitionend', onTransitionEnd);
+      clearTimeout(timeout);
+      resolve();
+    };
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === overlay && event.propertyName === 'opacity') finish();
+    };
+    const timeout = setTimeout(finish, TRANSITION_FALLBACK);
+    overlay.addEventListener('transitionend', onTransitionEnd);
+  });
+}
+
+function waitForBattleEndContent(sessionId: string): Promise<void> {
+  if (battleStore.battleModalSessionId !== sessionId || battleStore.battleModalContentReady) {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    const timeout = setTimeout(finish, 10000);
+    const stop = watch(
+      () => [battleStore.battleModalSessionId, battleStore.battleModalContentReady] as const,
+      ([activeSessionId, ready]) => {
+        if (activeSessionId !== sessionId || ready) finish();
+      },
+    );
+    function finish() {
+      clearTimeout(timeout);
+      stop();
+      resolve();
+    }
+  });
+}
+
 async function playBattleLog(): Promise<void> {
   if (playing.value) {
-    battleStore.notifyModalClosed();
+    battleStore.notifyModalClosed(battleStore.battleModalSessionId ?? '');
     return;
   }
   playing.value = true;
   try {
     const segment = battleStore.currentSegment as BattleSegmentV2 | null;
-    if (!segment) {
-      battleStore.notifyModalClosed();
+    const sessionId = battleStore.battleModalSessionId;
+    if (!segment || !sessionId) {
+      battleStore.notifyModalClosed(sessionId ?? '');
       return;
     }
     const playbackItems = collectPlaybackItems(segment);
     // battle_end/round_intro 段可能正文为空但仍需显示分隔符
     if (playbackItems.length === 0 && segment.kind !== 'battle_end' && segment.kind !== 'round_intro') {
-      battleStore.notifyModalClosed();
+      battleStore.notifyModalClosed(sessionId);
       return;
     }
 
@@ -146,10 +187,17 @@ async function playBattleLog(): Promise<void> {
     displayedEntries.value = [];
 
     // 显示模态框
+    const entered = waitForOverlayTransition();
     overlayOpen.value = true;
     overlayClosing.value = false;
-    await sleep(OVERLAY_FADE_IN);
+    await entered;
     if (cancelRequested) return;
+
+    if (battleStore.battleModalIsBattleEnd) {
+      battleStore.notifyBattleEndOverlayCovered(sessionId);
+      await waitForBattleEndContent(sessionId);
+      if (cancelRequested || battleStore.battleModalSessionId !== sessionId) return;
+    }
 
     // 段分隔符
     const divider = getSegmentDivider();
@@ -183,14 +231,15 @@ async function playBattleLog(): Promise<void> {
     if (cancelRequested) return;
 
     overlayClosing.value = true;
+    const exited = waitForOverlayTransition();
     overlayOpen.value = false;
-    await sleep(OVERLAY_FADE_OUT);
+    await exited;
     overlayClosing.value = false;
     displayedEntries.value = [];
 
-    battleStore.notifyModalClosed();
+    battleStore.notifyModalClosed(sessionId);
   } catch {
-    battleStore.notifyModalClosed();
+    battleStore.notifyModalClosed(battleStore.battleModalSessionId ?? '');
   } finally {
     playing.value = false;
   }
@@ -320,12 +369,18 @@ onUnmounted(() => {
     rejectSleep = null;
     r(new Error('BattleModal unmounted'));
   }
+  const sessionId = battleStore.battleModalSessionId;
+  if (sessionId) {
+    battleStore.notifyBattleEndOverlayCovered(sessionId);
+    battleStore.notifyModalClosed(sessionId);
+  }
 });
 </script>
 
 <template>
   <Teleport to="body">
     <div
+      ref="overlayRef"
       class="battle-modal-overlay"
       :class="{ open: overlayOpen, closing: overlayClosing }"
     >

@@ -273,5 +273,64 @@ return static function (TestRoom $room): array {
             test_same(['BATTLELOG_PERSIST_FAILED'], $persist['warnings'], 'post-commit log failure returns warning');
             test_same(66, (int)$room->fetch((int)$player['pid'])['hp'], 'post-commit warning does not roll back domain state');
         },
+        'presentation_batch_sequence_commits_and_rolls_back_with_domain_transaction' => static function () use ($room): void {
+            global $db, $gamevars, $obl_battle_log;
+            $room->resetData();
+            $player = $room->player('presentation-player', 0, ['pls' => 7, 'hp' => 88, 'ap' => 9]);
+            $gamevars = ['obl_tick' => 12, 'obl_pretick' => 12, 'obl_presentation_head_seq' => 4];
+            obl_gamevars_sync_from_globals();
+
+            $obl_battle_log = new BattleLogCollector();
+            $obl_battle_log->setPhase('battlelog_v2');
+            $obl_battle_log->emit([
+                'schema' => 'battlelog.v2',
+                'event_type' => 'notice',
+                'channel' => 'render',
+                'event_uid' => 'presentation-render-1',
+                'payload' => ['qid' => 44, 'message' => 'render'],
+            ], false);
+            $obl_battle_log->emit([
+                'schema' => 'battlelog.v2',
+                'event_type' => 'notice',
+                'channel' => 'debug',
+                'event_uid' => 'presentation-debug-1',
+                'payload' => ['message' => 'debug'],
+            ], true);
+
+            obl_runtime_transaction_begin();
+            $prepared = obl_runtime_prepare_presentation($player, 'request-1');
+            test_same(5, (int)$prepared['head_seq'], 'render batch increments head once');
+            test_same(1, count($prepared['batch']['events']), 'debug event excluded from live presentation');
+            test_same(1, (int)$prepared['batch']['events'][0]['event_seq'], 'batch-local event order assigned');
+            test_same(44, (int)$prepared['batch']['qid'], 'batch retains the completed combat qid');
+            test_same(0, (int)$prepared['batch']['state_after']['bid'], 'state_after retains authoritative cleared player bid');
+            test_same('IDLE', (string)$prepared['batch']['state_after']['battle_state'], 'state_after battle state follows player bid');
+            obl_runtime_transaction_commit();
+
+            $row = obl_game_load(false);
+            $vars = obl_game_json_decode((string)$row['vars_json']);
+            test_same(5, (int)$vars['obl_presentation_head_seq'], 'committed head persisted in oblgame');
+            $attached = obl_runtime_attach_presentation(['status' => 'success'], $prepared);
+            test_same(5, (int)$attached['presentation_head_seq'], 'response exposes committed head');
+            test_same('presentation.v1', (string)$attached['presentation']['schema'], 'response exposes immutable batch');
+
+            $obl_battle_log = new BattleLogCollector();
+            $obl_battle_log->setPhase('battlelog_v2');
+            $obl_battle_log->emit([
+                'schema' => 'battlelog.v2',
+                'event_type' => 'notice',
+                'channel' => 'render',
+                'event_uid' => 'presentation-render-rollback',
+                'payload' => ['message' => 'rollback'],
+            ], false);
+            $gamevars['obl_presentation_head_seq'] = 5;
+            obl_runtime_transaction_begin();
+            $rolled = obl_runtime_prepare_presentation($player, 'request-rollback');
+            test_same(6, (int)$rolled['head_seq'], 'tentative batch advances in transaction');
+            obl_runtime_transaction_rollback();
+            $row = obl_game_load(false);
+            $vars = obl_game_json_decode((string)$row['vars_json']);
+            test_same(5, (int)$vars['obl_presentation_head_seq'], 'rollback does not consume presentation sequence');
+        },
     ]);
 };

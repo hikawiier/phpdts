@@ -20,7 +20,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { PlayerAvatarIntent } from '@/types/player-avatar';
-import type { AttackKind } from '@/types/actor-animation';
+import type { AttackKind } from '@/types/actor-runtime';
 
 export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   const intent = ref<PlayerAvatarIntent>('idle');

@@ -46,11 +46,6 @@ export default defineConfig(({ command }) => ({
         changeOrigin: true,
         agent: proxyAgent,
       },
-      '/phpdts/oblivions/mark_battle_log_played.php': {
-        target: 'http://127.0.0.1',
-        changeOrigin: true,
-        agent: proxyAgent,
-      },
       '/phpdts/img/': {
         target: 'http://127.0.0.1',
         changeOrigin: true,

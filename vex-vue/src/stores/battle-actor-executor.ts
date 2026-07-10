@@ -1,8 +1,11 @@
 import { nextTick } from 'vue';
 import { getActorById } from '@/composables/actorRegistry';
+import { isCueAnimationHandle } from '@/composables/useActorRuntime';
 import { resolveActionSpec } from '@/animations/action-specs';
-import { usePlayerAvatarStore } from '@/stores/player-avatar';
-import type { ActorAnimation } from '@/types/actor-animation';
+import { createExplosionOverlay, createProjectileOverlay } from './battle-overlay-executor';
+import type { AnimationHandle } from '@/types/actor-runtime';
+import type { SceneGeometry, ScenePoint } from '@/types/scene';
+import type { BattlePresentationSession } from './battle-presentation-session';
 import type {
   CombatantView,
   CombatTargetView,
@@ -14,106 +17,126 @@ import type {
 } from './battle-director-v2';
 
 const MAP_READY_RETRIES = 10;
-const CLEARED_ANIM_DURATION = 450;
-const DELIVERY_PROJECTILE_DURATION = 360;
-const DELIVERY_EXPLOSION_DURATION = 420;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+export interface BattleActorExecutionContext {
+  scene: SceneGeometry;
+  presentation: BattlePresentationSession;
+  currentPid: number;
+}
+
+export interface PlaybackExecutionTask {
+  readonly finished: Promise<void>;
+  cancel(reason?: string): void;
+}
+
+interface TaskScope {
+  readonly cancelled: boolean;
+  add(handle: AnimationHandle): AnimationHandle;
+}
+
+function createTask(run: (scope: TaskScope) => Promise<void>): PlaybackExecutionTask {
+  const handles = new Set<AnimationHandle>();
+  let cancelled = false;
+  const scope: TaskScope = {
+    get cancelled() { return cancelled; },
+    add(handle) {
+      handles.add(handle);
+      void handle.finished.finally(() => handles.delete(handle));
+      return handle;
+    },
+  };
+  return {
+    finished: run(scope),
+    cancel(reason = 'cancelled') {
+      if (cancelled) return;
+      cancelled = true;
+      for (const handle of handles) handle.cancel(reason);
+    },
+  };
+}
+
+function completedTask(): PlaybackExecutionTask {
+  return { finished: Promise.resolve(), cancel: () => {} };
 }
 
 function nextFrame(): Promise<void> {
-  return new Promise(resolve => {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => resolve());
-      return;
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+export function prepareBattlefield(context: BattleActorExecutionContext): PlaybackExecutionTask {
+  return createTask(async scope => {
+    for (let i = 0; i < MAP_READY_RETRIES && !scope.cancelled; i++) {
+      if (!context.scene.active) throw new Error('Battle scene was replaced while preparing playback');
+      if (getActorById('player')) return;
+      await nextTick();
+      await nextFrame();
     }
-    setTimeout(resolve, 16);
   });
 }
 
-async function waitForUiFrame(): Promise<void> {
-  await nextTick();
-  await nextFrame();
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
-  return new Promise(resolve => {
-    const timer = setTimeout(() => {
-      if (import.meta.env.DEV) console.warn(`[BattlePlayback] ${label} timed out after ${ms}ms`);
-      resolve(undefined);
-    }, ms);
-
-    promise
-      .then(value => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch(error => {
-        clearTimeout(timer);
-        if (import.meta.env.DEV) console.warn(`[BattlePlayback] ${label} failed`, error);
-        resolve(undefined);
-      });
-  });
-}
-
-export async function prepareBattlefield(): Promise<void> {
-  for (let i = 0; i < MAP_READY_RETRIES; i++) {
-    if (document.getElementById('mapGrid') && getActorById('player')) return;
-    await waitForUiFrame();
-  }
-}
-
-export async function playActionAnimation(action: DirectedActionV2, currentPid: number): Promise<void> {
+export function playActionAnimation(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
   if (action.deliveries.some(delivery => isImpactDelivery(delivery.type))) {
-    await playDeliveredEffectReactions(action);
-    return;
+    return playDeliveredEffectReactions(action, context);
   }
   switch (action.animation.kind) {
-    case 'move':
-      await playMoveAction(action);
-      return;
+    case 'move': return playMoveAction(action, context);
     case 'melee_hit':
-    case 'projectile':
-      await playDamageAction(action);
-      return;
-    case 'area_burst':
-      await playAreaDamageAction(action);
-      return;
+    case 'projectile': return playDamageAction(action, context);
+    case 'area_burst': return playAreaDamageAction(action, context);
     case 'escape':
     case 'none':
-    default:
-      void currentPid;
-      return;
+    default: return completedTask();
   }
 }
 
-async function playDeliveredEffectReactions(action: DirectedActionV2): Promise<void> {
-  const effects = action.effects.filter(isDamageHpDrop);
-  for (const effect of effects) {
-    const target = effect.target.snapshot;
-    if (!target) continue;
-    const defender = await waitForActor(combatantEntityId(target));
-    if (!defender) continue;
-    const sourcePos = action.actor ? (await waitForActor(combatantEntityId(action.actor)))?.getPosition() : null;
-    const targetPos = defender.getPosition();
-    const dir: 1 | -1 | 0 = sourcePos && targetPos ? (sourcePos.x < targetPos.x ? 1 : -1) : 0;
-    defender.playHit(dir);
-    await sleep(120);
-  }
+function playDeliveredEffectReactions(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
+  return createTask(async scope => {
+    for (const effect of action.effects.filter(isDamageHpDrop)) {
+      if (scope.cancelled || !effect.target.snapshot) return;
+      const targetId = combatantEntityId(effect.target.snapshot);
+      const target = getActorById(targetId);
+      const lease = context.presentation.getLease(targetId, ['action', 'pose']);
+      if (!target || !lease) continue;
+      const direction = directionBetween(getActorById(combatantEntityId(action.actor))?.getScenePoint(), target.getScenePoint());
+      const handle = scope.add(lease.play({ kind: 'hit', direction }));
+      await handle.finished;
+    }
+  });
 }
 
-export async function playActionDelivery(action: DirectedActionV2, delivery: DirectedDeliveryV2): Promise<void> {
-  if (delivery.type === 'none') return;
-  const anchor = await waitForDeliveryAnchor(delivery.resolvedAim);
-  if (!anchor) return;
-
-  if (delivery.type === 'projectile' || delivery.type === 'projectile_to_tile') {
-    await playProjectileCue(action, anchor);
-  }
-  if (delivery.type === 'explosion' || delivery.type === 'explosion_at_tile') {
-    await playExplosionCue(anchor);
-  }
+export function playActionDelivery(
+  action: DirectedActionV2,
+  delivery: DirectedDeliveryV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
+  if (delivery.type === 'none') return completedTask();
+  return createTask(async scope => {
+    if (!context.scene.active) throw new Error('Battle scene was replaced during delivery playback');
+    const targetScene = resolveTargetScenePoint(delivery.resolvedAim, action, context);
+    const targetViewport = targetScene ? context.scene.sceneToViewport(targetScene) : null;
+    if (!targetViewport || scope.cancelled) return;
+    if (delivery.type === 'projectile' || delivery.type === 'projectile_to_tile') {
+      const attackerId = combatantEntityId(action.actor);
+      const attacker = getActorById(attackerId);
+      const attackerPoint = attacker?.getScenePoint();
+      const startViewport = attackerPoint ? context.scene.sceneToViewport(attackerPoint) : null;
+      const lease = context.presentation.getLease(attackerId, ['action', 'pose']);
+      if (lease) scope.add(lease.play({ kind: 'attack', target: targetScene ?? undefined, attackKind: 'ranged' }));
+      if (startViewport) {
+        const projectile = scope.add(createProjectileOverlay(startViewport, targetViewport));
+        await projectile.finished;
+      }
+    }
+    if (delivery.type === 'explosion' || delivery.type === 'explosion_at_tile') {
+      await scope.add(createExplosionOverlay(targetViewport)).finished;
+    }
+  });
 }
 
 function isImpactDelivery(type: string): boolean {
@@ -123,250 +146,181 @@ function isImpactDelivery(type: string): boolean {
     || type === 'explosion_at_tile';
 }
 
-export async function playCombatantJoined(joined: DirectedCombatantJoinedV2): Promise<void> {
-  const actor = await waitForActor(combatantEntityId(joined.combatant));
-  const el = actor?.getEl();
-  if (!el) return;
-  el.classList.add('combatant-joined-cue');
-  try {
-    await el.animate([
-      { filter: 'brightness(1.8)', boxShadow: '0 0 0 1px rgba(255,107,107,.9)' },
-      { filter: 'brightness(1)', boxShadow: '0 0 14px 2px rgba(255,107,107,.55)', offset: 0.45 },
-      { filter: 'brightness(1)', boxShadow: 'none' },
-    ], { duration: 500, easing: 'ease-out' }).finished;
-  } catch {
-    await sleep(500);
-  } finally {
-    el.classList.remove('combatant-joined-cue');
-  }
+export function playCombatantJoined(
+  joined: DirectedCombatantJoinedV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
+  const actorId = combatantEntityId(joined.combatant);
+  const lease = context.presentation.getLease(actorId, ['pose']);
+  return lease ? taskFromHandle(lease.play({ kind: 'join-cue' })) : completedTask();
 }
 
-export async function playCombatantCleared(notice: DirectedNoticeV2, currentPid: number): Promise<void> {
+export function playCombatantCleared(
+  notice: DirectedNoticeV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
   const combatant = notice.combatant;
-  if (!combatant) return;
-
-  const reason = notice.reason;
-  if (combatant.pid === currentPid && combatant.type === 0) {
-    const playerAvatarStore = usePlayerAvatarStore();
-    if (reason === 'death') {
-      playerAvatarStore.onDie();
-    } else if (reason === 'escaped') {
-      playerAvatarStore.onFlee();
-    }
-    await sleep(CLEARED_ANIM_DURATION);
-    return;
+  if (!combatant || (notice.reason !== 'death' && notice.reason !== 'escaped')) return completedTask();
+  const actorId = combatantEntityId(combatant);
+  if (notice.reason === 'death') {
+    const lease = context.presentation.getLease(actorId, ['action', 'pose', 'visibility'], 'terminal');
+    if (!lease) return completedTask();
+    context.presentation.markTerminal(actorId);
+    return taskFromHandle(lease.play({ kind: 'fall' }));
   }
-
-  if (combatant.type <= 0) return;
-  if (reason !== 'death' && reason !== 'escaped') return;
-
-  const actor = await waitForActor(combatantEntityId(combatant));
-  if (!actor) {
-    await sleep(CLEARED_ANIM_DURATION);
-    return;
-  }
-
-  await withTimeout(new Promise<void>(resolve => {
-    actor.playFadeOut(resolve);
-  }), CLEARED_ANIM_DURATION + 500, `clear:${combatant.id}`);
+  const retreatTarget = readRetreatTarget(notice);
+  const retreat = notice.detail?.visual_policy === 'retreat' && retreatTarget !== null;
+  const lease = context.presentation.getLease(
+    actorId,
+    retreat ? ['spatial', 'pose', 'visibility'] : ['visibility'],
+  );
+  if (!lease) return completedTask();
+  context.presentation.markBattleExit(actorId, 'escaped', retreatTarget);
+  return retreat ? completedTask() : taskFromHandle(lease.play({ kind: 'fade' }));
 }
 
-async function playMoveAction(action: DirectedActionV2): Promise<void> {
+function readRetreatTarget(notice: DirectedNoticeV2): { pgroup: number; pls: number } | null {
+  const raw = notice.detail?.retreat_target;
+  const target = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  const pgroup = Number(target?.pgroup ?? notice.combatant?.pgroup);
+  const pls = Number(target?.pls ?? notice.delta?.pls_after);
+  return Number.isFinite(pgroup) && Number.isFinite(pls) ? { pgroup, pls } : null;
+}
+
+function playMoveAction(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
   const target = getMoveTarget(action);
-  if (!target) return;
-
-  const actor = await waitForActor(combatantEntityId(action.actor));
-  const anchor = await waitForTileAnchor(target);
-  if (!actor || !anchor) return;
-
-  await withTimeout(new Promise<void>(resolve => {
-    actor.moveTo(anchor.x, anchor.y, anchor.cellW, anchor.cellH, resolve);
-  }), 1800, `move:${action.actionUid}`);
+  if (!target || target.pgroup === undefined || target.pls === undefined) return completedTask();
+  const anchor = context.scene.resolveTile({ pgroup: target.pgroup, pls: target.pls });
+  const actorId = combatantEntityId(action.actor);
+  const actor = getActorById(actorId);
+  if (!anchor || !actor) return completedTask();
+  const from = actor.getScenePoint();
+  const tier = from ? calcMoveTier(from, anchor.point, anchor.cellWidth, anchor.cellHeight) : 'long';
+  const channels = tier === 'long'
+    ? ['spatial', 'pose', 'visibility'] as const
+    : ['spatial', 'pose'] as const;
+  const lease = context.presentation.getLease(actorId, [...channels]);
+  return lease ? taskFromHandle(lease.play({ kind: 'move', target: anchor, tier, hold: true })) : completedTask();
 }
 
-async function playDamageAction(action: DirectedActionV2): Promise<void> {
-  const damageEffect = action.effects.find(isDamageHpDrop);
-  const target = damageEffect?.target.snapshot;
-  if (!target) return;
-
-  const spec = resolveActionSpec(action.actionId);
-  const attacker = await waitForActor(combatantEntityId(action.actor));
-  const defender = await waitForActor(combatantEntityId(target));
-  if (!attacker || !defender) return;
-
-  const targetPos = defender.getPosition();
-  attacker.playAttack(targetPos, spec.attacker.kind);
-
-  await sleep(action.animation.impactAt ?? spec.attacker.impactAt);
-
-  const attackerPos = attacker.getPosition();
-  const defenderPos = defender.getPosition();
-  const dir: 1 | -1 | 0 = attackerPos && defenderPos
-    ? (attackerPos.x < defenderPos.x ? 1 : -1)
-    : 0;
-  defender.playHit(dir);
-
-  await sleep(spec.target.duration);
-}
-
-async function playAreaDamageAction(action: DirectedActionV2): Promise<void> {
-  const damageEffects = action.effects.filter(isDamageHpDrop);
-  const targets = uniqueCombatants(damageEffects
-    .map(effect => effect.target.snapshot)
-    .filter((target): target is CombatantView => Boolean(target)));
-  if (targets.length === 0) return;
-
-  const spec = resolveActionSpec(action.actionId);
-  const attacker = await waitForActor(combatantEntityId(action.actor));
-  if (!attacker) return;
-
-  const primary = await waitForActor(combatantEntityId(targets[0]));
-  attacker.playAttack(primary?.getPosition(), 'ranged');
-
-  await sleep(action.animation.impactAt ?? spec.attacker.impactAt);
-
-  await Promise.all(targets.map(async target => {
-    const defender = await waitForActor(combatantEntityId(target));
-    if (!defender) return;
-    const attackerPos = attacker.getPosition();
-    const defenderPos = defender.getPosition();
-    const dir: 1 | -1 | 0 = attackerPos && defenderPos
-      ? (attackerPos.x < defenderPos.x ? 1 : -1)
-      : 0;
-    defender.playHit(dir);
-  }));
-
-  await sleep(spec.target.duration);
-}
-
-async function waitForActor(id: string): Promise<ActorAnimation | undefined> {
-  for (let i = 0; i < MAP_READY_RETRIES; i++) {
-    const actor = getActorById(id);
-    if (actor?.getEl()) return actor;
-    await waitForUiFrame();
-  }
-  return getActorById(id);
-}
-
-async function waitForTileAnchor(target: CombatTargetView): Promise<{
-  x: number; y: number; cellW: number; cellH: number;
-} | null> {
-  for (let i = 0; i < MAP_READY_RETRIES; i++) {
-    const grid = document.getElementById('mapGrid');
-    const tile = grid && target.kind === 'tile' && target.pls
-      ? grid.querySelector<HTMLElement>(`[data-pls="${target.pls}"]`)
-      : null;
-    if (grid && tile) return getTileAnchor(grid, tile);
-    await waitForUiFrame();
-  }
-  return null;
-}
-
-async function waitForDeliveryAnchor(target: CombatTargetView): Promise<{
-  x: number; y: number; cellW: number; cellH: number;
-} | null> {
-  if (target.kind === 'tile' && target.pls) {
-    for (let i = 0; i < MAP_READY_RETRIES; i++) {
-      const grid = document.getElementById('mapGrid');
-      const tile = grid?.querySelector<HTMLElement>(`[data-pls="${target.pls}"]`);
-      if (tile) {
-        const rect = tile.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, cellW: rect.width, cellH: rect.height };
-      }
-      await waitForUiFrame();
-    }
-  }
-  if ((target.kind === 'pid' || target.kind === 'self') && target.pid) {
-    const actor = await waitForActor(target.kind === 'self' ? 'player' : `enemy-${target.pid}`);
-    const el = actor?.getEl();
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, cellW: rect.width, cellH: rect.height };
-    }
-  }
-  return null;
-}
-
-async function playProjectileCue(action: DirectedActionV2, anchor: { x: number; y: number }): Promise<void> {
-  const attacker = await waitForActor(combatantEntityId(action.actor));
-  const attackerEl = attacker?.getEl();
-  if (!attacker || !attackerEl) return;
-  attacker.playAttack({ x: anchor.x, y: anchor.y }, 'ranged');
-  const rect = attackerEl.getBoundingClientRect();
-  const projectile = document.createElement('div');
-  projectile.setAttribute('aria-hidden', 'true');
-  Object.assign(projectile.style, {
-    position: 'fixed', left: `${rect.left + rect.width / 2}px`, top: `${rect.top + rect.height / 2}px`,
-    width: '6px', height: '6px', border: '1px solid #fff', background: '#ff6b6b',
-    boxShadow: '0 0 8px rgba(255,107,107,.9)', pointerEvents: 'none', zIndex: '520',
+function playDamageAction(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
+  return createTask(async scope => {
+    const effect = action.effects.find(isDamageHpDrop);
+    const defenderView = effect?.target.snapshot;
+    if (!defenderView) return;
+    const attackerId = combatantEntityId(action.actor);
+    const defenderId = combatantEntityId(defenderView);
+    const attacker = getActorById(attackerId);
+    const defender = getActorById(defenderId);
+    const attackerLease = context.presentation.getLease(attackerId, ['action', 'pose']);
+    const defenderLease = context.presentation.getLease(defenderId, ['action', 'pose']);
+    if (!attacker || !defender || !attackerLease || !defenderLease) return;
+    const spec = resolveActionSpec(action.actionId);
+    const attack = scope.add(attackerLease.play({
+      kind: 'attack',
+      target: defender.getScenePoint() ?? undefined,
+      attackKind: spec.attacker.kind,
+    }));
+    if (isCueAnimationHandle(attack)) await attack.cue('impact');
+    if (scope.cancelled) return;
+    const hit = scope.add(defenderLease.play({
+      kind: 'hit',
+      direction: directionBetween(attacker.getScenePoint(), defender.getScenePoint()),
+    }));
+    await Promise.all([attack.finished, hit.finished]);
   });
-  document.body.appendChild(projectile);
-  try {
-    await projectile.animate([
-      { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
-      { transform: `translate(${anchor.x - (rect.left + rect.width / 2)}px, ${anchor.y - (rect.top + rect.height / 2)}px) translate(-50%, -50%) scale(.7)`, opacity: 1 },
-    ], { duration: DELIVERY_PROJECTILE_DURATION, easing: 'ease-in' }).finished;
-  } catch {
-    await sleep(DELIVERY_PROJECTILE_DURATION);
-  } finally {
-    projectile.remove();
-  }
 }
 
-async function playExplosionCue(anchor: { x: number; y: number }): Promise<void> {
-  const burst = document.createElement('div');
-  burst.setAttribute('aria-hidden', 'true');
-  Object.assign(burst.style, {
-    position: 'fixed', left: `${anchor.x}px`, top: `${anchor.y}px`, width: '18px', height: '18px',
-    border: '2px solid #ff6b6b', background: 'rgba(255,107,107,.18)', pointerEvents: 'none',
-    zIndex: '519', transform: 'translate(-50%, -50%)',
+function playAreaDamageAction(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): PlaybackExecutionTask {
+  return createTask(async scope => {
+    const targets = uniqueCombatants(action.effects
+      .filter(isDamageHpDrop)
+      .map(effect => effect.target.snapshot)
+      .filter((target): target is CombatantView => Boolean(target)));
+    if (targets.length === 0) return;
+    const attackerId = combatantEntityId(action.actor);
+    const attacker = getActorById(attackerId);
+    const attackerLease = context.presentation.getLease(attackerId, ['action', 'pose']);
+    if (!attacker || !attackerLease) return;
+    const primary = getActorById(combatantEntityId(targets[0]));
+    const attack = scope.add(attackerLease.play({
+      kind: 'attack', target: primary?.getScenePoint() ?? undefined, attackKind: 'ranged',
+    }));
+    if (isCueAnimationHandle(attack)) await attack.cue('impact');
+    if (scope.cancelled) return;
+    const hits = targets.flatMap(target => {
+      const targetId = combatantEntityId(target);
+      const defender = getActorById(targetId);
+      const lease = context.presentation.getLease(targetId, ['action', 'pose']);
+      if (!defender || !lease) return [];
+      return [scope.add(lease.play({
+        kind: 'hit', direction: directionBetween(attacker.getScenePoint(), defender.getScenePoint()),
+      }))];
+    });
+    await Promise.all([attack.finished, ...hits.map(handle => handle.finished)]);
   });
-  document.body.appendChild(burst);
-  try {
-    await burst.animate([
-      { transform: 'translate(-50%, -50%) scale(.25)', opacity: 1 },
-      { transform: 'translate(-50%, -50%) scale(2.8)', opacity: 0 },
-    ], { duration: DELIVERY_EXPLOSION_DURATION, easing: 'ease-out' }).finished;
-  } catch {
-    await sleep(DELIVERY_EXPLOSION_DURATION);
-  } finally {
-    burst.remove();
-  }
 }
 
-function getTileAnchor(gridEl: HTMLElement, cell: HTMLElement): {
-  x: number; y: number; cellW: number; cellH: number;
-} {
-  let offsetX = 0;
-  let offsetY = 0;
-  let node: HTMLElement | null = cell;
-  while (node && node !== gridEl) {
-    offsetX += node.offsetLeft;
-    offsetY += node.offsetTop;
-    node = node.offsetParent as HTMLElement | null;
+function taskFromHandle(handle: AnimationHandle): PlaybackExecutionTask {
+  return {
+    finished: handle.finished.then(() => undefined),
+    cancel: reason => handle.cancel(reason),
+  };
+}
+
+function resolveTargetScenePoint(
+  target: CombatTargetView,
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): ScenePoint | null {
+  if (target.kind === 'tile' && target.pgroup !== undefined && target.pls !== undefined) {
+    return context.scene.resolveTile({ pgroup: target.pgroup, pls: target.pls })?.point ?? null;
   }
-  const cellW = cell.offsetWidth;
-  const cellH = cell.offsetHeight;
-  return { x: offsetX + cellW / 2, y: offsetY + cellH, cellW, cellH };
+  const actorId = resolveCombatTargetEntityId(target, action.actor, context.currentPid);
+  return actorId ? getActorById(actorId)?.getScenePoint() ?? null : null;
+}
+
+export function resolveCombatTargetEntityId(
+  target: CombatTargetView,
+  actionActor: CombatantView,
+  currentPid: number,
+): string | null {
+  if (target.kind === 'self') return combatantEntityId(actionActor);
+  if (target.snapshot) return combatantEntityId(target.snapshot);
+  if (!target.pid) return null;
+  return target.pid === currentPid ? 'player' : `enemy-${target.pid}`;
+}
+
+function calcMoveTier(from: ScenePoint, to: ScenePoint, cellWidth: number, cellHeight: number): 'duck' | 'jump' | 'long' {
+  const distance = Math.max(Math.abs(to.x - from.x) / cellWidth, Math.abs(to.y - from.y) / cellHeight);
+  if (distance <= 1.5) return 'duck';
+  if (distance <= 6.5) return 'jump';
+  return 'long';
+}
+
+function directionBetween(source: ScenePoint | null | undefined, target: ScenePoint | null | undefined): -1 | 0 | 1 {
+  if (!source || !target || source.x === target.x) return 0;
+  return source.x < target.x ? 1 : -1;
 }
 
 function getMoveTarget(action: DirectedActionV2): CombatTargetView | null {
-  const moveEffect = action.effects.find(effect =>
-    effect.type === 'move' &&
-    effect.visual.kind === 'move_avatar' &&
-    effect.target.kind === 'tile',
-  );
-  if (moveEffect) return moveEffect.target;
-
-  const targetIds = action.animation.targetIds ?? [];
-  return action.targets.find(target => targetIds.includes(target.id) && target.kind === 'tile')
+  return action.effects.find(effect =>
+    effect.type === 'move' && effect.visual.kind === 'move_avatar' && effect.target.kind === 'tile')?.target
     ?? action.targets.find(target => target.kind === 'tile')
     ?? null;
 }
 
 function isDamageHpDrop(effect: DirectedEffectV2): boolean {
-  if (effect.type !== 'damage') return false;
-  if (!effect.target.snapshot) return false;
+  if (effect.type !== 'damage' || !effect.target.snapshot) return false;
   const before = Number(effect.delta?.hp_before ?? effect.target.snapshot.hp);
   const after = Number(effect.delta?.hp_after ?? effect.target.snapshot.hp);
   return after < before;
@@ -374,14 +328,12 @@ function isDamageHpDrop(effect: DirectedEffectV2): boolean {
 
 function uniqueCombatants(combatants: CombatantView[]): CombatantView[] {
   const seen = new Set<string>();
-  const result: CombatantView[] = [];
-  for (const combatant of combatants) {
+  return combatants.filter(combatant => {
     const id = combatantEntityId(combatant);
-    if (seen.has(id)) continue;
+    if (seen.has(id)) return false;
     seen.add(id);
-    result.push(combatant);
-  }
-  return result;
+    return true;
+  });
 }
 
 function combatantEntityId(combatant: CombatantView): string {

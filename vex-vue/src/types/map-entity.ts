@@ -36,6 +36,8 @@ export interface MapEntity {
   kind: EntityKind;
   /** 锚点格位置 ID（pls） */
   pls: string | number;
+  /** 锚点所在区域（与 pls 共同组成 TileRef） */
+  pgroup: string | number;
   /** 立绘图片 URL */
   img: string;
   /** 水平跨度（占几格宽，默认 1） */

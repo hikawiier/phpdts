@@ -6,7 +6,6 @@ export const API_ACTIONS = {
   PLAYER_INFO: 'player_info',
   OBL_LOG: 'obl_log',
   OBL_ERROR: 'obl_error',
-  BATTLE_LOG: 'battle_log',
   ENEMIES: 'enemies',
   COMBAT_TARGETS: 'combat_targets',
   SKILL_LIST: 'skill_list',

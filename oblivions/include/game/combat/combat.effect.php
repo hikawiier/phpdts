@@ -205,7 +205,53 @@ function combat_effect_move(CombatContext $ctx, array $effect): bool {
 }
 
 /**
- * escape 应用器：写 tag_mutations.escaped + emit
+ * 为 escape 选择确定性的相邻世界退避落点。
+ * 优先最大化与其他活跃战斗成员的最短距离，同分取较小 pls。
+ */
+function combat_effect_select_retreat_target(CombatContext $ctx): int {
+    $actor_pid = (int)($ctx->actor_data['pid'] ?? 0);
+    $pgroup = (int)($ctx->actor_data['pgroup'] ?? 0);
+    $from_pls = (int)($ctx->actor_data['pls'] ?? 0);
+    if ($actor_pid <= 0 || $pgroup <= 0 || $from_pls <= 0) return $from_pls;
+
+    $map = obl_get_map_data($pgroup);
+    $tiles = $map['tiles'][$pgroup] ?? [];
+    $neighbors = isset($tiles[$from_pls]['neighbors']) && is_array($tiles[$from_pls]['neighbors'])
+        ? array_map('intval', $tiles[$from_pls]['neighbors'])
+        : [];
+    sort($neighbors, SORT_NUMERIC);
+
+    $threat_tiles = [];
+    foreach (($ctx->battle_cache['combatants'] ?? []) as $pid => $active) {
+        $pid = (int)$pid;
+        if (!$active || $pid <= 0 || $pid === $actor_pid) continue;
+        $threat = obl_fetch_playerdata_by_pid($pid);
+        if (!$threat || (int)($threat['state'] ?? 0) > 0 || (int)($threat['pgroup'] ?? 0) !== $pgroup) continue;
+        $threat_tiles[] = (int)$threat['pls'];
+    }
+
+    $best_pls = $from_pls;
+    $best_score = -1;
+    foreach ($neighbors as $candidate) {
+        if (!isset($tiles[$candidate]) || empty($tiles[$candidate]['passable'])) continue;
+        if (!empty(obl_get_pids_in_tile($pgroup, $candidate, $actor_pid))) continue;
+
+        $score = empty($threat_tiles) ? 0 : PHP_INT_MAX;
+        foreach ($threat_tiles as $threat_pls) {
+            $distance = obl_get_distance($pgroup, $candidate, $threat_pls);
+            if ($distance < 0) continue 2;
+            $score = min($score, $distance);
+        }
+        if ($score > $best_score) {
+            $best_score = $score;
+            $best_pls = $candidate;
+        }
+    }
+    return $best_pls;
+}
+
+/**
+ * escape 应用器：确定世界退避落点、写 tag_mutations.escaped + emit
  *
  * 副作用：
  *   - $ctx->battle_cache['tag_mutations'][actor_pid]['escaped'] = true
@@ -218,6 +264,21 @@ function combat_effect_move(CombatContext $ctx, array $effect): bool {
 function combat_effect_escape(CombatContext $ctx, array $effect): bool {
     $actor_pid = (int)($ctx->actor_data['pid'] ?? 0);
     $state_before = (int)($ctx->actor_data['state'] ?? 0);
+    $pls_before = (int)($ctx->actor_data['pls'] ?? 0);
+    $retreat_target = combat_effect_select_retreat_target($ctx);
+    if ($retreat_target > 0) {
+        $ctx->actor_data['pls'] = $retreat_target;
+        if ((int)($ctx->actor_data['type'] ?? 0) > 0 && function_exists('obl_update_enemy_discovered')) {
+            foreach (($ctx->battle_cache['combatants'] ?? []) as $pid => $active) {
+                if (!$active || (int)$pid === $actor_pid) continue;
+                $player = obl_fetch_playerdata_by_pid((int)$pid);
+                if ($player && (int)($player['type'] ?? -1) === 0) {
+                    obl_update_enemy_discovered($ctx->actor_data, $player);
+                    break;
+                }
+            }
+        }
+    }
 
     // 写 tag_mutations.escaped（当前战斗内跨 action 可见；不污染持久 player state）
     if (!isset($ctx->battle_cache['tag_mutations'][$actor_pid])) {
@@ -228,6 +289,14 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
         ];
     }
     $ctx->battle_cache['tag_mutations'][$actor_pid]['escaped'] = true;
+    $ctx->battle_cache['tag_mutations'][$actor_pid]['retreat_from_pls'] = $pls_before;
+    $ctx->battle_cache['tag_mutations'][$actor_pid]['retreat_target'] = [
+        'pgroup' => (int)($ctx->actor_data['pgroup'] ?? 0),
+        'pls' => (int)($ctx->actor_data['pls'] ?? $pls_before),
+    ];
+    $ctx->battle_cache['tag_mutations'][$actor_pid]['retreat_visual_policy'] = $retreat_target !== $pls_before
+        ? 'retreat'
+        : 'settle-in-place';
 
     // combatants 标记为 0（不再活跃，main_end 流程集中 cleanup）
     $ctx->battle_cache['combatants'][$actor_pid] = 0;
@@ -237,6 +306,12 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
         'delta' => [
             'state_before' => $state_before,
             'state_after' => (int)($ctx->actor_data['state'] ?? 0),
+            'pls_before' => $pls_before,
+            'pls_after' => (int)($ctx->actor_data['pls'] ?? $pls_before),
+        ],
+        'detail' => [
+            'retreat_target' => $ctx->battle_cache['tag_mutations'][$actor_pid]['retreat_target'],
+            'visual_policy' => $ctx->battle_cache['tag_mutations'][$actor_pid]['retreat_visual_policy'],
         ],
     ]);
 

@@ -216,6 +216,9 @@ export function assertBattleDirectorV2Fixture(): void {
   const emptyGrenade = turn?.actions.find(item => item.actionUid === 'fixture-grenade-empty');
   const deliverySteps = plan.steps.filter((step): step is ActionDeliveryStep =>
     step.kind === 'action_delivery' && step.action.actionUid === 'fixture-grenade-empty');
+  const battleEndSteps = plan.steps
+    .filter(step => step.segment === battleEnd)
+    .map(step => step.kind);
 
   if (script.schema !== 'battleplay.v2') throw new Error('fixture schema mismatch');
   if (!turn || turn.notices.length < 2) throw new Error('fixture turn notices missing');
@@ -235,6 +238,9 @@ export function assertBattleDirectorV2Fixture(): void {
   assertMoveThenDeliveryOrder();
   assertEscapeThenClearOrder();
   if (!battleEnd || battleEnd.notices[0]?.winnerPid !== PLAYER.pid) throw new Error('fixture battle_end missing');
+  if (battleEndSteps.join(',') !== 'battle_end_overlay_enter,presentation_scene_handoff,battle_end_modal_content') {
+    throw new Error('fixture battle_end handoff ordering mismatch');
+  }
 }
 
 function assertEscapeThenClearOrder(): void {

@@ -11,8 +11,6 @@ function obl_state_dispatch($scope, $ctx) {
             return obl_state_handle_runtime_status($ctx);
         case 'player_info':
             return obl_state_handle_player_info($ctx);
-        case 'battle_log':
-            return obl_state_handle_battle_log($ctx);
         case 'game_map':
             return obl_state_handle_game_map($ctx);
         case 'tile_actions':
@@ -252,7 +250,7 @@ function obl_state_handle_player_info($ctx) {
         'gd'    => $pdata['gd'],
         'icon'  => $pdata['icon'],
 
-        // 房间 ID（供前端调用零依赖接口如 mark_battle_log_played.php）
+        // 房间 ID
         'groomid' => $groomid,
 
         // 战斗状态 / Combat state
@@ -300,6 +298,10 @@ function obl_state_handle_player_info($ctx) {
         // 调试用：游戏刻状态 / Debug: tick state
         'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
+        // 冷启动只接受当前权威状态，并把 runtime presentation cursor 快进到此 head。
+        'presentation_head_seq' => isset($gamevars['obl_presentation_head_seq'])
+            ? (int)$gamevars['obl_presentation_head_seq']
+            : 0,
         // 战斗状态机：当前玩家所在战场的状态（单一数据源）
         // IDLE / PLAYER_TURN / PROCESSING
         'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
@@ -318,20 +320,6 @@ function obl_state_handle_player_info($ctx) {
         ),
     ));
 }
-
-function obl_state_handle_battle_log($ctx) {
-    global $groomid;
-
-    $pdata = obl_state_require_player();
-    $pid = (int)$pdata['pid'];
-    $entries = obl_battle_log_load($groomid, $pid);
-
-    return obl_state_response_success(array(
-        'entries' => $entries,
-        'total'   => count($entries),
-    ));
-}
-
 
 function obl_state_handle_game_map($ctx) {
     global $db, $tablepre;
@@ -496,6 +484,7 @@ function obl_state_handle_enemies($ctx) {
         // 查询队列中所有参战者，找到非玩家的 NPC。
         $queue_members = obl_fetch_queue_all_by_qid($pdata['bid']);
         foreach ($queue_members as $qrow) {
+            if ((int)($qrow['active'] ?? 0) !== 1) continue;
             $qpid = (int)$qrow['pid'];
             if ($qpid == $pdata['pid']) continue;  // 跳过玩家自己。
             $battle_enemy = obl_fetch_playerdata_by_pid($qpid);

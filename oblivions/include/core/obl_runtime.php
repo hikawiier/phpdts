@@ -184,6 +184,96 @@ function obl_runtime_transaction_is_active() {
     return !empty($GLOBALS['obl_transaction_active']);
 }
 
+/**
+ * 在领域事务内冻结本请求的演出批次并推进房间级 head sequence。
+ * 返回值只能在事务 COMMIT 成功后附加到 HTTP response。
+ */
+function obl_runtime_prepare_presentation($pdata = null, $request_id = '') {
+    global $obl_battle_log, $gamevars, $groomid;
+
+    if (!isset($gamevars) || !is_array($gamevars)) $gamevars = array();
+    $head_seq = isset($gamevars['obl_presentation_head_seq'])
+        ? max(0, (int)$gamevars['obl_presentation_head_seq'])
+        : 0;
+
+    $entries = isset($obl_battle_log) && $obl_battle_log
+        ? $obl_battle_log->getEntries()
+        : array();
+    $events = array();
+    foreach ($entries as $entry) {
+        if (!is_array($entry) || !empty($entry['debug'])) continue;
+        $event = $entry;
+        $event['event_seq'] = count($events) + 1;
+        // 迁移期兼容现有 Director；log_id 不再具有服务端确认语义。
+        $event['log_id'] = $event['event_seq'];
+        $event['played'] = 1;
+        $events[] = $event;
+    }
+
+    if (empty($events)) {
+        return array('head_seq' => $head_seq, 'batch' => null);
+    }
+
+    $batch_seq = $head_seq + 1;
+    $gamevars['obl_presentation_head_seq'] = $batch_seq;
+    obl_runtime_save_tick_globals();
+
+    $pid = is_array($pdata) && isset($pdata['pid']) ? (int)$pdata['pid'] : 0;
+    $player_bid = is_array($pdata) && isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
+    $qid = $player_bid;
+    foreach (array_reverse($events) as $event) {
+        $event_qid = isset($event['qid']) ? (int)$event['qid'] : 0;
+        if ($event_qid <= 0 && isset($event['payload']['qid'])) {
+            $event_qid = (int)$event['payload']['qid'];
+        }
+        if ($event_qid > 0) {
+            $qid = $event_qid;
+            break;
+        }
+    }
+
+    $battle_state = $player_bid > 0 && function_exists('obl_battle_state_get')
+        ? obl_battle_state_get($player_bid)
+        : (defined('OBL_BS_IDLE') ? OBL_BS_IDLE : 'IDLE');
+    $state_after = array(
+        'pid' => $pid,
+        'action' => is_array($pdata) && isset($pdata['action']) ? (string)$pdata['action'] : '',
+        'bid' => $player_bid,
+        'battle_state' => $battle_state,
+        'pgroup' => is_array($pdata) && isset($pdata['pgroup']) ? (int)$pdata['pgroup'] : 0,
+        'pls' => is_array($pdata) && isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
+        'state' => is_array($pdata) && isset($pdata['state']) ? (int)$pdata['state'] : 0,
+        'hp' => is_array($pdata) && isset($pdata['hp']) ? (int)$pdata['hp'] : 0,
+        'ap' => is_array($pdata) && isset($pdata['ap']) ? (int)$pdata['ap'] : 0,
+    );
+
+    return array(
+        'head_seq' => $batch_seq,
+        'batch' => array(
+            'schema' => 'presentation.v1',
+            'batch_seq' => $batch_seq,
+            'groomid' => isset($groomid) ? (int)$groomid : 0,
+            'recipient_pid' => $pid,
+            'qid' => $qid > 0 ? $qid : null,
+            'request_id' => $request_id !== '' ? (string)$request_id : (string)($GLOBALS['obl_request_uid'] ?? ''),
+            'tick' => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
+            'state_after' => $state_after,
+            'events' => $events,
+        ),
+    );
+}
+
+function obl_runtime_attach_presentation($response, $prepared) {
+    if (!is_array($response)) $response = array();
+    $response['presentation_head_seq'] = is_array($prepared) && isset($prepared['head_seq'])
+        ? (int)$prepared['head_seq']
+        : 0;
+    if (is_array($prepared) && !empty($prepared['batch'])) {
+        $response['presentation'] = $prepared['batch'];
+    }
+    return $response;
+}
+
 function obl_runtime_shutdown_cleanup() {
     $error = error_get_last();
     if (obl_runtime_transaction_is_active()) {
@@ -206,11 +296,11 @@ function obl_runtime_persist_logs($pdata = null, $source = 'api', $writers = arr
     $warnings = array();
     if (isset($obl_log) && $obl_log && $obl_log->hasEntries()) obl_log_persist($obl_log, $groomid, $pid);
     if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) obl_error_log_persist($obl_error_log, $groomid, $pid);
-    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
-        $battle_writer = isset($writers['battle']) && is_callable($writers['battle'])
-            ? $writers['battle']
-            : 'obl_battle_log_persist';
-        $persisted = call_user_func($battle_writer, $obl_battle_log, $groomid, $pid);
+    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()
+        && isset($writers['battle']) && is_callable($writers['battle'])) {
+        // 在线演出已由 response PresentationBatch 投递。这里只保留显式注入的
+        // best-effort archive writer，不再默认维护 mutable played JSON。
+        $persisted = call_user_func($writers['battle'], $obl_battle_log, $groomid, $pid);
         if ($persisted === false) $warnings[] = 'BATTLELOG_PERSIST_FAILED';
     }
     $debug_writer = isset($writers['debug']) && is_callable($writers['debug'])

@@ -642,7 +642,20 @@ function combat_main_end(&$actor_data, &$atk_act, &$log, &$battle_cache): void {
         }
 
         if ($log) {
-            combat_log_v2_combatant_cleared($log, $target_data, $reason);
+            $extra = [];
+            if ($reason === 'escaped' && isset($mutations['retreat_target'])) {
+                $extra = [
+                    'delta' => [
+                        'pls_before' => (int)($mutations['retreat_from_pls'] ?? $target_data['pls'] ?? 0),
+                        'pls_after' => (int)($mutations['retreat_target']['pls'] ?? $target_data['pls'] ?? 0),
+                    ],
+                    'detail' => [
+                        'retreat_target' => $mutations['retreat_target'],
+                        'visual_policy' => (string)($mutations['retreat_visual_policy'] ?? 'settle-in-place'),
+                    ],
+                ];
+            }
+            combat_log_v2_combatant_cleared($log, $target_data, $reason, null, null, $extra);
         }
 
         // 调新系统 combat_state_clear（签名：$pid, $reason, &$actor_data, &$battle_cache, $log）

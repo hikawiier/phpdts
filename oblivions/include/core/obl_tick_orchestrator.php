@@ -223,7 +223,7 @@ function obl_tick_orchestrator_heartbeat($ctx = null) {
         if (!isset($result['changed_scopes']) || !is_array($result['changed_scopes'])) {
             $result['changed_scopes'] = array();
         }
-        foreach (array('player_info', 'battle_log', 'combat_targets') as $scope) {
+        foreach (array('player_info', 'combat_targets') as $scope) {
             if (!in_array($scope, $result['changed_scopes'], true)) {
                 $result['changed_scopes'][] = $scope;
             }

@@ -19,6 +19,7 @@ import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP } from '@/composables
 import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapReachability';
 import type { TileInfo } from '@/types/api';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
 // ─── 回调注入（由 useMapBusiness 调用） ───
 let _onKeyMove: ((pls: string | number) => Promise<void> | void) | null = null;
@@ -306,10 +307,12 @@ export function initMapInteraction(
     if (uiStore.mapInputMode === 'aim') return;
     // 战斗事务期间地图命令输入由战斗 UI 独占。
     const battleStore = useBattleStore();
+    const presentationScene = usePresentationSceneStore();
     if (isBattleMapInputLocked({
       currentMode: battleStore.currentMode,
       isPlayingBattleLog: battleStore.isPlayingBattleLog,
       isProcessingBattle: battleStore.isProcessingBattle,
+      presentationPhase: presentationScene.phase,
     })) return;
 
     let dx = 0, dy = 0;

@@ -20,39 +20,81 @@
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import { computeReachableMap } from '@/composables/useMapReachability';
 import { perf } from '@/utils/perf';
 import { useCharacterStore } from '@/stores/character';
 import type { GameMap, Enemy } from '@/types/api';
+import type { TileRef } from '@/types/scene';
+
+export interface MapProjection {
+  readonly revision: number;
+  readonly currentTile: TileRef | null;
+  readonly links: GameMap['links'] | null;
+  readonly enemies: Enemy[];
+}
+
+function normalizeLocation(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
 
 export const useMapStore = defineStore('map', () => {
-  // ── 状态（与现有 mapData 字段一致） ──
-  const curLoc = ref<string | number | null>(null);
-  const curRegion = ref<string | number | null>(null);
-  const links = ref<GameMap['links'] | null>(null);
-  const enemies = ref<Enemy[]>([]);
+  // A single ref is the observable map boundary. Compatibility fields below
+  // are derived from it, so consumers cannot observe a half-applied refresh.
+  const projection = shallowRef<MapProjection>({
+    revision: 0,
+    currentTile: null,
+    links: null,
+    enemies: [],
+  });
+  const projectionRevision = computed(() => projection.value.revision);
+  const currentTile = computed(() => projection.value.currentTile);
+  const curLoc = computed(() => projection.value.currentTile?.pls ?? null);
+  const curRegion = computed(() => projection.value.currentTile?.pgroup ?? null);
+  const links = computed(() => projection.value.links);
+  const enemies = computed(() => projection.value.enemies);
 
   // ── 加载状态 ──
   const loading = ref<boolean>(false);
   const error = ref<string>('');
+  let loadGeneration = 0;
+
+  function commitProjection(next: Omit<MapProjection, 'revision'>): MapProjection {
+    const committed: MapProjection = {
+      revision: projection.value.revision + 1,
+      currentTile: next.currentTile,
+      links: next.links,
+      enemies: next.enemies,
+    };
+    projection.value = committed;
+    useCharacterStore().replaceMapEnemies(committed.enemies);
+    return committed;
+  }
 
   /**
    * 统一更新 mapData 属性（P10：集中修改权）
    *
-   * enemies 变更时同步写入 CharacterHub（mergeEnemies），这样 mapStore.loadMap
-   * 和 battleStore.refreshMapEnemies（内部调 updateMapData）两个写入点都会自动触发 merge。
+   * enemies 变更时同步写入 CharacterHub，并原子替换 map enemy roster。
+   * mapStore.loadMap 和 battleStore.refreshMapEnemies 共用这一提交边界。
    */
   function updateMapData(patch: Partial<MapPatch>): void {
-    if (patch.curLoc !== undefined) curLoc.value = patch.curLoc;
-    if (patch.curRegion !== undefined) curRegion.value = patch.curRegion;
-    if (patch.links !== undefined) links.value = patch.links;
-    if (patch.enemies !== undefined) {
-      enemies.value = patch.enemies;
-      useCharacterStore().mergeEnemies(patch.enemies);
-    }
+    const previous = projection.value;
+    const pgroup = patch.curRegion !== undefined
+      ? normalizeLocation(patch.curRegion)
+      : previous.currentTile?.pgroup ?? null;
+    const pls = patch.curLoc !== undefined
+      ? normalizeLocation(patch.curLoc)
+      : previous.currentTile?.pls ?? null;
+
+    commitProjection({
+      currentTile: pgroup !== null && pls !== null ? { pgroup, pls } : null,
+      links: patch.links !== undefined ? patch.links : previous.links,
+      enemies: patch.enemies !== undefined ? patch.enemies : previous.enemies,
+    });
   }
 
   /**
@@ -67,6 +109,7 @@ export const useMapStore = defineStore('map', () => {
    *       由 MapGrid.vue watch mapStore 数据变化自动触发。
    */
   async function loadMap(): Promise<void> {
+    const generation = ++loadGeneration;
     loading.value = true;
     error.value = '';
 
@@ -80,7 +123,14 @@ export const useMapStore = defineStore('map', () => {
     const enemyPromise = dataManager.fetch('enemies', true);
 
     try {
-      const result = await gameMapPromise;
+      const [gameMapOutcome, enemiesOutcome] = await Promise.allSettled([
+        gameMapPromise,
+        enemyPromise,
+      ]);
+      if (generation !== loadGeneration) return;
+
+      if (gameMapOutcome.status === 'rejected') throw gameMapOutcome.reason;
+      const result = gameMapOutcome.value;
       perf.mark('← game_map 返回', 'store');
       const elapsed = Date.now() - t0;
 
@@ -96,25 +146,22 @@ export const useMapStore = defineStore('map', () => {
       }
 
       const d = result.data as GameMap;
-      updateMapData({
-        curLoc: d.currentLocation !== undefined ? d.currentLocation : null,
-        curRegion: d.currentRegion !== undefined ? d.currentRegion : null,
-        links: d.links || null,
-      });
-
-      // 等待 enemy 请求完成（与 game_map 处理并行，此时通常已完成）
-      try {
-        const enemiesResult = await enemyPromise;
+      let nextEnemies: Enemy[] = projection.value.enemies;
+      if (enemiesOutcome.status === 'fulfilled') {
+        const enemiesResult = enemiesOutcome.value;
         perf.mark('← enemies 返回', 'store');
-        updateMapData({
-          enemies:
-            enemiesResult.status === 'success' && enemiesResult.data
-              ? ((enemiesResult.data as { enemies?: Enemy[] }).enemies || [])
-              : [],
-        });
-      } catch {
-        updateMapData({ enemies: [] });
+        if (enemiesResult.status === 'success' && enemiesResult.data) {
+          nextEnemies = ((enemiesResult.data as { enemies?: Enemy[] }).enemies || []);
+        }
       }
+
+      const pgroup = normalizeLocation(d.currentRegion);
+      const pls = normalizeLocation(d.currentLocation);
+      commitProjection({
+        currentTile: pgroup !== null && pls !== null ? { pgroup, pls } : null,
+        links: d.links || null,
+        enemies: nextEnemies,
+      });
 
       // 刷新可达性缓存（BFS 从当前格出发，move_range 内）
       // 在广播 map:loaded 之前完成，确保 cells computed 读取的是最新可达性
@@ -131,26 +178,31 @@ export const useMapStore = defineStore('map', () => {
       });
       perf.mark('← broadcast map:loaded 完成', 'broadcast');
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
-      debugBus.emit('error', 'loadMap:error', { error: error.value });
+      if (generation === loadGeneration) {
+        error.value = e instanceof Error ? e.message : String(e);
+        debugBus.emit('error', 'loadMap:error', { error: error.value });
+      }
     } finally {
-      loading.value = false;
-      perf.mark('loadMap 完成', 'store');
+      if (generation === loadGeneration) {
+        loading.value = false;
+        perf.mark('loadMap 完成', 'store');
+      }
     }
   }
 
   /** 重置为初始状态（退出游戏/切换角色时） */
   function reset(): void {
-    curLoc.value = null;
-    curRegion.value = null;
-    links.value = null;
-    enemies.value = [];
+    loadGeneration += 1;
+    commitProjection({ currentTile: null, links: null, enemies: [] });
     loading.value = false;
     error.value = '';
   }
 
   return {
     // 状态
+    projection,
+    projectionRevision,
+    currentTile,
     curLoc,
     curRegion,
     links,
@@ -158,6 +210,7 @@ export const useMapStore = defineStore('map', () => {
     loading,
     error,
     // actions
+    commitProjection,
     updateMapData,
     loadMap,
     reset,

@@ -11,9 +11,9 @@
 //
 // 锁结构（5 层，详见 docs/战斗锁定白名单-设计案.md §2.7.2）：
 //   1. HTTP 请求锁 + 冷却（_locked / _cooldown）
-//   2. 战斗演出锁（isPlayingBattleLog）
-//   3. itm0 锁（inventoryStore.itm0 !== null，按命令 itm0Allowed 拦截）
-//   4. 模式锁（battleStore.currentMode，按命令 mode 拦截）
+//   2. itm0 锁（inventoryStore.itm0 !== null，按命令 itm0Allowed 拦截）
+//   3. 模式锁（battleStore.currentMode，按命令 mode 拦截）
+//   4. battle 命令演出水位锁（PresentationScene 必须 caught up）
 //   5. PROCESSING 锁（仅拦截 advancesTick 命令）
 //
 // canExecute(command) 与 execute() 共用 _checkLocks()，保证 UI 查询与
@@ -27,6 +27,8 @@ import { usePlayerStore } from '@/stores/player';
 import { useBattleStore } from '@/stores/battle';
 import { useInventoryStore } from '@/stores/inventory';
 import { COMMAND_REGISTRY } from '@/stores/command-registry';
+import { ingestPresentationResponse } from '@/stores/presentation-inbox';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
 class CommandQueue {
   private _locked = false;
@@ -36,7 +38,7 @@ class CommandQueue {
    * 统一的前置检查逻辑（execute 与 canExecute 共用）
    * 返回 null 表示通过所有锁；否则返回锁定原因。
    *
-   * 五层锁顺序：HTTP/冷却 → 演出 → itm0 → 模式 → PROCESSING
+   * 锁顺序：HTTP/冷却 → itm0 → 模式/演出水位 → PROCESSING
    */
   private _lockReason(command: string): string | null {
     // ── 第 1 层：HTTP 请求锁 + 冷却 ──
@@ -46,9 +48,6 @@ class CommandQueue {
     const battleStore = useBattleStore();
     const playerStore = usePlayerStore();
     const inventoryStore = useInventoryStore();
-
-    // ── 第 2 层：战斗演出锁 ──
-    if (battleStore.isPlayingBattleLog) return 'BATTLE_LOG_PLAYING';
 
     const spec = COMMAND_REGISTRY[command];
     if (!spec) return 'UNKNOWN_COMMAND';
@@ -60,6 +59,9 @@ class CommandQueue {
     const inBattle = battleStore.currentMode === 'battle';
     if (inBattle && spec.mode !== 'battle') return 'MODE_BATTLE';
     if (!inBattle && spec.mode === 'battle') return 'MODE_EXPLORE';
+    if (spec.mode === 'battle' && usePresentationSceneStore().phase !== 'idle') {
+      return 'PRESENTATION_NOT_CAUGHT_UP';
+    }
 
     // ── 第 5 层：PROCESSING 锁（仅拦截推进 tick 命令） ──
     if (spec.advancesTick && playerStore.oblBattleState === 'PROCESSING') return 'BATTLE_PROCESSING';
@@ -107,6 +109,10 @@ class CommandQueue {
     this._locked = true;
     try {
       const result = await sendOblCommand(envelope);
+      ingestPresentationResponse(result);
+      const commandChangedScopes = getHeartbeatChangedScopes(result);
+      for (const scope of commandChangedScopes) dataManager.invalidate(scope);
+      dataManager.broadcast('game:command-committed', { changedScopes: commandChangedScopes });
       // 后端返回 timer 时设置冷却（单位：秒）
       if (result.timer) {
         this._cooldown = Date.now() + result.timer * 1000;
@@ -135,6 +141,7 @@ class CommandQueue {
   private async _checkBattleState(): Promise<void> {
     try {
       const heartbeat = await oblHeartbeat();
+      ingestPresentationResponse(heartbeat);
       const changedScopes = getHeartbeatChangedScopes(heartbeat);
 
       if (!isHeartbeatSoftFailed(heartbeat)) {
@@ -153,15 +160,15 @@ class CommandQueue {
   /**
    * 全局锁：对所有命令都生效的锁
    *
-   * 仅包含 HTTP 锁 + 演出锁——这两种锁会阻止所有命令执行。
-   * PROCESSING / itm0 / 模式锁是"针对特定命令的锁"，不纳入 isLocked，
+   * 仅包含 HTTP 请求锁。演出水位、PROCESSING、itm0、模式锁都只针对特定命令，
+   * 不纳入 isLocked，
    * 应通过 canExecute(command) 查询具体命令是否可执行。
    *
    * 重构后 isLocked 主要用于"全局 UI 反馈"（如全屏遮罩、状态栏指示器），
    * 按钮 :disabled 应改用 canExecute(command) 精细化控制。
    */
   get isLocked(): boolean {
-    return this._locked || useBattleStore().isPlayingBattleLog;
+    return this._locked;
   }
 
   /** 后端是否处理中（PROCESSING 状态，由状态机派生，供 UI 绑定） */

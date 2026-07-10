@@ -125,7 +125,21 @@ function combat_target_unit_clear_current_if_needed(CombatContext $ctx): void {
     $reason = !empty($mutations['escaped']) ? 'escaped'
         : (!empty($mutations['dead']) ? 'dead' : 'unknown');
     if (!$ctx->dry_run) {
-        combat_log_v2_combatant_cleared($ctx->log, $data, $reason, $ctx->action_uid);
+        $extra = [];
+        if ($reason === 'escaped' && isset($mutations['retreat_target'])) {
+            $extra = [
+                'delta' => [
+                    'pls_before' => (int)($mutations['retreat_from_pls'] ?? $data['pls'] ?? 0),
+                    'pls_after' => (int)($mutations['retreat_target']['pls'] ?? $data['pls'] ?? 0),
+                ],
+                'detail' => [
+                    'retreat_target' => $mutations['retreat_target'],
+                    'visual_policy' => (string)($mutations['retreat_visual_policy'] ?? 'settle-in-place'),
+                ],
+            ];
+        }
+        $effect_uid = !empty($ctx->v2_effect_uids) ? end($ctx->v2_effect_uids) : null;
+        combat_log_v2_combatant_cleared($ctx->log, $data, $reason, $ctx->action_uid, $effect_uid, $extra);
         combat_state_clear($pid, $reason, $data, $ctx->battle_cache, $ctx->log);
     } else {
         if ($reason === 'dead') $data['state'] = 1;

@@ -4,13 +4,15 @@
 // 以 pid 为 key 的统一角色数据中心，消除敌人数据在
 // mapStore.enemies / combatContext.combatants / battleStore.enemyLocation 之间的分裂。
 //
-// 写入入口（merge* 方法）：
-//   - mergeEnemies(enemies)         ← enemies scope（探索态敌人列表）
+// 写入入口：
+//   - replaceMapEnemies(enemies)    ← enemies 完整地图 roster
+//   - mergeEnemyPatches(enemies)    ← combat_targets 等资料 patch
 //   - mergePlayer(playerInfo)       ← player_info scope（玩家自身）
 //   - mergeCombatContext(context)   ← player_info.combat_context（战斗派生字段）
 //
 // 读取出口（computed / getter）：
-//   - aliveList   ← 所有存活角色（state === 0），供 entities 渲染
+//   - mapVisibleList ← 玩家 + enemies roster 中的存活 NPC，供 entities 渲染
+//   - aliveList   ← 资料缓存中的所有存活角色
 //   - enemyList   ← 所有存活敌人（type > 0）
 //   - player      ← 玩家自身（type === 0）
 //   - getCharacter(pid) ← 按 pid 查询
@@ -19,7 +21,7 @@
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
-import { reactive, computed } from 'vue';
+import { reactive, computed, shallowRef } from 'vue';
 import { useMapStore } from '@/stores/map';
 import type { Character, CombatState } from '@/types/character';
 import type { CombatViewModel, Enemy, PlayerInfo } from '@/types/api';
@@ -78,7 +80,7 @@ function normalizeEnemy(enemy: Enemy): Partial<Character> {
     arfid: str(enemy.arfid),
     artid: str(enemy.artid),
     itemIds: Array.isArray(enemy.itemIds) ? enemy.itemIds.map(str) : [],
-    discovered: Boolean(enemy.discovered),
+    discovered: num(enemy.discovered) === 1,
   };
 }
 
@@ -126,40 +128,34 @@ function normalizePlayer(playerInfo: PlayerInfo): Partial<Character> {
 export const useCharacterStore = defineStore('character', () => {
   /** pid → Character 的响应式 Map（唯一真值源） */
   const characters = reactive<Map<number, Character>>(new Map());
+  /** enemies scope 的完整地图投影 roster；候选数据不得修改它。 */
+  const mapEnemyPids = shallowRef<ReadonlySet<number>>(new Set());
 
   // ══════════════════════════════════════════════════
   // 写入方法
   // ══════════════════════════════════════════════════
 
-  /**
-   * 合并 enemies scope 数据
-   *
-   * 语义：区域清理 + 合并写入
-   * 1. 清理：不在新列表中且 pgroup !== 当前区域的旧角色（跨区域移动后旧区域敌人残留清理）
-   * 2. 合并：已存在的角色更新字段，新角色插入
-   *
-   * 区域清理用 mapStore.curRegion（来自 game_map scope，移动后最先到达）。
-   * 玩家角色安全性：enemies 列表不含玩家自身，newPids 不含玩家 pid；
-   * 但玩家 pgroup === currentRegion，清理条件 c.pgroup !== currentRegion 对玩家为 false，不会被误删。
-   */
-  function mergeEnemies(enemies: Enemy[]): void {
-    const mapStore = useMapStore();
-    const currentRegion = mapStore.curRegion;
-    const newPids = new Set(enemies.map(e => num(e.pid)));
-
-    // 区域清理
-    for (const [pid, c] of characters) {
-      if (!newPids.has(pid) && c.pgroup !== num(currentRegion)) {
-        characters.delete(pid);
-      }
-    }
-
-    // 合并新数据
+  /** 只合并角色资料；不得改变 MapGrid 的权威可见 roster。 */
+  function mergeEnemyPatches(enemies: Enemy[]): void {
     for (const enemy of enemies) {
       const pid = num(enemy.pid);
       const existing = characters.get(pid);
       const patch = normalizeEnemy(enemy);
       characters.set(pid, { ...(existing as Character), ...(patch as Character) } as Character);
+    }
+  }
+
+  /** enemies scope 是完整 roster：合并资料后原子替换地图 NPC 成员集合。 */
+  function replaceMapEnemies(enemies: Enemy[]): void {
+    mergeEnemyPatches(enemies);
+    mapEnemyPids.value = new Set(enemies.map(enemy => num(enemy.pid)).filter(pid => pid > 0));
+
+    const currentRegion = num(useMapStore().curRegion);
+    for (const [pid, character] of characters) {
+      if (character.type === 0 || mapEnemyPids.value.has(pid)) continue;
+      if (currentRegion > 0 && character.pgroup !== currentRegion && !character.combat?.inCombat) {
+        characters.delete(pid);
+      }
     }
   }
 
@@ -246,9 +242,23 @@ export const useCharacterStore = defineStore('character', () => {
     [...characters.values()].filter(c => Number(c.state) === 0),
   );
 
+  /** MapGrid 的权威 roster：玩家 + enemies 完整快照中的存活 NPC。 */
+  const mapVisibleList = computed<Character[]>(() => {
+    const visible: Character[] = [];
+    for (const character of characters.values()) {
+      if (Number(character.state) !== 0) continue;
+      if (character.type === 0 || mapEnemyPids.value.has(character.pid)) visible.push(character);
+    }
+    return visible;
+  });
+
   /** 所有存活敌人（type > 0） */
   const enemyList = computed<Character[]>(() =>
     aliveList.value.filter(c => c.type > 0),
+  );
+
+  const mapEnemyList = computed<Character[]>(() =>
+    mapVisibleList.value.filter(c => c.type > 0),
   );
 
   /** 玩家自身（type === 0） */
@@ -258,12 +268,16 @@ export const useCharacterStore = defineStore('character', () => {
 
   return {
     characters,
-    mergeEnemies,
+    mapEnemyPids,
+    mergeEnemyPatches,
+    replaceMapEnemies,
     mergePlayer,
     mergeCombatContext,
     getCharacter,
     aliveList,
+    mapVisibleList,
     enemyList,
+    mapEnemyList,
     player,
   };
 });

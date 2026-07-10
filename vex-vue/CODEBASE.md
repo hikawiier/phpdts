@@ -16,7 +16,7 @@
 | 玩家写操作 | `commandQueue.execute(envelope)` → `src/api/obl-command.ts: sendOblCommand()` | `POST /phpdts/oblivions/api/command.php` |
 | 心跳（tick 推进） | `battleStore._daemonBeat` → `src/api/client.ts: oblHeartbeat()` | `POST /phpdts/oblivions/api/heartbeat.php` |
 | 状态读取 | `dataManager.fetch(action)` → `src/api/client.ts: gameApi()` | `GET /phpdts/oblivions/api/state.php?scope=xxx` |
-| 战斗日志标记 | `markBattleLogPlayed()` | `POST /phpdts/oblivions/mark_battle_log_played.php`（零依赖） |
+| 实时战斗演出 | `PresentationInbox` 消费 command/heartbeat response | 顶层 `presentation.v1` + `presentation_head_seq` |
 
 > 旧扁平 POST 命令（`obl_explore`/`obl_search`/`move`/...）与根目录 `command.php` 已 deprecated，前端不再调用。`submitCommand()` / `aiDumpSave()` 已从 `client.ts` 移除。
 
@@ -105,7 +105,7 @@ vex-vue/
     ├── main.ts             # 入口：createApp + createPinia + 挂载 #app
     ├── App.vue             # 根布局：StatusBar + LeftPanel + RightPanel + 浮动组件
     ├── api/
-    │   ├── client.ts           # API 客户端：gameApi（State API）/ oblHeartbeat / markBattleLogPlayed
+    │   ├── client.ts           # API 客户端：gameApi（State API）/ oblHeartbeat + presentation response 类型
     │   ├── endpoints.ts        # API action 常量（只读端点白名单）
     │   └── obl-command.ts      # Command API 客户端：sendOblCommand(envelope) → POST oblivions/api/command.php
     ├── assets/
@@ -144,7 +144,10 @@ vex-vue/
     │       ├── MapContainer.vue        # 地图容器（缩放按钮 + 立绘调试按钮 + 网格）
     │       └── MapGrid.vue             # 地图网格（v-for 渲染 cells + 实体层 entities + 迷雾）
     ├── composables/
-    │   ├── useMapEntities.ts      # 多实体动画层（entity DOM 引用 + 位置同步 + z-index 更新 + GSAP 动画 + 意图派发）
+    │   ├── mapSceneGeometry.ts    # MapGrid 的 ScenePoint/ViewportPoint 坐标适配器
+    │   ├── sceneRegistry.ts       # 当前场景注册、generation 与失效边界
+    │   ├── useActorRuntime.ts     # actor 四通道运行时、AnimationHandle 与 PresentationLease
+    │   ├── useMapEntities.ts      # 实体投影、世界移动、Runtime 注册与玩家意图接入
     │   ├── useDebugBus.ts          # DebugBus（?debug=ai 时收集事件流）
     │   ├── useLogScroll.ts         # 日志滚动逻辑（自动滚动 + 未读计数）
     │   ├── useMapBusiness.ts       # 地图业务逻辑（clickMove/handleEnemyClick）
@@ -168,8 +171,11 @@ vex-vue/
     │   ├── battle.ts               # 战斗状态机（normal/battle + battlelog.v2 播放 + NPC 刷新）
     │   ├── battle-director-v2.ts   # battlelog.v2 导演+计划模块（directV2 → BattlePlayScriptV2，planPlaybackV2 → BattlePlaybackPlan）
     │   ├── battle-director-v2.fixture.ts # DirectorV2 回归样例
-    │   ├── battle-playback-runner.ts # 播放计划执行器（runBattlePlaybackPlan 按 PlaybackStep 顺序执行 + 超时兜底）
+    │   ├── battle-playback-runner.ts # 播放计划执行器（顺序、取消式超时、Scene 失效守卫）
     │   ├── battle-actor-executor.ts  # 单 actor 动画执行器（prepareBattlefield / playActionAnimation / playCombatantCleared）
+    │   ├── battle-overlay-executor.ts # projectile/explosion viewport overlay
+    │   ├── battle-presentation-session.ts # 跨 PROCESSING 批次持有 battle lease 的演出会话
+    │   ├── actor-runtime.fixture.ts # ActorRuntime/SceneGeometry/DataManager 回归夹具
     │   ├── command-registry.ts     # 命令三维度分类（mode/advancesTick/itm0Allowed）单一真值源
     │   ├── command-queue.ts        # 命令队列（5 层锁 + canExecute + 冷却）
     │   ├── craft.ts                # 合成系统（配方发现 + 素材校验 + craft.execute 提交）
@@ -201,19 +207,19 @@ vex-vue/
 
 ### 3.1 五层并发锁
 
-前端通过 `commandQueue._checkLocks(command)` 在 `execute()` 和 `canExecute(command)` 内部依次检查 5 层锁。前两层为全局锁（写入 `isLocked`），后三层为按命令维度（依赖 `COMMAND_REGISTRY` 三维度分类）的细粒度锁：
+前端通过 `commandQueue._checkLocks(command)` 在 `execute()` 和 `canExecute(command)` 内部依次检查 5 层约束。只有正在进行的 HTTP 请求写入全局 `isLocked`；其余均按命令和场景细粒度判断：
 
 | 层 | 实现位置 | 检查内容 | 覆盖范围 |
 |----|---------|---------|---------|
-| **1. HTTP/冷却** | `commandQueue._locked` / `_cooldown` | HTTP 请求锁 + 后端返回 timer 设置的冷却 | 防止快速连点重复 POST；冷却未过期拒绝 |
-| **2. 战斗演出** | `battleStore.isPlayingBattleLog` | battlelog 播放期间 | 防止 fetchAndPlayBattleLog 重入；同时阻止所有命令（全局锁） |
-| **3. itm0** | `inventoryStore.itm0 !== null` | itm0 缓存槽非空时仅放行 `spec.itm0Allowed=true` 命令（整理/丢弃/使用手持） | 强制玩家处理遗留道具 |
-| **4. 模式** | `battleStore.currentMode` | 探索模式拒绝 `mode='battle'` 命令；战斗模式拒绝 `mode='explore'` 命令 | UI 状态与命令类型匹配 |
-| **5. PROCESSING** | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令（`battle.submit_turn` 等推进 tick） | 防止玩家在 NPC 行动期间重复提交推进 tick 命令 |
+| **1. HTTP/冷却** | `commandQueue._locked` / `_cooldown` | HTTP 请求互斥 + 后端 timer 冷却 | 防止快速连点重复 POST；`isLocked` 只反映 `_locked` |
+| **2. itm0** | `inventoryStore.itm0 !== null` | itm0 缓存槽非空时仅放行 `spec.itm0Allowed=true` 命令 | 强制玩家处理遗留道具 |
+| **3. 模式** | `battleStore.currentMode` | 探索模式拒绝 battle 命令；战斗模式拒绝 explore 命令 | UI 场景与命令类型匹配 |
+| **4. 演出水位** | `presentationScene.phase` | battle 命令仅在 `idle` 时可提交 | 当前回合演出/rebase 未追平时防止重复战斗提交，不冻结无关 UI |
+| **5. PROCESSING** | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令 | 防止玩家在 NPC 行动期间重复推进 tick |
 
 **关键设计**：
 
-- `isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈（状态栏指示器）；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制
+- `isLocked` getter 只包含正在进行的 HTTP 请求锁；按钮 `:disabled` 应使用 `canExecute(command)` 查询完整约束
 - `canExecute(command)` 与 `execute()` 共用 `_checkLocks()`，保证 UI 查询与实际执行判断完全一致——避免重蹈 `isLocked` 与 `execute` 行为分叉的隐性 bug
 - 命令三维度分类（`mode` / `advancesTick` / `itm0Allowed`）单一真值源在 `COMMAND_REGISTRY`，新增命令时需同步登记后端 Command Bus contract（`obl_command_contract.php` 的 `allowed_actions` / `advances_tick` / itm0 门控）
 - `battle.start` 前端归 `mode='battle'`（UI 状态：startBattle 立即切换 currentMode），后端归探索内（`action='normal'` 时允许）——两端分类不同但语义自洽
@@ -270,7 +276,7 @@ battle（战斗）
 |------|---------|---------|
 | **玩家主动攻击** | 前端先切换 currentMode='battle' | `useMapBusiness.onEnemyClick` → `battleStore.startBattle()` 立即设 currentMode；后端 action 在 `battle.start` 命令执行后才切换 |
 | **被动遭遇** | 后端先切换 action='battle'，前端跟随 | 玩家 `map.move` / `map.explore` / `poi.search` 触发后端遭遇战 → `_checkBattleState` 拉取 `player_info` 看到 action='battle' → `refreshBattle` → `enterBattleMode` |
-| **退出战斗** | 后端先切换 action='normal'，前端延迟到 battlelog 播完 | `refreshBattle` 看到 action !== 'battle' → `fetchAndPlayBattleLog` 播完积压战斗日志 → `exitBattleMode` |
+| **退出战斗** | 后端先切换 action='normal'，前端在当前 runtime 演出完成/快进后退出 | `refreshBattle` 持续 drain `PresentationInbox` → battle_end covered 时 rebase 权威场景并并行播放 handoff/正文 → 稳定边界 `exitBattleMode` |
 
 #### 3.3.2 窗口期合理性边界
 
@@ -398,7 +404,7 @@ obl_runtime_boot('heartbeat') + obl_tick_orchestrator_heartbeat()
 │  API Client（api/client.ts）                                 │
 │  ├─ gameApi(action)：GET oblivions/api/state.php?scope=xxx               │
 │  ├─ oblHeartbeat()：POST oblivions/api/heartbeat.php                     │
-│  ├─ markBattleLogPlayed：POST oblivions/mark_battle_log_played.php │
+│  ├─ command/heartbeat response：presentation.v1 / head_seq          │
 │  └─ （写操作已迁出至 api/obl-command.ts: sendOblCommand） │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -470,19 +476,19 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 
 ## 五、API 对接约定
 
-### 5.1 重要：数值字段返回 string
+### 5.1 重要：响应中的数值字段是混合类型
 
-> **这是前后端对接最关键的约定。**
+> **这是前后端对接最关键的约定。** 数据库直接读出的旧字段通常仍是 string；后端显式 `(int)` 归一化的新协议字段是 number。`json_encode()` 不会自动把二者统一。
 
-后端 PHP 通过 `compatible_json_encode()` 返回的所有数值字段实际为 **string 类型**（PHP json_encode 对数据库取出的值的行为）。例如：
+例如，同一个 `player_info` 响应可能同时包含：
 
 ```json
-{ "pid": "20", "hp": "398", "ap": "5", "log_id": "42", "played": "0" }
+{ "pid": "20", "hp": "398", "ap": "5", "presentation_head_seq": 42 }
 ```
 
 **前端处理规范**：
-- TypeScript 类型定义中这些字段声明为 `string`（见 `types/api.ts`）
-- 使用时通过 `Number()` / `parseInt(String(x))` 转换
+- 按实际 API 契约声明类型：旧数据库投影字段保留 `string`，`presentation.v1`、tick/head 等归一化字段使用 `number`
+- 业务计算边界仍通过 `Number()` / `parseInt(String(x))` 防御性转换
 - store 的 computed 属性集中处理转换（如 `playerStore.hp = computed(() => Number(playerInfo.value?.hp ?? 0))`）
 
 **例外**：`obl_tick` / `obl_pretick` 是数字类型（后端显式 `intval`），`LogEntry.ts` 也是数字类型。
@@ -498,7 +504,6 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 | `player_inventory` | 背包槽位 + 装备 | inventoryStore | 白名单 2s |
 | `player_info` | 玩家属性 + AP + 装备 + oblpara + groomid | playerStore, battleStore | 不缓存（实时拉取） |
 | `obl_log` | 结构化日志条目数组 | logStore | 不缓存 |
-| `battle_log` | 战斗日志条目数组（played=0） | battleStore | 不缓存 |
 | `enemies` | 当前区域敌人列表 | mapStore, battleStore | 不缓存 |
 | `combat_targets` | qid + suggestedTargetPid + display/selectable candidates + character projection | battleStore, AimMode, PreloadArea | 不缓存 |
 | `skill_list` | 技能列表 + player_ap | PreloadArea | 不缓存 |
@@ -544,35 +549,27 @@ Oblivions 模式写入请求直接提交到 `oblivions/api/command.php`，后端
 
 `sendOblCommand` 检测 `status !== 'success'` 时返回 `success: false`，前端视为失败（通常由 `commandQueue._locked` 在前端就拦截）。
 
-### 5.4 零依赖接口：`mark_battle_log_played.php`
+### 5.4 实时演出响应：`presentation.v1`
 
-**独立文件**（不走 State API），位于 `oblivions/mark_battle_log_played.php`。
+`sendOblCommand()` 与 `oblHeartbeat()` 都保留响应顶层的：
 
-- **请求**: `POST /phpdts/oblivions/mark_battle_log_played.php`
-- **Content-Type**: `application/x-www-form-urlencoded`
-- **参数**: `groomid` (int) + `pid` (int) + `log_ids` (逗号分隔字符串)
-- **响应**: `{ "success": true, "marked": N }`
+- `presentation_head_seq`：服务端已提交批次水位。
+- `presentation`：本请求产生的不可变 render batch；没有事件时缺省。
 
-**零依赖设计**：不依赖任何游戏框架（无 auth/DB），只文件读写。安全性靠 `(int)` 强制转换防路径遍历。设计理由：mark 请求即使被伪造也无严重后果。
-
-**前端调用**（`api/client.ts: markBattleLogPlayed`）：
-```typescript
-export async function markBattleLogPlayed(
-  groomid: number, pid: number, logIds: number[]
-): Promise<{ success: boolean; marked?: number }>
-```
+`commandQueue` 和 `battleStore` 分别把 command/heartbeat response 送入同一个 `PresentationInbox`。Inbox 按 `batch_seq` 去重和连续消费；观察到 head 缺口时直接触发权威状态重载与 PresentationScene rebase，不请求历史动画。
 
 ### 5.5 `player_info` 字段说明
 
 Oblivions 模式独立数据层 `bra_oblplayers`，字段详见 [oblivions/CODEBASE.md 4.0](../oblivions/CODEBASE.md)。
 
 前端关键字段：
-- **`groomid`**：房间 ID（供调用零依赖接口 `mark_battle_log_played.php`）
+- **`groomid`**：房间 ID
 - **`action`**：`''`=正常 / `'battle'`=战斗中
 - **`battle_queue`**：先攻队列（`{qid, queue: [{pid, type, myorder, done}]}`），用于判断玩家是否当前顺位
 - **`ap`/`max_ap`**：AP 值（Oblivions 专属）
 - **`oblpara`**：杂项数据（含 `killnum`/`battle`/`escape_skip_tick` 等）
 - **`obl_tick`/`obl_pretick`**：当前/上次 tick（数字类型，非字符串）
+- **`presentation_head_seq`**：当前服务端演出水位；F5/冷启动时 runtime cursor 直接初始化到该值
 - **`equipment`**：7 槽装备（wep/wep2/arb/arh/ara/arf/art）
 
 > 传统模式字段（race/club/nick/money/rage 等）在 Oblivions 模式下不再返回。`killnum` 改为从 `oblpara.killnum` 读取。
@@ -595,7 +592,6 @@ Oblivions 模式独立数据层 `bra_oblplayers`，字段详见 [oblivions/CODEB
 | `player_info` | 不缓存 | — |
 | `enemies` | 不缓存 | — |
 | `obl_log` | 不缓存 | — |
-| `battle_log` | 不缓存 | — |
 
 ### 6.2 请求去重
 
@@ -636,7 +632,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 | `tileActionStore` | 地图格动作 | `tileActions`/`modalOpen`/`modalType` | `handleExplore()`/`handleSearch(iaid)`/`handlePickup(iid)`/`handlePickupAll(items)`/`handleSwitchRegion()` |
 | `inventoryStore` | 背包 + 装备 | `inventoryData`/`equipment`(computed) | `loadInventory()`/`handleDiscard(slot)` |
 | `logStore` | 游戏日志 | `entries`/`lastTs` | `refreshLog(forceScroll)` |
-| `battleStore` | 战斗 session、候选与演出 | `currentMode`/`currentQid`/`combatContext`/`combatTargets`/`isPlayingBattleLog`/`battleModalOpen` | `startBattle(clickedPid)`/`loadCombatTargets()`/`refreshBattle()`/`fetchAndPlayBattleLog()` |
+| `battleStore` | 战斗 session、候选、权威刷新与演出 | `currentMode`/`currentQid`/`combatContext`/`combatTargets`/`isPlayingBattleLog`/`battleModalOpen` | `startBattle(clickedPid)`/`loadCombatTargets()`/`refreshBattle()`/`consumePresentationBatches()` |
 | `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
 | `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
 | `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(envelope)` / `canExecute(command)` |
@@ -713,8 +709,8 @@ BattleLogCollector     battle-director-v2.ts     battle-director-v2.ts        ba
 **四层职责分离**：
 - `battle-director-v2.ts` **导演层**：同步纯函数 `directV2(events)`，输入 `BattleLogV2Event[]` → 输出 `BattlePlayScriptV2`，不做 DOM 操作
 - `battle-director-v2.ts` **计划层**：同步纯函数 `planPlaybackV2(script)`，输入 `BattlePlayScriptV2` → 输出 `BattlePlaybackPlan`（含 `PlaybackStep[]` + `awaitPolicy` + `timeout`），与导演同文件
-- `battle-playback-runner.ts` **执行器**：`runBattlePlaybackPlan(plan, runtime)` 按 `PlaybackStep` 顺序执行，提供超时兜底，调用 actor-executor 和模态框
-- `battle-actor-executor.ts` **演员**：执行 action delivery、动态成员准备、动作和清场动画（`playActionDelivery` / `playCombatantJoined` / `playActionAnimation` / `playCombatantCleared`），不涉及文案或 HP 更新
+  - `battle-playback-runner.ts` **执行器**：`runBattlePlaybackPlan(plan, runtime)` 按 `PlaybackStep` 顺序执行；超时会先取消 handle 再放行，Scene generation 失效会中止旧计划
+  - `battle-actor-executor.ts` **演员**：只通过 `ActorRuntime`/`SceneGeometry`/`BattlePresentationSession` 执行动作，不查询 DOM，不涉及文案或 HP 更新
 - `BattleModal.vue` **模态框**：演出组件，直接播放 v2 text cue，并按 effect delta 更新 HP 条
 
 ### 8.2 三类核心输出类型
@@ -741,12 +737,14 @@ BattleLogCollector     battle-director-v2.ts     battle-director-v2.ts        ba
 battleStore.onPreloadExecuted()
   ├─ invalidate 相关缓存
   └─ refreshBattle()
-       ├─ 拉取 player_info → 判断 action
+       ├─ PendingAuthorityScopes 串行刷新权威 stores
+       │   └─ player_info/CharacterHub → game_map/enemies → combat_targets
+       ├─ 读取已发布的 player_info → 判断 action
        │   ├─ action='battle' → 维持战斗模式
-       │   └─ action='' → 播放完 battlelog 后退出
+       │   └─ action='' → 当前 runtime batch 处理/快进后退出
        │
-       └─ fetchAndPlayBattleLog()
-            ├─ 拉取 battle_log（played=0）
+       └─ drainPresentationBatches()
+            ├─ PresentationInbox 读取下一个连续 presentation.v1 batch
             ├─ filter battlelog.v2 render events
             ├─ directV2(events) → 编排为 BattlePlayScriptV2（导演层）
             ├─ extractNpcPidFromScriptV2(script)
@@ -760,31 +758,38 @@ battleStore.onPreloadExecuted()
             │           combatant_joined  → 准备并高亮新加入角色
             │           action_animation → playActionAnimation（actor-executor）
             │           combatant_cleared → playCombatantCleared（actor-executor）
-            │           modal_text       → playSegmentInModal（BattleModal.vue）
+            │           battle_end_overlay_enter → 等待真实 transitionend/covered
+            │           presentation_scene_handoff → 原子发布权威 rebase + 启动 exit handoff / 普通 RebaseMoveRun
+            │           battle_end_modal_content → 结果正文与两类 world animation 并行；等待 closed + 聚合 run finished
+            │           modal_text       → 普通段 BattleModal.vue
             │           damage_linger    → broadcast('battle:play-damage-numbers')
-            └─ markBattleLogPlayed() 标记所有原始 log_id
+            └─ batch 完成后 cursor 前移；gap 时快进到 head 并 rebase
        ↓
        播放完成后根据 action 决定后续
 ```
 
-### 8.4 fetchAndPlayBattleLog（新版）
+### 8.4 PresentationInbox 与 runtime drain
 
-接入 v2 导演编排，历史非 v2 条目只标记 played，不进入演出：
+在线演出不再调用 State API 拉取或 mark。command/heartbeat response 到达时先入 Inbox，战斗刷新循环负责连续 drain：
 
 ```typescript
-async function fetchAndPlayBattleLog(): Promise<void> {
+async function drainPresentationBatches(): Promise<void> {
   if (isPlayingBattleLog.value) return;
-  const entries = (await dataManager.fetch('battle_log', true)).data?.entries ?? [];
-  if (entries.length === 0) return;
   isPlayingBattleLog.value = true;
   try {
-    const v2Events = entries.filter(isBattleLogV2Event);
-    const script = directV2(v2Events);          // 导演层：同步编排
-    if (script.segments.length > 0) {
-      const npcPid = extractNpcPidFromScriptV2(script);
-      await playScriptV2(script, npcPid);       // 串联计划层+执行器
+    for (;;) {
+      const batch = presentationInbox.peekNext();
+      if (!batch) {
+        const head = presentationInbox.gapHead;
+        if (head === null) break;
+        await rebaseAuthoritativeScene();
+        presentationInbox.commitGap(head);
+        continue;
+      }
+      const script = directV2(batch.events.filter(isBattleLogV2Event));
+      if (script.segments.length > 0) await playScriptV2(script, extractNpcPidFromScriptV2(script));
+      presentationInbox.commit(batch.batch_seq);
     }
-    await markBattleLogPlayed(groomid, pid, collectAllLogIds(entries));
   } finally {
     isPlayingBattleLog.value = false;
   }
@@ -803,21 +808,29 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
   await runBattlePlaybackPlan(plan, {           // 执行器：按 step 顺序执行
     currentPid: currentPid.value,
     npcPid,
+    scene,
+    presentation: presentationSession,
     updateSegmentContext,
     playSegmentInModal,
+    enterBattleEndOverlay,
+    handoffPresentationScene,
+    playBattleEndModalContent,
   });
 }
 ```
 
 **planPlaybackV2 按 segment.kind 生成 PlaybackStep 序列**：
 - `round_intro` 段：单个 `modal_text` step（`alwaysShowHeader: true`）
-- `battle_end` 段：单个 `modal_text` step（`isBattleEnd: true`）
+- `battle_end` 段：`battle_end_overlay_enter` → `presentation_scene_handoff` → `battle_end_modal_content`；handoff 启动 world animation 后立即放行正文，content step 等待 modal closed 与 handoff finished
 - `turn` 段：`segment_context` → `prepare_map` → 每个 action 的 ordered delivery steps → joined steps → action animation → cleared steps → `modal_text` → `damage_linger`
 
 **runBattlePlaybackPlan 执行策略**：
 - `awaitPolicy: 'none'`：fire-and-forget（如 `damage_linger`）
-- `awaitPolicy: 'completion'` + `timeout`：用 `withTimeout` 包裹，超时则 console.warn 并继续下一步，避免单步卡死阻塞整个播放
+- `awaitPolicy: 'completion'` + `timeout`：超时先调用 task.cancel() 清理 tween/overlay，再继续下一步
+- 每步由 scene guard 监控 adapter.active；MapGrid 重挂载会取消当前 task 并让 battle store abort 旧 presentation session
 - 每个 step 调用 actor-executor 的对应函数或 `runtime.playSegmentInModal`
+
+`PresentationScene.beginRebase()` 会把 actor 位移拆成两个互斥集合：battle exit actor 交给 `PostCombatHandoffRun`；其余已有 actor 的位置 diff 交给 MapGrid 创建 world-owner `RebaseMoveRun`。普通 run 以 rebase token + ActorRuntime generation 注册并在一帧后封口；无位置变化不创建 run，取消时 reconcile 到已经发布的权威 anchor，不回滚旧战斗 snapshot。
 
 `BattleModal.vue` 直接消费 `segment.notices`、`segment.actions[].text`、`segment.actions[].effects[].text`，不再通过 `renderDirectedEntryHtml()` 或旧 `DirectedEntry`。
 
@@ -838,8 +851,8 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 
 | 函数 | 说明 |
 |------|------|
-| `runBattlePlaybackPlan(plan, runtime)` | 按 `PlaybackStep` 顺序执行，提供 `withTimeout` 超时兜底 |
-| `BattlePlaybackRuntime` | 接口：`currentPid` / `npcPid` / `updateSegmentContext` / `playSegmentInModal` |
+| `runBattlePlaybackPlan(plan, runtime)` | 按 `PlaybackStep` 顺序执行，提供取消式 timeout 与 Scene active guard |
+| `BattlePlaybackRuntime` | 接口：`currentPid` / `npcPid` / `scene` / `presentation` / `updateSegmentContext` / `playSegmentInModal` |
 
 **battle-actor-executor.ts 核心函数**：
 
@@ -849,7 +862,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | `playActionDelivery(action, delivery)` | 按 ResolvedAim 锚点播放 projectile/explosion cue；空目标 grenade 仍可播放 |
 | `playCombatantJoined(joined)` | 对后端确认加入的稳定 PID actor 播放准备/高亮，不重建实体 |
 | `playActionAnimation(action, currentPid)` | 按 `action.animation.kind` 分发：melee_hit/projectile/area_burst/move/escape/none |
-| `playCombatantCleared(notice, currentPid)` | 参战者退场动画：玩家调 `onDie`/`onFlee`，NPC 调 `playFadeOut` |
+| `playCombatantCleared(notice, context)` | death 使用 terminal lease 并标记实体退场已播放；escaped 只标记战斗 roster 退出，稳定边界按最新投影决定卸载或恢复可见 |
 
 `battle-director-v2.fixture.ts` 提供回归样例，覆盖 `round_start/turn_start/action_start/action_delivery/combatant_joined/effect_applied/action_end/action_failed/combatant_cleared/battle_end`，并校验 delivery/joined PlaybackStep。
 
@@ -866,7 +879,8 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | `action_uid` / `effect_uid` | string\|null | action/effect 归属 ID |
 | `payload` | object | v2 主载荷，包含 actor/target/effect/delta/reason 等结构化事实 |
 | `bl_turn_num` / `bl_round_num` | number\|null | Turn/Round 计数 |
-| `log_id/played/ts` | number | 持久化元数据 |
+| `event_seq` / `ts` | number | 批次内顺序 / 事件时间 |
+| `log_id` / `played` | number | Director 迁移兼容别名；当前响应固定为 `log_id=event_seq`、`played=1`，不具有服务端确认或持久消费语义 |
 
 旧 `phase`、`actor_pid`、`effect_value` 等扁平字段仍可作为后端持久化冗余存在，但 native v2 演员层不再依赖这些字段决定动画或文案。
 
@@ -904,7 +918,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | `battle.ts` | `exitBattleMode` | `onBattleEnd()` | 战斗结束 |
 | `battle-actor-executor.ts` | `playCombatantCleared` | `onDie()` / `onFlee()` | 玩家退场（`combatant_cleared` + reason='death'/'escaped'） |
 
-旧版 `playTurnSegment` 中基于 `hpSnapshot` 的 `onHit()` 受击立绘已移除——受击反馈现在由 actor-executor 的 `defender.playHit(dir)` 在地图 sprite 层处理，不再触发立绘动画。`playBattleEndSegment` 的死亡兜底判定也已由 `playCombatantCleared` 在 `combatant_cleared` step 实时触发替代。
+旧版 `playTurnSegment` 中基于 `hpSnapshot` 的 `onHit()` 受击立绘已移除——受击反馈现在由 actor-executor 取得 defender 的 battle lease 后播放 `hit` command。`playBattleEndSegment` 的死亡兜底判定也已由 `playCombatantCleared` 在 `combatant_cleared` step 实时触发替代。
 
 ---
 
@@ -924,30 +938,20 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 - `useMapBusiness.setupMapCallbacks()` 调用 `setRenderCallbacks()` 和 `setInteractionCallbacks()` 注入业务回调
 - `useMapInteraction` 通过 `_onKeyMove` 回调触发 `useMapBusiness.clickMove`
 
-### 9.2 实体动画层（useMapEntities）
+### 9.2 SceneGeometry 与实体投影
 
-`useMapEntities(gridRef)` 是多实体动画 composable，替代旧的 `useActors`（已删除）和 `usePlayerAvatar`（已删除）。管理所有地图实体（actor/poi/grass/crevice/worm）的 DOM 引用、位置同步、z-index 更新、GSAP 动画、意图派发。
+`mapStore.projection` 是地图可观察边界：`game_map` 与 `enemies` 请求全部完成后一次性提交 `currentTile/links/enemies/revision`。`loadGeneration` 拒绝旧调用结果；`forceRefresh` 对 cacheable action 会发起新请求，旧 pending 响应不能覆盖新缓存。
 
-**三层职责**：
-- **位置同步**（`syncEntityPosition`）：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移，同时设实体 `width/height` 等于 cell 尺寸 × 跨度（让 `.entity-img` 的 `height` 生效）
-- **z-index 更新**（`updateEntityZIndex`）：基于 `isDown` 状态切换 z-index（阶段 1 硬编码 -1/10，阶段 2 将改用 Y 排序动态计算）
-- **GSAP 动画**：`resetTransform`/`setDown`/`startIdle`/`popUp`/`fall`，参数沿用旧 usePlayerAvatar
+`mapSceneGeometry.ts` 把当前 MapGrid 封装为带类型的坐标端口：
 
-**关键设计**：
-- `resetTransform`/`setDown` 不动 `x/y/xPercent/yPercent/width/height`（位置由 `syncActorPosition` 管，避免被动画覆盖）
-- 角色投影由 `.entity-img` 的 CSS `filter: drop-shadow(0 4px 4px rgba(0,0,0,0.6))` 提供，跟随立绘形状，无需独立阴影元素
-- `notifyUp` 挂在回弹 tween 的 `onComplete`（非 timeline.onComplete，因末尾 idle `repeat:-1` 会导致 timeline 永不完成）
-- `watch(intentSeq)` 而非 `watch(intent)`：连续移动（intent 都是 'move'）时 intentSeq 递增确保每次都触发
+- `TileRef`：后端位置 `{ pgroup, pls }`，解析时必须同时匹配区域与格号。
+- `ScenePoint`：未缩放 grid-local 坐标，actor anchor 只使用此空间。
+- `ViewportPoint`：浏览器 viewport 坐标，仅用于 projectile/explosion overlay。
+- `SceneGeometry.active/generation`：MapGrid 重挂载后旧 adapter 立即失效，旧播放计划不得继续写入。
 
-**位置同步的三路 watch**：
+`useMapEntities(gridRef)` 只负责世界投影与接线：注册 SceneGeometry/ActorRuntime、根据完整 TileRef 计算移动、在 resize/revision 变化时 project 最新 anchor、消费 removal disposition，以及把 `playerAvatarStore` 意图转换为 runtime command。它不再直接维护一套独立 GSAP 动画实现。
 
-| 触发场景 | 机制 | 说明 |
-|---------|------|------|
-| 缩放 / resize | `ResizeObserver` 监听 `#mapGrid` 尺寸变化 | `watch(gridRef)` 创建/清理 observer，回调用 `requestAnimationFrame` 同步 |
-| 移动（curLoc 变化） | `watch(mapStore.curLoc)` | 先 `syncAllPositions` 再 `playerAvatarStore.onMove()` |
-| 实体列表变化 | `watch(entitiesStore.entities)` | 初始挂载 / 区域切换 |
-
-**关键导出**：`setEntityRef(id, el)` / `syncAllPositions()` / `dispose()`
+空间通道被 battle/world lease 占用时，投影只覆盖 `pendingAnchor`；lease `release({ reconcile:true })` 后一次性对齐最新权威位置。关键导出为 `setEntityRef(id, el)`、`syncAllPositions()`、`displayEntities`、`dispose()`。
 
 ### 9.3 其他 composables
 
@@ -1092,92 +1096,40 @@ RightPanel.vue (battle mode)
 
 ### 10.3 实体层（多实体动画架构）
 
-玩家立绘（及未来 NPC/敌怪/POI/草丛/蠕虫/裂隙）独立为 `#mapGrid` 内与 `.map-cell` 同级的实体层，通过 GSAP 实现标靶式弹起/倒下/呼吸动画。架构采用事件源 → 意图层 → 动画层 → DOM 层四层解耦。
+地图 actor 与 `.map-cell` 同为 `#mapGrid` 直接子元素，但每个 actor 的动画域被固定拆为四层：
 
-**四层架构**：
-
+```html
+<div class="entity actor-anchor">
+  <div class="actor-action">
+    <div class="actor-visibility">
+      <div class="actor-pose">
+        <img class="entity-img">
+      </div>
+    </div>
+  </div>
+</div>
 ```
-事件源层（battle.ts / MapGrid.vue / 调试按钮）
-    ↓ 调用 playerAvatarStore.onXxx()
-意图层（playerAvatarStore：intent/intentSeq/isDown/pendingIntent）
-    ↓ intentSeq 变化
-动画层（useMapEntities composable）
-    ↓ watch(intentSeq) 派发动画 + watch(curLoc/entities) + ResizeObserver 同步位置
-DOM 层（#mapGrid > .entity × N，与 .map-cell × N 同级）
-```
 
-**数据层**（`entitiesStore`）：
-- `entities` computed 从 `mapStore` 派生：当前格存在时生成 `player` actor（`{id:'player', kind:'actor', actorKind:'player', pls:curLoc, img:'/img/4.png', imgHeightRatio:1.5}`）
-- **不依赖 `playerAvatarStore.isDown`**：避免 isDown 变化触发 entities 重算 → watch(entities) → syncAllPositions（多余）
-- 敌人/NPC/POI/草丛/蠕虫/裂隙预留（代码注释，未来取消注释即可启用）
+权威刷新与视觉发布是两条独立流水线。command/heartbeat 一到达就记录 changed scopes 并启动 authority worker；播放期间 PlayerStore、CharacterHub、MapStore 仍持续更新。`useMapEntities` 虽会观察到最新 authority，但 `PresentationSceneStore.syncAuthoritative()` 在 `playing/rebasing` 阶段只保存 pending authority，不改写当前地图 snapshot。stable boundary、gap fast-forward 或 battle-end covered handoff 显式 rebase；若 authority 在 rebase 动画期间继续前进，`finishRebase()` 会自动发布最后一份 pending snapshot。
 
-**DOM 层**（`MapGrid.vue`）：
-- `.entity` 与 `.map-cell` 同为 `#mapGrid` 直接子元素，`position:absolute` 脱离 grid 流
-- `:class="`entity-${entity.kind}`"` 按实体类型添加 class（如 `entity-actor`）
-- z-index 由 JS 通过 `el.style.zIndex` 动态设置（删除原 `:class="{ popped: ... }"` 绑定）
-- `:ref` 用函数形式绑定到 `setEntityRef`，收集实体 DOM 引用
-- `.entity-img`（`<img>`）是 `.entity` 子元素，`height` 由 `imgStyle()` 动态绑定（`imgHeightRatio × 100%`，actor=150%）
+live batch 被 `PresentationInbox` 接受时会先把 PresentationScene claim 为 `playing`，然后才允许同一响应的 changed scopes 发布到权威 stores，避免入战 tick 或 `combat_context.pls` 修正提前泄漏成普通 world move。
 
-**位置同步**（`useMapEntities.syncEntityPosition`）：
-- 算法与 `centerOnPlayer` 一致：用 `offsetLeft/offsetTop` 累加计算 cell 相对 grid 偏移
-- 同时设实体 `width/height` 等于 cell 尺寸 × 跨度（`spanCols`/`spanRows`，默认 1），让 `.entity-img` 的 `height` 生效
-- GSAP `x/y/xPercent:-50/yPercent:-100` 让实体中心底部对准锚点格底部中心
-- 位置同步后立即调用 `updateEntityZIndex` 更新 z-index
+CharacterHub 的角色资料缓存不再等于地图 roster。`replaceMapEnemies()` 合并 enemies 完整快照并原子替换 `mapEnemyPids`；`entitiesStore` 只消费 `mapVisibleList`。`combat_targets` 只能调用 `mergeEnemyPatches()` 补候选资料，不能让 hidden/left/blocked NPC 重新出现在地图。数据库 `discovered` 使用数值归一化，字符串 `"0"` 不再被当成 true。
 
-**z-index 更新**（`useMapEntities.updateEntityZIndex`）：
+| 通道 | DOM | 所有权 |
+|------|-----|--------|
+| spatial | `.actor-anchor` | SceneGeometry 投影与 move；只写 x/y/尺寸 |
+| action | `.actor-action` | attack/hit 的短位移 |
+| visibility | `.actor-visibility` | enter/fade/reset-visible |
+| pose | `.actor-pose` | idle/fall/scale/rotation |
 
-| 状态 | z-index | 视觉 |
-|------|---------|------|
-| 倒下（setDown / fall 后） | -1 | 被 `.map-background`（z-index:0）遮挡 |
-| 站立（popUp 回弹开始） | 10 | 浮出所有 cell 之上 |
+`ActorRuntime` 是唯一动画入口。每次 `acquire()` 返回覆盖指定通道的 `PresentationLease`，优先级为 `terminal > battle > world > ambient`；高优先级可取消低优先级 handle，同优先级同 session 会复用 lease。所有可等待动画返回可取消的 `AnimationHandle`，取消后旧 completion 不得恢复 idle 或覆盖新位置。
 
-- 阶段 1：硬编码 -1/10，与现状一致
-- 阶段 2：将改用 `computeZIndex` 动态计算（Y 排序：`1000 + yZ*10 + tiebreaker`）
-- 玩家 actor 的 `isDown` 从 `playerAvatarStore.isDown` 实时读取；NPC/敌人初版无 isDown 状态（视为 false）
-- 切换时机：`popUp` 回弹 tween 的 `onStart` 设 `el.style.zIndex = 10`；`fall` 的 `timeline.onComplete` 设 `el.style.zIndex = -1`
+Runtime 独立记录 `terminal` 与 `down`：death 是不可被普通 world 演出抢占的终态；fall 只是持续倒地姿态，释放 pose lease 后不会自动站起；escaped 不是 terminal，淡出 lease 释放后允许稳定边界恢复或卸载。
 
-**角色投影**：
-- 由 `.entity-img` 的 CSS `filter: drop-shadow(...)` 提供，含白色描边（4 方向 1px 白色 drop-shadow）+ 黑色投影（`drop-shadow(0 4px 4px rgba(0,0,0,0.6))`）
-- 投影跟随立绘形状，idle/popUp/fall 任何状态都自然显示，无需独立阴影元素
-- 黑线稿角色在黑底地图上靠白色描边 + 黑色投影实现视觉分离
+`BattlePresentationSession` 跨多个 `PROCESSING` 日志批次持有 battle spatial lease。稳定边界先刷新 CharacterHub/map/combat targets，使最新投影写入 pending anchor，再 commit session：死亡实体保留已播放退场 disposition；逃跑实体若仍在投影中播放 reset-visible，否则直接卸载；最后释放 lease 并 reconcile 最新 anchor。异常 abort 不会把已经死亡退场的 actor 复活。
 
-**GSAP 动画**（`useMapEntities`，仅 actor）：
-- `resetTransform`：重置 scale/rotation/alpha（不动位置）
-- `setDown`：扁平倒地状态（`scaleY:0.04, rotation:-90, alpha:0.25`）
-- `startIdle`：呼吸循环（`scaleY:1.02, scaleX:0.99, yoyo, repeat:-1`）
-- `popUp`：4 段 timeline（淡入 → 蓄力 → 回弹设 z-index:10 + `notifyUp` → idle 循环）
-- `fall`：2 段 timeline（蓄力 → 倒下设 z-index:-1 + `notifyDown`）
-
-**意图映射**（`INTENT_HANDLERS`，11 种意图）：
-- `enter`/`popup` → `setDown + popUp`（先倒下再弹起）
-- `move` → `resetTransform + startIdle`
-- `die`/`fall` → `fall`
-- `battle-start`/`battle-end`/`hit`/`low-hp`/`normal-hp`/`idle` → `startIdle`（预留扩展点，未来可替换为战斗姿态/flinch/低 HP 摇晃等）
-
-**自动恢复**（`pendingIntent` 回调链）：
-- 任何非 `die`/`fall` 意图触发时若 `isDown=true`：暂存 next 到 `pendingIntent`，只派发 `popup`
-- `popUp` 回弹完成时 composable 调 `notifyUp()`，store 派发 `pendingIntent`
-- 不使用 `setTimeout`，避免 `killTweensOf` 打断 popUp 动画
-
-**调试按钮**：
-- 位于 `MapContainer.vue` 缩放条左侧（`弹` / `倒` 两个按钮）
-- 直接调用 `playerAvatarStore.debugPopUp()` / `debugFall()`，不走事件总线
-- `StatusBar.vue` 的旧调试按钮已移除
-
-**HP 危险接入**（`MapGrid.vue`）：
-- `watch(() => playerStore.hp / playerStore.mhp)` 触发 `setHpRatio` + `onLowHp`（<30%）/ `onNormalHp`（≥30%）
-- 当前 low-hp/normal-hp 映射 idle，未来可扩展低 HP 摇晃动画
-
-相关实现文件：
-- [src/composables/useMapEntities.ts](src/composables/useMapEntities.ts) — 动画层（DOM 引用 + 位置同步 + z-index 更新 + GSAP + 意图派发）
-- [src/stores/entities.ts](src/stores/entities.ts) — 数据层（entities 列表 computed 派生，不依赖 isDown）
-- [src/stores/player-avatar.ts](src/stores/player-avatar.ts) — 意图层（intent 状态机 + 自动恢复）
-- [src/types/map-entity.ts](src/types/map-entity.ts) — MapEntity/EntityKind/EntityLayer/ActorKind 类型
-- [src/types/player-avatar.ts](src/types/player-avatar.ts) — PlayerAvatarIntent 类型
-- [src/components/map/MapGrid.vue](src/components/map/MapGrid.vue) — DOM 层（实体层 v-for + HP watch + imgStyle）
-- [src/components/map/MapContainer.vue](src/components/map/MapContainer.vue) — 调试按钮
-- [src/assets/styles/terminal.css](src/assets/styles/terminal.css) — `.entity` / `.entity-img` 样式 + z-index 层级变量
-- [src/stores/battle.ts](src/stores/battle.ts) — 6 处事件接入（详见 §8.9）
+相关实现：`useActorRuntime.ts`、`useMapEntities.ts`、`actorRegistry.ts`、`mapSceneGeometry.ts`、`sceneRegistry.ts`、`battle-presentation-session.ts`、`battle-actor-executor.ts`、`actorAnimations.ts`、`MapGrid.vue`。
 
 > 设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)（v2：多实体分层架构，含 Y 排序/多格实体/地面装饰层预留）。原设计案 [docs/ACTORS_LAYER_REFACTOR.md](docs/ACTORS_LAYER_REFACTOR.md) 已被取代（记录的 `.actor-shadow` 独立阴影元素已删除，角色投影改由立绘 img 的 `drop-shadow` 滤镜提供）。
 
@@ -1208,7 +1160,6 @@ server: {
     '/phpdts/oblivions/api/command.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
     '/phpdts/oblivions/api/heartbeat.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
     '/phpdts/oblivions/api/state.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
-    '/phpdts/oblivions/mark_battle_log_played.php': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
     '/phpdts/img/': { target: 'http://127.0.0.1', changeOrigin: true, agent: proxyAgent },
   },
 }
@@ -1283,7 +1234,7 @@ perf.clear();
 - `ActorKind` — actor 子类型联合（`'player' | 'npc' | 'enemy'`）
 - `MapEntity` — 地图实体数据（`id` / `kind` / `pls` / `img` / `spanCols?` / `spanRows?` / `imgHeightRatio?` / `actorKind?`）
   - 注：`isDown` 不作为 MapEntity 字段，玩家 actor 的 isDown 在 `useMapEntities.updateEntityZIndex` 中实时从 `playerAvatarStore.isDown` 读取
-- `PlayerAvatarIntent` — 玩家小人动画意图（11 种：`enter`/`move`/`battle-start`/`battle-end`/`hit`/`die`/`low-hp`/`normal-hp`/`popup`/`fall`/`idle`）
+- `PlayerAvatarIntent` — 玩家小人动画意图（14 种，含 `attack`/`flee`/`revive`；具体集合见 `types/player-avatar.ts`）
 
 ### 12.3 事件类型（`types/events.ts`）
 
@@ -1337,7 +1288,6 @@ perf.clear();
 | `vex/data/terrain-desc.js` | `data/terrain-desc.ts` |
 | `vex/css/terminal.css` | `assets/styles/terminal.css` |
 | `vex/css/battle.css` | `assets/styles/battle.css` |
-| `oblivions/mark_battle_log_played.php` | 零依赖接口，前端通过 `api/client.ts: markBattleLogPlayed` 调用（已从 vex/ 迁移至 oblivions/） |
 
 > 玩家立绘动画最初在 `MapGrid.vue` 内联 GSAP 实现（单 actor + StatusBar 调试按钮 + `player:popup`/`player:fall` 事件），后经三次重构：
 > 1. 抽离为 `usePlayerAvatar` composable + `playerAvatarStore`（单 actor 架构）

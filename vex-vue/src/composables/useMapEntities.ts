@@ -1,459 +1,486 @@
-// ══════════════════════════════════════════════════
-// useMapEntities composable — 注册中心 + 调度层
-//
-// 改造自原 useMapEntities（515 行三层职责混合），现为"注册中心 + 调度层"：
-//   - 动画函数已提取到 @/animations/actorAnimations.ts（纯函数，不依赖 store）
-//   - 每 actor 竞态保护（isMoving/animToken）已提取到 @/composables/useActorAnimation.ts
-//   - 本文件只负责：实体 DOM 引用管理 + 4 路 watch 调度 + 位置同步
-//
-// 三层架构：
-//   数据层（stores）→ 调度层（本文件 watch）→ 演员层（useActorAnimation + actorAnimations）
-//
-// 4 路 watch：
-//   - watch(gridRef)    → ResizeObserver（缩放/resize）→ syncAllPositions
-//   - watch(curLoc)     → player 移动：预锁定 → rAF 内分级（long→onEnter / 短中→moveTo）
-//   - watch(entities)   → 敌人位置变化（同步阶段预锁定）+ 首次入场
-//   - watch(intentSeq)  → player intent 派发（enter/idle/playFall）
-//
-// 关键设计：
-//   - actors: Map<id, ActorAnimation> 注册中心，每 actor 独立竞态保护
-//   - syncEntityPosition 通用化：跳过任何 isMoving 的 actor（不再硬编码 player）
-//   - setEntityRef 调 actor.setEl(el) 命令式注入（普通 Map 无响应式，computed 方案失效）
-//   - 敌人 pls 变化在 entities watch 同步阶段预 lockMove()，防止 rAF 内 syncAllPositions 瞬移
-//   - player 长距离移动走 onEnter intent（保证 notifyUp），敌人长距离走 actor.enter()
-//   - 可见性由 alpha 控制（倒下 alpha:0，站立 alpha:1），z-index 固定 Z_STANDING+Math.round(y)
-// ══════════════════════════════════════════════════
-
-import { watch, nextTick, shallowRef, type Ref } from 'vue';
-import gsap from 'gsap';
-import { usePlayerAvatarStore } from '@/stores/player-avatar';
+import { nextTick, shallowRef, watch, type Ref } from 'vue';
+import { createActorRuntime } from '@/composables/useActorRuntime';
+import { getActorById, registerActor, unregisterActor } from '@/composables/actorRegistry';
+import { createMapSceneGeometry } from '@/composables/mapSceneGeometry';
+import { registerSceneGeometry, getSceneGeometry } from '@/composables/sceneRegistry';
 import { useEntitiesStore } from '@/stores/entities';
 import { useMapStore } from '@/stores/map';
-import { updateEntityZIndex } from '@/animations/actorAnimations';
-import { useActorAnimation } from '@/composables/useActorAnimation';
-import { registerActor, unregisterActor, getActorById } from '@/composables/actorRegistry';
-import type { ActorAnimation, MoveTier } from '@/types/actor-animation';
+import { usePlayerAvatarStore } from '@/stores/player-avatar';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
+import type { ActorElements, AnimationHandle, MoveTier, PresentationLease } from '@/types/actor-runtime';
 import type { MapEntity } from '@/types/map-entity';
+import type { PresentationRebaseMoveRegistration } from '@/types/presentation-scene';
+import type { SceneAnchor, TileRef } from '@/types/scene';
 
-/** 移动分级阈值（与原 useMapEntities 一致） */
-const DUCK_MAX_GRID = 1.5;   // ≤1.5 格：鸭子步
-const JUMP_MAX_GRID = 6.5;   // ≤6.5 格：跳跃
+const DUCK_MAX_GRID = 1.5;
+const JUMP_MAX_GRID = 6.5;
 
-/**
- * 计算 cell 锚点位置（供 syncEntityPosition 和移动动画复用）
- * 返回 cell 底部居中的坐标 + cell 尺寸
- */
-function getCellAnchor(gridEl: HTMLElement, pls: string | number): {
-  x: number; y: number; cellW: number; cellH: number;
-} | null {
-  const cell = gridEl.querySelector(`[data-pls="${pls}"]`) as HTMLElement | null;
-  if (!cell) return null;
-  let offsetX = 0, offsetY = 0;
-  let node: HTMLElement | null = cell;
-  while (node && node !== gridEl) {
-    offsetX += node.offsetLeft;
-    offsetY += node.offsetTop;
-    node = node.offsetParent as HTMLElement | null;
-  }
-  const cellW = cell.offsetWidth;
-  const cellH = cell.offsetHeight;
-  // 锚点：cell 底部居中（span=1 场景）
-  return { x: offsetX + cellW / 2, y: offsetY + cellH, cellW, cellH };
+function toTileRef(entity: MapEntity): TileRef | null {
+  const pgroup = Number(entity.pgroup);
+  const pls = Number(entity.pls);
+  return Number.isFinite(pgroup) && Number.isFinite(pls) ? { pgroup, pls } : null;
 }
 
-/** 计算移动分级（供调用方判断，moveTo 不决策长距离） */
-function calcMoveTier(
-  fromX: number, fromY: number,
-  toX: number, toY: number,
-  cellW: number, cellH: number,
-): MoveTier {
-  const gridDist = Math.max(Math.abs(toX - fromX) / cellW, Math.abs(toY - fromY) / cellH);
+function sameTile(left: MapEntity | undefined, right: MapEntity): boolean {
+  if (!left) return false;
+  return Number(left.pgroup) === Number(right.pgroup)
+    && Number(left.pls) === Number(right.pls);
+}
+
+function calcMoveTier(fromX: number, fromY: number, target: SceneAnchor): MoveTier {
+  const gridDist = Math.max(
+    Math.abs(target.point.x - fromX) / target.cellWidth,
+    Math.abs(target.point.y - fromY) / target.cellHeight,
+  );
   if (gridDist <= DUCK_MAX_GRID) return 'duck';
   if (gridDist <= JUMP_MAX_GRID) return 'jump';
   return 'long';
 }
 
+export function isScenePointAtAnchor(from: { x: number; y: number }, target: SceneAnchor): boolean {
+  return Math.abs(from.x - target.point.x) < 0.5
+    && Math.abs(from.y - target.point.y) < 0.5;
+}
+
+export interface CancellableProjectedRemoval {
+  readonly finished: Promise<void>;
+  cancel(reason?: string, recoverVisibility?: boolean): void;
+}
+
+export function createCancellableProjectedRemoval(
+  handle: AnimationHandle,
+  callbacks: {
+    complete(): void;
+    cancel(recoverVisibility: boolean): void;
+  },
+): CancellableProjectedRemoval {
+  let cancelled = false;
+  const finished = handle.finished.then(() => {
+    if (!cancelled) callbacks.complete();
+  });
+  return {
+    finished,
+    cancel(reason = 'projected_removal_cancelled', recoverVisibility = true) {
+      if (cancelled) return;
+      cancelled = true;
+      handle.cancel(reason);
+      callbacks.cancel(recoverVisibility);
+    },
+  };
+}
+
+function actorElements(root: HTMLElement): ActorElements | null {
+  const action = root.querySelector<HTMLElement>('.actor-action');
+  const visibility = root.querySelector<HTMLElement>('.actor-visibility');
+  const pose = root.querySelector<HTMLElement>('.actor-pose');
+  return action && visibility && pose ? { anchor: root, action, visibility, pose } : null;
+}
+
 export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
-  const playerAvatarStore = usePlayerAvatarStore();
   const entitiesStore = useEntitiesStore();
   const mapStore = useMapStore();
-
-  // ── 实体 DOM 引用（id → HTMLElement） ──
-  const entityRefs = new Map<string, HTMLElement>();
-  // ── actor 动画控制器注册中心（id → ActorAnimation） ──
-  const actors = new Map<string, ActorAnimation>();
-  // ── 敌人上次位置（检测敌人移动）──
-  const enemyLastPls = new Map<string, string | number>();
-  // ── 已入场记录（避免重复播 enter）──
-  const enteredEntities = new Set<string>();
-  // ── 正在淡出的实体 id（displayEntities 中间层，延迟移除直到动画完成）──
-  const fadingOutIds = new Set<string>();
-  // ── 实际渲染的实体列表（entities + 正在淡出的实体）──
+  const presentationScene = usePresentationSceneStore();
+  const playerAvatarStore = usePlayerAvatarStore();
   const displayEntities = shallowRef<MapEntity[]>([]);
+  const enteredEntities = new Set<string>();
+  const runtimeIds = new Set<string>();
+  const worldMoves = new Map<string, PresentationLease>();
+  const rebaseMoves = new Map<string, PresentationRebaseMoveRegistration>();
+  const projectedRemovals = new Map<string, CancellableProjectedRemoval>();
+  let resizeObserver: ResizeObserver | null = null;
+  let unregisterScene: (() => void) | null = null;
 
   function setEntityRef(id: string, el: HTMLElement | null): void {
-    if (el) {
-      entityRefs.set(id, el);
-      // actor 创建控制器并命令式注入 el；同步注册到全局 registry 供 battle.ts 查询
-      if (!actors.has(id)) {
-        const controller = useActorAnimation();
-        actors.set(id, controller);
-        registerActor(id, controller);
+    if (!el) {
+      if (actorTraceEnabled) {
+        debugBus.emit('actor', 'map-ref:unmount', {
+          actorId: id,
+          projectionRevision: mapStore.projectionRevision,
+          authoritativeIds: entitiesStore.entities.map(entity => entity.id),
+          displayedIds: displayEntities.value.map(entity => entity.id),
+          stack: new Error('actor ref unmounted').stack ?? null,
+        });
       }
-      actors.get(id)!.setEl(el);
-    } else {
-      entityRefs.delete(id);
+      runtimeIds.delete(id);
       unregisterActor(id);
-      actors.delete(id);  // killAll 在 dispose 统一处理，这里仅移除引用
-      enemyLastPls.delete(id);
       enteredEntities.delete(id);
+      rebaseMoves.get(id)?.cancel('actor_unmounted');
+      rebaseMoves.delete(id);
+      projectedRemovals.get(id)?.cancel('actor_unmounted', false);
+      worldMoves.delete(id);
+      return;
     }
+    const elements = actorElements(el);
+    if (!elements) return;
+    let runtime = getActorById(id);
+    if (!runtime) {
+      runtime = createActorRuntime(id);
+      registerActor(id, runtime);
+    }
+    runtimeIds.add(id);
+    runtime.setElements(elements);
   }
 
-  // ── 位置同步（通用化：跳过任何 isMoving 的 actor）──
-  // 算法与 centerOnPlayer 一致：offsetLeft/offsetTop 累加计算 cell 相对 grid 偏移
-  // 同时设实体 width/height 等于 cell 尺寸 × 跨度，让 .entity-img 的 height 生效
-  function syncEntityPosition(entityEl: HTMLElement, entity: MapEntity, gridEl: HTMLElement): boolean {
-    const actor = actors.get(entity.id);
-    if (actor?.isMoving) return false;  // 通用化，不再只跳 player
-
-    const anchor = getCellAnchor(gridEl, entity.pls);
-    if (!anchor) return false;
-    const { x: targetX, y: targetY, cellW, cellH } = anchor;
-    const spanCols = entity.spanCols ?? 1;
-    const spanRows = entity.spanRows ?? 1;
-
-    // 实体定位到锚点格底部居中，尺寸 = cell 尺寸 × 跨度
-    // x/y 是实体原点（左上角）的目标位置
-    // xPercent:-50 yPercent:-100 让实体中心底部对准 (targetX, targetY)
-    // 注：spanCols>1 时 targetX 需为 offsetX + cellW*spanCols/2，当前 span=1 用 anchor.x 即可
-    gsap.set(entityEl, {
-      width: cellW * spanCols,
-      height: cellH * spanRows,
-      x: targetX,
-      y: targetY,
-      xPercent: -50,
-      yPercent: -100,
-    });
-
-    // 位置同步后立即更新 z-index
-    updateEntityZIndex(entityEl);
-
-    return true;
+  function resolveAnchor(entity: MapEntity): SceneAnchor | null {
+    const tile = toTileRef(entity);
+    return tile ? getSceneGeometry()?.resolveTile(tile) ?? null : null;
   }
 
-  // ── 同步所有实体 ──
+  function syncEntityPosition(entity: MapEntity): void {
+    const runtime = getActorById(entity.id);
+    const anchor = resolveAnchor(entity);
+    if (runtime && anchor) runtime.projectAnchor(anchor);
+  }
+
   function syncAllPositions(): void {
-    const grid = gridRef.value;
-    if (!grid) return;
-    for (const entity of entitiesStore.entities) {
-      const el = entityRefs.get(entity.id);
-      if (el) syncEntityPosition(el, entity, grid);
+    for (const entity of presentationScene.snapshot.entities) {
+      if (presentationScene.phase === 'rebasing'
+        && presentationScene.shouldAnimateRebaseActor(entity.id)) continue;
+      syncEntityPosition(entity);
     }
   }
 
-  // ── watch(curLoc)：player 移动 ──
-  // 同时监听 curLoc 和 curRegion：curLoc 变化触发移动动画，curRegion 变化强制走 arrive
-  const stopCurLocWatch = watch(
-    () => [mapStore.curLoc, mapStore.curRegion] as const,
-    ([newLoc, newRegion], [oldLoc, oldRegion]) => {
-      // 首次加载（curLoc null → 值）：让 onEnter 接管 popUp，跳过分级动画
-      if (oldLoc === null) return;
-      // curLoc 未变化（仅 curRegion 变化等）：不处理移动
-      if (newLoc === oldLoc) return;
-      // curLoc 变为 null（退出游戏）：不处理移动
-      if (newLoc === null) return;
+  async function playWorldMove(entity: MapEntity, lease: PresentationLease): Promise<void> {
+    await nextTick();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    if (lease.released || worldMoves.get(entity.id) !== lease) return;
+    const runtime = getActorById(entity.id);
+    const anchor = resolveAnchor(entity);
+    const from = runtime?.getScenePoint();
+    if (!runtime || !anchor || !from) {
+      lease.release({ reconcile: true });
+      worldMoves.delete(entity.id);
+      return;
+    }
+    if (isScenePointAtAnchor(from, anchor)) {
+      runtime.projectAnchor(anchor);
+      lease.release({ reconcile: true });
+      if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+      return;
+    }
+    runtime.projectAnchor(anchor);
+    const tier = calcMoveTier(from.x, from.y, anchor);
+    const visibilityHandle = tier === 'long'
+      ? null
+      : lease.play({ kind: 'reset-visible' });
+    const handle = lease.play({ kind: 'move', target: anchor, tier });
+    await Promise.all([
+      handle.finished,
+      visibilityHandle?.finished ?? Promise.resolve(),
+    ]);
+    lease.release({ reconcile: true });
+    if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+  }
 
-      const player = actors.get('player');
-      if (!player) return;
+  function startRebaseWorldMove(
+    entity: MapEntity,
+    token: number,
+  ): PresentationRebaseMoveRegistration | null {
+    const runtime = getActorById(entity.id);
+    const anchor = resolveAnchor(entity);
+    const from = runtime?.getScenePoint();
+    if (!runtime || !anchor || !from) return null;
 
-      // 预锁定（方案 A）：同步阶段立即设 isMoving=true，
-      // 防止 rAF 前 syncEntityPosition 瞬移 player 导致 moveTo 读到 from===to
-      // 降级/区域切换/长距离分支在 rAF 内 unlockMove() 解除
-      player.lockMove();
+    worldMoves.get(entity.id)?.release({ reconcile: false });
+    rebaseMoves.get(entity.id)?.cancel('rebase_move_replaced');
+    if (isScenePointAtAnchor(from, anchor)) {
+      runtime.projectAnchor(anchor);
+      return null;
+    }
+    const generation = runtime.generation;
+    const lease = runtime.acquire({
+      owner: 'world',
+      channels: ['spatial', 'pose', 'visibility'],
+      sessionId: `rebase:${token}:${generation}`,
+      replaceEqualOwner: true,
+    });
+    if (!lease) return null;
+    worldMoves.set(entity.id, lease);
+    runtime.projectAnchor(anchor);
+    const tier = calcMoveTier(from.x, from.y, anchor);
+    const handles: AnimationHandle[] = [];
+    if (tier !== 'long') handles.push(lease.play({ kind: 'reset-visible' }));
+    handles.push(lease.play({ kind: 'move', target: anchor, tier }));
 
-      nextTick(() => requestAnimationFrame(() => {
-        const grid = gridRef.value;
-        const el = entityRefs.get('player');
+    let settled = false;
+    let resolveFinished!: () => void;
+    const finished = new Promise<void>(resolve => { resolveFinished = resolve; });
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      lease.release({ reconcile: true });
+      if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+      if (rebaseMoves.get(entity.id)?.generation === generation) rebaseMoves.delete(entity.id);
+      resolveFinished();
+    };
+    const run: PresentationRebaseMoveRegistration = {
+      actorId: entity.id,
+      generation,
+      token,
+      finished,
+      cancel(reason = 'rebase_move_cancelled') {
+        for (const handle of handles) handle.cancel(reason);
+        settle();
+      },
+    };
+    rebaseMoves.set(entity.id, run);
+    void Promise.all(handles.map(handle => handle.finished)).then(settle, settle);
+    return run;
+  }
 
-        // 降级：无 grid / 无 el → 走 syncAllPositions + onMove
-        if (!grid || !el) { player.unlockMove(); syncAllPositions(); playerAvatarStore.onMove(); return; }
+  async function playFirstEnter(entity: MapEntity): Promise<void> {
+    const runtime = getActorById(entity.id);
+    if (!runtime || enteredEntities.has(entity.id) || projectedRemovals.has(entity.id)) return;
+    const anchor = resolveAnchor(entity);
+    if (!anchor) return;
+    runtime.projectAnchor(anchor);
+    enteredEntities.add(entity.id);
+    if (entity.id === 'player') {
+      playerAvatarStore.onEnter();
+      return;
+    }
+    const lease = runtime.acquire({
+      owner: 'world',
+      channels: ['pose', 'visibility'],
+      sessionId: `enter:${runtime.generation}`,
+    });
+    if (!lease) return;
+    await lease.play({ kind: 'enter' }).finished;
+    lease.release();
+  }
 
-        // 区域切换：到达弹起动画（淡入弹起，无倒下阶段）
-        // 跨区域加载很快，倒下动画无法完整播放；arrive 直接从透明缩小状态弹起出现
-        if (newRegion !== oldRegion) {
-          player.unlockMove();
-          syncAllPositions();
-          player.arrive();
-          return;
+  function startProjectedRemoval(entity: MapEntity): void {
+    const runtime = getActorById(entity.id);
+    if (!runtime) {
+      displayEntities.value = displayEntities.value.filter(item => item.id !== entity.id);
+      return;
+    }
+    const disposition = runtime.consumeRemovalDisposition();
+    if (disposition === 'animated' || disposition === 'immediate') {
+      displayEntities.value = displayEntities.value.filter(item => item.id !== entity.id);
+      return;
+    }
+    const lease = runtime.acquire({
+      owner: 'world',
+      channels: ['visibility'],
+      sessionId: `remove:${runtime.generation}`,
+    });
+    if (!lease) {
+      displayEntities.value = displayEntities.value.filter(item => item.id !== entity.id);
+      return;
+    }
+    const handle = lease.play({ kind: 'fade' });
+    let run!: CancellableProjectedRemoval;
+    run = createCancellableProjectedRemoval(handle, {
+      complete() {
+        if (projectedRemovals.get(entity.id) !== run) return;
+        lease.release({ reconcile: false });
+        projectedRemovals.delete(entity.id);
+        displayEntities.value = displayEntities.value.filter(item => item.id !== entity.id);
+      },
+      cancel(recoverVisibility) {
+        lease.release({ reconcile: false });
+        if (projectedRemovals.get(entity.id) === run) projectedRemovals.delete(entity.id);
+        if (!recoverVisibility) return;
+        const recovery = runtime.acquire({
+          owner: 'world',
+          channels: ['visibility'],
+          sessionId: `rediscovered:${runtime.generation}`,
+          replaceEqualOwner: true,
+        });
+        if (recovery) {
+          void recovery.play({ kind: 'reset-visible' }).finished.finally(() => recovery.release());
         }
+      },
+    });
+    projectedRemovals.set(entity.id, run);
+  }
 
-        // 倒下降级：解锁 + onMove（走 intent 系统触发 popup 恢复）
-        if (playerAvatarStore.isDown) {
-          player.unlockMove();
-          syncAllPositions();
-          playerAvatarStore.onMove();
-          return;
-        }
-
-        // 计算目标位置
-        const anchor = getCellAnchor(grid, newLoc);
-        if (!anchor) { player.unlockMove(); syncAllPositions(); playerAvatarStore.onMove(); return; }
-        const { x: toX, y: toY, cellW, cellH } = anchor;
-
-        // 读取旧位置（gsap transform 当前值，此时 syncAllPositions 未执行因 player 已锁定）
-        const fromX = gsap.getProperty(el, 'x') as number;
-        const fromY = gsap.getProperty(el, 'y') as number;
-        const tier = calcMoveTier(fromX, fromY, toX, toY, cellW, cellH);
-
-        if (tier === 'long') {
-          // 长距离：解锁 + syncAllPositions + onEnter（走 intent 系统触发 popUp + notifyUp）
-          // 不走 moveTo，避免丢失 isDown 状态机更新
-          player.unlockMove();
-          syncAllPositions();
-          playerAvatarStore.onEnter();
-          return;
-        }
-
-        // 短/中距离：moveTo 内部 isMoving=true 幂等，保持锁定状态
-        // 不传 onDone：moveTo done 直接 startIdle，保留当前视觉行为（不绕 intent 系统）
-        player.moveTo(toX, toY, cellW, cellH);
-      }));
-    },
+  const stopAuthorityWatch = watch(
+    () => ({ revision: mapStore.projectionRevision, entities: entitiesStore.entities }),
+    ({ revision, entities }) => presentationScene.syncAuthoritative(entities, revision),
+    { immediate: true },
   );
 
-  // ── watch(entities)：敌人位置变化 + 首次入场 ──
-  // v2.0 修复：同步阶段比较新旧 pls，对变化的敌人预 lockMove()，
-  //           防止 rAF 内 syncAllPositions 先瞬移敌人导致 moveTo from===to
   const stopEntitiesWatch = watch(
-    () => entitiesStore.entities,
-    (entities, oldEntities) => {
-      // ── 同步阶段 ──
+    () => ({
+      revision: presentationScene.snapshot.revision,
+      phase: presentationScene.phase,
+      entities: presentationScene.snapshot.entities,
+    }),
+    ({ entities }, previous) => {
+      const oldEntities = previous?.entities ?? [];
+      const oldById = new Map(oldEntities.map(entity => [entity.id, entity]));
+      const newIds = new Set(entities.map(entity => entity.id));
 
-      const newIds = new Set(entities.map(e => e.id));
-
-      // 1. 取消正在淡出但又重新出现的实体（敌人消失后又回来）
-      for (const e of entities) {
-        if (fadingOutIds.has(e.id)) {
-          fadingOutIds.delete(e.id);
-          const actor = actors.get(e.id);
-          if (actor) actor.idle();
-        }
+      for (const entity of entities) {
+        projectedRemovals.get(entity.id)?.cancel('entity_rediscovered');
       }
+      const removedIds = oldEntities
+        .filter(entity => entity.id !== 'player' && !newIds.has(entity.id))
+        .map(entity => entity.id);
 
-      // 2. 对从列表移除的 actor（非 player）启动淡出动画
-      //    displayEntities 会保留这些实体直到动画完成，Vue 不会调用 :ref(null)
-      for (const e of oldEntities ?? []) {
-        if (e.kind !== 'actor' || e.id === 'player') continue;
-        if (newIds.has(e.id)) continue;       // 仍在列表中
-        if (fadingOutIds.has(e.id)) continue;  // 已在淡出
-        const actor = actors.get(e.id);
-        if (!actor) continue;
-        fadingOutIds.add(e.id);
-        actor.playFadeOut(() => {
-          fadingOutIds.delete(e.id);
-          displayEntities.value = displayEntities.value.filter(x => x.id !== e.id);
+      if (actorTraceEnabled && removedIds.length > 0) {
+        debugBus.emit('actor', 'projection:removed', {
+          projectionRevision: mapStore.projectionRevision,
+          removedIds,
+          nextIds: [...newIds],
+          fadingIds: [...projectedRemovals.keys()],
         });
       }
 
-      // 3. 更新 displayEntities：新 entities + 正在淡出的旧 entities
-      //    正在淡出的实体使用旧数据（旧位置/旧图片），不会被 syncAllPositions 同步
+      for (const entity of oldEntities) {
+        if (entity.id === 'player' || newIds.has(entity.id) || projectedRemovals.has(entity.id)) continue;
+        startProjectedRemoval(entity);
+      }
+
       displayEntities.value = [
         ...entities,
-        ...displayEntities.value.filter(e => fadingOutIds.has(e.id) && !newIds.has(e.id)),
+        ...displayEntities.value.filter(entity => projectedRemovals.has(entity.id) && !newIds.has(entity.id)),
       ];
 
-      // 4. 预锁定移动的敌人（防止 rAF 内 syncAllPositions 瞬移）
-      const oldPlsMap = new Map<string, string | number>();
-      for (const e of oldEntities ?? []) {
-        if (e.id !== 'player' && e.kind === 'actor') oldPlsMap.set(e.id, e.pls);
-      }
       for (const entity of entities) {
-        if (entity.id === 'player') continue;
-        if (entity.kind !== 'actor') continue;
-        const oldPls = oldPlsMap.get(entity.id);
-        if (oldPls !== undefined && oldPls !== entity.pls) {
-          const actor = actors.get(entity.id);
-          if (actor) actor.lockMove();
+        const previousEntity = oldById.get(entity.id);
+        if (!previousEntity) continue;
+        if (sameTile(previousEntity, entity)) continue;
+        if (presentationScene.phase === 'rebasing') {
+          if (presentationScene.shouldAnimateRebaseActor(entity.id)) {
+            const token = presentationScene.rebaseToken;
+            const run = token === null ? null : startRebaseWorldMove(entity, token);
+            if (run) presentationScene.registerRebaseMove(run);
+          } else {
+            syncEntityPosition(entity);
+          }
+          continue;
         }
-      }
-
-      // 5. 清理已消失 entity 的入场记录（player 消失后重现可重新播 enter）
-      for (const id of enteredEntities) {
-        if (!newIds.has(id)) enteredEntities.delete(id);
+        const runtime = getActorById(entity.id);
+        if (!runtime) continue;
+        const existing = worldMoves.get(entity.id);
+        existing?.release({ reconcile: false });
+        const lease = runtime.acquire({
+          owner: 'world',
+          channels: ['spatial', 'pose', 'visibility'],
+          sessionId: `world:${mapStore.projectionRevision}:${runtime.generation}`,
+          replaceEqualOwner: true,
+        });
+        if (!lease) {
+          syncEntityPosition(entity);
+          continue;
+        }
+        worldMoves.set(entity.id, lease);
+        void playWorldMove(entity, lease);
       }
 
       nextTick(() => requestAnimationFrame(() => {
         syncAllPositions();
-        tryFirstEnter(entities);
-        handleEnemyMoves(entities);
+        for (const entity of entities) void playFirstEnter(entity);
       }));
+
+      for (const id of [...enteredEntities]) {
+        if (!newIds.has(id)) enteredEntities.delete(id);
+      }
     },
     { immediate: true },
   );
 
-  // ── 首次入场触发 ──
-  function tryFirstEnter(entities: readonly MapEntity[]): void {
-    // player 首次入场：走 intent 系统（onEnter → intent='enter' → intent watch → player.enter(notifyUp)）
-    // 解决异步加载场景：onMounted 调 onEnter 时 player entity 还没渲染，intent watch 取不到 el 静默跳过。
-    // 改由 entities watch 检测 player el 可用后触发。
-    if (!enteredEntities.has('player') && entityRefs.has('player')) {
-      enteredEntities.add('player');
-      playerAvatarStore.onEnter();
-    }
-
-    // 非 player actor 首次入场：直接调 actor.enter()（无 onUp，无 isDown 状态机）
-    // 与 player 的 'enter' intent 视觉一致，但不走 playerAvatarStore 状态机
-    for (const entity of entities) {
-      if (entity.id === 'player') continue;
-      if (entity.kind !== 'actor') continue;
-      if (enteredEntities.has(entity.id)) continue;
-      // 跳过正在淡出的 entity：watch(entities) 的 rAF 闭包可能持有 stale entities，
-      // 其中包含已在另一轮 watch 中启动 fadeOut 的 enemy。
-      // 若不跳过，enter→setDown 会 killTweensOf 杀掉 fadeOut tween 并覆盖属性，
-      // 导致 fadeOut 立即完成、淡出动画失效（enemy 突然消失）。
-      if (fadingOutIds.has(entity.id)) continue;
-      const actor = actors.get(entity.id);
-      if (!actor) continue;
-      enteredEntities.add(entity.id);
-      actor.enter();  // 不传 onUp
-    }
-
-    // 清理已消失 entity（区域切换/敌人被击败/player reset）
-    const currentIds = new Set(entities.map(e => e.id));
-    for (const id of enteredEntities) {
-      if (!currentIds.has(id)) enteredEntities.delete(id);
-    }
-  }
-
-  // ── 敌人移动检测：比较 pls 变化 ──
-  function handleEnemyMoves(entities: readonly MapEntity[]): void {
-    const grid = gridRef.value;
-    const currentIds = new Set(entities.map(e => e.id));
-
-    for (const entity of entities) {
-      if (entity.id === 'player') continue;
-      if (entity.kind !== 'actor') continue;
-      // 跳过正在淡出的 entity：同 tryFirstEnter，防止 stale entities 触发 moveTo/enter
-      // 杀掉正在进行的 fadeOut tween
-      if (fadingOutIds.has(entity.id)) continue;
-
-      const oldPls = enemyLastPls.get(entity.id);
-      enemyLastPls.set(entity.id, entity.pls);
-
-      // 首次记录 / 未变化 → 跳过
-      if (oldPls === undefined || oldPls === entity.pls) continue;
-
-      const actor = actors.get(entity.id);
-      if (!actor || !grid) continue;
-
-      // 敌人已预锁定（同步阶段），此处读取的 from 是旧位置（syncAllPositions 跳过了它）
-      const el = entityRefs.get(entity.id);
-      if (!el) continue;
-      const anchor = getCellAnchor(grid, entity.pls);
-      if (!anchor) { actor.unlockMove(); continue; }
-      const { x: toX, y: toY, cellW, cellH } = anchor;
-
-      const fromX = gsap.getProperty(el, 'x') as number;
-      const fromY = gsap.getProperty(el, 'y') as number;
-      const tier = calcMoveTier(fromX, fromY, toX, toY, cellW, cellH);
-
-      if (tier === 'long') {
-        // 敌人长距离：解锁 + enter（setDown + popUp，无 onUp）
-        actor.unlockMove();
-        // 先同步到新位置（syncAllPositions 已跳过，这里手动 gsap.set）
-        gsap.set(el, { x: toX, y: toY, width: cellW, height: cellH, xPercent: -50, yPercent: -100 });
-        actor.enter();
-      } else {
-        // 短/中距离：moveTo 内部 isMoving=true 幂等
-        actor.moveTo(toX, toY, cellW, cellH);
-      }
-    }
-
-    // 防御性清理消失敌人的 enemyLastPls（setEntityRef(null) 已清理，这里双保险）
-    for (const id of enemyLastPls.keys()) {
-      if (!currentIds.has(id)) enemyLastPls.delete(id);
-    }
-  }
-
-  // ── watch(intentSeq)：player intent 派发 ──
-  // watch intentSeq 而非 intent：连续移动（intent 都是 'move'）时 intentSeq 递增确保每次都触发
   const stopIntentWatch = watch(
     () => playerAvatarStore.intentSeq,
-    () => {
-      nextTick(() => {
-        const player = actors.get('player');
-        if (!player) return;
-        const intent = playerAvatarStore.intent;
-        switch (intent) {
-          case 'enter': case 'popup': case 'revive':
-            player.enter(() => playerAvatarStore.notifyUp());
-            break;
-          case 'die': case 'fall':
-            player.playFall(() => playerAvatarStore.notifyDown());
-            break;
-          case 'hit':
-            player.playHit();
-            break;
-          case 'attack': {
-            // 查 lastAttackTargetId 对应的演员位置算冲撞方向
-            // targetId 为 null 或演员已不存在（已死亡移除）时，playAttack 退化为默认朝右冲撞
-            const targetId = playerAvatarStore.lastAttackTargetId;
-            const targetPos = targetId ? getActorById(targetId)?.getPosition() : undefined;
-            player.playAttack(targetPos, playerAvatarStore.lastAttackKind);
-            break;
-          }
-          case 'flee':
-            // 无 notifyDown：flee 是"逃跑离开"非"倒下死亡"，不设 isDown=true
-            // player 保持 alpha=0，由 onBattleEnd 检查 isFled 后派 'enter' 恢复可见性
-            player.playFadeOut();
-            break;
-          default:
-            // move / battle-start / battle-end / low-hp / normal-hp / idle → idle
-            player.idle();
-        }
+    async () => {
+      await nextTick();
+      const runtime = getActorById('player');
+      if (!runtime) return;
+      const intent = playerAvatarStore.intent;
+      const sessionId = `player-intent:${playerAvatarStore.intentSeq}:${runtime.generation}`;
+      if (intent === 'move') return;
+
+      if (intent === 'battle-start' || intent === 'battle-end'
+        || intent === 'low-hp' || intent === 'normal-hp' || intent === 'idle') {
+        const lease = runtime.acquire({ owner: 'ambient', channels: ['pose'], sessionId: `ambient:${runtime.generation}` });
+        lease?.play({ kind: 'idle' });
+        return;
+      }
+
+      const terminal = intent === 'die';
+      const channels = intent === 'hit' || intent === 'attack'
+        ? ['action', 'pose'] as const
+        : intent === 'flee'
+          ? ['visibility'] as const
+          : ['pose', 'visibility'] as const;
+      const lease = runtime.acquire({
+        owner: terminal ? 'terminal' : 'world',
+        channels: [...channels],
+        sessionId,
       });
+      if (!lease) return;
+      if (terminal) runtime.markTerminal();
+
+      let command;
+      switch (intent) {
+        case 'enter': case 'popup': case 'revive': command = { kind: 'enter' } as const; break;
+        case 'die': case 'fall': command = { kind: 'fall' } as const; break;
+        case 'hit': command = { kind: 'hit', direction: 0 } as const; break;
+        case 'attack': {
+          const target = playerAvatarStore.lastAttackTargetId
+            ? getActorById(playerAvatarStore.lastAttackTargetId)?.getScenePoint() ?? undefined
+            : undefined;
+          command = { kind: 'attack', target, attackKind: playerAvatarStore.lastAttackKind } as const;
+          break;
+        }
+        case 'flee': command = { kind: 'fade' } as const; break;
+        default: command = { kind: 'idle' } as const;
+      }
+      const result = await lease.play(command).finished;
+      if (result.status === 'completed' && (intent === 'enter' || intent === 'popup' || intent === 'revive')) {
+        runtime.markStanding();
+        playerAvatarStore.notifyUp();
+      }
+      if (result.status === 'completed' && (intent === 'die' || intent === 'fall')) {
+        runtime.markDown();
+        playerAvatarStore.notifyDown();
+      }
+      if (!terminal) lease.release();
     },
   );
 
-  // ── 位置同步触发：ResizeObserver ──
-  // 监听 grid 尺寸变化（缩放/resize），用 watch(gridRef) 而非 watchEffect，避免重复创建 observer
-  let resizeObserver: ResizeObserver | null = null;
-  const stopGridWatch = watch(gridRef, (grid) => {
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
-    }
+  const stopGridWatch = watch(gridRef, grid => {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    unregisterScene?.();
+    unregisterScene = null;
     if (!grid) return;
-    resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => syncAllPositions());
-    });
+
+    const scene = createMapSceneGeometry(
+      gridRef,
+      () => mapStore.curRegion,
+      () => mapStore.projectionRevision,
+    );
+    unregisterScene = registerSceneGeometry(scene);
+    resizeObserver = new ResizeObserver(() => requestAnimationFrame(() => syncAllPositions()));
     resizeObserver.observe(grid);
-  });
+    requestAnimationFrame(() => {
+      syncAllPositions();
+      for (const entity of presentationScene.snapshot.entities) void playFirstEnter(entity);
+    });
+  }, { immediate: true });
 
   function dispose(): void {
     stopIntentWatch();
     stopGridWatch();
-    stopCurLocWatch();
+    stopAuthorityWatch();
     stopEntitiesWatch();
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
-    }
-    // 清理所有 actor 的 tween
-    for (const actor of actors.values()) {
-      actor.killAll();
-    }
-    actors.clear();
-    entityRefs.clear();
-    enemyLastPls.clear();
+    resizeObserver?.disconnect();
+    unregisterScene?.();
+    for (const lease of worldMoves.values()) lease.release({ reconcile: false });
+    for (const run of rebaseMoves.values()) run.cancel('map_entities_disposed');
+    for (const run of projectedRemovals.values()) run.cancel('map_entities_disposed', false);
+    for (const id of runtimeIds) unregisterActor(id);
+    runtimeIds.clear();
+    worldMoves.clear();
+    rebaseMoves.clear();
+    projectedRemovals.clear();
     enteredEntities.clear();
   }
 
-  return {
-    setEntityRef,
-    syncAllPositions,
-    displayEntities,
-    dispose,
-  };
+  return { setEntityRef, syncAllPositions, displayEntities, dispose };
 }

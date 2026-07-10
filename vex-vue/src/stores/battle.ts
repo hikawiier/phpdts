@@ -7,12 +7,12 @@
 // - normal（探索）→ 玩家点击敌人 → startBattle() → battle
 // - battle（战斗）→ 玩家/NPC 回合交替 → 播放 battlelog → 继续 battle 或回 normal
 //
-// battlelog 数据流（played 标记机制 + v2 导演编排）：
-// - 后端所有 battlelog 持久化到文件，每条带 log_id + played=0
-// - 前端拉取 played=0 的 v2 event → DirectorV2.directV2() 编排为脚本
+// presentation 数据流（不可变批次 + v2 导演编排）：
+// - command/heartbeat 顶层返回 presentation.v1 批次
+// - inbox 按 batch_seq 去重并连续交给 DirectorV2.directV2() 编排为脚本
 // - DirectorV2.planPlaybackV2() 把语义脚本编排为 playback steps
 // - BattlePlaybackRunner 按 steps 执行动作动画、文本模态框、残留反馈
-// - 播完调 mark_battle_log_played.php 标记 played=1
+// - presentation.v1 批次按 batch_seq 连续消费，成功播放后推进本地 cursor
 //
 // 演出事件转发（store → 组件单向触发）：
 // - battle:preload-init → PreloadArea 组件初始化装填区
@@ -29,13 +29,19 @@
 import { defineStore } from 'pinia';
 import { ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import { getHeartbeatChangedScopes, isHeartbeatSoftFailed, markBattleLogPlayed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
+import { getHeartbeatChangedScopes, isHeartbeatSoftFailed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
-import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse } from '@/types/api';
+import { useEntitiesStore } from '@/stores/entities';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
+import type { ApiAction } from '@/api/endpoints';
+import { getSceneGeometry } from '@/composables/sceneRegistry';
+import type { BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse } from '@/types/api';
+import type { PresentationAnimationRun } from '@/types/presentation-scene';
 import {
   directV2,
   isBattleLogV2Event,
@@ -45,7 +51,13 @@ import {
 } from './battle-director-v2';
 import { runBattlePlaybackPlan, type SegmentPlayOptions } from './battle-playback-runner';
 import {
-  DeferredVisualScopes,
+  createBattlePresentationSession,
+  type BattlePresentationSession,
+  type PostCombatHandoffRun,
+} from './battle-presentation-session';
+import {
+  PendingAuthorityScopes,
+  drainBattleTicksToStable,
   shouldCommitBattleVisualState,
 } from './battle-ui-policy';
 
@@ -64,8 +76,16 @@ const YOUR_TURN_TOAST_DURATION = 2000;
 /** 模态框播放超时兜底（毫秒）— 防止组件异常卸载未通知导致 Promise 永久挂起 */
 const MODAL_TIMEOUT = 30000;
 
-function collectAllLogIds(entries: BattleLogRawEntry[]): number[] {
-  return entries.map(e => Number(e.log_id)).filter(id => id > 0);
+/** 单次刷新最多连续推进的战斗 tick，防止异常状态导致无限排空。 */
+const MAX_BATTLE_DRAIN_CYCLES = 32;
+
+export function closePresentationSessionOwnership(
+  session: BattlePresentationSession,
+  cancelPending: (reason: string) => void,
+  reason: string,
+): void {
+  cancelPending(reason);
+  if (session.active) session.abort(reason);
 }
 
 function extractNpcPidFromScriptV2(script: BattlePlayScriptV2): number {
@@ -112,6 +132,9 @@ export const useBattleStore = defineStore('battle', () => {
   const battleModalOpen = ref<boolean>(false);
   /** 当前正在播放的 v2 段（供 BattleModal 读取 text cues/actions/notices） */
   const currentSegment = ref<BattleSegmentV2 | null>(null);
+  const battleModalSessionId = ref<string | null>(null);
+  const battleModalIsBattleEnd = ref(false);
+  const battleModalContentReady = ref(false);
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
   let npcTurnRefreshRunning = false;
@@ -121,11 +144,24 @@ export const useBattleStore = defineStore('battle', () => {
   let daemonTimer: ReturnType<typeof setTimeout> | null = null;
   let daemonRunning = false;
   let combatTargetsRequestGeneration = 0;
-  const deferredVisualScopes = new DeferredVisualScopes();
-  let characterProjectionDeferred = false;
+  const pendingAuthorityScopes = new PendingAuthorityScopes();
+  let authorityRefreshRun: Promise<void> | null = null;
+  let authorityRefreshGeneration = 0;
+  let presentationSession: BattlePresentationSession | null = null;
+  let presentationSceneGeneration = 0;
+  let activePresentationBatchSeq: number | null = null;
+  let pendingBattleEndHandoff: {
+    sessionId: string;
+    sceneGeneration: number;
+    actorRun: PostCombatHandoffRun;
+    worldRun: PresentationAnimationRun;
+    finished: Promise<void>;
+  } | null = null;
 
   // ── 模态框播放完成回调（内部使用） ──
-  let _modalResolve: (() => void) | null = null;
+  let nextModalSessionId = 1;
+  let coveredWait: { sessionId: string; resolve: () => void } | null = null;
+  let closedWait: { sessionId: string; resolve: () => void } | null = null;
 
   // ══════════════════════════════════════════════════
   // 辅助函数
@@ -154,11 +190,13 @@ export const useBattleStore = defineStore('battle', () => {
     return extractEnemyPid(battleQueue);
   }
 
-  async function refreshMapEnemies(): Promise<Enemy[]> {
+  async function refreshMapEnemies(generation = authorityRefreshGeneration): Promise<Enemy[]> {
     const enemiesResult = await dataManager.fetch('enemies', true);
-    const enemies = enemiesResult.status === 'success' && enemiesResult.data
-      ? ((enemiesResult.data as { enemies?: Enemy[] }).enemies || [])
-      : [];
+    if (enemiesResult.status !== 'success' || !enemiesResult.data) {
+      return useMapStore().enemies;
+    }
+    const enemies = ((enemiesResult.data as { enemies?: Enemy[] }).enemies || []);
+    if (generation !== authorityRefreshGeneration) return useMapStore().enemies;
     useMapStore().updateMapData({ enemies });
     return enemies;
   }
@@ -183,46 +221,119 @@ export const useBattleStore = defineStore('battle', () => {
     const enemies = next.candidates.flatMap(candidate => candidate.character ? [candidate.character] : []);
     if (enemies.length > 0) {
       const characterStore = useCharacterStore();
-      characterStore.mergeEnemies(enemies);
+      characterStore.mergeEnemyPatches(enemies);
       characterStore.mergeCombatContext(combatContext.value);
     }
     dataManager.broadcast('battle:combat-targets-updated', next);
     return next;
   }
 
-  function deferHeartbeatChangedScopes(heartbeat: OblHeartbeatResponse): void {
-    const changedScopes = getHeartbeatChangedScopes(heartbeat);
-    if (changedScopes.length === 0) return;
+  function ingestHeartbeat(heartbeat: OblHeartbeatResponse): void {
+    ingestPresentationResponse(heartbeat);
+    noteAuthorityScopes(getHeartbeatChangedScopes(heartbeat));
+  }
 
+  function noteAuthorityScopes(changedScopes: readonly ApiAction[]): void {
+    if (changedScopes.length === 0) return;
     for (const scope of changedScopes) {
       dataManager.invalidate(scope);
     }
-
-    deferredVisualScopes.record(changedScopes);
+    pendingAuthorityScopes.record(changedScopes);
   }
 
-  function deferPlayerInfoProjection(playerInfo: PlayerInfo): void {
-    usePlayerStore().setPlayerInfo(playerInfo, { syncCharacters: false });
-    characterProjectionDeferred = true;
+  function publishAuthoritativePlayerInfo(playerInfo: PlayerInfo): void {
+    usePlayerStore().setPlayerInfo(playerInfo);
+    currentGroomid.value = parseInt(String(playerInfo.groomid)) || 0;
+    currentPid.value = parseInt(String(playerInfo.pid)) || 0;
+    combatContext.value = playerInfo.combat_context || null;
   }
 
-  async function flushDeferredVisualState(): Promise<void> {
-    const changedScopes = deferredVisualScopes.snapshot();
+  async function flushAuthoritativeStores(additionalScopes: readonly ApiAction[] = []): Promise<void> {
+    noteAuthorityScopes(additionalScopes);
+    if (authorityRefreshRun) {
+      await authorityRefreshRun;
+      return flushAuthoritativeStores();
+    }
+
+    const run = (async () => {
+      for (;;) {
+        const scopes = pendingAuthorityScopes.take() as ApiAction[];
+        if (scopes.length === 0) return;
+        const generation = authorityRefreshGeneration;
+        try {
+          if (scopes.includes('player_info')) {
+            const result = await dataManager.fetch('player_info', true);
+            if (result.status !== 'success' || !result.data) {
+              throw new Error('authoritative player_info refresh failed');
+            }
+            if (generation !== authorityRefreshGeneration) continue;
+            publishAuthoritativePlayerInfo(result.data as PlayerInfo);
+          }
+          if (scopes.includes('game_map')) {
+            await useMapStore().loadMap();
+          } else if (scopes.includes('enemies')) {
+            await refreshMapEnemies(generation);
+          }
+          if (generation !== authorityRefreshGeneration) continue;
+          if (scopes.includes('combat_targets')) await loadCombatTargets();
+        } catch (error) {
+          if (generation === authorityRefreshGeneration) pendingAuthorityScopes.record(scopes);
+          throw error;
+        }
+      }
+    })();
+    authorityRefreshRun = run;
+    try {
+      await run;
+    } finally {
+      if (authorityRefreshRun === run) authorityRefreshRun = null;
+    }
+  }
+
+  function cancelPendingBattleEndHandoff(reason: string): void {
+    const pending = pendingBattleEndHandoff;
+    if (!pending) return;
+    pendingBattleEndHandoff = null;
+    if (presentationSession?.id === pending.sessionId
+      && presentationSceneGeneration === pending.sceneGeneration) {
+      usePresentationSceneStore().finishRebase();
+      presentationSession = null;
+      presentationSceneGeneration = 0;
+    }
+    pending.actorRun.cancel(reason);
+    pending.worldRun.cancel(reason);
+  }
+
+  async function rebasePresentationScene(): Promise<boolean> {
+    const sceneStore = usePresentationSceneStore();
 
     try {
-      if (characterProjectionDeferred) {
-        usePlayerStore().syncCharacterProjection();
+      if (presentationSession?.active) {
+        const exits = presentationSession.sealForHandoff();
+        const handoffs = sceneStore.beginRebase(
+          useEntitiesStore().entities,
+          useMapStore().projectionRevision,
+          exits,
+        );
+        await nextTick();
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        const rebaseToken = sceneStore.rebaseToken;
+        const worldRun = rebaseToken === null
+          ? { finished: Promise.resolve(), cancel: () => {} }
+          : sceneStore.sealRebaseMoves(rebaseToken);
+        const actorRun = presentationSession.startCommit(handoffs);
+        await Promise.all([actorRun.finished, worldRun.finished]);
+        presentationSession = null;
+        presentationSceneGeneration = 0;
+        sceneStore.finishRebase();
+      } else {
+        sceneStore.syncAuthoritative(useEntitiesStore().entities, useMapStore().projectionRevision);
       }
-      if (changedScopes.includes('game_map')) {
-        await useMapStore().loadMap();
-      } else if (changedScopes.includes('enemies')) {
-        await refreshMapEnemies();
-      }
-      if (changedScopes.includes('combat_targets')) await loadCombatTargets();
-      characterProjectionDeferred = false;
-      deferredVisualScopes.commit(changedScopes);
+      return true;
     } catch (e) {
-      console.error('[Battle] deferred visual state sync error:', e);
+      sceneStore.rollbackRebase();
+      console.error('[Battle] presentation scene rebase error:', e);
+      return false;
     }
   }
 
@@ -234,7 +345,7 @@ export const useBattleStore = defineStore('battle', () => {
    * 启动 NPC 回合自动刷新循环
    *
    * NPC 顺位时，后端由 oblivions/api/heartbeat.php 显式执行 NPC 先攻轮。
-   * 前端轮询 refreshBattle() 会先 await heartbeat，再拉取 player_info/battle_log。
+   * 前端轮询 refreshBattle() 会先 await heartbeat，再读取 player_info 与响应内 presentation。
    *
    * 使用 setTimeout 递归调度（与 scheduleDaemonBeat 一致）：await refreshBattle()
    * 完成后再安排下一次，避免 refreshBattle 耗时 >1s 时 interval tick 空转。
@@ -251,7 +362,6 @@ export const useBattleStore = defineStore('battle', () => {
       npcTurnRefreshTimer = null;
       if (!npcTurnRefreshRunning) return;
       dataManager.invalidate('player_info');
-      dataManager.invalidate('battle_log');
       await refreshBattle();
       scheduleNpcTurnRefresh();
     }, NPC_TURN_REFRESH_INTERVAL);
@@ -286,13 +396,18 @@ export const useBattleStore = defineStore('battle', () => {
   async function _daemonBeat(): Promise<void> {
     try {
       const heartbeat = await oblHeartbeat();
-      deferHeartbeatChangedScopes(heartbeat);
+      ingestHeartbeat(heartbeat);
       const playerStore = usePlayerStore();
+      if (heartbeat.presentation || presentationInbox.peekNext() || presentationInbox.gapHead !== null) {
+        await refreshBattle(heartbeat);
+        return;
+      }
+      await flushAuthoritativeStores(['player_info']);
       if (currentMode.value === 'normal'
         && !isPlayingBattleLog.value
         && !isProcessingBattle.value
         && playerStore.oblBattleState !== 'PROCESSING') {
-        await flushDeferredVisualState();
+        await rebasePresentationScene();
       }
     } catch {
       // 静默失败，下次心跳重试
@@ -338,6 +453,14 @@ export const useBattleStore = defineStore('battle', () => {
    */
   function enterBattleMode(enemyPid: number, playerTurn: boolean, context: CombatViewModel | null = combatContext.value): void {
     const nextQid = context?.qid ?? null;
+    const session = presentationSession;
+    if (session && session.qid !== nextQid) {
+      closePresentationSessionOwnership(session, cancelPendingBattleEndHandoff, 'qid_changed');
+      if (presentationSession === session) {
+        presentationSession = null;
+        presentationSceneGeneration = 0;
+      }
+    }
     if (currentMode.value === 'battle' && currentQid.value === nextQid && nextQid !== null) {
       currentEnemyPid.value = enemyPid;
       updateActionPanel(playerTurn, context, false);
@@ -375,9 +498,10 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayerTurn.value = false;
     battleModalOpen.value = false;
     currentSegment.value = null;
-    deferredVisualScopes.clear();
-    characterProjectionDeferred = false;
-
+    cancelPendingBattleEndHandoff('battle_exited');
+    if (presentationSession?.active) presentationSession.abort('battle_exited');
+    presentationSession = null;
+    presentationSceneGeneration = 0;
     dataManager.invalidate('enemies');
     dataManager.broadcast('battle:ended');
 
@@ -447,8 +571,8 @@ export const useBattleStore = defineStore('battle', () => {
    *
    * 职责分工：
    * - 本函数负责拉取数据 + 进入/维持战斗模式 + 启停 NPC 刷新
-   * - 退出战斗模式的判断不在本函数，由 fetchAndPlayBattleLog 播完后调
-   *   verifyBattleStateAndDecide 触发后端校验决定
+   * - 退出战斗模式的判断不在本函数，由 consumePresentationBatches 排空批次并
+   *   到达稳定状态后决定
    *
    * 状态机驱动（3 态）：
    *  - 用 obl_battle_state 作为单一数据源决定轮询行为
@@ -468,20 +592,14 @@ export const useBattleStore = defineStore('battle', () => {
       // （经 game:tick-advanced 事件传入），直接复用，避免重复 POST heartbeat。
       const heartbeat = prefetchedHeartbeat ?? await oblHeartbeat();
       if (isHeartbeatSoftFailed(heartbeat)) return; // tick 未推进，等下一轮
-      deferHeartbeatChangedScopes(heartbeat);
-      const result = await dataManager.fetch('player_info', true);
-      if (result.status !== 'success' || !result.data) return;
-
-      const playerInfo = result.data as PlayerInfo;
-      deferPlayerInfoProjection(playerInfo);
+      ingestHeartbeat(heartbeat);
+      await flushAuthoritativeStores(['player_info']);
+      const playerInfo = usePlayerStore().playerInfo;
+      if (!playerInfo) return;
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
       const nextCombatContext = playerInfo.combat_context || null;
       const battleState = playerInfo.obl_battle_state;
-
-      currentGroomid.value = parseInt(String(playerInfo.groomid)) || 0;
-      currentPid.value = parseInt(String(playerInfo.pid)) || 0;
-      combatContext.value = nextCombatContext;
 
       if (action === 'battle') {
         const enemyPid = resolveEnemyPid(battleQueue, nextCombatContext);
@@ -497,11 +615,11 @@ export const useBattleStore = defineStore('battle', () => {
         stopNpcTurnRefresh();
       }
 
-      // 拉取并播放 battlelog —— 播完钩子内部触发后端校验
-      // fetchAndPlayBattleLog 播完后会调 verifyBattleStateAndDecide，由后端校验决定退出还是继续
-      await fetchAndPlayBattleLog();
+      // 拉取并播放 battlelog；内部会持续推进 PROCESSING，并先排空 heartbeat
+      // 新生成的日志，再由稳定状态决定退出还是继续。
+      await consumePresentationBatches();
       if (currentMode.value === 'normal' && action !== 'battle') {
-        await flushDeferredVisualState();
+        await rebasePresentationScene();
       }
     } catch (e) {
       console.error('[Battle] refreshBattle error:', e);
@@ -519,30 +637,24 @@ export const useBattleStore = defineStore('battle', () => {
    * 后端校验：拉取最新 player_info，根据 action 决定退出还是继续战斗
    *
    * 触发时机：
-   * - 导演播完所有动画后（fetchAndPlayBattleLog 末尾）
+   * - 导演播完所有动画后（consumePresentationBatches 末尾）
    * - F5 刷新页面初始化时（App.vue onMounted，已有逻辑）
    *
    * 设计原则：退出战斗页面唯一判据是后端校验，前端不维护战斗状态机。
    */
-  async function verifyBattleStateAndDecide(): Promise<void> {
-    // 不在战斗模式，无需校验（避免正常探索态下的无谓拉取）
-    if (currentMode.value !== 'battle') return;
-
+  async function advanceAndReadBattleState(): Promise<PlayerInfo | null> {
     const afterHeartbeat = await oblHeartbeat();
-    if (isHeartbeatSoftFailed(afterHeartbeat)) return; // 锁忙，等下一轮
-    deferHeartbeatChangedScopes(afterHeartbeat);
+    if (isHeartbeatSoftFailed(afterHeartbeat)) return null;
+    ingestHeartbeat(afterHeartbeat);
+    await flushAuthoritativeStores(['player_info']);
+    return usePlayerStore().playerInfo;
+  }
 
-    const afterResult = await dataManager.fetch('player_info', true);
-    if (afterResult.status !== 'success' || !afterResult.data) return;
-
-    const afterInfo = afterResult.data as PlayerInfo;
-    deferPlayerInfoProjection(afterInfo);
-    combatContext.value = afterInfo.combat_context || null;
-
+  async function applyVerifiedBattleState(afterInfo: PlayerInfo): Promise<void> {
     const afterAction = afterInfo.action || '';
     const afterBattleState = afterInfo.obl_battle_state;
     if (shouldCommitBattleVisualState(afterAction, afterBattleState)) {
-      await flushDeferredVisualState();
+      await rebasePresentationScene();
     }
     if (afterAction === 'battle') {
       // 继续战斗
@@ -557,59 +669,87 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  // ══════════════════════════════════════════════════
-  // battlelog 拉取 + 导演编排 + 播放 + 标记 + 后端校验
-  // ══════════════════════════════════════════════════
-
-  /**
-   * 拉取未播放的 battlelog，导演编排后播放，播完标记并触发后端校验
-   *
-   * 职责：
-   * - 拉取 battlelog，交给导演编排并播放
-   * - 播完后触发后端校验（verifyBattleStateAndDecide），由后端 action 决定退出还是继续
-   */
-  async function fetchAndPlayBattleLog(): Promise<void> {
-    if (isPlayingBattleLog.value) return;
-    if (!currentGroomid.value || !currentPid.value) return;
-
-    isPlayingBattleLog.value = true;
-    try {
-      dataManager.invalidate('battle_log');
-      const result = await dataManager.fetch('battle_log', true);
-      if (result.status !== 'success' || !result.data) return;
-
-      const entries = (result.data as { entries?: BattleLogRawEntry[] }).entries || [];
-      const v2Events = entries.filter(isBattleLogV2Event);
-
+  async function playPendingPresentationBatches(): Promise<number> {
+    let played = 0;
+    for (;;) {
+      const batch = presentationInbox.peekNext();
+      if (!batch) {
+        const gapHead = presentationInbox.gapHead;
+        if (gapHead === null) break;
+        await flushAuthoritativeStores(['player_info', 'game_map', 'combat_targets']);
+        if (!await rebasePresentationScene()) throw new Error('presentation gap rebase failed');
+        presentationInbox.commitGap(gapHead);
+        continue;
+      }
+      const v2Events = batch.events.filter(isBattleLogV2Event);
+      const authorityHead = usePlayerStore().playerInfo?.presentation_head_seq ?? 0;
+      if (authorityHead < batch.batch_seq) break;
       if (v2Events.length > 0) {
         const scriptV2 = directV2(v2Events);
         if (import.meta.env.DEV) {
           (globalThis as Record<string, unknown>).__battleScriptV2 = scriptV2;
           (globalThis as Record<string, unknown>).__battleRawEventsV2 = v2Events;
+          (globalThis as Record<string, unknown>).__presentationBatchV1 = batch;
         }
 
         if (scriptV2.segments.length > 0) {
           const npcPid = extractNpcPidFromScriptV2(scriptV2);
-          await playScriptV2(scriptV2, npcPid);
+          activePresentationBatchSeq = batch.batch_seq;
+          try {
+            await playScriptV2(scriptV2, npcPid);
+          } finally {
+            activePresentationBatchSeq = null;
+          }
         }
-      } else if (entries.length > 0 && import.meta.env.DEV) {
-        console.warn('[Battle] ignored non-v2 battlelog entries; battlelog.v2 is now required.', entries);
+      } else if (batch.events.length > 0 && import.meta.env.DEV) {
+        console.warn('[Battle] ignored non-v2 presentation events.', batch.events);
       }
+      presentationInbox.commit(batch.batch_seq);
+      played += batch.events.length;
+    }
+    return played;
+  }
 
-      if (entries.length > 0) {
-        const markResult = await markBattleLogPlayed(
-          currentGroomid.value,
-          currentPid.value,
-          collectAllLogIds(entries),
-        );
-        if (!markResult.success) {
-          console.warn('[Battle] markBattleLogPlayed returned failure:', markResult);
-        }
+  // ══════════════════════════════════════════════════
+  // presentation inbox + 导演编排 + 播放 + 后端校验
+  // ══════════════════════════════════════════════════
+
+  /**
+   * 连续消费 presentation.v1，导演编排后播放并触发后端校验
+   *
+   * 职责：
+   * - command/heartbeat 响应批次经 inbox 去重后交给导演播放
+   * - heartbeat 每次推进后先播放它新生成的批次
+   * - 非 PROCESSING 且尾随日志排空后，由后端 action 决定退出还是继续
+   */
+  async function consumePresentationBatches(): Promise<void> {
+    if (isPlayingBattleLog.value) return;
+    if (!currentGroomid.value || !currentPid.value) return;
+
+    isPlayingBattleLog.value = true;
+    try {
+      await playPendingPresentationBatches();
+      if (currentMode.value !== 'battle') return;
+
+      const drain = await drainBattleTicksToStable({
+        maxCycles: MAX_BATTLE_DRAIN_CYCLES,
+        advance: advanceAndReadBattleState,
+        playPending: playPendingPresentationBatches,
+        isProcessing: info => info.obl_battle_state === 'PROCESSING',
+      });
+      if (drain.status === 'stable' && drain.snapshot) {
+        await applyVerifiedBattleState(drain.snapshot);
+        return;
       }
-
-      await verifyBattleStateAndDecide();
+      if (drain.status === 'exhausted' && import.meta.env.DEV) {
+        console.warn(`[Battle] drain exceeded ${MAX_BATTLE_DRAIN_CYCLES} cycles; preserving presentation session`);
+      }
     } catch (e) {
-      console.error('[Battle] fetchAndPlayBattleLog error:', e);
+      cancelPendingBattleEndHandoff('playback_error');
+      presentationSession?.abort('playback_error');
+      presentationSession = null;
+      presentationSceneGeneration = 0;
+      console.error('[Battle] consumePresentationBatches error:', e);
       useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
     } finally {
       isPlayingBattleLog.value = false;
@@ -627,17 +767,44 @@ export const useBattleStore = defineStore('battle', () => {
       (globalThis as Record<string, unknown>).__battlePlaybackPlanV2 = plan;
     }
 
+    const scene = await waitForSceneGeometry();
+    if (!scene) throw new Error('Battle scene is not available');
+    if (!presentationSession?.active
+      || presentationSession.qid !== currentQid.value
+      || presentationSceneGeneration !== scene.generation) {
+      presentationSession?.abort('scene_or_qid_changed');
+      cancelPendingBattleEndHandoff('scene_or_qid_changed');
+      presentationSession = createBattlePresentationSession(currentQid.value);
+      presentationSceneGeneration = scene.generation;
+      usePresentationSceneStore().beginPlayback();
+    }
+
     await runBattlePlaybackPlan(plan, {
       currentPid: currentPid.value,
       npcPid,
+      scene,
+      presentation: presentationSession,
       updateSegmentContext,
       playSegmentInModal,
+      enterBattleEndOverlay,
+      handoffPresentationScene,
+      playBattleEndModalContent,
     });
+  }
+
+  async function waitForSceneGeometry() {
+    for (let i = 0; i < 10; i++) {
+      const scene = getSceneGeometry();
+      if (scene) return scene;
+      await nextTick();
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    }
+    return getSceneGeometry();
   }
 
   async function updateSegmentContext(segment: BattleSegmentV2, _npcPid: number): Promise<void> {
     updateEnemyNameFromSegment(segment);
-    // 敌人位置不再需要主动刷新——CharacterHub 已通过 mergeEnemies 持有最新 pls，
+    // 敌人位置不再需要主动刷新——CharacterHub 已通过权威资料 patch 持有最新 pls，
     // BattleHeader 响应式派生。参数 _npcPid 保留以兼容 runBattlePlaybackPlan 调用签名。
   }
 
@@ -657,10 +824,121 @@ export const useBattleStore = defineStore('battle', () => {
     // - 其他：跳过
     if (!segmentHasRenderableText(segment) && !options.isBattleEnd && !options.alwaysShowHeader) return;
 
-    currentSegment.value = segment;
-    battleModalOpen.value = true;
+    const sessionId = `modal-${nextModalSessionId++}`;
+    openBattleModal(segment, sessionId, false, true);
+    await waitForModalClose(sessionId);
+  }
 
-    await waitForModalClose();
+  function openBattleModal(
+    segment: BattleSegmentV2,
+    sessionId: string,
+    isBattleEnd: boolean,
+    contentReady: boolean,
+  ): void {
+    currentSegment.value = segment;
+    battleModalSessionId.value = sessionId;
+    battleModalIsBattleEnd.value = isBattleEnd;
+    battleModalContentReady.value = contentReady;
+    battleModalOpen.value = true;
+  }
+
+  async function enterBattleEndOverlay(segment: BattleSegmentV2, sessionId: string): Promise<void> {
+    if (presentationSession?.id !== sessionId) throw new Error('stale battle-end presentation session');
+    openBattleModal(segment, sessionId, true, false);
+    await waitForBattleEndOverlayCovered(sessionId);
+  }
+
+  async function handoffPresentationScene(_segment: BattleSegmentV2, sessionId: string): Promise<void> {
+    const session = presentationSession;
+    if (session?.id !== sessionId) throw new Error('stale presentation handoff');
+    // Authority refresh starts when responses arrive. Handoff only joins any
+    // already-running refresh before publishing its latest snapshot.
+    await flushAuthoritativeStores();
+    const authorityHead = usePlayerStore().playerInfo?.presentation_head_seq ?? 0;
+    if (activePresentationBatchSeq === null || authorityHead < activePresentationBatchSeq) {
+      throw new Error('authoritative projection has not reached the presentation batch watermark');
+    }
+    const sceneGeneration = presentationSceneGeneration;
+    const sceneStore = usePresentationSceneStore();
+    let authorityPublished = false;
+    try {
+      if (presentationSession !== session
+        || presentationSceneGeneration !== sceneGeneration
+        || battleModalSessionId.value !== sessionId) {
+        throw new Error('presentation handoff replaced while loading authority');
+      }
+      const exits = session.sealForHandoff();
+      const handoffs = sceneStore.beginRebase(
+        useEntitiesStore().entities,
+        useMapStore().projectionRevision,
+        exits,
+      );
+      authorityPublished = true;
+      await nextTick();
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (presentationSession !== session
+        || presentationSceneGeneration !== sceneGeneration
+        || battleModalSessionId.value !== sessionId) {
+        throw new Error('presentation handoff replaced before animation start');
+      }
+
+      const actorRun = session.startCommit(handoffs);
+      const rebaseToken = sceneStore.rebaseToken;
+      if (rebaseToken === null) throw new Error('presentation rebase token is missing');
+      const worldRun = sceneStore.sealRebaseMoves(rebaseToken);
+      const pending = {
+        sessionId,
+        sceneGeneration,
+        actorRun,
+        worldRun,
+        finished: Promise.resolve(),
+      };
+      pendingBattleEndHandoff = pending;
+      pending.finished = Promise.all([actorRun.finished, worldRun.finished]).then(() => {
+        if (pendingBattleEndHandoff !== pending
+          || presentationSession !== session
+          || presentationSceneGeneration !== sceneGeneration) return;
+        sceneStore.finishRebase();
+        presentationSession = null;
+        presentationSceneGeneration = 0;
+      }).catch(error => {
+        if (pendingBattleEndHandoff === pending
+          && presentationSession === session
+          && presentationSceneGeneration === sceneGeneration) {
+          sceneStore.finishRebase();
+          presentationSession = null;
+          presentationSceneGeneration = 0;
+        }
+        throw error;
+      });
+      if (battleModalSessionId.value === sessionId) battleModalContentReady.value = true;
+    } catch (error) {
+      if (pendingBattleEndHandoff?.sessionId !== sessionId
+        && presentationSession === session
+        && presentationSceneGeneration === sceneGeneration) {
+        if (authorityPublished) {
+          sceneStore.cancelActiveRebaseMoves('battle_end_handoff_start_failed');
+          sceneStore.finishRebase();
+        }
+        session.abort('battle_end_handoff_start_failed');
+        presentationSession = null;
+        presentationSceneGeneration = 0;
+      }
+      throw error;
+    }
+  }
+
+  async function playBattleEndModalContent(_segment: BattleSegmentV2, sessionId: string): Promise<void> {
+    if (battleModalSessionId.value !== sessionId) throw new Error('stale battle-end modal session');
+    const pending = pendingBattleEndHandoff;
+    if (!pending || pending.sessionId !== sessionId) throw new Error('battle-end handoff run is missing');
+    const [modalResult, handoffResult] = await Promise.allSettled([
+      waitForModalClose(sessionId),
+      pending.finished,
+    ]);
+    if (pendingBattleEndHandoff === pending) pendingBattleEndHandoff = null;
+    if (modalResult.status === 'rejected') throw modalResult.reason;
+    if (handoffResult.status === 'rejected') throw handoffResult.reason;
   }
 
   function segmentHasRenderableText(segment: BattleSegmentV2): boolean {
@@ -672,17 +950,37 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   /** 等待模态框关闭 */
-  async function waitForModalClose(): Promise<void> {
+  async function waitForBattleEndOverlayCovered(sessionId: string): Promise<void> {
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        _modalResolve = null;
+        if (coveredWait?.sessionId === sessionId) coveredWait = null;
         resolve();
-      }, MODAL_TIMEOUT);
-      _modalResolve = () => {
+      }, 5000);
+      coveredWait = { sessionId, resolve: () => {
         clearTimeout(timeout);
         resolve();
-      };
+      } };
     });
+  }
+
+  async function waitForModalClose(sessionId: string): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        if (closedWait?.sessionId === sessionId) closedWait = null;
+        resolve();
+      }, MODAL_TIMEOUT);
+      closedWait = { sessionId, resolve: () => {
+        clearTimeout(timeout);
+        resolve();
+      } };
+    });
+  }
+
+  function notifyBattleEndOverlayCovered(sessionId: string): void {
+    if (battleModalSessionId.value !== sessionId || coveredWait?.sessionId !== sessionId) return;
+    const wait = coveredWait;
+    coveredWait = null;
+    wait.resolve();
   }
 
   /**
@@ -690,12 +988,17 @@ export const useBattleStore = defineStore('battle', () => {
    *
    * BattleModal 播放完后调用本函数，触发 waitForModalClose 中的 Promise resolve。
    */
-  function notifyModalClosed(): void {
+  function notifyModalClosed(sessionId: string = battleModalSessionId.value ?? ''): void {
+    if (!sessionId || battleModalSessionId.value !== sessionId) return;
     battleModalOpen.value = false;
     currentSegment.value = null;
-    if (_modalResolve) {
-      _modalResolve();
-      _modalResolve = null;
+    battleModalSessionId.value = null;
+    battleModalIsBattleEnd.value = false;
+    battleModalContentReady.value = false;
+    if (closedWait?.sessionId === sessionId) {
+      const wait = closedWait;
+      closedWait = null;
+      wait.resolve();
     }
   }
 
@@ -764,6 +1067,13 @@ export const useBattleStore = defineStore('battle', () => {
       const d = data as { heartbeat?: OblHeartbeatResponse } | undefined;
       refreshBattle(d?.heartbeat);
     });
+    dataManager.listen('game:command-committed', (data) => {
+      const d = data as { changedScopes?: ApiAction[] } | undefined;
+      noteAuthorityScopes(d?.changedScopes ?? []);
+      void flushAuthoritativeStores().catch(error => {
+        console.error('[Battle] command authority refresh error:', error);
+      });
+    });
   }
 
   /** 重置为初始状态（退出战斗/切换角色时） */
@@ -782,13 +1092,22 @@ export const useBattleStore = defineStore('battle', () => {
     enemyName.value = '';
     battleModalOpen.value = false;
     currentSegment.value = null;
-    deferredVisualScopes.clear();
-    characterProjectionDeferred = false;
+    battleModalSessionId.value = null;
+    battleModalIsBattleEnd.value = false;
+    battleModalContentReady.value = false;
+    cancelPendingBattleEndHandoff('battle_reset');
+    presentationSession?.abort('battle_reset');
+    presentationSession = null;
+    presentationSceneGeneration = 0;
+    activePresentationBatchSeq = null;
+    authorityRefreshGeneration++;
+    pendingAuthorityScopes.clear();
+    usePresentationSceneStore().reset();
     stopNpcTurnRefresh();
-    if (_modalResolve) {
-      _modalResolve();
-      _modalResolve = null;
-    }
+    coveredWait?.resolve();
+    coveredWait = null;
+    closedWait?.resolve();
+    closedWait = null;
   }
 
   return {
@@ -806,6 +1125,9 @@ export const useBattleStore = defineStore('battle', () => {
     enemyName,
     battleModalOpen,
     currentSegment,
+    battleModalSessionId,
+    battleModalIsBattleEnd,
+    battleModalContentReady,
     // 定时器管理
     startNpcTurnRefresh,
     stopNpcTurnRefresh,
@@ -822,9 +1144,10 @@ export const useBattleStore = defineStore('battle', () => {
     // 主刷新
     refreshBattle,
     loadCombatTargets,
-    // battlelog 播放
-    fetchAndPlayBattleLog,
+    // presentation 播放
+    consumePresentationBatches,
     notifyModalClosed,
+    notifyBattleEndOverlayCovered,
     // 装填区执行完成
     onPreloadExecuted,
     // 初始化

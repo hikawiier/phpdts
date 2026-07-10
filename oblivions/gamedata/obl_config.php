@@ -24,8 +24,7 @@ return [
     'log_max_debug_entries' => 50,   // debug 日志最大条目数（与正式日志分开计数，互不挤占）
 
     // ─── 战斗 / Battle ──────────────────────────────────
-    'battle_log_old_max'    => 10,   // 战斗日志历史归档最大批次（超过后丢弃最旧的）
-    // battlelog.v2 是唯一玩家战斗演出协议；保留该键仅避免历史读取方缺字段。
+    // battlelog.v2 是唯一玩家战斗演出事件结构。
     'battlelog_schema'      => 'v2',
 
     // ─── 战斗引擎 / Combat Engine ──────────────────────

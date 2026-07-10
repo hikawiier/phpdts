@@ -52,6 +52,8 @@ try {
     obl_runtime_transaction_begin();
     obl_runtime_reload_tick_globals();
     $result = obl_tick_orchestrator_heartbeat($ctx);
+    $presentation_pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+    $presentation = obl_runtime_prepare_presentation($presentation_pdata, '');
     obl_runtime_transaction_commit();
     $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
     $warnings = array();
@@ -68,6 +70,7 @@ try {
         'data' => $result,
     );
     if (!empty($warnings)) $response['warnings'] = array_values($warnings);
+    $response = obl_runtime_attach_presentation($response, $presentation);
     obl_command_response_emit($response);
 } catch (Throwable $e) {
     obl_runtime_transaction_rollback();

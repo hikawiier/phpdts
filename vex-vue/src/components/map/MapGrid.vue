@@ -43,18 +43,21 @@ import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { useUiStore } from '@/stores/ui';
 import type { MapEntity } from '@/types/map-entity';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
 const battleStore = useBattleStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const uiStore = useUiStore();
+const presentationScene = usePresentationSceneStore();
 
 function isMapCommandInputLocked(): boolean {
   return isBattleMapInputLocked({
     currentMode: battleStore.currentMode,
     isPlayingBattleLog: battleStore.isPlayingBattleLog,
     isProcessingBattle: battleStore.isProcessingBattle,
+    presentationPhase: presentationScene.phase,
   });
 }
 
@@ -93,7 +96,7 @@ function imgStyle(entity: MapEntity): Record<string, string> {
 // 预装填阶段（currentMode='battle' 但 combatContext 未加载）：hasActiveCombat=false，不半透明
 // 探索模式：忽略 inCombat，全部正常显示
 const hasActiveCombat = computed(() =>
-  characterStore.aliveList.some(c => c.combat?.inCombat === true),
+  displayEntities.value.some(entity => entity.inCombat === true),
 );
 
 function entityClass(entity: MapEntity): Record<string, boolean> {
@@ -175,7 +178,7 @@ watch(
 // ─── 监听 mapStore 数据变化 → 重新应用布局 + 居中 ───
 // cells computed 会自动重新计算（响应式），这里只需处理布局 + 居中
 watch(
-  () => [mapStore.links, characterStore.enemyList, mapStore.curLoc, mapStore.curRegion],
+  () => [mapStore.links, characterStore.mapEnemyList, mapStore.curLoc, mapStore.curRegion],
   () => {
     if (!initialized) return;
     if (!gridRef.value || !containerRef.value) return;
@@ -305,7 +308,13 @@ onUnmounted(() => {
         :data-character-pid="entity.characterPid || undefined"
         @click="onEntityClick(entity, $event)"
       >
-        <img class="entity-img" :src="entity.img" :alt="entity.id" :style="imgStyle(entity)" />
+        <div class="actor-action">
+          <div class="actor-visibility">
+            <div class="actor-pose">
+              <img class="entity-img" :src="entity.img" :alt="entity.id" :style="imgStyle(entity)" />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

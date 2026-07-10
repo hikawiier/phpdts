@@ -179,14 +179,25 @@ body::after {
     will-change: transform, opacity;
 }
 
+.actor-action,
+.actor-visibility,
+.actor-pose {
+    position: absolute;
+    inset: 0;
+    transform-origin: bottom center;
+    will-change: transform, opacity;
+}
+
+.actor-visibility {
+    opacity: 0;
+}
+
 .entity-actor {
   pointer-events: auto;
 }
 /* player 实体默认透明：避免首次渲染到 GSAP 接管之间立绘"透出来" */
 /* GSAP 的 setDown(alpha:0)/popUp(alpha:1) 会通过 style.opacity 覆盖此默认值 */
-.entity.entity-player {
-    opacity: 0;
-}
+.entity.entity-player { opacity: 1; }
 /* z-index 固定 10，可见性由 GSAP alpha 控制（删除原 .actor.popped 规则） */
 
 /* 立绘图片：height 由 MapGrid.vue 的 imgStyle() 动态绑定（ratio * 100%） */

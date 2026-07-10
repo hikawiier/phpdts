@@ -29,22 +29,22 @@
 - 一个 TickFrame 内，同一 actor 最多执行一个主动行为。
 - 主动行为只属于两个域之一：`combat` 或 `world`。
 - TickFrame 初始化 `BattleActorScope`，world AI 必须排除本 TickFrame 战斗域成员。
-- 战斗结束后的下一 TickFrame 若 `BattleActorScope` 已为空，原战斗 actor 恢复普通 NPC 后可执行 world AI；这是当前预期行为，不是同 tick 双行动 bug。
+- 普通离场 actor 在后续 TickFrame 按世界规则恢复资格；escaped actor 先记录 `post_combat_handoff_pending`，qid disband 时再转换为 `world_ai_resume_tick=disband_tick+1`，必须跳过首个真正的战后 world-AI TickFrame，避免退避后立即再次随机移动。
 
-**战斗系统边界**：`combat/` 是唯一战斗执行主流程；`battle/` 是仍被复用的 shared combat infrastructure，负责队列、状态机 hook、共享数值与 battle log 持久化。旧 `battle.entry.php` / `battle.main.php` 不再存在于运行时心智模型里。
+**战斗系统边界**：`combat/` 是唯一战斗执行主流程；`battle/` 是仍被复用的 shared combat infrastructure，负责队列、状态机 hook、共享数值与请求内 BattleLogCollector。在线演出由 response `presentation.v1` 投递，不由 `battle/` 维护持久 played 队列。旧 `battle.entry.php` / `battle.main.php` 不再存在于运行时心智模型里。
 
 **战斗 UI 数据源**：`player_info.combat_context` 提供当前 qid、队列成员和提交权限；独立的 `combat_targets` scope 提供全部展示候选及 `member/joinable/left/other_battle/blocked` 投影。前端战斗会话以规范化后的 `qid` 为身份，点击敌人的 PID 只作为 suggested/focused target，不能代替战场身份或后端合法性判断。
 
 **前端战斗播放边界（四层架构）**：battlelog.v2 是语义事件流；后端原料层 emit 事件，Director（`directV2`）负责把事件转脚本，PlaybackPlan（`planPlaybackV2`）负责排序/并发/等待策略，Runner/ActorExecutor（`battle-playback-runner.ts` / `battle-actor-executor.ts`）负责真实动画执行。不要把动画时序散落回组件事件里。
 
-**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback, refresh, server_state, ...domainData }, warnings? }`。战斗命令的领域结果位于 `data.actions[]`，每项含 `resolvedAim`、`capturedTargetCount` 和逐目标结果；日志落盘失败在数据库提交后以 `warnings=['BATTLELOG_PERSIST_FAILED']` 返回，客户端不得重放命令。
+**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback, refresh, server_state, ...domainData }, presentation_head_seq, presentation?, warnings? }`。战斗命令的领域结果位于 `data.actions[]`，每项含 `resolvedAim`、`capturedTargetCount` 和逐目标结果；在线演出随 `presentation.v1` 直带。只有显式配置的可选 archive writer 失败时才可能返回 `BATTLELOG_PERSIST_FAILED`，客户端不得因此重放命令。
 
 **三套日志系统职责**（物理隔离）：
 
 | 日志 | 用途 | 前端呈现 |
 |------|------|---------|
 | `obl_log` | 玩家历史事件 | 日志区 + Toast（按白名单） |
-| `obl_battle_log` | 战斗导演事件 | 战斗模态框播放 |
+| `$obl_battle_log` / battlelog.v2 | 请求内战斗导演事件收集器 | 随 `presentation.v1` 进入 Director/Planner/Runner |
 | `obl_error_log` | **诊断流**（后端异常/命令拒绝） | 默认不提示；仅 `?debug=ai` / `?poll_error=1` 时弹诊断 Toast |
 
 > `obl_error_log` 不再作为普通 UI 错误通道。普通业务拒绝由 Command API response 的 `code + feedback` 负责，前端 `command-feedback.ts` 渲染。
@@ -53,7 +53,7 @@
 - 不升级旧根 `command.php` 为 JSON；Oblivions 新写操作只走 `oblivions/api/command.php`
 - Oblivions 运行时不依赖 `common.inc.php`
 - 后端只返回结构（`code + feedback.id + params`），前端负责文案/i18n/HTML
-- `battle_log` 是战斗导演事件流，不是普通日志
+- battlelog.v2 是请求内战斗导演事件流，不是普通日志，也不是 played/ack 消息队列
 - Vite proxy 保留（开发环境转发 `/phpdts/*` 到后端）
 
 ---
@@ -139,7 +139,9 @@
 - **NPC 行动自驱动**：NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`（`obl_tick++`），下次心跳检测到 pending tick 继续处理
 - **玩家操作与 NPC 回合互斥**：PROCESSING 状态时 Command Bus gate `BATTLE_BUSY` 拒绝推进 tick 的命令（防止玩家在 NPC 行动期间重复提交）
 - **同 tick 单 actor 单主动行为**：TickFrame 内每个 actor 只能执行一个主动行为；战斗行为与非战斗 world AI 共享同一个行为额度。后端通过 `ActorBehaviorLedger` 登记 `combat` / `world` 行为，通过 `BattleActorScope` 排除本 TickFrame 入口的战斗域成员。
-- **战斗结束后的下一 tick**：最后一个 NPC 战斗回合可能在 disband / battle_end 后继续请求推进 1 个 pending tick。该 NPC 在“执行 escape 的 TickFrame”内仍被 `BattleActorScope` 阻断 world AI；但下一 TickFrame 若战斗已清理且 `BattleActorScope=[]`，它恢复普通 NPC 身份并可执行 world AI。这是当前时间模型的预期行为。
+- **战斗结束后的下一 tick**：escape 结算只给该 actor 写入 `post_combat_handoff_pending`，不能在逃跑当刻提前计算恢复时间；qid 真正 disband 时才把 pending 转换成 `world_ai_resume_tick = disband_tick + 1`。因此即使 actor 提前逃跑、战斗又持续多个 tick，它仍会跳过首个真正的 post-battle world-AI TickFrame，下一 tick 才恢复普通 NPC 身份。该约束只作用于退出 actor，不暂停世界其他 NPC。
+
+> post-combat AI 恢复边界与 PresentationScene 的 Actor 级 handoff 共同保证领域和视觉连续性；`battle_end` 遮罩达到覆盖态时作为战斗投影向世界投影的显式交接窗口，world animation 可在遮罩下开始。详见 [`docs/战斗演出事件消费与权威投影解耦研判.md` §12](./docs/战斗演出事件消费与权威投影解耦研判.md#12-战斗结束到世界-ai-的视觉连续性)。
 
 > 旧根 `command.php` → `obl_command.php` 的 [F] 段 `obl_tick_advance()` 仍存在于代码中，但该路径整体标记为 `@deprecated`。新前端走 Command API（`oblivions/api/command.php` → `obl_command_bus.php`），不经过 [F] 段。
 
@@ -196,49 +198,46 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 - 瞬时事件不在日志区留痕，避免与结果事件重复
 - 需强制处理的事件依赖模态框而非 Toast，因为 Toast 短暂提示不足以驱动玩家行动
 
-### 1.10 战斗日志 (Battle Log) 与 played 标记机制
+### 1.10 战斗演出事件与 PresentationBatch
 
-**与 obl_log 分离的第二套日志系统**，专门记录战斗细节（每一步动作），obl_log 只存战斗摘要（`battle.start`/`battle.end`）。
+`obl_log` 继续保存玩家可回看的结构化摘要；`$obl_battle_log` 现在只是单次 command/heartbeat 请求内的 battlelog.v2 事件收集器，不再是持久消息队列。
 
-| | obl_log（结构化日志） | obl_battle_log（战斗日志） |
+| | obl_log（结构化日志） | battlelog.v2（实时演出事件） |
 |---|---|---|
-| **存储内容** | 探索/移动/拾取/战斗摘要 | 战斗内每一步动作（攻击/反击/先攻判定/逃跑） |
-| **全局变量** | `$obl_log`（`OblivionsLogger`） | `$obl_battle_log`（`BattleLogCollector`） |
-| **持久化文件** | `oblivions/cache/logs/obl_log_{groomid}_{pid}.json` | `oblivions/cache/battles/obl_battle_log_{groomid}_{pid}.json` |
-| **API 端点** | `obl_log` | `battle_log` |
-| **前端用途** | 日志区渲染 + Toast 触发 | 战斗模态框播放 + 碰撞动画 |
+| **内容** | 探索/移动/拾取/战斗摘要 | 战斗内 action/delivery/effect/clear/end 等演出事实 |
+| **生命周期** | 按既有日志保留策略持久化 | 请求内收集，COMMIT 后随 response 的 `presentation` 字段投递 |
+| **可靠性** | 可重新读取 | best-effort；丢失时按权威状态 rebase，不重放命令 |
+| **前端用途** | 日志区渲染 + Toast | Director/Planner/Runner + PresentationScene |
 
 **event_type 细分与原料补全**：
 
 后端 render channel 当前使用 11 种 battlelog.v2 `event_type`：`round_start` / `turn_start` / `action_start` / `action_delivery` / `combatant_joined` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice`。`action_delivery` 始终引用 ResolvedAim，`effect_applied` 始终引用具体 ResolutionTarget；`combatant_joined` 必须先于该角色的 effect。
 
-**render/debug 分离**：
+**render/debug 分离**：每条 emit 携带 `debug` 布尔字段。Runtime 只把 `debug=false` 的 render events 放入 `PresentationBatch.events`；debug/diagnostic 使用独立诊断流，不参与 presentation cursor。
 
-每条 emit 携带 `debug` 布尔字段，由 phase 级默认映射表控制（如 `queue_create` / `actor_state_check` / `queue_rebuild` 默认 debug=true）。`obl_battle_log_load` 新增 `$includeDebug` 参数，前端轮询时默认 `false`，只获取渲染原料，减小 payload。debug 条目保留在后端文件中但不传输。
+**迁移兼容字段**：当前 response event 仍补充 `log_id=event_seq` 与 `played=1`，只为兼容既有 Director fixture/type；它们没有服务端游标、确认或重播语义。新代码必须使用 `batch_seq/event_seq` 排序与去重，不能恢复 played ack。
 
 **边界标记字段**：
 
-每个条目自动附加三个边界标记字段：
-- `bl_turn_num` — Turn 计数（null=Phase 0/尚未开始，1+=第 N turn），由 `battle_hook_turn_start` 递增
-- `bl_round_num` — Round 计数（null=Phase 0 无队列，0+=第 N round），从 DB `oblbattle_state.round_num` 同步
+每个条目自动附加两项层级计数字段：
+- `bl_turn_num` — Turn 计数（null=pre-battle/尚未开始，1+=第 N turn），由 `battle_hook_turn_start` 递增
+- `bl_round_num` — Round 计数（null=pre-battle 尚无队列，0+=第 N round），从 DB `oblbattle_state.round_num` 同步
 
 这些字段供前端导演系统进行分层分段编排。v2 不再依赖 `bl_segment_flag` 字段——边界信号直接由 `event_type` 本身表达（`round_start` / `turn_start` / `battle_end` 即边界）。
 
-**played 标记机制**：
+**在线投递流程**：
 
-```
-后端 emit battlelog（played=0）
-  → obl_battle_log_persist() 追加到文件，分配 log_id，played=0
-  → 命令响应只返回 {}（不再附带 battlelog 字段）
-
-前端 fetchAndPlayBattleLog()
-  → gameApi('battle_log') → 返回 played=0 的条目（已过滤 debug=true）
-  → directV2(events) → 编排为 BattlePlayScriptV2（导演层）
-  → playScriptV2(script, npcPid) → planPlaybackV2 + runBattlePlaybackPlan（计划层+执行器）
-  → POST mark_battle_log_played.php 标记 played=1
+```text
+领域事务内 emit battlelog.v2
+  -> Runtime 冻结 render events，事务内递增 obl_presentation_head_seq
+  -> COMMIT
+  -> command/heartbeat response 附加 presentation.v1
+  -> 前端 PresentationInbox 按 batch_seq 消费
+  -> Director/Planner/Runner 更新 PresentationScene
+  -> 完成或发现 gap 后 rebase 到 AuthoritativeStore
 ```
 
-> BattleLogEntry 字段结构见 [CODEBASE.md §4.5](./CODEBASE.md#45-battle_log-战斗日志未播放条目)。
+F5/冷启动从 `player_info.presentation_head_seq` 初始化 cursor，直接显示当前权威世界，不补播旧动画。旧 `battle_log` State scope、mutable JSON 和 `mark_battle_log_played.php` 已删除。详见 [`docs/战斗演出事件消费与权威投影解耦研判.md`](./docs/战斗演出事件消费与权威投影解耦研判.md)。
 
 ### 1.11 错误日志 (Error Log)
 
@@ -345,9 +344,9 @@ function skill_xxx_execute(CombatContext $ctx): void {
 
 ### 1.18 请求事务与目标 SAVEPOINT
 
-Command 与 heartbeat 都遵循 `GET_LOCK -> BEGIN -> reload -> execute/tick -> COMMIT -> persist battlelog -> release lock`。所有可写 Oblivions 表使用 InnoDB；DB adapter 在事务中通过 request-local throw-on-error flag 抛出 SQL 失败。shutdown guard 在事务仍 active 的 fatal/异常收口中 rollback，并兜底释放 room lock；COMMIT 后 fatal 不可能撤销已提交状态。当前 request_id 尚无服务端去重账本，因此客户端只能先 State reconcile，不能自动重放不确定结果的命令。
+Command 与 heartbeat 都遵循 `GET_LOCK -> BEGIN -> reload -> execute/tick -> freeze presentation/head -> COMMIT -> attach presentation.v1 -> optional archive/diagnostic persistence -> release lock`。所有可写 Oblivions 表使用 InnoDB；DB adapter 在事务中通过 request-local throw-on-error flag 抛出 SQL 失败。shutdown guard 在事务仍 active 的 fatal/异常收口中 rollback，并兜底释放 room lock；COMMIT 后 fatal 不可能撤销已提交状态。当前 request_id 尚无服务端去重账本，因此客户端只能先 State reconcile，不能自动重放不确定结果的命令。
 
-每个真实 TargetResolutionUnit 还在 Participation enlist 前建立 SAVEPOINT 和 BattleLogCollector checkpoint。可恢复的单目标 enlist/effect 失败只撤销本目标的 DB、内存和事件，保留此前目标的成功结果；SQL/PHP/commit 异常必须越过该层，由请求事务回滚全部写入。collector 仅在 commit 后落盘，文件失败返回 warning，不能回滚已提交领域状态。
+每个真实 TargetResolutionUnit 还在 Participation enlist 前建立 SAVEPOINT 和 BattleLogCollector checkpoint。可恢复的单目标 enlist/effect 失败只撤销本目标的 DB、内存和事件，保留此前目标的成功结果；SQL/PHP/commit 异常必须越过该层，由请求事务回滚全部写入。collector 的 render events 只在 COMMIT 成功后随 response 投递；显式配置的可选 archive writer 失败只返回 warning，不能回滚已提交领域状态。
 
 ### 1.19 BattlePlaybackPlan
 
@@ -358,9 +357,15 @@ Command 与 heartbeat 都遵循 `GET_LOCK -> BEGIN -> reload -> execute/tick -> 
 | 后端原料层 | battlelog.v2 语义事件 | emit 时补全名称、HP 快照、边界标记，不预判前端如何消费 |
 | Director | `BattlePlayScriptV2` | 把 battlelog.v2 语义事件按 `action_uid` 聚合，分段（round_intro/turn/battle_end/system） |
 | Planner | `BattlePlaybackPlan` / `PlaybackStep[]` | 决定准备地图、动作动画、清场、文本、伤害残留等步骤的顺序和等待策略 |
-| Runner / ActorExecutor | 实际动画 promise | 执行 plan，等待 completion/duration，驱动 actor 动画 |
+| Runner / ActorExecutor | 可取消 PlaybackExecutionTask | 执行 plan，等待 completion，超时先 cancel，驱动 actor runtime |
 
 设计边界：组件只呈现状态，不承担时序推理；动画排序不应靠全局事件临时串联。战斗域动画和非战斗域动画都应进入明确的编排序列，避免同一帧内互相抢表现。
+
+**Actor/Scene 执行底座**：地图以原子 `MapProjection { revision, currentTile, links, enemies }` 为可观察边界，`game_map` 与 `enemies` 不允许半提交；强制刷新必须绕过旧 pending，旧 generation 响应不得覆盖新投影或新缓存。`SceneGeometry` 统一 `TileRef -> ScenePoint -> ViewportPoint` 转换，并通过 `active/generation` 使 MapGrid 重挂载后的旧播放任务可检测、可取消。
+
+每个 actor DOM 固定拆为 spatial/action/visibility/pose 四个通道，由 `ActorRuntime` 统一管理。调用方必须取得 `PresentationLease`，优先级为 `terminal > battle > world > ambient`；投影在 spatial lease 期间只写 `pendingAnchor`，释放时 reconcile 最新权威位置。`death` 标记 terminal 和已动画退场；`escaped` 进入 `PostCombatHandoff`，按 `retreat/settle-in-place/hidden-relocate-arrive/remove` 对齐权威实体；非死亡 `fall` 保持 down posture，不因 lease 释放自动恢复 idle。
+
+`BattlePresentationSession` 跨连续 `PROCESSING` 批次存活。普通稳定边界负责 scene rebase 与 lease reconcile；`battle_end` 使用 `overlay covered -> presentation_scene_handoff -> modal content` 显式移交，结果正文与 PostCombatHandoff 并行。Scene 失效或执行异常会 abort 当前 session，但不得复活已经完成死亡退场的 actor。投射物与爆炸由独立 overlay executor 使用 ViewportPoint，ActorExecutor 不直接查询 DOM。
 
 ### 1.20 TickFrameResult 与 changedScopes
 
@@ -369,7 +374,7 @@ TickFrameResult 是一次 pending tick 结算的结构化结果。它记录：
 - actor_behaviors：本 TickFrame actor 行为账本
 - changed_scopes：本次 tick 影响了哪些前端读模型
 
-`changedScopes` 是 TickFrameResult 面向前端的刷新摘要。前端按 scope 精准 invalidate：例如战斗事件刷新 `player_info/battle_log`，world AI 移动刷新 `game_map/enemies`。
+`changedScopes` 是 TickFrameResult 面向前端的刷新摘要。前端按 scope 精准 invalidate：例如战斗事件刷新 `player_info/combat_targets`，world AI 移动刷新 `game_map/enemies`；实时演出由 heartbeat response 的 `presentation` 字段直带，不再存在 `battle_log` State scope。
 
 设计理由：tick 推进是世界时间推进，不等于“全量刷新所有状态”。后端应把结算影响域显式暴露给前端，让前端既能即时同步地图，又不会把刷新策略和战斗播放时序混在一起。
 
@@ -412,34 +417,28 @@ $obl_log->emit('move.success', 'move', [
 - 玩家提交战斗指令并结束 → `PLAYER_TURN → PROCESSING`（Command Bus `obl_command_after_dispatch()` 触发 `player_acted` 事件）
 - tick 推进 / NPC 回合处理 → 在 `PROCESSING` 状态下允许（Tick Orchestrator `obl_tick_orchestrator_after_command()` 中调用 `obl_battle_state_refresh()` 刷新时间戳）
 - 后端 Command Bus `obl_command_gate()` 检测 `PROCESSING` 状态 → 拒绝提交战斗命令的命令（返回 `BATTLE_BUSY`，`battle.submit_turn` 自身例外）
-- 前端 `commandQueue` 第 5 层 PROCESSING 锁（`_checkLocks` 中检查 `oblBattleState === 'PROCESSING'`）仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令；`isLocked` 只含 HTTP/演出两层全局锁，`pendingNpc` 仅用于 UI 状态展示（详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
+- 前端 `commandQueue` 的 PROCESSING 锁（`_checkLocks` 中检查 `oblBattleState === 'PROCESSING'`）仅拦截 `COMMAND_REGISTRY` 中 `advancesTick=true` 的命令；`isLocked` 只表示 HTTP 请求互斥，战斗命令另受 `PresentationScene.phase` 局部水位约束（详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)）
 - 下一顺位判定 → `battle_manage_queue()` 集中确定 next 并写入 `bra_oblbattle_state.next_pid`：下一位是玩家则 `player_turn` 事件 → `PLAYER_TURN`，仍是 NPC 则 `self_loop` 事件刷新时间戳
 
 **设计理由**：全局标志是单布尔值，无法区分多战场。状态机按 qid 分离，支持多战场并发，且 qid 销毁后自动清理状态。
 
 > 旧的 `obl_command.php` 中段名 `[C2b]` / `[C2d]` / `[F-bs]` 仍存在于 deprecated 兼容路径中，新前端走 Command Bus（`obl_command_bus.php`），不经过这些段。
 
-### 2.4 played 标记机制替代响应内嵌
+### 2.4 响应直带 PresentationBatch
 
-战斗日志采用"持久化 → 前端拉取 → 标记"的统一单路径流程，替代"命令响应附带 battlelog"的双路径方案：
+- command/heartbeat 在领域 COMMIT 前冻结本请求 render events，并在同一事务内推进房间级 `obl_presentation_head_seq`。
+- COMMIT 成功后才把 `presentation.v1` 附加到 HTTP response；回滚不会消耗 batch sequence。
+- 前端只在当前 JS runtime 保存 cursor。response 丢失时，后续 `presentation_head_seq` 触发 gap rebase，不请求历史补播。
+- 在线演出不再写 mutable JSON，也没有 played/ack 接口。需要回顾或审计时应建设独立 immutable archive，不能参与实时播放正确性。
 
-- 后端在数据库 commit 后把 collector 持久化到文件（`played=0`）；命令响应可返回 action/target results，但不内嵌 battlelog
-- 前端通过 `battle_log` API 拉取未播放条目，播放后调 mark 接口标记 `played=1`
-- `played=1` 的条目保留在文件中作为历史记录，游戏重置时清理
+### 2.5 权威投影与演出投影分离
 
-**设计理由**：
-- 统一单路径：玩家命令和遭遇战走相同流程，避免双路径维护成本
-- 响应体精简：命令响应不再携带大量 battlelog 数据
-- 可重放：前端可重新拉取未播放的 battlelog
+- `CharacterHub/map/player/combat_targets` 持续接受最新权威快照，不因动画暂停；command/heartbeat 的 changed scopes 进入串行 authority refresh worker，立即合并刷新。
+- `MapGrid` 读取 `PresentationSceneStore`；战斗 Runner 只操作表现投影和 ActorRuntime lease。
+- stable boundary 只负责 scene rebase、lease reconcile 和 cursor 前移，不再决定网络是否允许刷新。
+- `battle_end` 遮罩达到 covered 状态时执行战斗场景向世界场景的 handoff，世界动画可在遮罩下开始。
 
-### 2.5 零依赖接口设计
-
-`mark_battle_log_played.php` 采用零依赖设计：不 require 任何游戏框架文件（无 common.inc.php / player.func.php / DB 连接），只做文件读写。
-
-- 安全性靠 `(int)` 强制转换防路径遍历
-- 并发写靠 `LOCK_EX` 保护
-
-**设计理由**：mark 请求的唯一目的是"修改文件中某些条目的 played 字段"，即使被伪造也无严重后果（最多让玩家少看一条 battlelog），不值得走完整的 auth + DB 流程。
+当前实现已完成双投影闭环：权威 worker 固定按 `player_info -> game_map/enemies -> combat_targets` 更新真实 stores；`PresentationSceneStore.syncAuthoritative()` 在 `playing/rebasing` 阶段只更新 pending authority、不改写可见 snapshot，covered/stable boundary 使用最新 authority 做 rebase，动画期间继续到达的 authority 会在 `finishRebase()` 自动发布。网络刷新时机不再由表现层边界控制。
 
 ### 2.6 房间 GET_LOCK + 玩家 flock + 前端 5 层锁
 
@@ -448,14 +447,14 @@ $obl_log->emit('move.success', 'move', [
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
 | 前端第 1 层：HTTP/冷却 | `commandQueue._locked` / `_cooldown` | HTTP 请求期间 + 后端返回 timer 设置的冷却 | `try/finally` 末尾 / 冷却计时到期 |
-| 前端第 2 层：战斗演出 | `battleStore.isPlayingBattleLog` | battlelog 播放期间阻止所有命令 | `fetchAndPlayBattleLog` 播完释放 |
-| 前端第 3 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
-| 前端第 4 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
+| 前端第 2 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
+| 前端第 3 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
+| 前端第 4 层：演出水位 | `PresentationScene.phase` | 战斗提交要求 caught up；地图位置输入仅在 `rebasing` 时局部锁定 | scene 回到 `idle` |
 | 前端第 5 层：PROCESSING | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令 | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
 | 后端房间锁 | `obl_runtime_acquire_room_lock()` / MySQL `GET_LOCK` | 同一 groomid 的 command 与 heartbeat 串行 | 正常 finally 或 shutdown guard `RELEASE_LOCK` |
 | 后端文件锁 | `obl_command_bus.php: obl_command_acquire_lock() flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
 
-**`isLocked` 语义边界**：`isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制。`pendingNpc` getter 仍从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`。
+**`isLocked` 语义边界**：`isLocked` getter 只包含 HTTP 请求锁，不再把演出、冷却、PROCESSING、itm0 或模式当作全局锁；按钮 `:disabled` 必须使用 `canExecute(command)` 精细化控制。`pendingNpc` getter 仍从 `oblBattleState === 'PROCESSING'` 派生，仅用于 UI 状态提示，不参与 `isLocked`。
 
 > 完整 5 层锁架构与 `COMMAND_REGISTRY` 三维度分类详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)。
 
@@ -484,7 +483,7 @@ $obl_log->emit('move.success', 'move', [
    - ActorExecutor 执行单 actor 动画 promise
    - 组件只呈现状态，不承担时序推理
 
-**约束**：生产端和消费端不互斥，同一文件可多次追加后一次性拉取播放。导演、计划、执行层均应保持幂等；动画排序不靠组件临时事件串联。
+**约束**：command/heartbeat response 生产 batch 与前端消费队列不互斥；同一 JS runtime 按 `batch_seq/event_seq` 去重和顺序消费，gap 时权威 rebase，不读取 mutable 文件队列。导演、计划、执行层均应保持幂等；动画排序不靠组件临时事件串联。
 
 ### 2.8 区域切换日志拆分
 
@@ -632,16 +631,16 @@ Oblivions 有三套独立的日志系统。普通日志仍按 ID 映射模板；
 
 | 定时器 | 职责 | 间隔 | 与前端业务耦合 |
 |--------|------|------|--------------|
-| 心跳守护进程 | 纯 tick 激活，fire-and-forget | PROCESSING 300ms；其他状态 1000ms | 只读取 `playerStore.oblBattleState` 选择快/慢档，不触发业务 store 刷新 |
-| NPC 状态轮询 | 前端状态同步（`refreshBattle`） | 1000ms | 无改动，沿用原有逻辑 |
+| 心跳守护进程 | tick 激活 + 接收本响应 `presentation.v1` | PROCESSING 300ms；其他状态 1000ms | 读取战斗状态选择快/慢档；有 batch 时交给 PresentationInbox |
+| NPC 状态轮询 | 前端状态同步（`refreshBattle`） | 1000ms | 拉取权威 `player_info/combat_targets` 并推动稳定状态判断 |
 
 **设计原则**：
 - heartbeat 是状态推进接口，必须使用 `POST /phpdts/oblivions/api/heartbeat.php`；后端拒绝 GET
-- 心跳与前端业务数据同步解耦：心跳只推进 tick，不组装 state 数据
-- 频率只做两档：`PROCESSING` 快速推进 NPC / battlelog，其他状态降到 1000ms 减少空转请求
+- 心跳不组装 State API 业务快照，但必须接收并入队本次响应直带的 `presentation.v1`
+- 频率只做两档：`PROCESSING` 快速推进 NPC / presentation，其他状态降到 1000ms 减少空转请求
 - 守护进程使用 `setTimeout` 串行调度，避免上一次 heartbeat 未结束时下一次请求重叠
 - 原有 NPC 轮询定时器的隐含双重职责（tick 激活 + 状态同步）被心跳剥离后，变为纯粹的“状态发现”
-- 动画播放期间心跳持续不受影响，`refreshBattle` 由 `isProcessingBattle` 锁保护
+- 动画播放期间心跳持续不受影响；新 batch 进入 inbox，`refreshBattle` 由 `isProcessingBattle` 防重入保护
 
 **入口**：`oblivions/api/heartbeat.php`，响应 Tick Orchestrator 的 JSON 结果，不进 State API 业务字段组装。
 
@@ -701,25 +700,19 @@ oblgame 持久化 obl_tick/obl_pretick
 - 前端 1 秒轮询拉取 player_info 是“状态发现”，不是“驱动后端”——这是常见误解
 - 真正驱动后端 NPC 行动的是 heartbeat，而非 1 秒轮询
 
-### 2.17 Phase 0 vs Phase 1 — 两阶段战斗执行分离
+### 2.17 Pre-battle 规划与正式队列执行
 
-战斗执行分为两个本质不同的阶段：
+`battle.start` 在创建正式战场前允许执行 utility/空投送动作，但第一项成功 hostile action 的合法角色目标必须先定义 initial roster，再创建队列并按真实 initiative 顺序结算。旧“Phase 0 无队列直接结算 hostile action”的模型已经废弃。
 
-| | Phase 0（突袭阶段） | Phase 1（标准战斗阶段） |
+| | Pre-battle transaction context | 正式队列执行 |
 |---|---|---|
-| **触发条件** | `battle.start` 时立即执行 | 玩家/敌人队列存在后执行 |
-| **队列** | 无队列（不创建 `oblbattle_queue`） | 有队列，按先攻排序 |
-| **Turn/Round** | 无 Turn/Round（`bl_turn_num=null`） | 有 Turn/Round 递增 |
-| **边界信号** | 被攻击者全死/全逃 → `battle_end` / `combatant_cleared` | `round_start` / `turn_start` / `battle_end` |
-| **可以执行的动作** | 仅无队列的动作（如先攻回合、逃跑检测） | 队列中任意动作 |
-| **战斗日志** | `bl_turn_num`/`bl_round_num` 均为 null，导演层归入 `system` 或 `turn` 段 | `bl_turn_num`/`bl_round_num` 递增，导演层按 `round_start`/`turn_start` 分段 |
+| **触发条件** | `battle.start` 从排序后动作链开头扫描 | initial roster 创建成功后 |
+| **队列** | 尚未创建；只允许 utility 或 `empty_policy=execute` 的空投送暂存结果 | actor + 首个 hostile action 合法角色目标共同建队 |
+| **Turn/Round** | 尚无真实 initiative，preview 只能返回 `pending_initiative` | 按实际 `myorder` 产生 round/turn 边界 |
+| **失败语义** | 最终无成功 hostile action 时整条命令 rollback-only | 单目标业务失败独立 skipped；基础设施失败回滚请求 |
+| **后续目标** | 不提前吸收整条动作链目标 | 后续首次接触角色走 Participation append-tail |
 
-**设计理由**：
-- Phase 0 本质是一个"战斗预热"阶段——先处理先攻掷骰、确认双方能否进入标准战斗。Phase 1 才是真正的回合制战斗
-- 两阶段分离后，导演系统可通过 `bl_turn_num`/`bl_round_num` 是否为 null 区分阶段归属（Phase 0 归入 `system` 或无 round/turn 编号的 `turn` 段，Phase 1 按 `round_start`/`turn_start` 分段显示"第N轮/第N回合"头）
-- 旧版将 Phase 0 和 Phase 1 混在一起 emit，前端通过 `turn=0` 和 `action_id` 猜测阶段归属，导致渲染逻辑复杂且脆弱
-
-**实施**：`BuildLogCollector` 自动管理 `bl_turn_num`/`bl_round_num`：Phase 0 期间两者均为 `null`；队列首次创建时 `setRoundNum(0)+nextTurn()` 触发 `round_start+turn_start` 进入 Phase 1。`battle_queue_rebuild` 也会调 `setRoundNum` 同步 DB 的 `round_num`。
+**设计理由**：initial roster 必须参加同一次真实先攻；若 hostile action 在无队列阶段先结算，就会绕过 initial AOE 的队列顺序和参战语义。`BattleLogCollector` 在队列建立前可以保留 `bl_turn_num/bl_round_num=null` 的 pre-battle utility/system 事件；队列创建后由 `setRoundNum(0)+nextTurn()` 进入正式 round/turn 分段。
 
 ### 2.18 前端导演系统概念
 
@@ -766,7 +759,7 @@ oblgame 持久化 obl_tick/obl_pretick
 - 旧 v1 依赖 `bl_segment_flag` 驱动分段；v2 依赖 `event_type` 本身（`round_start` / `turn_start` / `battle_end` 即边界信号）
 - 旧 v1 无独立计划层；v2 引入 `planPlaybackV2` + `battle-playback-runner.ts` + `battle-actor-executor.ts` 三件套，把时序推理从组件中彻底剥离
 
-**调试便利**：开发模式下 `fetchAndPlayBattleLog` 自动挂载 `window.__battleScriptV2`（导演产物）、`window.__battleRawEventsV2`（原始事件）、`window.__battlePlaybackPlanV2`（播放计划），浏览器控制台可直接检查三层产物。
+**调试便利**：开发模式下 PresentationInbox/播放器消费 batch 时挂载 `window.__battleScriptV2`（导演产物）、`window.__battleRawEventsV2`（原始事件）、`window.__battlePlaybackPlanV2`（播放计划）和 `window.__presentationBatchV1`，浏览器控制台可直接检查各层产物。
 
 **旧逻辑清理**：导演层替代了以下旧实现——`groupByEncounter`（由 `extractNpcPidFromScriptV2` + `BattleSegmentV2` 替代）、`playBattleLogGroup`（由 `playScriptV2` → `planPlaybackV2` + `runBattlePlaybackPlan` 替代）、`buildPlayContext`（后端 v2 emit 已带名称/HP 快照）、`BATTLE_TEMPLATES` / `KIND_TEMPLATES`（由导演层 `buildActionText` / `buildEffectText` 生成的 `TextCue` 替代）、`renderBattleLogEntryHtml` / `renderDirectedEntryHtml`（由 `BattleModal.vue` 直接播放 text cue 替代）。
 
@@ -954,7 +947,7 @@ if ($s === '0' || $s === '') continue;
 | 场景 | 方向 | 合理性 | 说明 |
 |------|------|--------|------|
 | 玩家主动攻击时前端先切换 `currentMode='battle'` | 前端比后端**早进入** | ✅ 合理 | 玩家需要装填区才能发起 `battle.start`，UI 必须先切换 |
-| 退出战斗时前端等 battlelog 播完才切 `currentMode='normal'` | 前端比后端**晚退出** | ✅ 合理 | 演出完整性优先，避免战斗突然结束的突兀感 |
+| 退出战斗时前端完成当前 runtime batch 与 battle-end handoff 后才切 `currentMode='normal'` | 前端比后端**晚退出** | ✅ 合理 | 权威状态已接受；UI 等遮罩交接和局部 handoff 收口 |
 | 被动遭遇时后端先切换 `action='battle'` | 后端比前端**早进入** | ✅ 合理 | 遭遇战由后端判定触发，前端通过 `player_info` 跟随 |
 
 **反向不合理场景**（应视为 bug 修正）：
@@ -998,11 +991,15 @@ refreshBattle → enterBattleMode（currentMode 切换到 battle）
 ```
 后端 battle_end → action='normal'，obl_battle_state=IDLE
   ↓
-前端 refreshBattle 拉取 player_info → action !== 'battle'
+command/heartbeat response 同时更新权威状态并把 presentation.v1 放入 inbox
   ↓
-fetchAndPlayBattleLog（先播完积压的 battlelog）← 关键：演出完整性优先
+battle_end overlay covered
   ↓
-播完后 afterAction !== 'battle' → exitBattleMode → currentMode='normal'
+PresentationScene rebase + PostCombatHandoff（与结果正文并行）
+  ↓
+当前 batch、modal closed 与 handoff finished 收口
+  ↓
+afterAction !== 'battle' → exitBattleMode → currentMode='normal'
 ```
 
 #### 2.26.3 设计含义

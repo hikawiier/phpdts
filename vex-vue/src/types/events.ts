@@ -11,6 +11,7 @@ export type AppEvent =
   | 'game:action-completed'
   | 'game:npc-settled'
   | 'game:tick-advanced'
+  | 'game:command-committed'
   | 'map:click-current'
   | 'ui:toast'
   | 'battle:ended'

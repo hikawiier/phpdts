@@ -1,5 +1,6 @@
 import { API_ACTIONS, type ApiAction } from './endpoints';
 import { perf } from '@/utils/perf';
+import type { PresentationBatchV1 } from '@/types/api';
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
 
@@ -85,7 +86,11 @@ export async function oblHeartbeat(): Promise<OblHeartbeatResponse> {
 }
 
 export function getHeartbeatChangedScopes(response: unknown): ApiAction[] {
-  const data = (response as { data?: Record<string, unknown> } | null)?.data;
+  const root = response as {
+    data?: Record<string, unknown>;
+    gamedata?: Record<string, unknown>;
+  } | null;
+  const data = root?.data ?? root?.gamedata;
   const raw = data?.changed_scopes ?? data?.changedScopes;
   if (!Array.isArray(raw)) return [];
 
@@ -171,32 +176,6 @@ export async function gameApiData<T = unknown>(action: ApiAction): Promise<T> {
   return resp.data as T;
 }
 
-/**
- * 零依赖接口：标记战斗日志已播放
- * POST oblivions/mark_battle_log_played.php（groomid/pid/log_ids）
- */
-export async function markBattleLogPlayed(
-  groomid: number,
-  pid: number,
-  logIds: number[],
-): Promise<{ success: boolean; marked?: number }> {
-  const body = new URLSearchParams({
-    groomid: String(groomid),
-    pid: String(pid),
-    log_ids: logIds.join(','),
-  });
-  const res = await fetchWithTimeout(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-  }
-  return res.json();
-}
-
 // ─── 响应类型定义 ───
 
 /** API 通用响应结构（Oblivions State API） */
@@ -219,6 +198,8 @@ export interface CommandResult {
   message?: string | null;
   messageIsHtml?: boolean;
   status?: number;
+  presentation_head_seq?: number;
+  presentation?: PresentationBatchV1;
 }
 
 export interface TickDomainPhaseResult {
@@ -261,5 +242,7 @@ export interface OblHeartbeatResponse {
   code?: string;
   message?: string;
   data?: OblHeartbeatData;
+  presentation_head_seq?: number;
+  presentation?: PresentationBatchV1;
   [key: string]: unknown;
 }

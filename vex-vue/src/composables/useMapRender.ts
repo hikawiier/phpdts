@@ -265,8 +265,8 @@ const cells: ComputedRef<CellData[]> = computed(() => {
 
         displayLabel = name;
 
-        // 查找敌人（enemyList 已过滤 state===0，存活敌人）
-        enemy = characterStore.enemyList.find(e => Number(e.pls) === Number(pls)) || null;
+        // 只读取 enemies 完整快照中的权威可见敌人。
+        enemy = characterStore.mapEnemyList.find(e => Number(e.pls) === Number(pls)) || null;
         if (enemy) {
           hasEnemy = true;
           enemyName = enemy.name;

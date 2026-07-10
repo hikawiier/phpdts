@@ -5,7 +5,7 @@
 // 白名单缓存 + 去重 + 语义事件广播。
 //
 // 缓存策略：仅白名单 action 缓存（game_map/tile_actions/player_inventory），
-//           高频数据（player_info/enemies/obl_log/battle_log）不缓存，每次实时拉取。
+//           高频数据（player_info/enemies/obl_log）不缓存，每次实时拉取。
 // 去重策略：所有 action 共享 _pending 去重，并发请求合并为一个。
 //
 // 现有实现（data-manager.js）：
@@ -24,7 +24,7 @@ interface CacheEntry {
   timestamp: number;
 }
 
-class DataManager {
+export class DataManager {
   /** action -> { data, timestamp }（仅白名单 action） */
   private _cache = new Map<ApiAction, CacheEntry>();
   /** action -> Promise（去重，所有 action 都生效） */
@@ -32,9 +32,11 @@ class DataManager {
   /** event -> Set<callback>（语义事件订阅） */
   private _listeners = new Map<AppEvent, Set<EventCallback>>();
 
+  constructor(private readonly request: (action: ApiAction) => Promise<ApiResponse> = gameApi) {}
+
   /**
    * 白名单：只缓存这些 action，TTL 各自不同
-   * player_info, enemies, obl_log, battle_log 不缓存（每次实时拉取）
+   * player_info, enemies, obl_log 不缓存（每次实时拉取）
    */
   private _cacheable = new Map<ApiAction, number>([
     ['game_map', 5000], // 地图结构，5s（移动后 invalidate）
@@ -59,7 +61,7 @@ class DataManager {
         perf.mark(`fetch(${action}) → 去重命中`, 'store');
         return this._pending.get(action)!;
       }
-      const promise = gameApi(action)
+      const promise = this.request(action)
         .then((result) => {
           if (this._pending.get(action) === promise) {
             this._pending.delete(action);
@@ -85,19 +87,21 @@ class DataManager {
       return cached.data;
     }
 
-    if (this._pending.has(action)) {
+    if (!forceRefresh && this._pending.has(action)) {
       perf.mark(`fetch(${action}) → 去重命中(白名单)`, 'store');
       return this._pending.get(action)!;
     }
 
-    const promise = gameApi(action)
+    const promise = this.request(action)
       .then((result) => {
-        this._cache.set(action, { data: result, timestamp: Date.now() });
-        this._pending.delete(action);
+        if (this._pending.get(action) === promise) {
+          this._cache.set(action, { data: result, timestamp: Date.now() });
+          this._pending.delete(action);
+        }
         return result;
       })
       .catch((err) => {
-        this._pending.delete(action);
+        if (this._pending.get(action) === promise) this._pending.delete(action);
         throw err;
       });
 

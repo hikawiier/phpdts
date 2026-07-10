@@ -1,0 +1,490 @@
+import gsap from 'gsap';
+import {
+  arriveAnim,
+  attackAnim,
+  fadeOut,
+  fall,
+  hitAnim,
+  jumpActor,
+  moveActor,
+  popUp,
+  setDown,
+  startIdle,
+  updateEntityZIndex,
+} from '@/animations/actorAnimations';
+import type {
+  ActorChannel,
+  ActorCommand,
+  ActorElements,
+  ActorRuntime,
+  AnimationHandle,
+  AnimationResult,
+  CueAnimationHandle,
+  LeaseRequest,
+  PresentationLease,
+  PresentationOwner,
+  RemovalDisposition,
+} from '@/types/actor-runtime';
+import type { SceneAnchor, ScenePoint } from '@/types/scene';
+import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
+
+const OWNER_PRIORITY: Record<PresentationOwner, number> = {
+  ambient: 0,
+  world: 1,
+  battle: 2,
+  terminal: 3,
+};
+
+let nextGeneration = 1;
+
+function skippedHandle(reason: string): AnimationHandle {
+  return {
+    finished: Promise.resolve({ status: 'skipped', reason }),
+    cancel: () => {},
+  };
+}
+
+class TimelineHandle implements CueAnimationHandle {
+  readonly finished: Promise<AnimationResult>;
+  private resolveFinished!: (result: AnimationResult) => void;
+  private readonly cuePromises = new Map<string, Promise<AnimationResult>>();
+  private readonly cueResolvers = new Map<string, (result: AnimationResult) => void>();
+  private settled = false;
+  private cueTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private readonly timeline: gsap.core.Animation,
+    impactAt: number | null,
+    private readonly onSettled: (result: AnimationResult) => void,
+  ) {
+    this.finished = new Promise(resolve => { this.resolveFinished = resolve; });
+    this.timeline.eventCallback('onComplete', () => this.settle({ status: 'completed' }));
+    if (impactAt !== null) {
+      const promise = new Promise<AnimationResult>(resolve => {
+        this.cueResolvers.set('impact', resolve);
+      });
+      this.cuePromises.set('impact', promise);
+      this.cueTimer = setTimeout(() => {
+        this.cueTimer = null;
+        this.resolveCue('impact', { status: 'completed' });
+      }, impactAt);
+    }
+  }
+
+  cue(name: 'impact'): Promise<AnimationResult> {
+    return this.cuePromises.get(name)
+      ?? Promise.resolve({ status: 'skipped', reason: 'cue_unavailable' });
+  }
+
+  cancel(reason = 'cancelled'): void {
+    if (this.settled) return;
+    this.timeline.kill();
+    this.settle({ status: 'cancelled', reason });
+  }
+
+  private resolveCue(name: string, result: AnimationResult): void {
+    const resolve = this.cueResolvers.get(name);
+    if (!resolve) return;
+    this.cueResolvers.delete(name);
+    resolve(result);
+  }
+
+  private settle(result: AnimationResult): void {
+    if (this.settled) return;
+    this.settled = true;
+    if (this.cueTimer !== null) {
+      clearTimeout(this.cueTimer);
+      this.cueTimer = null;
+    }
+    for (const name of this.cueResolvers.keys()) this.resolveCue(name, result);
+    this.resolveFinished(result);
+    this.onSettled(result);
+  }
+}
+
+class RuntimeLease implements PresentationLease {
+  readonly channels = new Set<ActorChannel>();
+  released = false;
+
+  constructor(
+    private readonly runtime: ActorRuntimeImpl,
+    readonly owner: PresentationOwner,
+    readonly sessionId: string | null,
+    channels: readonly ActorChannel[],
+  ) {
+    this.addChannels(channels);
+  }
+
+  get actorId(): string {
+    return this.runtime.id;
+  }
+
+  addChannels(channels: readonly ActorChannel[]): void {
+    for (const channel of channels) this.channels.add(channel);
+  }
+
+  play(command: ActorCommand): AnimationHandle {
+    if (this.released) return skippedHandle('lease_released');
+    return this.runtime.play(this, command);
+  }
+
+  release(options: { reconcile?: boolean } = {}): void {
+    this.runtime.releaseLease(this, options.reconcile !== false, 'released');
+  }
+
+  forceRelease(reconcile: boolean, reason: string): void {
+    this.runtime.releaseLease(this, reconcile, reason);
+  }
+}
+
+class ActorRuntimeImpl implements ActorRuntime {
+  readonly generation = nextGeneration++;
+  disposed = false;
+  private elements: ActorElements | null = null;
+  private readonly channelOwners = new Map<ActorChannel, RuntimeLease>();
+  private readonly leases = new Set<RuntimeLease>();
+  private readonly channelHandles = new Map<ActorChannel, AnimationHandle>();
+  private pendingAnchor: SceneAnchor | null = null;
+  private currentAnchor: SceneAnchor | null = null;
+  private terminal = false;
+  private down = false;
+  private removalDisposition: RemovalDisposition = 'projected';
+  private readonly battleExitSessions = new Set<string>();
+
+  constructor(readonly id: string) {}
+
+  setElements(elements: ActorElements | null): void {
+    if (elements && this.elements
+      && this.elements.anchor === elements.anchor
+      && this.elements.action === elements.action
+      && this.elements.visibility === elements.visibility
+      && this.elements.pose === elements.pose) return;
+    this.elements = elements;
+    if (!elements) return;
+    gsap.set(elements.action, { x: 0, y: 0 });
+    if (this.down) setDown(elements);
+    else gsap.set(elements.pose, { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 });
+    if (this.currentAnchor) this.writeAnchor(this.currentAnchor);
+  }
+
+  acquire(request: LeaseRequest): PresentationLease | null {
+    if (this.disposed) return null;
+    const sessionId = request.sessionId ?? null;
+    const sameLease = [...this.leases].find(lease =>
+      !lease.released && lease.owner === request.owner && lease.sessionId === sessionId);
+    const conflicts = new Set<RuntimeLease>();
+    for (const channel of request.channels) {
+      const owner = this.channelOwners.get(channel);
+      if (owner && owner !== sameLease) conflicts.add(owner);
+    }
+    for (const conflict of conflicts) {
+      const conflictPriority = OWNER_PRIORITY[conflict.owner];
+      const requestPriority = OWNER_PRIORITY[request.owner];
+      const canReplaceEqual = request.replaceEqualOwner === true
+        && conflict.owner === request.owner;
+      if (conflictPriority > requestPriority
+        || (conflictPriority === requestPriority && !canReplaceEqual)) return null;
+    }
+    for (const conflict of conflicts) conflict.forceRelease(false, 'preempted');
+
+    const lease = sameLease ?? new RuntimeLease(this, request.owner, sessionId, []);
+    lease.addChannels(request.channels);
+    this.leases.add(lease);
+    for (const channel of request.channels) this.channelOwners.set(channel, lease);
+    return lease;
+  }
+
+  projectAnchor(anchor: SceneAnchor): void {
+    if (this.disposed) return;
+    if (this.channelOwners.has('spatial')) {
+      this.pendingAnchor = anchor;
+      return;
+    }
+    this.currentAnchor = anchor;
+    this.pendingAnchor = null;
+    this.writeAnchor(anchor);
+  }
+
+  getProjectedAnchor(): SceneAnchor | null {
+    return this.pendingAnchor ?? this.currentAnchor;
+  }
+
+  getScenePoint(): ScenePoint | null {
+    if (!this.elements) return this.currentAnchor?.point ?? null;
+    return {
+      space: 'scene',
+      x: Number(gsap.getProperty(this.elements.anchor, 'x')) || 0,
+      y: Number(gsap.getProperty(this.elements.anchor, 'y')) || 0,
+    };
+  }
+
+  setFacing(direction: 'left' | 'right'): void {
+    const anchor = this.elements?.anchor;
+    if (!anchor) return;
+    anchor.classList.toggle('facing-right', direction === 'right');
+  }
+
+  markTerminal(): void {
+    this.terminal = true;
+  }
+
+  settleTerminalPresentation(): void {
+    this.terminal = true;
+    this.down = true;
+    if (this.elements) setDown(this.elements);
+  }
+
+  markDown(): void {
+    this.down = true;
+  }
+
+  markStanding(): void {
+    this.down = false;
+  }
+
+  recoverPresentation(): void {
+    this.terminal = false;
+    this.removalDisposition = 'projected';
+    this.battleExitSessions.clear();
+    if (!this.elements) return;
+    gsap.killTweensOf(this.elements.action);
+    gsap.killTweensOf(this.elements.visibility);
+    gsap.killTweensOf(this.elements.pose);
+    gsap.set(this.elements.action, { x: 0, y: 0 });
+    gsap.set(this.elements.visibility, { alpha: 1 });
+    if (this.down) setDown(this.elements);
+    else {
+      gsap.set(this.elements.pose, { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 });
+      this.restoreIdle();
+    }
+  }
+
+  markRemovalAnimated(sessionId: string): void {
+    this.removalDisposition = 'animated';
+    void sessionId;
+  }
+
+  markBattleExitAnimated(sessionId: string): void {
+    this.battleExitSessions.add(sessionId);
+  }
+
+  consumeBattleExitAnimated(sessionId: string): boolean {
+    const exists = this.battleExitSessions.has(sessionId);
+    this.battleExitSessions.delete(sessionId);
+    return exists;
+  }
+
+  consumeRemovalDisposition(): RemovalDisposition {
+    if (this.battleExitSessions.size > 0) {
+      this.battleExitSessions.clear();
+      this.removalDisposition = 'immediate';
+      return 'animated';
+    }
+    const disposition = this.removalDisposition;
+    this.removalDisposition = 'immediate';
+    return disposition;
+  }
+
+  play(lease: RuntimeLease, command: ActorCommand): AnimationHandle {
+    const elements = this.elements;
+    if (!elements) {
+      this.traceAnimation(command.kind, 'skipped', 'actor_dom_missing');
+      return skippedHandle('actor_dom_missing');
+    }
+    const required = requiredChannels(command);
+    if (required.some(channel => !lease.channels.has(channel) || this.channelOwners.get(channel) !== lease)) {
+      this.traceAnimation(command.kind, 'skipped', 'lease_channel_missing');
+      return skippedHandle('lease_channel_missing');
+    }
+    this.cancelChannels(required, 'replaced');
+    this.traceAnimation(command.kind, 'start');
+
+    let animation: gsap.core.Animation;
+    let impactAt: number | null = null;
+    let onCompleted: (() => void) | null = null;
+    switch (command.kind) {
+      case 'idle':
+        animation = startIdle(elements.pose);
+        break;
+      case 'enter':
+        setDown(elements);
+        animation = popUp(elements);
+        break;
+      case 'arrive':
+        animation = arriveAnim(elements);
+        break;
+      case 'move': {
+        const from = this.getScenePoint();
+        const target = command.target.point;
+        gsap.set(elements.anchor, {
+          width: command.target.cellWidth,
+          height: command.target.cellHeight,
+          xPercent: -50,
+          yPercent: -100,
+        });
+        if (from && target.x > from.x) this.setFacing('right');
+        else if (from && target.x < from.x) this.setFacing('left');
+        const direction: -1 | 0 | 1 = !from || target.x === from.x ? 0 : target.x < from.x ? -1 : 1;
+        if (command.tier === 'long') {
+          gsap.set(elements.anchor, { x: target.x, y: target.y });
+          updateEntityZIndex(elements.anchor);
+          animation = arriveAnim(elements);
+        } else if (command.tier === 'jump') {
+          animation = jumpActor(elements, target.x, target.y, command.target.cellHeight);
+        } else {
+          animation = moveActor(
+            elements.anchor,
+            elements.pose,
+            target.x,
+            target.y,
+            direction,
+          );
+        }
+        onCompleted = () => { this.currentAnchor = command.target; };
+        break;
+      }
+      case 'attack': {
+        const from = this.getScenePoint() ?? { space: 'scene' as const, x: 0, y: 0 };
+        if (command.target?.x !== undefined) {
+          if (command.target.x > from.x) this.setFacing('right');
+          else if (command.target.x < from.x) this.setFacing('left');
+        }
+        const attack = attackAnim(elements.action, elements.pose, from, command.target, command.attackKind);
+        animation = attack.timeline;
+        impactAt = attack.impactAt;
+        break;
+      }
+      case 'hit':
+        animation = hitAnim(elements.action, elements.pose, command.direction);
+        break;
+      case 'join-cue':
+        animation = gsap.timeline()
+          .to(elements.pose, { scaleX: 1.12, scaleY: 1.12, duration: 0.18, ease: 'power2.out' })
+          .to(elements.pose, { scaleX: 1, scaleY: 1, duration: 0.32, ease: 'elastic.out(1, 0.5)' });
+        break;
+      case 'fall':
+        this.down = true;
+        animation = fall(elements);
+        break;
+      case 'fade':
+        animation = fadeOut(elements.visibility);
+        break;
+      case 'reset-visible':
+        animation = gsap.timeline().to(elements.visibility, { alpha: 1, duration: 0.18, ease: 'power1.out' });
+        break;
+    }
+
+    let handle!: TimelineHandle;
+    handle = new TimelineHandle(animation, impactAt, result => {
+      if (result.status === 'completed') onCompleted?.();
+      this.traceAnimation(command.kind, result.status, result.reason);
+      this.removeHandle(handle);
+    });
+    for (const channel of required) this.channelHandles.set(channel, handle);
+    return handle;
+  }
+
+  releaseLease(lease: RuntimeLease, reconcile: boolean, reason: string): void {
+    if (lease.released) return;
+    lease.released = true;
+    const channels = [...lease.channels].filter(channel => this.channelOwners.get(channel) === lease);
+    this.cancelChannels(channels, reason);
+    for (const channel of channels) this.channelOwners.delete(channel);
+    this.leases.delete(lease);
+
+    if (reconcile && channels.includes('spatial') && this.pendingAnchor) {
+      const next = this.pendingAnchor;
+      this.pendingAnchor = null;
+      this.currentAnchor = next;
+      this.writeAnchor(next);
+    }
+    if (!this.terminal && !this.down && lease.owner !== 'ambient' && channels.includes('pose') && !this.channelOwners.has('pose')) {
+      this.restoreIdle();
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const lease of [...this.leases]) this.releaseLease(lease, false, 'disposed');
+    this.cancelChannels(['spatial', 'action', 'visibility', 'pose'], 'disposed');
+    this.elements = null;
+    this.pendingAnchor = null;
+  }
+
+  private traceAnimation(command: ActorCommand['kind'], status: string, reason?: string): void {
+    if (!actorTraceEnabled) return;
+    debugBus.emit('actor-runtime', 'animation', {
+      actorId: this.id,
+      generation: this.generation,
+      command,
+      status,
+      reason: reason ?? null,
+      disposed: this.disposed,
+      hasElements: Boolean(this.elements),
+      isConnected: this.elements?.anchor.isConnected ?? false,
+      visibilityAlpha: this.elements
+        ? Number(gsap.getProperty(this.elements.visibility, 'opacity'))
+        : null,
+    });
+  }
+
+  private restoreIdle(): void {
+    if (!this.elements || this.disposed || this.terminal || this.down || this.channelOwners.has('pose')) return;
+    const lease = this.acquire({ owner: 'ambient', channels: ['pose'], sessionId: `ambient:${this.generation}` });
+    lease?.play({ kind: 'idle' });
+  }
+
+  private cancelChannels(channels: readonly ActorChannel[], reason: string): void {
+    const handles = new Set<AnimationHandle>();
+    for (const channel of channels) {
+      const handle = this.channelHandles.get(channel);
+      if (handle) handles.add(handle);
+    }
+    for (const handle of handles) handle.cancel(reason);
+  }
+
+  private removeHandle(handle: AnimationHandle): void {
+    for (const [channel, current] of this.channelHandles) {
+      if (current === handle) this.channelHandles.delete(channel);
+    }
+  }
+
+  private writeAnchor(anchor: SceneAnchor): void {
+    if (!this.elements) return;
+    gsap.set(this.elements.anchor, {
+      width: anchor.cellWidth,
+      height: anchor.cellHeight,
+      x: anchor.point.x,
+      y: anchor.point.y,
+      xPercent: -50,
+      yPercent: -100,
+    });
+    updateEntityZIndex(this.elements.anchor);
+  }
+}
+
+function requiredChannels(command: ActorCommand): ActorChannel[] {
+  switch (command.kind) {
+    case 'idle': return ['pose'];
+    case 'enter':
+    case 'arrive':
+    case 'fall': return ['pose', 'visibility'];
+    case 'move': return command.tier === 'long'
+      ? ['spatial', 'pose', 'visibility']
+      : ['spatial', 'pose'];
+    case 'attack':
+    case 'hit': return ['action', 'pose'];
+    case 'join-cue': return ['pose'];
+    case 'fade':
+    case 'reset-visible': return ['visibility'];
+  }
+}
+
+export function createActorRuntime(id: string): ActorRuntime {
+  return new ActorRuntimeImpl(id);
+}
+
+export function isCueAnimationHandle(handle: AnimationHandle): handle is CueAnimationHandle {
+  return typeof (handle as CueAnimationHandle).cue === 'function';
+}

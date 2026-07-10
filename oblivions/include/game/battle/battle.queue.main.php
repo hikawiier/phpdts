@@ -97,6 +97,7 @@ function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): void {
             $actor_data['bid'] = 0;
             $actor_data['action'] = '';
             $actor_data['ap'] = $actor_data['max_ap'];
+            combat_state_activate_post_battle_handoff($actor_data);
             obl_save_player($actor_data);
             continue;
         }
@@ -105,6 +106,7 @@ function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): void {
         $c_data['bid'] = 0;
         $c_data['action'] = '';
         $c_data['ap'] = $c_data['max_ap'];
+        combat_state_activate_post_battle_handoff($c_data);
         obl_save_player($c_data);
 
         if ($obl_battle_log) {
@@ -148,6 +150,7 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
                 $actor_data['bid'] = 0;
                 $actor_data['action'] = '';
                 $actor_data['ap'] = $actor_data['max_ap'];
+                combat_state_activate_post_battle_handoff($actor_data);
                 obl_save_player($actor_data);
             } else {
                 $c_data = obl_fetch_playerdata_by_pid($pid);
@@ -155,6 +158,7 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
                 $c_data['bid'] = 0;
                 $c_data['action'] = '';
                 $c_data['ap'] = $c_data['max_ap'];
+                combat_state_activate_post_battle_handoff($c_data);
                 obl_save_player($c_data);
             }
         }

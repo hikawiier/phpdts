@@ -70,6 +70,31 @@ function combat_state_mark_escaped(int $pid, array &$battle_cache): void {
 }
 
 /**
+ * 记录 actor 已退出战斗、但整场战斗尚未完成世界交接。
+ *
+ * 恢复 tick 不能在逃跑当刻计算：actor 可能提前退出，而战斗继续多个 tick。
+ * 这里只保存领域事实，等 qid 真正解散时再锚定首个 post-battle frame。
+ */
+function combat_state_mark_post_battle_handoff_pending(array &$actor_data): void {
+    if (!isset($actor_data['oblpara']) || !is_array($actor_data['oblpara'])) {
+        $actor_data['oblpara'] = array();
+    }
+    $actor_data['oblpara']['post_combat_handoff_pending'] = true;
+    unset($actor_data['oblpara']['world_ai_resume_tick']);
+}
+
+/**
+ * 在战场真正解散时激活 actor 级 world-AI 恢复边界。
+ */
+function combat_state_activate_post_battle_handoff(array &$actor_data): void {
+    if (empty($actor_data['oblpara']['post_combat_handoff_pending'])) return;
+    unset($actor_data['oblpara']['post_combat_handoff_pending']);
+    $actor_data['oblpara']['world_ai_resume_tick'] = function_exists('obl_tick_get')
+        ? obl_tick_get() + 1
+        : 1;
+}
+
+/**
  * attack 管道专有：伤害结算后写缓存（per-target）
  *
  * 三分支逻辑（spec §Queue/State）：
@@ -121,12 +146,16 @@ function combat_state_clear(int $pid, string $reason, array &$actor_data, array 
         $actor_data['state'] = 1;
     } elseif ($reason === 'escaped') {
         $actor_data['state'] = 0;
+        combat_state_mark_post_battle_handoff_pending($actor_data);
     }
 
     $actor_data['action'] = '';
 
     if (!empty($actor_data['bid'])) {
         battle_queue_exit($actor_data, $log, $battle_cache);
+    } elseif ($reason === 'escaped') {
+        // 无 qid 表示此处本身就是最终退出边界。
+        combat_state_activate_post_battle_handoff($actor_data);
     }
 
     $actor_data['ap'] = $actor_data['max_ap'];

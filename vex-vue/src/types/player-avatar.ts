@@ -2,10 +2,9 @@
 // 玩家小人动画意图类型
 //
 // 事件源层（battle.ts / map.ts / player.ts / 调试按钮）调用 store action，
-// store 派发意图，composable 的 INTENT_HANDLERS 映射到具体 GSAP 动画。
+// store 派发意图，useMapEntities 将其映射为 ActorRuntime command。
 //
-// 当前所有非 die/fall/popup 意图都映射到 idle（沿用现有特效）。
-// 未来扩展：在 INTENT_HANDLERS 中替换 handler 即可，事件层和 store 零改动。
+// 具体动画由 ActorRuntime 的四通道 lease 执行，事件层不直接操作 DOM/GSAP。
 // ══════════════════════════════════════════════════
 
 export type PlayerAvatarIntent =

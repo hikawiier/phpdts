@@ -42,6 +42,8 @@ export interface PlayerInfo {
   oblpara: Oblpara;
   obl_tick: number; // 当前 tick（数字类型，非字符串）
   obl_pretick: number; // 上一次 tick（数字类型）
+  /** 当前已提交的实时演出批次水位；冷启动时直接从此处开始。 */
+  presentation_head_seq: number;
   /**
    * 战斗状态机：当前玩家所在战场的状态（单一数据源）
    */
@@ -470,6 +472,8 @@ export interface BattleLogV2Payload {
 }
 
 export interface BattleLogV2Event {
+  /** presentation.v1 批次内的稳定顺序；旧 fixture/兼容数据可能缺省。 */
+  event_seq?: number;
   log_id: number;
   played: number;
   ts: number;
@@ -500,10 +504,29 @@ export interface BattleLogV2Event {
 
 export type BattleLogRawEntry = BattleLogV2Event;
 
-/** 战斗日志响应（oblivions/api/state.php?scope=battle_log） */
-export interface BattleLogResponse {
-  entries: BattleLogRawEntry[];
-  total: number;
+export interface PresentationStateAfter {
+  pid: number;
+  action: string;
+  bid: number;
+  battle_state: BattleState;
+  pgroup: number;
+  pls: number;
+  state: number;
+  hp: number;
+  ap: number;
+}
+
+/** command/heartbeat 事务提交后随响应返回的不可变演出批次。 */
+export interface PresentationBatchV1 {
+  schema: 'presentation.v1';
+  batch_seq: number;
+  groomid: number;
+  recipient_pid: number;
+  qid: number | null;
+  request_id: string;
+  tick: number;
+  state_after: PresentationStateAfter;
+  events: BattleLogV2Event[];
 }
 
 /** 敌人列表响应（oblivions/api/state.php?scope=enemies） */

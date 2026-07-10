@@ -1,6 +1,7 @@
 import { API_BASE, fetchWithTimeout, type CommandResult } from './client';
 import { renderCommandFeedback } from '@/data/command-feedback';
 import { perf } from '@/utils/perf';
+import type { PresentationBatchV1 } from '@/types/api';
 
 export interface OblCommandEnvelope<TPayload = unknown> {
   command: string;
@@ -21,6 +22,8 @@ export interface OblCommandResponse<TData = Record<string, unknown>> {
   message?: string;
   data?: TData;
   details?: unknown;
+  presentation_head_seq?: number;
+  presentation?: PresentationBatchV1;
 }
 
 function createRequestId(): string {
@@ -77,6 +80,8 @@ export async function sendOblCommand<TPayload = unknown>(
         message: feedback.message,
         messageIsHtml: feedback.isHtml,
         status: res.status,
+        presentation_head_seq: response.presentation_head_seq,
+        presentation: response.presentation,
       };
     } catch (e) {
       const feedback = renderCommandFeedback('NETWORK_ERROR');

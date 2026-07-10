@@ -74,8 +74,18 @@ try {
     obl_runtime_reload_tick_globals();
     $response = obl_command_api_handle($envelope_check['envelope']);
     $rolled_back = !empty($GLOBALS['obl_transaction_rollback_only']);
-    if ($rolled_back) obl_runtime_transaction_rollback();
-    else obl_runtime_transaction_commit();
+    $presentation = null;
+    if ($rolled_back) {
+        obl_runtime_transaction_rollback();
+    } else {
+        $presentation_pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+        $presentation = obl_runtime_prepare_presentation(
+            $presentation_pdata,
+            isset($response['request_id']) ? (string)$response['request_id'] : ''
+        );
+        obl_runtime_transaction_commit();
+        $response = obl_runtime_attach_presentation($response, $presentation);
+    }
 
     if (!$rolled_back) {
         $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);

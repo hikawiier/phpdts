@@ -55,9 +55,6 @@ function obl_rs_game() {
     if (function_exists('obl_error_log_clear_all')) {
         obl_error_log_clear_all();
     }
-    if (function_exists('obl_battle_log_clear_all')) {
-        obl_battle_log_clear_all();
-    }
 }
 
 /**

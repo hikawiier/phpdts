@@ -16,6 +16,9 @@ import type { DebugBusEntry, DebugStateSnapshot } from '@/types/events';
 
 const MAX_BUFFER = 200;
 
+export const actorTraceEnabled = import.meta.env.DEV
+  || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('actor_debug') === '1');
+
 class DebugBus {
   private _buffer: DebugBusEntry[] = [];
   private _writeIdx = 0;
@@ -98,3 +101,18 @@ class DebugBus {
 
 /** DebugBus 单例（与现有 DebugBus 导出一致） */
 export const debugBus = new DebugBus();
+
+if (actorTraceEnabled) {
+  (globalThis as Record<string, unknown>).__phpdtsDebug = {
+    events: () => debugBus.snapshot(),
+    actorTimeline: () => debugBus.snapshot().filter(entry =>
+      entry.cat === 'actor'
+      || entry.cat === 'actor-runtime'
+      || entry.cat === 'battle-playback'),
+    actorTimelineJson: () => JSON.stringify(debugBus.snapshot().filter(entry =>
+      entry.cat === 'actor'
+      || entry.cat === 'actor-runtime'
+      || entry.cat === 'battle-playback'), null, 2),
+    state: () => debugBus.getState(),
+  };
+}

@@ -293,7 +293,14 @@ function combat_log_v2_action_failed_from_context(CombatContext $ctx, string $re
     combat_log_v2_action_failed($ctx->log, $ctx->actor_data, $ctx->act_id, $reason, $extra, $ctx->action_uid);
 }
 
-function combat_log_v2_combatant_cleared($log, array $combatant_data, string $reason, ?string $action_uid = null, ?string $effect_uid = null): void {
+function combat_log_v2_combatant_cleared(
+    $log,
+    array $combatant_data,
+    string $reason,
+    ?string $action_uid = null,
+    ?string $effect_uid = null,
+    array $extra = []
+): void {
     if (!$log || !combat_log_v2_enabled()) return;
     $contract_reason = $reason === 'dead' ? 'death' : $reason;
     combat_log_v2_emit($log, [
@@ -302,12 +309,12 @@ function combat_log_v2_combatant_cleared($log, array $combatant_data, string $re
         'cleared_pid' => (int)($combatant_data['pid'] ?? 0),
         'cleared_name' => $combatant_data['name'] ?? '',
         'reason' => $contract_reason,
-        'payload' => [
+        'payload' => array_merge([
             'combatant' => combat_log_v2_combatant_snapshot($combatant_data),
             'reason' => $contract_reason,
             'by_action_uid' => $action_uid,
             'by_effect_uid' => $effect_uid,
-        ],
+        ], $extra),
     ]);
 }
 

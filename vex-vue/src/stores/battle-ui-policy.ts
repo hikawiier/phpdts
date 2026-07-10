@@ -4,25 +4,47 @@ export interface BattleMapInputState {
   currentMode: 'normal' | 'battle';
   isPlayingBattleLog: boolean;
   isProcessingBattle: boolean;
+  presentationPhase?: 'idle' | 'playing' | 'rebasing';
 }
 
-/**
- * Accumulates authoritative cache changes until battle playback reaches a
- * boundary where the visual projection may safely catch up.
- */
-export class DeferredVisualScopes {
+export interface BattleDrainResult<T> {
+  status: 'stable' | 'deferred' | 'exhausted';
+  snapshot: T | null;
+  cycles: number;
+}
+
+export async function drainBattleTicksToStable<T>(options: {
+  maxCycles: number;
+  advance(): Promise<T | null>;
+  playPending(): Promise<unknown>;
+  isProcessing(snapshot: T): boolean;
+}): Promise<BattleDrainResult<T>> {
+  for (let cycle = 0; cycle < options.maxCycles; cycle++) {
+    const snapshot = await options.advance();
+    if (!snapshot) return { status: 'deferred', snapshot: null, cycles: cycle + 1 };
+
+    // The advancing heartbeat may have generated render events. They must be
+    // consumed before the snapshot is allowed to become a stable boundary.
+    await options.playPending();
+    if (!options.isProcessing(snapshot)) {
+      return { status: 'stable', snapshot, cycles: cycle + 1 };
+    }
+  }
+  return { status: 'exhausted', snapshot: null, cycles: options.maxCycles };
+}
+
+/** Accumulates authority scopes until the serialized refresh worker consumes them. */
+export class PendingAuthorityScopes {
   private readonly scopes = new Set<string>();
 
   record(scopes: readonly string[]): void {
     for (const scope of scopes) this.scopes.add(scope);
   }
 
-  snapshot(): string[] {
-    return [...this.scopes];
-  }
-
-  commit(scopes: readonly string[]): void {
-    for (const scope of scopes) this.scopes.delete(scope);
+  take(): string[] {
+    const pending = [...this.scopes];
+    this.scopes.clear();
+    return pending;
   }
 
   clear(): void {
@@ -35,13 +57,11 @@ export function shouldCommitBattleVisualState(action: string, battleState: Battl
 }
 
 export function isBattleMapInputLocked(state: BattleMapInputState): boolean {
-  return state.currentMode === 'battle'
-    || state.isPlayingBattleLog
-    || state.isProcessingBattle;
+  return state.presentationPhase === 'rebasing';
 }
 
 export function isSilentMapCommandLock(lockReason: string | null | undefined): boolean {
-  return lockReason === 'BATTLE_LOG_PLAYING'
+  return lockReason === 'PRESENTATION_NOT_CAUGHT_UP'
     || lockReason === 'MODE_BATTLE'
     || lockReason === 'BATTLE_PROCESSING';
 }

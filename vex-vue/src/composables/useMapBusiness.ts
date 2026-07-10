@@ -29,6 +29,7 @@ import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPla
 import { perf } from '@/utils/perf';
 import type { Character } from '@/types/character';
 import { isBattleMapInputLocked, isSilentMapCommandLock } from '@/stores/battle-ui-policy';
+import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
 /**
  * 点击移动 / 点击当前格探索
@@ -41,10 +42,12 @@ export async function clickMove(areaId: string | number): Promise<void> {
   if (areaId === undefined || areaId === null) return;
   const mapStore = useMapStore();
   const battleStore = useBattleStore();
+  const presentationScene = usePresentationSceneStore();
   if (isBattleMapInputLocked({
     currentMode: battleStore.currentMode,
     isPlayingBattleLog: battleStore.isPlayingBattleLog,
     isProcessingBattle: battleStore.isProcessingBattle,
+    presentationPhase: presentationScene.phase,
   })) return;
 
   // 点击当前格 → 触发探索（广播事件，tile-action 监听执行）

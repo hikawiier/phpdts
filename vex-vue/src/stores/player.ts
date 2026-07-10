@@ -16,6 +16,7 @@ import { ref, computed } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { useCharacterStore } from '@/stores/character';
 import type { PlayerInfo, BattleState, CombatViewModel } from '@/types/api';
+import { presentationInbox } from '@/stores/presentation-inbox';
 
 export const usePlayerStore = defineStore('player', () => {
   // ── 状态 ──
@@ -63,6 +64,7 @@ export const usePlayerStore = defineStore('player', () => {
       const result = await dataManager.fetch('player_info', forceRefresh);
       if (result.status === 'success' && result.data) {
         const info = result.data as PlayerInfo;
+        presentationInbox.initialize(info.presentation_head_seq);
         playerInfo.value = info;
         // 同步写入 CharacterHub（玩家自身 + 战斗上下文）
         const characterStore = useCharacterStore();
@@ -96,6 +98,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function setPlayerInfo(info: PlayerInfo, options: { syncCharacters?: boolean } = {}): void {
+    presentationInbox.initialize(info.presentation_head_seq);
     playerInfo.value = info;
     error.value = '';
     if (options.syncCharacters !== false) syncCharacterProjection(info);
@@ -103,6 +106,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   /** 重置为初始状态 */
   function reset(): void {
+    presentationInbox.reset();
     playerInfo.value = null;
     loading.value = false;
     error.value = '';

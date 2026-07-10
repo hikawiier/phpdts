@@ -73,7 +73,7 @@
 - 不升级旧根 `command.php` 为 JSON；Oblivions 新写操作只走 `oblivions/api/command.php`
 - Oblivions 运行时不依赖 `common.inc.php`
 - 后端只返回结构（`code + feedback.id + params`），前端负责文案/i18n/HTML
-- `battle_log` 是战斗导演事件流，不是普通日志
+- battlelog.v2 是请求内战斗演出事件流，通过 response `presentation.v1` 投递，不是 State API 日志
 - `obl_error_log` 是诊断流，默认不作为普通 UI 提示通道（仅 `?debug=ai` / `?poll_error=1` 弹 Toast）
 
 ---
@@ -131,7 +131,7 @@ oblivions/
 │   └── game/
 │       ├── obl_global.func.php   # 公共函数（obl_get_config 等）
 │       ├── log.func.php          # 结构化日志收集器 + 持久化/读取（详见 §8.6）
-│       ├── battle_log.func.php   # 战斗日志收集器 + played 标记机制（详见 §8.10）
+│       ├── battle_log.func.php   # 请求内战斗演出事件收集器（详见 §8.10）
 │       ├── sql.func.php          # SQL 操作封装（队列/状态机查询）
 │       ├── player.func.php       # 玩家数据层：认证/抓取/格式化/保存 + 命令状态过滤（详见 §8.1）
 │       ├── move.func.php         # 移动/地图数据加载/BFS距离计算（详见 §8.4）
@@ -196,9 +196,7 @@ oblivions/
 │   ├── .htaccess               # Apache 访问保护（Deny from all）
 │   ├── locks/                  # obl_lock_{groomid}_{pid}.php — 命令并发锁
 │   ├── logs/                   # obl_log_{groomid}_{pid}.json + obl_error_{groomid}_{pid}.json
-│   ├── battles/                # obl_battle_log_{groomid}_{pid}.json — 战斗日志
 │   └── debug/                  # ai_dump_{groomid}.jsonl — AI 调试 dump
-├── mark_battle_log_played.php  # 零依赖 battlelog 标记接口（无 auth/DB，只文件读写）
 ├── editor/                     # 地图编辑器（Node.js/Vite前端工具）
 └── docs/                       # 设计文档
 ```
@@ -414,11 +412,11 @@ $oblpara['battle'] = [
 
 ### 5.0 通用约定
 
-> **重要：数值字段返回 string**
+> **重要：响应中的数值字段是混合类型**
 >
-> 后端 PHP 通过 `compatible_json_encode()` 返回的所有数值字段（如 `pid`/`hp`/`ap`/`log_id`/`turn`/`effect_value`/`played`/`ts` 等）实际为 **string 类型**。这是 PHP json_encode 对数据库取出的值的行为。
+> 数据库直接读出的旧字段（如 `pid`/`hp`/`ap`）通常仍是 **string**；后端显式 `(int)` 归一化的字段（如 `obl_tick`、`presentation_head_seq`、`presentation.v1.batch_seq/event_seq`）是 **number**。`compatible_json_encode()` 只是调用 `json_encode()`，不会自动统一数值类型。
 >
-> 前端 TypeScript 类型定义中这些字段均声明为 `string`，使用时需 `Number()` 转换。详见 [vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md) 类型定义章节。
+> 前端应按具体 API 契约声明类型，并在业务计算边界使用 `Number()` 防御性归一化。详见 [vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md) 类型定义章节。
 
 ### 5.1 通用协议
 
@@ -559,43 +557,34 @@ $oblpara['battle'] = [
 
 **debug 分类**：`OblivionsLogger::DEBUG_IDS` 常量声明 debug 日志 ID 清单（当前含 `enemy.move`、`battle.invalid`）。这些日志持久化保留但前端默认不渲染，debug 模式下显示并加 `[DBG]` 前缀。
 
-### 5.5 `battle_log` — 战斗日志（未播放条目）
+### 5.5 `presentation.v1` — command/heartbeat 实时演出批次
 
-- **请求**: `GET oblivions/api/state.php?scope=battle_log`
-- **前置条件**: 必须在 Oblivions 模式下
-- **响应**:
+command 与 heartbeat 的成功响应顶层始终可返回 `presentation_head_seq`；本请求存在 render events 时同时返回 `presentation`：
+
 ```json
 {
-  "status": "success",
-  "data": {
-    "entries": [BattleLogEntry, ...],
-    "total": 3
+  "presentation_head_seq": 12,
+  "presentation": {
+    "schema": "presentation.v1",
+    "batch_seq": 12,
+    "groomid": 1,
+    "recipient_pid": 19,
+    "qid": 7,
+    "request_id": "obl-...",
+    "tick": 31,
+    "state_after": { "pid": 19, "action": "", "bid": 0, "battle_state": "IDLE" },
+    "events": [BattleLogV2Event]
   }
 }
 ```
 
-**只返回 `played=0` 的条目**。文件中 `played=1` 的条目保留但不返回（历史归档）。
+约束：
 
-**BattleLogEntry 字段**：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | string | 固定 `'battle.action'` |
-| `log_id` | string | 文件内自增 ID（持久化时分配），用于标记 played |
-| `turn` | string | 回合序号（0=战斗开始/结束，1+=回合 N） |
-| `actor` | string | 行动方标识（`'player'` 或 `'enemy_{pid}'`） |
-| `action_id` | string | 动作 ID（`unarmed_strike`/`escape`/`battle.start`/`initiative.roll`/`battle.end`） |
-| `action_name` | string | 动作显示名（如 `'空手攻击'`） |
-| `target` | string | 目标标识（`'player'`/`'enemy_{pid}'`/结果标识） |
-| `effect_value` | string | 效果值（伤害值等） |
-| `extra` | object\|null | 额外信息（如 `{'success': true}`、`{'player_roll': 50, 'enemy_roll': 30}`） |
-| `enemy_pid` | int | 战斗对象 PID（前端按战斗分组播放） |
-| `played` | string | 0=未播放，1=已播放（前端播放后通过 mark 接口标记） |
-| `ts` | string | Unix 时间戳 |
-
-> **关于数值类型**：后端 PHP 返回的所有数值字段实际为 **string 类型**（PHP json_encode 行为），前端使用时需 `Number()` 转换。详见 [§5.0](#50-通用约定)。
-
-**前端用途**：拉取后按 `enemy_pid` 分组，每组按 `log_id` 排序播放（碰撞动画 → 模态框 → 残留伤害数字），播完调 `mark_battle_log_played.php` 标记 `played=1`。
+- `batch_seq` 在 `oblgame.vars_json.obl_presentation_head_seq` 中事务性递增；事务回滚不消耗序号。
+- `events` 只包含 `debug=false` 的 battlelog.v2 render events，并按 `event_seq` 排序。
+- 在线投递为 best-effort；缺批时前端接受最新权威状态并 rebase，不调用补拉接口。
+- `player_info.presentation_head_seq` 供 F5/冷启动直接把 runtime cursor 快进到 server head。
+- 已删除 `battle_log` State scope、mutable JSON 和 played/mark 接口。
 
 ### 5.6 `enemies` — 当前区域敌人列表
 
@@ -735,25 +724,6 @@ State scope 只提供候选投影，具体技能射程、Aim/Capture 和 Partici
 - 过滤逻辑：返回所有配方，经 `item_recipe_visibility_filter` 过滤（P0 默认全部可见）
 - 取消"已发现/未发现"机制：所有配方天然可见，软锁通过资源可达性自然限制（玩家不到 POI → 工作台素材不可用 → 配方实际无法合成，但配方仍可查看了解需求）
 
-### 5.12 `mark_battle_log_played.php` — 零依赖标记接口
-
-**独立文件**（不走 State API），位于 `oblivions/mark_battle_log_played.php`。
-
-- **请求**: `POST oblivions/mark_battle_log_played.php`
-- **Content-Type**: `application/x-www-form-urlencoded`
-- **参数**:
-  - `groomid` (int) — 房间 ID
-  - `pid` (int) — 玩家 ID
-  - `log_ids` (array 或逗号分隔字符串) — 要标记的 log_id 数组
-- **响应**:
-```json
-{ "success": true, "marked": 3 }
-```
-或
-```json
-{ "success": false, "error": "invalid_params" }
-```
-
 **零依赖设计**：详见 [DESIGN.md §2.5](./DESIGN.md#25-零依赖接口设计)。
 
 ### 5.13 Heartbeat `tick_frame` / `changed_scopes`
@@ -772,13 +742,13 @@ State scope 只提供候选投影，具体技能射程、Aim/Capture 和 Partici
     "tick_frame": {
       "delta": 1,
       "phases": [
-        {"name": "combat_domain", "changed_scopes": ["player_info", "battle_log"]},
+        {"name": "combat_domain", "changed_scopes": ["player_info"]},
         {"name": "world_ai_domain", "changed_scopes": ["game_map", "enemies"]}
       ],
       "actor_behaviors": {},
-      "changed_scopes": ["player_info", "battle_log", "game_map", "enemies"]
+      "changed_scopes": ["player_info", "game_map", "enemies"]
     },
-    "changed_scopes": ["player_info", "battle_log", "game_map", "enemies"]
+    "changed_scopes": ["player_info", "game_map", "enemies"]
   }
 }
 ```
@@ -856,7 +826,7 @@ oblivions/api/command.php
   "data": {
     "command": "battle.submit_turn",
     "feedback": { "id": "battle.start", "params": { "enemy_pid": 101 } },
-    "refresh": ["player_info", "battle_log"],
+    "refresh": ["player_info", "enemies"],
     "server_state": { "action": "battle", "bid": 42, "battle_state": "PROCESSING" },
     "actions": [
       {
@@ -948,7 +918,7 @@ return [
     'memory_range'       => 3,    // 每次探索最多发现道具数
     'move_sp_cost'       => 0,    // 每格移动消耗体力
     'log_max_entries'    => 200,  // 结构化日志最大条目数
-    'battle_log_old_max' => 10,   // 战斗日志历史归档最大批次（保留量）
+    'battlelog_schema'   => 'v2', // PresentationBatch 内事件结构
 ];
 ```
 
@@ -1335,7 +1305,7 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 | `combat.tag.php` | `combat_tag_build` / `combat_check_target_rules` | 构建当前 Aim/ResolutionTarget 标签，供 `aim.rules` / `capture.rules` 判定 |
 | `combat.ap.php` | `combat_ap_register` / `combat_ap_calculate` | AP 计算器注册与动态消耗 |
 | `combat.effect.php` | `combat_effect_apply_all` | 实际应用 `damage` / `heal` / `move` / `escape` / `ap_change` |
-| `combat.state.php` | `combat_state_post_check` / `combat_state_clear` / `combat_state_check_end` | 管理 `combatants` 与 `tag_mutations`，处理死亡 / 逃跑 / 清场 |
+| `combat.state.php` | `combat_state_post_check` / `combat_state_clear` / `combat_state_mark_post_battle_handoff_pending` / `combat_state_activate_post_battle_handoff` | 管理 `combatants` 与 `tag_mutations`；逃跑时登记待交接状态，qid 解散时才锚定首个战后 world-AI 跳过帧 |
 | `combat.queue.php` | `combat_queue_create_and_init` / `combat_queue_exit` | combat 层队列适配，内部复用 `battle.queue.*` |
 | `combat.planned_state.php` | `combat_planned_state_*` | dry-run/verify/preview 的计划状态读写 |
 | `combat.effect_projector.php` | `combat_effect_project_all` | 在 planned state 上投影效果，不写 DB |
@@ -1409,17 +1379,17 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 - 新管道：`combat/combat.pipeline.php`
 - 共享队列出口：`battle.queue.main.php::battle_manage_queue`
 
-### 8.10 battle_log.func.php — 战斗日志系统
+### 8.10 battle_log.func.php — 请求内战斗演出事件收集器
 
-战斗日志收集与持久化，与 obl_log 分离（详见 [DESIGN.md §1.10](./DESIGN.md#110-战斗日志-battle-log-与-played-标记机制)）。
+`BattleLogCollector` 与 `obl_log` 分离，但不再持久化为在线队列（详见 [DESIGN.md §1.10](./DESIGN.md#110-战斗演出事件与-presentationbatch)）。
 
 **BattleLogCollector 关键设计：**
 - **battlelog.v2 事件**：render channel 使用 round/turn/action/delivery/joined/effect/cleared/end/notice 等正式 `event_type`；phase 仅用于 collector 内部调试分类
-- **render/debug 分离**：`emit()` 的 `$debug` 参数控制是否进入默认前端拉取结果；queue/state 诊断事件保留在文件但不进入 render script
+- **render/debug 分离**：`emit()` 的 `$debug` 参数控制是否进入 response PresentationBatch；诊断事件不进入 render script
 - **边界标记**：每个条目携带 `bl_turn_num` / `bl_round_num`，Director 直接使用 `round_start` / `turn_start` / `battle_end` 事件分段
 - **Turn/Round 管理**：`nextTurn()` 由 `battle_hook_turn_start` 调用递增；`setRoundNum()` 由 `battle_queue_create_and_init` / `battle_queue_rebuild` 调用同步 DB 的 round_num
 - **目标原子性**：`checkpoint()` / `rollbackTo()` 与 TargetResolutionUnit SAVEPOINT 同步，单目标回滚时丢弃该目标尚未提交的 action/delivery/join/effect 事件
-- **提交后持久化**：collector 在事务中只驻留内存；`obl_battle_log_persist()` 在 DB commit 后返回可检查 bool，失败转换为 `BATTLELOG_PERSIST_FAILED` warning
+- **事务边界**：collector 在事务中只驻留内存；Runtime 在 COMMIT 前冻结 render events 与 batch sequence，COMMIT 后附加到 response
 
 | 函数/类 | 签名 | 说明 |
 |---------|------|------|
@@ -1431,11 +1401,6 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 | `BattleLogCollector::getEntries` | `(): array` | 获取本请求累积的战斗日志条目 |
 | `BattleLogCollector::checkpoint` / `rollbackTo` | `(): int` / `(int): void` | 建立并恢复目标单元事件检查点 |
 | `BattleLogCollector::hasEntries` | `(): bool` | 本请求是否有战斗日志 |
-| `obl_battle_log_get_old_max` | `(): int` | 读取 battle_log 历史归档最大批次配置（带静态缓存） |
-| `obl_battle_log_persist` | `($logger, $groomid, $pid): bool` | commit 后持久化到文件；mkdir/json/write 任一步失败返回 false |
-| `obl_battle_log_load` | `($groomid, $pid, $includeDebug = false): array` | 从文件读取**未播放**的战斗日志（played=0），`$includeDebug=false` 时自动过滤 `debug=true` 的条目 |
-| `obl_battle_log_mark_played` | `($groomid, $pid, $log_ids): int` | 标记指定 log_id 的战斗日志为已播放（played=1）。供 `mark_battle_log_played.php` 调用 |
-| `obl_battle_log_clear_all` | `(): void` | 清理所有战斗日志文件（在 `rs_game()` 游戏重置时调用，删除 `oblivions/cache/battles/obl_battle_log*.json`） |
 
 ### 8.11 battle.entry.php — 已删除
 
@@ -1665,7 +1630,6 @@ State API 的 scope 分发器。所有 handler 纯读，不推进 tick。
 | `obl_state_handle_tile_actions` | `($ctx): array` | 当前格可执行动作 |
 | `obl_state_handle_obl_log` | `($ctx): array` | 结构化日志 |
 | `obl_state_handle_obl_error` | `($ctx): array` | 错误诊断日志 |
-| `obl_state_handle_battle_log` | `($ctx): array` | 战斗日志（前端导演输入） |
 | `obl_state_handle_enemies` | `($ctx): array` | 当前区域敌人 |
 | `obl_state_handle_skill_list` | `($ctx): array` | 技能列表 |
 | `obl_state_handle_skill_cd_check` | `($ctx): array` | 技能 CD 检查 |
@@ -1706,7 +1670,7 @@ State API 的 scope 分发器。所有 handler 纯读，不推进 tick。
 - **搜索计数**: `UPDATE ... SET search_count=search_count+1` 原子递增
 - **迷雾写入**: `INSERT ... ON DUPLICATE KEY UPDATE fog=1` 幂等操作
 - **日志写入**: `file_put_contents` 加 `LOCK_EX`，多请求并发写入不丢数据
-- **战斗日志写入**: `obl_battle_log_persist()` 加 `LOCK_EX`，多请求并发写入不丢数据
+- **演出序号**: `obl_presentation_head_seq` 与领域事务一起写入 `oblgame.vars_json`；回滚不消耗序号
 - **命令并发锁**: 新 Command API 先使用房间级 DB lock，再由 Command Bus 使用玩家级 `flock(LOCK_EX|LOCK_NB)`，同一玩家同时只能处理一个命令（详见 [§6.5](#65-并发锁机制)）
 
 ### 9.4 itmpara 约定
@@ -1761,7 +1725,7 @@ State API 的 scope 分发器。所有 handler 纯读，不推进 tick。
 ```
 
 每一步操作产生的日志通过 `$obl_log->emit()` 收集，请求结束前由 `obl_log_persist()` 持久化。
-战斗细节日志通过 `$obl_battle_log->emit()` 收集，请求结束前由 `obl_battle_log_persist()` 持久化（played=0）。
+战斗演出事件通过 `$obl_battle_log->emit()` 在请求内收集，COMMIT 后由 command/heartbeat response 的 `presentation.v1` 直接投递。
 
 ---
 
@@ -1779,17 +1743,16 @@ Oblivions 模式下 `game.php` 重定向到 `vex-vue/dist/index.html`（生产�
 |------|-----|----------|
 | 地图网格+连通性 | `game_map` | `links.tiles[pgroup][pls].neighbors`, `links.grids[pgroup]` |
 | 当前格交互 | `tile_actions` | `pois[]`, `ground_items[]` |
-| 玩家位置 + 房间ID | `player_info` | `pgroup`(区域), `pls`(格子), `groomid`(房间ID, 供 mark 接口用) |
+| 玩家位置 + 演出水位 | `player_info` | `pgroup`, `pls`, `groomid`, `presentation_head_seq` |
 | 战斗上下文视图 | `player_info.combat_context` | `qid/state/canSubmitTurn/combatants/validTargets/suggestedTargetPid` |
 | 战斗候选视图 | `combat_targets` | `qid/suggestedTargetPid/candidates[relation,participation,selectable,reason,character]` |
 | 玩家背包详情 | `player_inventory` | `items[]`（含 usable/tags/itmk 字段，供前端判断可使用/可装备道具） |
 | 结构化日志 | `obl_log` | `entries[]`（LogEntry 数组）, `total` |
-| 战斗日志（未播放） | `battle_log` | `entries[]`（BattleLogEntry 数组，played=0）, `total` |
 | 当前区域敌人 | `enemies` | `enemies[]`（已发现敌人列表） |
 | 合成预判 | `craft_preview` | `match_count`, `craftable`, `is_new_recipe` |
 | 可用工作台素材 | `craft_workbench_materials` | `workbench_materials[]`（含 source/id/item_id/tool_level） |
 | 已发现配方列表 | `craft_recipes` | `recipes[]`（含 recipe_id/category/materials/results） |
-| tick 后刷新范围 | `heartbeat.changed_scopes` | `player_info/game_map/enemies/battle_log/...`，由前端用于精准 invalidate |
+| tick 后刷新范围 | `heartbeat.changed_scopes` | `player_info/game_map/enemies/combat_targets/...`，由前端用于精准 invalidate |
 
 ### 11.3 命令提交
 
@@ -1850,22 +1813,9 @@ commandQueue.execute({ command: 'craft.execute', request_id, payload: { slots: [
 
 > 旧扁平 POST 命令名（`obl_explore`/`obl_search`/`move`/...）仅保留在根 `command.php` + `oblivions_router.php` deprecated 路径中，新前端不再调用。
 
-### 11.4 战斗日志标记
+### 11.4 实时战斗演出
 
-前端通过 `markBattleLogPlayed()` 标记 played=1（零依赖接口）：
-
-```typescript
-await fetch(`${API_BASE}/oblivions/mark_battle_log_played.php`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-        groomid: String(groomid),
-        pid: String(pid),
-        log_ids: logIds.join(',')
-    }).toString()
-});
-```
+前端从 command/heartbeat 响应顶层读取 `presentation_head_seq` 与可选 `presentation.v1`。批次进入 `PresentationInbox` 后由 Director/Planner/Runner 消费；F5 或缺批直接按权威快照 rebase，不存在 played 标记请求。
 
 ### 11.5 前端关键逻辑
 

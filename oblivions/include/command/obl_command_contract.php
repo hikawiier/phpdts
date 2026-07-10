@@ -12,7 +12,7 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array('to' => array('type' => 'int', 'required' => true, 'min' => 0)),
-            'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log', 'battle_log'),
+            'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
         'map.explore' => array(
             'legacy' => 'obl_explore',
@@ -21,7 +21,7 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array(),
-            'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log', 'battle_log'),
+            'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
         'poi.search' => array(
             'legacy' => 'obl_search',
@@ -30,7 +30,7 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array('iaid' => array('type' => 'int', 'required' => true, 'min' => 1)),
-            'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log', 'battle_log'),
+            'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
         'item.pickup' => array(
             'legacy' => 'obl_pickup',
@@ -88,7 +88,7 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
-            'refresh' => array('player_info', 'battle_log', 'enemies', 'game_map'),
+            'refresh' => array('player_info', 'enemies', 'game_map'),
         ),
         'battle.submit_turn' => array(
             'legacy' => 'obl_battle_action',
@@ -99,7 +99,7 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
-            'refresh' => array('player_info', 'battle_log', 'enemies'),
+            'refresh' => array('player_info', 'enemies'),
         ),
         'combat.can_engage' => array(
             // L0 可达性查询（read-only）：前端"点击敌人发起战斗"前的预判

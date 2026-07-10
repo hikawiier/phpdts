@@ -12,7 +12,7 @@
 //   - 修改动画时长时需同步更新此表
 // ══════════════════════════════════════════════════
 
-import type { ActionAnimationSpec } from '@/types/actor-animation';
+import type { ActionAnimationSpec } from '@/types/actor-runtime';
 
 /**
  * 默认规格（近战冲撞）

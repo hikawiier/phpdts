@@ -387,13 +387,6 @@ function obl_command_feedback_error($rule, $entry, $source = 'log') {
     );
 }
 
-function obl_command_persist_logs(&$pdata) {
-    global $obl_log, $obl_error_log, $obl_battle_log, $groomid;
-    if (isset($obl_log) && $obl_log && $obl_log->hasEntries()) obl_log_persist($obl_log, $groomid, $pdata['pid']);
-    if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) obl_error_log_persist($obl_error_log, $groomid, $pdata['pid']);
-    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) obl_battle_log_persist($obl_battle_log, $groomid, $pdata['pid']);
-}
-
 function obl_command_emit_rejected($command, &$pdata, $reason) {
     global $obl_error_log;
     if (isset($obl_error_log) && $obl_error_log) {

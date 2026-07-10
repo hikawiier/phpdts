@@ -40,7 +40,9 @@ The current suite is focused regression coverage, not complete proof of every it
 | SQL exception causes explicit transaction rollback | `sql_exception_rolls_back_transaction` |
 | Isolated fatal shutdown rolls back active transaction and releases room lock | `fatal_shutdown_rolls_back_and_releases_room_lock` |
 | Commit failure cleanup clears request-local transaction state even on a broken connection | `commit_failure_cleanup_clears_runtime_state` |
-| Battlelog persistence failure after commit returns warning and preserves domain state | `post_commit_battlelog_failure_returns_warning_and_keeps_state` |
+| Optional presentation archive writer failure after commit returns warning and preserves domain state | `post_commit_battlelog_failure_returns_warning_and_keeps_state` |
+| Presentation batch sequence commits/rolls back with the domain transaction; debug events stay out of live delivery; completed-qid and authoritative state_after remain distinct | `presentation_batch_sequence_commits_and_rolls_back_with_domain_transaction` |
+| Escape chooses and emits a deterministic authoritative retreat target; an early escape remains pending across later combat ticks and only anchors its one-frame world-AI cooldown when the qid disbands | `escape_selects_and_emits_authoritative_retreat_target`, `escaped_actor_skips_first_post_battle_world_tick` |
 | Preview preserves DB/files, real collector, gamevars, request/event UID sequence, and RNG; readonly Command Bus preserves debug collector | `preview_has_no_db_or_file_side_effects`, `readonly_command_bus_does_not_touch_player_or_game` |
 | Director creates ordered delivery/joined playback; target validator rejects stale qid, blocked, dead, and missing projections | `npm test` in `vex-vue` |
 

@@ -8,6 +8,70 @@ function skill_test_actor_termination_execute(CombatContext $ctx): void {
 
 return static function (TestRoom $room): array {
     return test_run_cases('battle', [
+        'escaped_actor_skips_first_post_battle_world_tick' => static function () use ($room): void {
+            global $gamevars;
+            $original_gamevars = $gamevars;
+            $room->resetData();
+            try {
+                $survivor = $room->player('escape-survivor', 0, ['pls' => 1]);
+                $actor = $room->player('escape-handoff', 1, ['pls' => 3]);
+                $room->queue($survivor, 61, 1);
+                $room->queue($actor, 61, 2);
+                $cache = [
+                    'combatants' => [(int)$survivor['pid'] => 1, (int)$actor['pid'] => 1],
+                    'tag_mutations' => [],
+                ];
+                $gamevars = ['obl_tick' => 10, 'obl_pretick' => 10];
+                combat_state_clear((int)$actor['pid'], 'escaped', $actor, $cache, new BattleLogCollector());
+                test_assert(!empty($actor['oblpara']['post_combat_handoff_pending']), 'escape records pending post-battle handoff');
+                test_assert(!isset($actor['oblpara']['world_ai_resume_tick']), 'escape does not anchor resume tick before battle end');
+
+                // 战斗继续多个 tick；绝对时间不能让交接冷却提前过期。
+                $gamevars['obl_tick'] = 13;
+                $log = new BattleLogCollector();
+                battle_disband_cleanup(61, $survivor, $log);
+                $actor = $room->fetch((int)$actor['pid']);
+                test_assert(empty($actor['oblpara']['post_combat_handoff_pending']), 'disband consumes pending handoff marker');
+                test_same(14, (int)$actor['oblpara']['world_ai_resume_tick'], 'disband anchors first post-battle frame');
+
+                $ctx = ['battle_actor_scope' => [], 'actor_behaviors' => []];
+                $gamevars['obl_tick'] = 14;
+                test_same('post_combat_handoff', obl_actor_world_ai_block_reason($actor, $ctx), 'first post-battle frame is blocked');
+                $gamevars['obl_tick'] = 15;
+                test_same('', obl_actor_world_ai_block_reason($actor, $ctx), 'actor resumes world AI on later frame');
+                test_assert(!isset($room->fetch((int)$actor['pid'])['oblpara']['world_ai_resume_tick']), 'expired handoff marker is persisted away');
+            } finally {
+                $gamevars = $original_gamevars;
+            }
+        },
+        'escape_selects_and_emits_authoritative_retreat_target' => static function () use ($room): void {
+            $room->resetData();
+            $actor = $room->player('retreat-actor', 1, ['action' => 'battle', 'bid' => 51, 'pgroup' => 1, 'pls' => 1]);
+            $threat = $room->player('retreat-threat', 0, ['action' => 'battle', 'bid' => 51, 'pgroup' => 1, 'pls' => 4]);
+            $cache = [
+                'combatants' => [(int)$actor['pid'] => 1, (int)$threat['pid'] => 1],
+                'tag_mutations' => [],
+            ];
+            $log = new BattleLogCollector();
+            $config = combat_skill_get_config('escape');
+            $ctx = new CombatContext($actor, 'escape', $config, $log, $cache);
+            $ctx->action_uid = 'retreat-action';
+            test_assert(combat_effect_escape($ctx, []), 'escape effect succeeds');
+            test_same(17, (int)$actor['pls'], 'retreat chooses deterministic farthest free neighbor');
+
+            $ctx->targets = [['target_data' => []]];
+            $ctx->targets[0]['target_data'] = &$actor;
+            combat_target_unit_clear_current_if_needed($ctx);
+
+            $events = $log->getEntries();
+            $effect = current(array_values(array_filter($events, static fn(array $event): bool => ($event['event_type'] ?? '') === 'effect_applied')));
+            $cleared = current(array_values(array_filter($events, static fn(array $event): bool => ($event['event_type'] ?? '') === 'combatant_cleared')));
+            test_same(1, (int)$effect['payload']['delta']['pls_before'], 'escape effect records origin');
+            test_same(17, (int)$effect['payload']['delta']['pls_after'], 'escape effect records authoritative target');
+            test_same('retreat', (string)$effect['payload']['detail']['visual_policy'], 'escape effect selects retreat visual policy');
+            test_same(17, (int)$cleared['payload']['detail']['retreat_target']['pls'], 'clear event forwards retreat target to presentation');
+            test_same('retreat', (string)$cleared['payload']['detail']['visual_policy'], 'clear event forwards retreat visual policy');
+        },
         'dead_a_and_skipped_b_do_not_block_c' => static function () use ($room): void {
             $room->resetData();
             $actor = $room->player('continue-actor', 0, ['pls' => 1, 'att' => 30, 'ap' => 10]);

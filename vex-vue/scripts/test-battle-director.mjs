@@ -29,26 +29,90 @@ const server = await createServer({
 try {
   const fixture = await server.ssrLoadModule('/src/stores/battle-director-v2.fixture.ts');
   fixture.assertBattleDirectorV2Fixture();
+  const actorRuntimeFixture = await server.ssrLoadModule('/src/stores/actor-runtime.fixture.ts');
+  actorRuntimeFixture.assertActorRuntimeContractFixture();
+  actorRuntimeFixture.assertMapSceneGeometryFixture();
+  await actorRuntimeFixture.assertPostCombatHandoffRunFixture();
+  await actorRuntimeFixture.assertPresentationRebaseMoveFixture();
+  actorRuntimeFixture.assertCharacterMapRosterFixture();
+  actorRuntimeFixture.assertPresentationClaimFixture();
+  await actorRuntimeFixture.assertProjectedRemovalRediscoveryFixture();
+  actorRuntimeFixture.assertQidChangeSessionOwnershipFixture();
+  await actorRuntimeFixture.assertDataManagerRefreshContractFixture();
+  await actorRuntimeFixture.assertPlaybackSceneGuardFixture();
+  await actorRuntimeFixture.assertPlaybackTimeoutCancellationFixture();
+  await actorRuntimeFixture.assertBattleEndParallelBarrierFixture();
   const uiPolicy = await server.ssrLoadModule('/src/stores/battle-ui-policy.ts');
-  const scopes = new uiPolicy.DeferredVisualScopes();
+  const scopes = new uiPolicy.PendingAuthorityScopes();
   scopes.record(['game_map', 'combat_targets']);
   scopes.record(['enemies', 'game_map']);
-  const pendingScopes = scopes.snapshot().sort().join(',');
-  if (pendingScopes !== 'combat_targets,enemies,game_map') throw new Error('deferred visual scopes did not accumulate');
-  scopes.commit(['game_map']);
-  if (scopes.snapshot().includes('game_map')) throw new Error('deferred visual scope commit failed');
+  const pendingScopes = scopes.take().sort().join(',');
+  if (pendingScopes !== 'combat_targets,enemies,game_map') throw new Error('pending authority scopes did not accumulate');
+  if (scopes.take().length !== 0) throw new Error('pending authority scopes were not consumed atomically');
   if (uiPolicy.shouldCommitBattleVisualState('battle', 'PROCESSING')) throw new Error('PROCESSING visual state committed early');
   if (!uiPolicy.shouldCommitBattleVisualState('battle', 'PLAYER_TURN')) throw new Error('PLAYER_TURN visual state not committed');
   if (!uiPolicy.shouldCommitBattleVisualState('', 'IDLE')) throw new Error('IDLE visual state not committed');
-  if (!uiPolicy.isBattleMapInputLocked({ currentMode: 'battle', isPlayingBattleLog: false, isProcessingBattle: false })) {
-    throw new Error('battle mode map input not locked');
+  const drainOrder = [];
+  const drainStates = ['PROCESSING', 'IDLE'];
+  const drainResult = await uiPolicy.drainBattleTicksToStable({
+    maxCycles: 4,
+    advance: async () => {
+      drainOrder.push('heartbeat');
+      return { state: drainStates.shift() ?? 'IDLE' };
+    },
+    playPending: async () => { drainOrder.push('play'); },
+    isProcessing: snapshot => snapshot.state === 'PROCESSING',
+  });
+  if (drainResult.status !== 'stable' || drainResult.cycles !== 2) {
+    throw new Error('battle drain did not reach the expected stable snapshot');
   }
-  if (!uiPolicy.isBattleMapInputLocked({ currentMode: 'normal', isPlayingBattleLog: true, isProcessingBattle: false })) {
-    throw new Error('battle playback map input not locked');
+  if (drainOrder.join(',') !== 'heartbeat,play,heartbeat,play') {
+    throw new Error('battle drain committed before heartbeat-generated logs were played');
   }
-  if (!uiPolicy.isSilentMapCommandLock('BATTLE_LOG_PLAYING') || uiPolicy.isSilentMapCommandLock('COOLDOWN')) {
+  if (uiPolicy.isBattleMapInputLocked({ currentMode: 'battle', isPlayingBattleLog: true, isProcessingBattle: true, presentationPhase: 'playing' })) {
+    throw new Error('map input remained globally locked during battle playback');
+  }
+  if (!uiPolicy.isBattleMapInputLocked({ currentMode: 'normal', isPlayingBattleLog: false, isProcessingBattle: false, presentationPhase: 'rebasing' })) {
+    throw new Error('presentation rebase map input not locked');
+  }
+  if (!uiPolicy.isSilentMapCommandLock('PRESENTATION_NOT_CAUGHT_UP') || uiPolicy.isSilentMapCommandLock('COOLDOWN')) {
     throw new Error('silent map command lock classification mismatch');
   }
+  const presentationSceneModule = await server.ssrLoadModule('/src/stores/presentation-scene.ts');
+  const entity = (id, pgroup, pls) => ({ id, kind: 'actor', pgroup, pls, img: '' });
+  const exits = [
+    { actorId: 'same', generation: 1, reason: 'escaped', from: { pgroup: 1, pls: 2 }, fromPoint: null, retreatTarget: null },
+    { actorId: 'retreat', generation: 2, reason: 'escaped', from: { pgroup: 1, pls: 2 }, fromPoint: null, retreatTarget: { pgroup: 1, pls: 3 } },
+    { actorId: 'relocate', generation: 3, reason: 'escaped', from: { pgroup: 1, pls: 2 }, fromPoint: null, retreatTarget: null },
+    { actorId: 'removed', generation: 4, reason: 'escaped', from: { pgroup: 1, pls: 2 }, fromPoint: null, retreatTarget: null },
+  ];
+  const handoffs = presentationSceneModule.derivePostCombatHandoffs(exits, [
+    entity('same', 1, 2), entity('retreat', 1, 3), entity('relocate', 2, 9),
+  ]);
+  const policies = handoffs.map(item => item.visualPolicy).join(',');
+  if (policies !== 'settle-in-place,retreat,hidden-relocate-arrive,remove') {
+    throw new Error(`post-combat handoff policy mismatch: ${policies}`);
+  }
+  const inboxModule = await server.ssrLoadModule('/src/stores/presentation-inbox.ts');
+  const inbox = inboxModule.presentationInbox;
+  inbox.reset();
+  inbox.initialize(1);
+  inbox.enqueueResponse({ presentation_head_seq: 3 });
+  if (inbox.gapHead !== 3) throw new Error('presentation gap was not detected');
+  inbox.commitGap(3);
+  const accepted = inbox.enqueueResponse({
+    presentation_head_seq: 4,
+    presentation: { schema: 'presentation.v1', batch_seq: 4, groomid: 1, recipient_pid: 1, qid: null, request_id: 'fixture', tick: 1, state_after: {}, events: [] },
+  });
+  const duplicateAccepted = inbox.enqueueResponse({
+    presentation_head_seq: 4,
+    presentation: { schema: 'presentation.v1', batch_seq: 4, groomid: 1, recipient_pid: 1, qid: null, request_id: 'fixture', tick: 1, state_after: {}, events: [] },
+  });
+  if (!accepted || duplicateAccepted) throw new Error('presentation inbox claim result mismatch');
+  if (inbox.peekNext()?.batch_seq !== 4) throw new Error('presentation inbox lost contiguous batch');
+  inbox.commit(4);
+  if (inbox.peekNext() !== null) throw new Error('presentation inbox dedupe failed');
+  inbox.reset();
   const targeting = await server.ssrLoadModule('/src/utils/combat-targeting.ts');
   const characters = new Map([
     [2, { pid: 2, type: 1, state: 0 }],
@@ -74,7 +138,7 @@ try {
   if (targeting.findSelectableCombatTarget(targets, 17, 4, getCharacter)) throw new Error('blocked target accepted');
   if (targeting.findSelectableCombatTarget(targets, 17, 5, getCharacter)) throw new Error('dead CharacterHub target accepted');
   if (targeting.findSelectableCombatTarget(targets, 17, 6, getCharacter)) throw new Error('missing CharacterHub target accepted');
-  console.log('battle director, visual barrier, input policy, and combat targeting fixtures passed');
+  console.log('battle director, actor runtime, scene geometry, visual barrier, input policy, and combat targeting fixtures passed');
 } finally {
   await server.close();
 }
