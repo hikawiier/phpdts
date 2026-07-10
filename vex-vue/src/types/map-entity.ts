@@ -48,6 +48,8 @@ export interface MapEntity {
   // ── actor 特有 ──
   /** actor 子类型（仅 kind === 'actor' 时有效） */
   actorKind?: ActorKind;
+  /** 角色实体对应的后端 PID */
+  characterPid?: number;
   /** 是否在当前战斗中（供渲染层半透明区分：battle 模式下非 inCombat 的 actor 半透明） */
   inCombat?: boolean;
 }

@@ -42,10 +42,26 @@ class CombatContext {
     // ── 目标层 ──
     /** @var string 目标类型：pid / tile / self / none */
     public string $target_type = '';
+    /** @var string ResolvedAim kind */
+    public string $aim_kind = '';
+    /** @var string 当前 ResolutionTarget kind */
+    public string $current_resolution_kind = '';
+    /** @var array 后端权威瞄准对象 */
+    public array $resolved_aim = [];
+    /** @var array 一次捕获后冻结的目标集合 */
+    public array $captured_target_set = [];
+    /** @var array 有序 ResolutionTarget 列表 */
+    public array $resolution_targets = [];
     /** @var array 完整目标列表（每项含 target_data + tags + effects + snapshot） */
     public array $targets = [];
     /** @var int 当前 target 索引（唯一可变状态） */
     public int $current_target_index = 0;
+    /** @var array 每个目标的独立结果 */
+    public array $target_results = [];
+    public bool $any_target_resolved = false;
+    public bool $delivery_executed = false;
+    public bool $resources_committed = false;
+    public bool $resources_reserved = false;
 
     // ── 状态层 ──
     public bool $success = true;
@@ -54,6 +70,8 @@ class CombatContext {
     // ── AP 层 ──
     /** @var int 当前 action 的 AP 消耗（verify 算出后写入 $action['_ap_cost']，persist 从 action 读） */
     public int $ap_cost = 0;
+    public int $ap_before = 0;
+    public int $ap_after = 0;
 
     // ── Battlelog v2 层 ──
     /** @var string|null 当前 action 的 v2 关联 ID */
@@ -144,6 +162,10 @@ class CombatContext {
         if (empty($this->targets)) {
             return $this->empty_target_ref;
         }
+        $this->current_resolution_kind = (string)($this->targets[$this->current_target_index]['kind'] ?? '');
+        $this->target_type = $this->current_resolution_kind === 'character'
+            ? 'pid'
+            : $this->current_resolution_kind;
         return $this->targets[$this->current_target_index];
     }
 
@@ -164,7 +186,7 @@ class CombatContext {
      */
     public function getCurrentSnapshot(): ?array {
         $target = &$this->getCurrentTarget();
-        return $target['snapshot'] ?? null;
+        return $target['snapshot_target_state'] ?? null;
     }
 
     /**
@@ -226,13 +248,13 @@ class CombatContext {
     /**
      * 快照 actor + current_target 的 HP/AP/位置前值
      *
-     * 写入 getCurrentTarget()['snapshot']，供回滚 / 日志 / 前端导演系统对比前后值。
+     * 写入 getCurrentTarget()['snapshot_target_state']，供回滚 / 日志 / 前端导演系统对比前后值。
      * per-target 设计：每个 target 独立持有 snapshot。
      */
-    public function snapshotHp(): void {
+    public function snapshotTargetState(): void {
         if (empty($this->targets)) return;
         $target = &$this->getCurrentTarget();
-        $target['snapshot'] = [
+        $target['snapshot_target_state'] = [
             'actor' => [
                 'hp' => $this->actor_data['hp'] ?? 0,
                 'ap' => $this->actor_data['ap'] ?? 0,
@@ -244,5 +266,15 @@ class CombatContext {
                 'pls' => $target['target_data']['pls'] ?? 0,
             ],
         ];
+    }
+
+    public function storeRuntimePlayer(array $data): void {
+        $pid = (int)($data['pid'] ?? 0);
+        if ($pid <= 0) return;
+        if (!isset($this->battle_cache['_runtime_players']) || !is_array($this->battle_cache['_runtime_players'])) {
+            $this->battle_cache['_runtime_players'] = [];
+        }
+        $this->battle_cache['_runtime_players'][$pid] = $data;
+        if ($this->dry_run) combat_planned_state_put_player($this->battle_cache, $data);
     }
 }

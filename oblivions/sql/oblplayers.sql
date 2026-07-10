@@ -61,4 +61,4 @@ CREATE TABLE bra_oblplayers (
   PRIMARY KEY  (pid),
   INDEX TYPE (type),
   INDEX NAME (name, type)
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -88,12 +88,17 @@ export const usePlayerStore = defineStore('player', () => {
    *
    * 同步写入 CharacterHub（玩家自身 + 战斗上下文），与 loadPlayerInfo 保持一致。
    */
-  function setPlayerInfo(info: PlayerInfo): void {
-    playerInfo.value = info;
-    error.value = '';
+  function syncCharacterProjection(info: PlayerInfo | null = playerInfo.value): void {
+    if (!info) return;
     const characterStore = useCharacterStore();
     characterStore.mergePlayer(info);
     characterStore.mergeCombatContext(info.combat_context);
+  }
+
+  function setPlayerInfo(info: PlayerInfo, options: { syncCharacters?: boolean } = {}): void {
+    playerInfo.value = info;
+    error.value = '';
+    if (options.syncCharacters !== false) syncCharacterProjection(info);
   }
 
   /** 重置为初始状态 */
@@ -121,6 +126,7 @@ export const usePlayerStore = defineStore('player', () => {
     // actions
     loadPlayerInfo,
     setPlayerInfo,
+    syncCharacterProjection,
     reset,
   };
 });

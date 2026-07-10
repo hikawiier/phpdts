@@ -1,50 +1,63 @@
-# Combat Module — 新战斗系统
+# Combat Module
 
-## 概述
+## 执行模型
 
-新战斗系统采用管道-阶段架构，替代旧 battle engine 的动作执行主流程。
-当前 `battle/` 目录不再是旧引擎入口，而是仍被 `combat/` 复用的 shared combat infrastructure。
+`include/game/combat/` 是 Oblivions 唯一战斗执行模块。动作执行使用目标优先管道：
+
+```text
+AimIntent
+-> AimResolver
+-> ResolvedAim
+-> ResolutionTargetCapturer
+-> ordered ResolutionTarget[]
+-> TargetResolutionUnit A 完整结算
+-> TargetResolutionUnit B 完整结算
+-> action finalize
+```
+
+每个目标单元依次执行最新状态绑定、规则、Participation、效果声明、入列、`snapshot_target_state`、效果应用、死亡/逃跑清理、持久化和事件输出。一个目标被拒绝只产生 `skipped`，不会阻止后续目标。
+
+真实执行会为每个目标建立数据库 SAVEPOINT 和 BattleLogCollector checkpoint。入列或效果阶段出现可恢复失败时，只撤销当前目标的 DB、内存和暂存事件；SQL/PHP 基础设施异常仍由 command/heartbeat 外层事务回滚整条请求。
 
 ## 文件职责
 
-| 文件 | 职责 | 关键函数 |
-|------|------|----------|
-| combat.runtime.php | 运行期 helper（battle log 初始化 + battle_cache） | combat_ensure_battle_log / combat_cache_create |
-| combat.context.php | CombatContext 类（单 action 执行上下文） | CombatContext |
-| combat.planned_state.php | 动作链计划状态（dry-run 覆盖读取/写入） | combat_planned_state_* |
-| combat.chain.php | 动作链投影（verify / preview 共享） | combat_chain_project |
-| combat.core.php | 核心调度（入口 + 主循环 + wallet） | combat_dispatch / combat_main / combat_verify / combat_execute |
-| combat.pipeline.php | 管道阶段（8 阶段 attack / 7 阶段 utility） | combat_pipeline_run |
-| combat.target.php | 目标系统（enemy/all/tiles/self/none） | combat_target_resolve_all |
-| combat.tag.php | 标签系统（Cat A 重算 + Cat B 读 mutation） | combat_tag_build / combat_check_target_rules |
-| combat.ap.php | AP 系统（动态计算 + 注册表） | combat_ap_calculate / combat_ap_register |
-| combat.effect.php | 效果系统（damage/heal/move/escape） | combat_effect_apply_all |
-| combat.effect_projector.php | 效果投影（dry-run planned state） | combat_effect_project_all |
-| combat.skill.php | 技能系统（配置加载 + 钩子约定） | combat_skill_get_config / combat_skill_load_module |
-| combat.queue.php | 队列管理（策略 B：复用 battle_manage_queue） | combat_queue_create_and_init |
-| combat.state.php | 战斗状态（combatants + tag_mutations） | combat_state_post_check / combat_state_clear |
-| combat.preview.php | 预校验（L0 可达性 + L1 即时 + L2 动作链） | combat_can_engage / combat_preview_single / combat_preview_chain |
-| combat.log.php | battlelog.v2 日志适配 | combat_log_v2_effect_applied |
+| 文件 | 当前职责 |
+|---|---|
+| `combat.context.php` | `CombatContext`，保存 ResolvedAim、CapturedTargetSet、当前目标、target results、资源与 delivery 状态 |
+| `combat.aim.php` | `pid/tile/self/none` AimResolver registry 与瞄准规则 |
+| `combat.target_capture.php` | 四个内置 Capturer、权威来源校验、去重和稳定排序 |
+| `combat.target_unit.php` | 逐目标完整结算、Participation enlist、目标 SAVEPOINT、资源一次提交 |
+| `combat.participation.php` | `member/joinable/left/other_battle/blocked/not_applicable` 分类 |
+| `combat.pipeline.php` | 入口编排：Aim -> Capture -> TargetResolutionUnit，不再按 stage 批量遍历所有目标 |
+| `combat.chain.php` | verify/preview 的 planned-state 投影，复用同一 Aim/Capture/Unit 语义 |
+| `combat.effect.php` | 只对 current target 或显式 `scope=actor` 应用效果；move 写入也在 applier 内 |
+| `combat.core.php` | 动作排序、初始 roster、执行链和 `battle_manage_queue()` 收尾 |
+| `combat.skill.php` | 技能配置加载及 aim/capture/execution/delivery 组合校验 |
+| `combat.log.php` | `action_delivery`、`combatant_joined`、逐目标 effect 等 battlelog.v2 事件 |
+| `combat.preview.php` | 无 DB/文件日志/RNG 副作用的 engage/single/chain 预览 |
+| `combat.target.php` | 仅保留旧入口 facade，领域实现位于 aim/capture 文件 |
 
-## 与旧系统边界
+## 技能配置
 
-### 替代关系
+技能必须显式声明：
 
-- `combat.core.php` 的 `combat_dispatch` 是唯一回合入口
-- `combat.core.php` 的 `combat_main` 是唯一战斗执行主流程
-- `combat.state.php` 的 `combat_state_clear` 替代 `battle.func.php` 的 `battle_state_clear`
-- `combat_skill_config.php` + `combat_skills/` 替代 `skill_config.php` + `skill/modules/`
+```php
+'aim' => ['resolver' => 'pid|tile|self|none', 'rules' => []],
+'capture' => [
+    'resolver' => 'direct_character|battle_hostiles|tile_characters|identity',
+    'relation' => 'hostile|friendly|any|self',
+    'participation' => 'join_if_unengaged|members_only|none',
+    'order' => 'single|queue|queue_then_pid|pid',
+    'rules' => [],
+],
+'execution' => ['empty_policy' => 'fail|execute'],
+'delivery' => ['types' => []],
+```
 
-### 共享适配层（不废止）
+`delivery.types` 是有序语义 cue。grenade 使用 `['projectile_to_tile', 'explosion_at_tile']`；无独立投送的动作使用空数组。技能 hook 只能声明当前目标效果，不能查询或写入任意 PID。
 
-- `battle/README.md` — 共享基础设施边界说明
-- `battle.func.php` — 轻量状态切换 / AP 恢复 / 目标规则 / turn hook
-- `battle_state_machine.func.php` — 3 态状态机，`battle_manage_queue` 内部依赖
-- `battle.queue.main.php` — 含 `battle_manage_queue`，新系统收尾调用
-- `battle.queue.func.php` — `battle_queue_*` 原语，`combat_queue_*` 转调
-- `battle.calc.php` — 射程 / 先攻 / 伤害等共享数值函数
-- `battle_log.func.php` — BattleLogCollector 与持久化/played 机制
+## 共享边界
 
-## 配置状态
+`battle/` 仍提供先攻计算、队列编排、状态机和 battle log collector。动态参战只允许调用锁定后的 `battle_queue_append_tail()`；会先删除 PID 旧队列记录的 unsafe join 接口已经移除。动作链结束后仍由 `battle_manage_queue()` 统一推进顺位。
 
-旧 battle engine 已下线。`obl_config.php` 中的 `combat_engine='new'` 仅作为历史键保留，入口不再按 old/new 分流。
+旧 battle engine 已下线，`obl_config.php` 的 `combat_engine='new'` 仅保留为历史配置键。

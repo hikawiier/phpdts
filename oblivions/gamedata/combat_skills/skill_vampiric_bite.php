@@ -26,10 +26,9 @@ function skill_vampiric_bite_execute(CombatContext $ctx): void {
 
     $ctx->declareEffect('damage', [
         'value'      => $damage,
-        'target_pid' => (int)($target_data['pid'] ?? 0),
     ]);
     $ctx->declareEffect('heal', [
         'value'      => $heal,
-        'target_pid' => (int)($ctx->actor_data['pid'] ?? 0),
+        'scope'      => 'actor',
     ]);
 }

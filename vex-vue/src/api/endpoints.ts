@@ -8,6 +8,7 @@ export const API_ACTIONS = {
   OBL_ERROR: 'obl_error',
   BATTLE_LOG: 'battle_log',
   ENEMIES: 'enemies',
+  COMBAT_TARGETS: 'combat_targets',
   SKILL_LIST: 'skill_list',
   SKILL_CD_CHECK: 'skill_cd_check',
   // ── 合成系统（v2.2 新增） ──

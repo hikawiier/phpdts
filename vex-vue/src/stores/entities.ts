@@ -36,6 +36,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         id: isPlayer ? 'player' : `enemy-${c.pid}`,
         kind: 'actor',
         actorKind: isPlayer ? 'player' : 'enemy',
+        characterPid: c.pid,
         pls: isPlayer ? (playerPls ?? c.pls) : c.pls,
         img: isPlayer ? '/img/1.png' : `/img/n_${c.type}.png`,
         imgHeightRatio: 1.25,

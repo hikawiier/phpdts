@@ -22,14 +22,14 @@ function combat_chain_failure_result(string $act_id, string $reason, int $ap_cos
     ];
 }
 
-function combat_chain_success_result(string $act_id, int $ap_cost, array $effects): array {
-    return [
+function combat_chain_success_result(string $act_id, int $ap_cost, array $effects, array $extra = []): array {
+    return array_merge([
         'act_id' => $act_id,
         'success' => true,
         'reason' => null,
         'ap_cost' => $ap_cost,
         'effects' => $effects,
-    ];
+    ], $extra);
 }
 
 function combat_chain_emit_failure_if_needed(array $options, &$log, array $actor_data, string $act_id, string $reason, array $extra = []): void {
@@ -93,7 +93,8 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
     $total_ap_cost = 0;
     $pending_cd_usage = [];
 
-    foreach ($actions as $action) {
+    foreach ($actions as $action_index => $action) {
+        $action['_action_index'] = (int)$action_index;
         $act_id = (string)($action['act_id'] ?? '');
         if ($act_id === '') {
             $results[] = combat_chain_failure_result('', 'invalid_action');
@@ -150,8 +151,15 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
         $ctx->dry_run = true;
 
         combat_skill_load_module($act_id);
-        combat_target_resolve_all($ctx);
-        combat_debug_log('CHAIN_TARGET', ['act_id'=>$act_id, 'success'=>$ctx->success, 'failure_reason'=>$ctx->failure_reason, 'targets_count'=>count($ctx->targets), 'sim_pls'=>(int)($sim_actor['pls'] ?? 0)]);
+        combat_aim_resolve($ctx);
+        if ($ctx->success) {
+            $aim_rules = combat_aim_check_rules($ctx);
+            if (empty($aim_rules['pass'])) {
+                $ctx->success = false;
+                $ctx->failure_reason = 'AIM_RULE_FAILED:' . ($aim_rules['reason'] ?? 'unknown');
+            }
+        }
+        if ($ctx->success) combat_capture_resolution_targets($ctx);
         if (!$ctx->success) {
             $reason = 'target_resolve_failed:' . ($ctx->failure_reason ?? 'unknown');
             combat_chain_emit_failure_if_needed($options, $log, $actor_data, $act_id, $reason);
@@ -159,28 +167,8 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
             continue;
         }
 
-        combat_stage_check_rules($ctx);
-        $rules_result = [
-            'pass' => $ctx->success,
-            'reason' => $ctx->failure_reason,
-            'valid_target_count' => combat_context_valid_target_count($ctx),
-            'total_target_count' => count($ctx->targets),
-        ];
-        combat_debug_log('CHAIN_RULES', ['act_id'=>$act_id, 'rules'=>$rules_result]);
-        if (empty($rules_result['pass'])) {
-            $raw_reason = (string)($rules_result['reason'] ?? 'unknown');
-            if (strpos($raw_reason, 'all_targets_skipped:') === 0) {
-                $raw_reason = substr($raw_reason, strlen('all_targets_skipped:'));
-            }
-            $reason = 'rule_failed:' . ($raw_reason !== '' ? $raw_reason : 'unknown');
-            combat_chain_emit_failure_if_needed($options, $log, $actor_data, $act_id, $reason, $rules_result);
-            $results[] = combat_chain_failure_result($act_id, $reason);
-            continue;
-        }
-
         $ap_cost = combat_ap_calculate($ctx);
         $actor_ap = (int)($sim_actor['ap'] ?? 0);
-        combat_debug_log('CHAIN_AP', ['act_id'=>$act_id, 'ap_cost'=>$ap_cost, 'actor_ap'=>$actor_ap, 'sim_pls'=>(int)($sim_actor['pls'] ?? 0)]);
         if ($actor_ap - $ap_cost < 0) {
             combat_chain_emit_failure_if_needed($options, $log, $actor_data, $act_id, 'ap_insufficient', [
                 'ap_have' => $actor_ap,
@@ -190,12 +178,16 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
             continue;
         }
 
+        $actor_before_action = $sim_actor;
+        $cache_before_action = $sim_battle_cache;
         $ctx->ap_cost = $ap_cost;
-        combat_planned_state_spend_ap($ctx->actor_data, $ctx->battle_cache, $ap_cost);
+        combat_action_reserve_resources($ctx);
 
-        combat_chain_execute_and_project($ctx);
+        combat_target_units_run($ctx);
         if (!$ctx->success) {
             $reason = $ctx->failure_reason ?? 'project_failed';
+            $sim_actor = $actor_before_action;
+            $sim_battle_cache = $cache_before_action;
             combat_chain_emit_failure_if_needed($options, $log, $actor_data, $act_id, $reason);
             $results[] = combat_chain_failure_result($act_id, $reason, $ap_cost);
             continue;
@@ -210,7 +202,11 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
             $pending_cd_usage[$act_id] = true;
         }
 
-        $results[] = combat_chain_success_result($act_id, $ap_cost, combat_chain_collect_effects($ctx));
+        $results[] = combat_chain_success_result($act_id, $ap_cost, combat_chain_collect_effects($ctx), [
+            'resolved_aim' => $ctx->resolved_aim,
+            'captured_target_count' => count($ctx->targets),
+            'target_results' => $ctx->target_results,
+        ]);
     }
 
     return [

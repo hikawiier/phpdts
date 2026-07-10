@@ -17,7 +17,7 @@ if (!defined('IN_GAME')) {
 //       * combat_get_action_range_meta(&$actor_data, $act_id)
 //           — 单技能射程元信息
 //       * combat_get_max_attack_range(&$actor_data)
-//           — actor 最大攻击射程（遍历 target=enemy 技能）
+//           — actor 最大攻击射程（遍历 pid AimResolver 技能）
 //       * combat_can_engage(&$actor_data, &$target_data)
 //           — actor 能否对 target 发起战斗（前端 toast 数据源）
 //   (b) 旧 L0 stub（接受 CombatContext，后续与 pipeline 整合时再启用）：
@@ -91,12 +91,11 @@ function combat_get_action_range_meta(&$actor_data, string $act_id): array {
 /**
  * 获取 actor 的最大攻击射程
  *
- * 遍历所有技能配置中 target=enemy 的技能，取 action_range 最大值。
+ * 遍历所有使用 pid AimResolver 的技能，取 action_range 最大值。
  *
  * v1 简化：不实现"装备满足"过滤（技能配置表中无装备需求字段），
  *          所有非 hidden 的 enemy 技能都算可用。
- *          target='all' 的范围技能（whirlwind）不纳入（spec Task 5.2
- *          明确只统计 target=enemy）。
+ *          implicit battle_hostiles 范围技能（whirlwind）不纳入。
  *
  * @param array &$actor_data 行动者数据
  * @return int 最大攻击射程（BFS 跳数），无可用攻击技能时返回 0
@@ -109,9 +108,9 @@ function combat_get_max_attack_range(&$actor_data): int {
 
     $max_range = 0;
     foreach ($all_configs as $act_id => $config) {
-        // 只看攻击技能（target='enemy'）
-        $target = $config['target'] ?? 'none';
-        if ($target !== 'enemy') {
+        // 只看显式 PID 瞄准技能。
+        $aim_resolver = $config['aim']['resolver'] ?? 'none';
+        if ($aim_resolver !== 'pid') {
             continue;
         }
         // 过滤 hidden=true（NPC 专属如 idle）
@@ -218,48 +217,31 @@ function combat_can_engage(&$actor_data, &$target_data): array {
  * @param int    $target_pid 目标 PID（enemy 类技能用；self/none 类技能忽略）
  * @return array ['pass' => bool, 'reason' => string|null, 'ap_cost' => int]
  */
-function combat_preview_single(array $actor_data, string $act_id, int $target_pid): array {
+function combat_preview_single(array $actor_data, string $act_id, $aim_intent): array {
     $config = combat_skill_get_config($act_id);
     if ($config === null) {
         return ['pass' => false, 'reason' => 'skill_not_found', 'ap_cost' => 0];
     }
 
-    // 局部副本（值拷贝，不污染外部）
-    $sim_actor = $actor_data;
-    $sim_battle_cache = [
-        'combatants'    => [],
-        'tag_mutations' => [],
+    if (!is_array($aim_intent)) {
+        $resolver = (string)($config['aim']['resolver'] ?? 'none');
+        $aim_intent = in_array($resolver, ['pid', 'tile'], true)
+            ? ['type' => $resolver, 'id' => (int)$aim_intent]
+            : ['type' => $resolver];
+    }
+    $projection = combat_chain_project($actor_data, [[
+        'act_id' => $act_id,
+        'target' => $aim_intent,
+        'params' => [],
+    ]], combat_cache_create($actor_data, false));
+    $result = $projection['actions'][0] ?? ['success' => false, 'reason' => 'preview_failed', 'ap_cost' => 0];
+    return [
+        'pass' => !empty($result['success']),
+        'reason' => $result['reason'] ?? null,
+        'ap_cost' => (int)($result['ap_cost'] ?? 0),
+        'resolved_aim' => $result['resolved_aim'] ?? null,
+        'targets' => $result['target_results'] ?? [],
     ];
-
-    $config_with_target = $config;
-    $config_with_target['target_id'] = $target_pid;
-
-    $ctx = new CombatContext($sim_actor, $act_id, $config_with_target, null, $sim_battle_cache);
-    $ctx->dry_run = true;
-
-    combat_skill_load_module($act_id);
-
-    // 解析 target（只读，无副作用）
-    combat_target_resolve_all($ctx);
-    if (!$ctx->success) {
-        return ['pass' => false, 'reason' => $ctx->failure_reason ?? 'target_resolve_failed', 'ap_cost' => 0];
-    }
-
-    // AP 校验
-    $ap_cost = combat_ap_calculate($ctx);
-    $actor_ap = (int)($sim_actor['ap'] ?? 0);
-    if ($actor_ap < $ap_cost) {
-        return ['pass' => false, 'reason' => 'ap_insufficient', 'ap_cost' => $ap_cost];
-    }
-
-    // 规则匹配（forbid 标签）
-    $tags = $ctx->getCurrentTags();
-    $rules_result = combat_check_target_rules($config, $tags);
-    if (!$rules_result['pass']) {
-        return ['pass' => false, 'reason' => 'rule_failed:' . ($rules_result['reason'] ?? 'unknown'), 'ap_cost' => $ap_cost];
-    }
-
-    return ['pass' => true, 'reason' => null, 'ap_cost' => $ap_cost];
 }
 
 // ================================================================

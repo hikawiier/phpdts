@@ -178,6 +178,10 @@ body::after {
     transform-origin: bottom center;
     will-change: transform, opacity;
 }
+
+.entity-actor {
+  pointer-events: auto;
+}
 /* player 实体默认透明：避免首次渲染到 GSAP 接管之间立绘"透出来" */
 /* GSAP 的 setDown(alpha:0)/popUp(alpha:1) 会通过 style.opacity 覆盖此默认值 */
 .entity.entity-player {

@@ -214,23 +214,24 @@ function battle_queue_set_initiative($qid, &$actor_data, &$obl_battle_log, $ambu
     return $sorted;
 }
 
-function battle_queue_join(&$actor_data, $qid, &$obl_battle_log)
-{
-    #将新参战者加入现有先攻队列，排入末尾，done=0
-    #适用场景：遭遇战中一方已在先攻队列中，另一方（非战斗状态）加入该队列
+function battle_queue_append_tail(array &$target_data, int $qid, array &$battle_cache, $log, ?CombatContext $ctx = null): array {
+    if ($qid <= 0 || !$ctx) return ['ok' => false, 'joined' => false, 'code' => 'TARGET_NO_CURRENT_BATTLE'];
+    $decision = combat_participation_classify_locked($ctx, $target_data);
+    if (($decision['state'] ?? '') === 'member') return ['ok' => true, 'joined' => false, 'participation' => 'member'];
+    if (($decision['state'] ?? '') !== 'joinable') return ['ok' => false, 'joined' => false, 'code' => $decision['reason'] ?? 'TARGET_REJECTED'];
 
-    # 获取队列中最大的 myorder，新加入者排入末尾（myorder 最大 = 顺位最低）
-    $myorder = obl_queue_next_myorder($qid);
-
-    # 清理该 pid 的旧队列记录（避免 PRIMARY KEY 冲突，保证一个 pid 同时只在一个队列中）
-    obl_queue_delete_by_pid($actor_data['pid']);
-
-    # 插入队列记录（排入末尾，done=0 表示未行动，本游戏刻不会执行其回合）
-    obl_queue_insert_entry($actor_data['pid'], $qid, $actor_data['type'], $myorder);
-
-    # 更新参战者的 bid 为 qid
-    $actor_data['bid'] = $qid;
-    obl_save_player($actor_data);
+    $rows = obl_fetch_queue_all_by_qid_for_update($qid);
+    $myorder = 0;
+    foreach ($rows as $row) $myorder = max($myorder, (int)$row['myorder']);
+    $myorder++;
+    obl_queue_insert_entry((int)$target_data['pid'], $qid, (int)$target_data['type'], $myorder);
+    battle_state_init($target_data);
+    $target_data['bid'] = $qid;
+    obl_save_player($target_data);
+    $battle_cache['combatants'][(int)$target_data['pid']] = 1;
+    $battle_cache['_queue_order'][(int)$target_data['pid']] = $myorder;
+    if (function_exists('combat_log_v2_combatant_joined')) combat_log_v2_combatant_joined($ctx, $target_data, $myorder);
+    return ['ok' => true, 'joined' => true, 'participation' => 'joined', 'myorder' => $myorder];
 }
 
 function battle_queue_exit(&$actor_data, &$obl_battle_log, &$battle_cache)

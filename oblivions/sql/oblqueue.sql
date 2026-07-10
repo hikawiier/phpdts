@@ -19,5 +19,6 @@ CREATE TABLE bra_oblqueue (
   `myorder` int(11) NOT NULL,
   `done` tinyint(1) NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  PRIMARY KEY (`pid`)
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (`pid`),
+  KEY `idx_qid_turn_order` (`qid`,`active`,`done`,`myorder`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

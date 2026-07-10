@@ -15,8 +15,8 @@ $ctx = obl_runtime_boot('command');
 $GLOBALS['obl_runtime_ctx'] = $ctx;
 
 register_shutdown_function(function () {
-    $error = error_get_last();
-    if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+    $error = obl_runtime_shutdown_cleanup();
+    if ($error) {
         $response = obl_command_response_error(
             'PHP_FATAL',
             $error['message'] . ' in ' . $error['file'] . ':' . $error['line']
@@ -67,14 +67,28 @@ if (!$lock_name) {
     obl_command_response_emit(obl_command_response_error('COMMAND_IN_PROGRESS', '', array('reason' => 'room_lock_busy')));
     exit;
 }
+$GLOBALS['obl_runtime_lock_name'] = $lock_name;
 
 try {
+    obl_runtime_transaction_begin();
     obl_runtime_reload_tick_globals();
     $response = obl_command_api_handle($envelope_check['envelope']);
+    $rolled_back = !empty($GLOBALS['obl_transaction_rollback_only']);
+    if ($rolled_back) obl_runtime_transaction_rollback();
+    else obl_runtime_transaction_commit();
+
+    if (!$rolled_back) {
+        $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+        $persist = obl_runtime_persist_logs($pdata, 'command');
+        if (!empty($persist['warnings'])) $response['warnings'] = array_values($persist['warnings']);
+    }
     obl_runtime_release_room_lock($lock_name);
+    $GLOBALS['obl_runtime_lock_name'] = null;
     obl_command_response_emit($response);
 } catch (Throwable $e) {
+    obl_runtime_transaction_rollback();
     obl_runtime_release_room_lock($lock_name);
+    $GLOBALS['obl_runtime_lock_name'] = null;
     obl_command_response_emit(obl_command_response_error('INTERNAL_ERROR', $e->getMessage()));
 }
 exit;

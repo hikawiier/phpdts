@@ -84,7 +84,7 @@ export interface CombatViewModel {
   canSubmitTurn: boolean;
   combatants: CombatantViewModel[];
   validTargets: CombatTargetViewModel[];
-  defaultTargetPid: number | null;
+  suggestedTargetPid: number | null;
 }
 
 export interface CombatantViewModel {
@@ -112,6 +112,23 @@ export interface CombatTargetViewModel {
   hp: number;
   mhp: number;
   state: number;
+}
+
+export type CombatTargetParticipation = 'member' | 'joinable' | 'left' | 'other_battle' | 'blocked';
+
+export interface CombatTargetCandidate {
+  pid: number;
+  relation: 'hostile' | 'friendly' | 'self' | 'unknown';
+  participation: CombatTargetParticipation;
+  selectable: boolean;
+  reason: string | null;
+  character?: Enemy;
+}
+
+export interface CombatTargetsResponse {
+  qid: number | null;
+  suggestedTargetPid: number | null;
+  candidates: CombatTargetCandidate[];
 }
 
 /** 战术参数（player_info.tacpara） */
@@ -314,8 +331,9 @@ export interface Skill {
   lstact: string;
   /** 是否可用（综合判断：AP 足够 + 未冷却 + ...） */
   available: boolean;
-  /** 目标类型：enemy/pid、tiles/tile、self、none、all */
-  target: 'self' | 'enemy' | 'tiles' | 'tile' | 'none' | 'all';
+  aimType: 'pid' | 'tile' | 'self' | 'none';
+  selectionMode: 'explicit' | 'implicit';
+  captureResolver: 'direct_character' | 'battle_hostiles' | 'tile_characters' | 'identity';
   range_mode?: 'fixed' | 'inherit' | 'additive' | 'capped_additive';
   range_max?: string | number;
   range_bonus?: string | number;
@@ -381,6 +399,8 @@ export type BattleLogV2EventType =
   | 'round_start'
   | 'turn_start'
   | 'action_start'
+  | 'action_delivery'
+  | 'combatant_joined'
   | 'effect_applied'
   | 'action_end'
   | 'action_failed'

@@ -7,12 +7,16 @@ import type {
   CombatantView,
   CombatTargetView,
   DirectedActionV2,
+  DirectedCombatantJoinedV2,
+  DirectedDeliveryV2,
   DirectedEffectV2,
   DirectedNoticeV2,
 } from './battle-director-v2';
 
 const MAP_READY_RETRIES = 10;
 const CLEARED_ANIM_DURATION = 450;
+const DELIVERY_PROJECTILE_DURATION = 360;
+const DELIVERY_EXPLOSION_DURATION = 420;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -61,6 +65,10 @@ export async function prepareBattlefield(): Promise<void> {
 }
 
 export async function playActionAnimation(action: DirectedActionV2, currentPid: number): Promise<void> {
+  if (action.deliveries.some(delivery => isImpactDelivery(delivery.type))) {
+    await playDeliveredEffectReactions(action);
+    return;
+  }
   switch (action.animation.kind) {
     case 'move':
       await playMoveAction(action);
@@ -77,6 +85,59 @@ export async function playActionAnimation(action: DirectedActionV2, currentPid: 
     default:
       void currentPid;
       return;
+  }
+}
+
+async function playDeliveredEffectReactions(action: DirectedActionV2): Promise<void> {
+  const effects = action.effects.filter(isDamageHpDrop);
+  for (const effect of effects) {
+    const target = effect.target.snapshot;
+    if (!target) continue;
+    const defender = await waitForActor(combatantEntityId(target));
+    if (!defender) continue;
+    const sourcePos = action.actor ? (await waitForActor(combatantEntityId(action.actor)))?.getPosition() : null;
+    const targetPos = defender.getPosition();
+    const dir: 1 | -1 | 0 = sourcePos && targetPos ? (sourcePos.x < targetPos.x ? 1 : -1) : 0;
+    defender.playHit(dir);
+    await sleep(120);
+  }
+}
+
+export async function playActionDelivery(action: DirectedActionV2, delivery: DirectedDeliveryV2): Promise<void> {
+  if (delivery.type === 'none') return;
+  const anchor = await waitForDeliveryAnchor(delivery.resolvedAim);
+  if (!anchor) return;
+
+  if (delivery.type === 'projectile' || delivery.type === 'projectile_to_tile') {
+    await playProjectileCue(action, anchor);
+  }
+  if (delivery.type === 'explosion' || delivery.type === 'explosion_at_tile') {
+    await playExplosionCue(anchor);
+  }
+}
+
+function isImpactDelivery(type: string): boolean {
+  return type === 'projectile'
+    || type === 'projectile_to_tile'
+    || type === 'explosion'
+    || type === 'explosion_at_tile';
+}
+
+export async function playCombatantJoined(joined: DirectedCombatantJoinedV2): Promise<void> {
+  const actor = await waitForActor(combatantEntityId(joined.combatant));
+  const el = actor?.getEl();
+  if (!el) return;
+  el.classList.add('combatant-joined-cue');
+  try {
+    await el.animate([
+      { filter: 'brightness(1.8)', boxShadow: '0 0 0 1px rgba(255,107,107,.9)' },
+      { filter: 'brightness(1)', boxShadow: '0 0 14px 2px rgba(255,107,107,.55)', offset: 0.45 },
+      { filter: 'brightness(1)', boxShadow: 'none' },
+    ], { duration: 500, easing: 'ease-out' }).finished;
+  } catch {
+    await sleep(500);
+  } finally {
+    el.classList.remove('combatant-joined-cue');
   }
 }
 
@@ -199,6 +260,78 @@ async function waitForTileAnchor(target: CombatTargetView): Promise<{
     await waitForUiFrame();
   }
   return null;
+}
+
+async function waitForDeliveryAnchor(target: CombatTargetView): Promise<{
+  x: number; y: number; cellW: number; cellH: number;
+} | null> {
+  if (target.kind === 'tile' && target.pls) {
+    for (let i = 0; i < MAP_READY_RETRIES; i++) {
+      const grid = document.getElementById('mapGrid');
+      const tile = grid?.querySelector<HTMLElement>(`[data-pls="${target.pls}"]`);
+      if (tile) {
+        const rect = tile.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, cellW: rect.width, cellH: rect.height };
+      }
+      await waitForUiFrame();
+    }
+  }
+  if ((target.kind === 'pid' || target.kind === 'self') && target.pid) {
+    const actor = await waitForActor(target.kind === 'self' ? 'player' : `enemy-${target.pid}`);
+    const el = actor?.getEl();
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, cellW: rect.width, cellH: rect.height };
+    }
+  }
+  return null;
+}
+
+async function playProjectileCue(action: DirectedActionV2, anchor: { x: number; y: number }): Promise<void> {
+  const attacker = await waitForActor(combatantEntityId(action.actor));
+  const attackerEl = attacker?.getEl();
+  if (!attacker || !attackerEl) return;
+  attacker.playAttack({ x: anchor.x, y: anchor.y }, 'ranged');
+  const rect = attackerEl.getBoundingClientRect();
+  const projectile = document.createElement('div');
+  projectile.setAttribute('aria-hidden', 'true');
+  Object.assign(projectile.style, {
+    position: 'fixed', left: `${rect.left + rect.width / 2}px`, top: `${rect.top + rect.height / 2}px`,
+    width: '6px', height: '6px', border: '1px solid #fff', background: '#ff6b6b',
+    boxShadow: '0 0 8px rgba(255,107,107,.9)', pointerEvents: 'none', zIndex: '520',
+  });
+  document.body.appendChild(projectile);
+  try {
+    await projectile.animate([
+      { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
+      { transform: `translate(${anchor.x - (rect.left + rect.width / 2)}px, ${anchor.y - (rect.top + rect.height / 2)}px) translate(-50%, -50%) scale(.7)`, opacity: 1 },
+    ], { duration: DELIVERY_PROJECTILE_DURATION, easing: 'ease-in' }).finished;
+  } catch {
+    await sleep(DELIVERY_PROJECTILE_DURATION);
+  } finally {
+    projectile.remove();
+  }
+}
+
+async function playExplosionCue(anchor: { x: number; y: number }): Promise<void> {
+  const burst = document.createElement('div');
+  burst.setAttribute('aria-hidden', 'true');
+  Object.assign(burst.style, {
+    position: 'fixed', left: `${anchor.x}px`, top: `${anchor.y}px`, width: '18px', height: '18px',
+    border: '2px solid #ff6b6b', background: 'rgba(255,107,107,.18)', pointerEvents: 'none',
+    zIndex: '519', transform: 'translate(-50%, -50%)',
+  });
+  document.body.appendChild(burst);
+  try {
+    await burst.animate([
+      { transform: 'translate(-50%, -50%) scale(.25)', opacity: 1 },
+      { transform: 'translate(-50%, -50%) scale(2.8)', opacity: 0 },
+    ], { duration: DELIVERY_EXPLOSION_DURATION, easing: 'ease-out' }).finished;
+  } catch {
+    await sleep(DELIVERY_EXPLOSION_DURATION);
+  } finally {
+    burst.remove();
+  }
 }
 
 function getTileAnchor(gridEl: HTMLElement, cell: HTMLElement): {

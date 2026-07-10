@@ -9,7 +9,6 @@ if (!defined('IN_GAME')) {
 // 职责：转调 battle_queue_* 原语，提供新系统命名空间。
 //   - combat_queue_create_and_init():  建队列 + 排先攻（共享函数内部已建状态机）
 //   - combat_queue_advance():          推进到下一顺位（标当前顺位者 done=1）
-//   - combat_queue_join():             加入现有队列（排末尾）
 //   - combat_queue_exit():             退出队列（标 active=0，不删行不清 bid）
 //   - combat_queue_disband():          解散队列（删行 + 清 bid，状态机由 manage_queue 处理）
 //   - combat_queue_get_next_actor():   取下一行动者 pid
@@ -23,7 +22,6 @@ if (!defined('IN_GAME')) {
 // 与 shared battle/ 层边界：完全复用 battle.queue.* 原语，仅做命名空间隔离。
 //   共享函数签名（battle.queue.func.php）：
 //     battle_queue_create_and_init(&$actor_data, array $pids, &$obl_battle_log): int
-//     battle_queue_join(&$actor_data, $qid, &$obl_battle_log)
 //     battle_queue_exit(&$actor_data, &$obl_battle_log, &$battle_cache)
 // ================================================================
 
@@ -62,19 +60,6 @@ function combat_queue_advance(int $qid): void {
     $current = obl_fetch_queue_current_initiator($qid);
     if (!$current) return;
     obl_update_queue_done((int)$current['pid'], $qid, 1);
-}
-
-/**
- * 加入现有队列（排末尾，done=0）
- *
- * 转调 battle_queue_join。旧函数内部：取 next_myorder → 清旧队列行 → INSERT → 设 bid → save。
- *
- * @param array &$actor_data 加入者数据
- * @param int   $qid          队列编号
- * @param mixed $log          BattleLogCollector
- */
-function combat_queue_join(array &$actor_data, int $qid, $log): void {
-    battle_queue_join($actor_data, $qid, $log);
 }
 
 /**

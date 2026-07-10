@@ -97,6 +97,14 @@ function obl_runtime_boot($kind = 'command') {
     if (!isset($obl_error_log)) $obl_error_log = new OblivionsErrorLogger();
     if (!isset($obl_battle_log)) $obl_battle_log = new BattleLogCollector();
 
+    if (empty($GLOBALS['obl_request_uid'])) {
+        try {
+            $GLOBALS['obl_request_uid'] = $kind . '-' . bin2hex(random_bytes(8));
+        } catch (Throwable $e) {
+            $GLOBALS['obl_request_uid'] = $kind . '-' . str_replace('.', '', uniqid('', true));
+        }
+    }
+
     return array(
         'kind' => $kind,
         'now' => $now,
@@ -130,17 +138,88 @@ function obl_runtime_acquire_room_lock($timeout = 5) {
 function obl_runtime_release_room_lock($lock_name) {
     global $db;
     if ($lock_name) {
-        $db->query("SELECT RELEASE_LOCK('" . addslashes($lock_name) . "')");
+        try {
+            $db->query("SELECT RELEASE_LOCK('" . addslashes($lock_name) . "')", 'SILENT');
+        } catch (Throwable $e) {
+            // A broken connection already releases its MySQL named locks server-side.
+        }
     }
 }
 
-function obl_runtime_persist_logs($pdata = null, $source = 'api') {
+function obl_runtime_transaction_begin() {
+    global $db;
+    if (!empty($GLOBALS['obl_transaction_active'])) {
+        throw new RuntimeException('Oblivions transaction already active');
+    }
+    $GLOBALS['obl_db_throw_on_error'] = true;
+    $db->query('START TRANSACTION');
+    $GLOBALS['obl_transaction_active'] = true;
+}
+
+function obl_runtime_transaction_commit() {
+    global $db;
+    if (empty($GLOBALS['obl_transaction_active'])) return;
+    $db->query('COMMIT');
+    $GLOBALS['obl_transaction_active'] = false;
+    $GLOBALS['obl_db_throw_on_error'] = false;
+}
+
+function obl_runtime_transaction_rollback() {
+    global $db;
+    if (empty($GLOBALS['obl_transaction_active'])) {
+        $GLOBALS['obl_db_throw_on_error'] = false;
+        return;
+    }
+    try {
+        $db->query('ROLLBACK', 'SILENT');
+    } catch (Throwable $e) {
+        // Connection loss rolls the server transaction back automatically.
+    } finally {
+        $GLOBALS['obl_transaction_active'] = false;
+        $GLOBALS['obl_db_throw_on_error'] = false;
+    }
+}
+
+function obl_runtime_transaction_is_active() {
+    return !empty($GLOBALS['obl_transaction_active']);
+}
+
+function obl_runtime_shutdown_cleanup() {
+    $error = error_get_last();
+    if (obl_runtime_transaction_is_active()) {
+        obl_runtime_transaction_rollback();
+    }
+    if (!empty($GLOBALS['obl_runtime_lock_name'])) {
+        obl_runtime_release_room_lock($GLOBALS['obl_runtime_lock_name']);
+        $GLOBALS['obl_runtime_lock_name'] = null;
+    }
+    if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+        return $error;
+    }
+    return null;
+}
+
+function obl_runtime_persist_logs($pdata = null, $source = 'api', $writers = array()) {
     global $obl_log, $obl_error_log, $obl_battle_log, $groomid;
     $pid = is_array($pdata) && isset($pdata['pid']) ? (int)$pdata['pid'] : 0;
-    if ($pid <= 0) return;
+    if ($pid <= 0) return array('ok' => true, 'warnings' => array());
+    $warnings = array();
     if (isset($obl_log) && $obl_log && $obl_log->hasEntries()) obl_log_persist($obl_log, $groomid, $pid);
     if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) obl_error_log_persist($obl_error_log, $groomid, $pid);
-    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) obl_battle_log_persist($obl_battle_log, $groomid, $pid);
+    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
+        $battle_writer = isset($writers['battle']) && is_callable($writers['battle'])
+            ? $writers['battle']
+            : 'obl_battle_log_persist';
+        $persisted = call_user_func($battle_writer, $obl_battle_log, $groomid, $pid);
+        if ($persisted === false) $warnings[] = 'BATTLELOG_PERSIST_FAILED';
+    }
+    $debug_writer = isset($writers['debug']) && is_callable($writers['debug'])
+        ? $writers['debug']
+        : (function_exists('combat_debug_persist') ? 'combat_debug_persist' : null);
+    if ($debug_writer !== null && call_user_func($debug_writer) === false) {
+        $warnings[] = 'COMBAT_DEBUG_PERSIST_FAILED';
+    }
+    return array('ok' => true, 'warnings' => $warnings);
 }
 
 function obl_runtime_reload_tick_globals() {

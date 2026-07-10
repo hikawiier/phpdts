@@ -62,48 +62,14 @@ function &combat_effect_resolve_target_data(CombatContext $ctx, array $effect): 
     $missing_target = [];
 
     $payload = isset($effect['payload']) && is_array($effect['payload']) ? $effect['payload'] : [];
-    $target_pid = (int)($effect['target_pid'] ?? ($payload['target_pid'] ?? 0));
-
-    if ($target_pid <= 0) {
-        $target = &$ctx->getCurrentTarget();
-        if (isset($target['target_data']) && is_array($target['target_data'])) {
-            return $target['target_data'];
-        }
-        return $missing_target;
-    }
-
-    if ((int)($ctx->actor_data['pid'] ?? 0) === $target_pid) {
+    $scope = (string)($payload['scope'] ?? ($effect['scope'] ?? 'target'));
+    if ($scope === 'actor') {
         return $ctx->actor_data;
     }
-
-    foreach ($ctx->targets as &$target) {
-        if (isset($target['target_data']) && is_array($target['target_data'])
-            && (int)($target['target_data']['pid'] ?? 0) === $target_pid) {
-            return $target['target_data'];
-        }
-        if (isset($target['effect_targets'][$target_pid]) && is_array($target['effect_targets'][$target_pid])) {
-            return $target['effect_targets'][$target_pid];
-        }
-    }
-    unset($target);
-
-    $current = &$ctx->getCurrentTarget();
-    if (!isset($current['effect_targets']) || !is_array($current['effect_targets'])) {
-        $current['effect_targets'] = [];
-    }
-
-    $fetched = function_exists('combat_planned_state_get_player')
-        ? combat_planned_state_get_player($ctx->battle_cache, $target_pid)
-        : null;
-    if (!$fetched) {
-        $fetched = obl_fetch_playerdata_by_pid($target_pid);
-    }
-    if (!$fetched) {
-        return $missing_target;
-    }
-
-    $current['effect_targets'][$target_pid] = $fetched;
-    return $current['effect_targets'][$target_pid];
+    if (isset($payload['target_pid']) || isset($effect['target_pid'])) return $missing_target;
+    $target = &$ctx->getCurrentTarget();
+    if (isset($target['target_data']) && is_array($target['target_data'])) return $target['target_data'];
+    return $missing_target;
 }
 
 function combat_effect_target_ref(CombatContext $ctx, array $target_data): array {
@@ -220,6 +186,13 @@ function combat_effect_heal(CombatContext $ctx, array $effect): bool {
  * @return bool
  */
 function combat_effect_move(CombatContext $ctx, array $effect): bool {
+    $to_pls = (int)($effect['payload']['to_pls'] ?? 0);
+    $result = obl_perform_move_core($ctx->actor_data, $to_pls);
+    if (empty($result['success'])) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'move_failed:' . ($result['reason'] ?? 'unknown');
+        return false;
+    }
     $target = &$ctx->getCurrentTarget();
     combat_log_v2_effect_applied($ctx, 'move', [
         'target' => combat_log_v2_target_ref($ctx, $target),

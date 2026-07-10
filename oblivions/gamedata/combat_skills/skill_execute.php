@@ -32,6 +32,5 @@ function skill_execute_execute(CombatContext $ctx): void {
 
     $ctx->declareEffect('damage', [
         'value'      => $damage,
-        'target_pid' => (int)($target_data['pid'] ?? 0),
     ]);
 }

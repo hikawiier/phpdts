@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "npm run test:director",
+    "test:director": "node scripts/test-battle-director.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit"

@@ -55,6 +55,20 @@ function obl_fetch_queue_by_pid($pid)
     return $row;
 }
 
+function obl_fetch_queue_by_pid_for_update($pid) {
+    global $db, $tablepre;
+    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE pid = " . (int)$pid . " LIMIT 1 FOR UPDATE");
+    return $db->fetch_array($result);
+}
+
+function obl_fetch_queue_all_by_qid_for_update($qid): array {
+    global $db, $tablepre;
+    $rows = array();
+    $result = $db->query("SELECT * FROM {$tablepre}oblqueue WHERE qid = " . (int)$qid . " ORDER BY myorder ASC, pid ASC FOR UPDATE");
+    while ($row = $db->fetch_array($result)) $rows[] = $row;
+    return $rows;
+}
+
 function obl_fetch_queue_current_initiator($qid)
 {
     # 获取当前顺位者：myorder 最小且 done=0、active=1 的参战者

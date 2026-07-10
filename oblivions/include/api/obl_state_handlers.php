@@ -19,6 +19,8 @@ function obl_state_dispatch($scope, $ctx) {
             return obl_state_handle_tile_actions($ctx);
         case 'enemies':
             return obl_state_handle_enemies($ctx);
+        case 'combat_targets':
+            return obl_state_handle_combat_targets($ctx);
         case 'player_inventory':
             return obl_state_handle_player_inventory($ctx);
         case 'craft_preview':
@@ -204,7 +206,7 @@ function obl_state_build_combat_context($pdata) {
         'canSubmitTurn' => $battle_state === 'PLAYER_TURN' && $current_pid === $player_pid,
         'combatants' => $combatants,
         'validTargets' => $valid_targets,
-        'defaultTargetPid' => $default_target_pid,
+        'suggestedTargetPid' => $default_target_pid,
     );
 }
 
@@ -519,6 +521,88 @@ function obl_state_handle_enemies($ctx) {
     }
 
     return obl_state_response_success(array('enemies' => $result));
+}
+
+function obl_state_handle_combat_targets($ctx) {
+    $pdata = obl_state_require_player();
+    $player_pid = (int)$pdata['pid'];
+    $qid = ($pdata['action'] === 'battle' && (int)$pdata['bid'] > 0) ? (int)$pdata['bid'] : null;
+    $queue_by_pid = array();
+    if ($qid !== null) {
+        foreach (obl_fetch_queue_all_by_qid($qid) as $row) $queue_by_pid[(int)$row['pid']] = $row;
+    }
+
+    $characters = array();
+    foreach (obl_state_fetch_discovered_enemies((int)$pdata['pgroup']) as $enemy) {
+        $characters[(int)$enemy['pid']] = $enemy;
+    }
+    foreach ($queue_by_pid as $pid => $row) {
+        if ($pid === $player_pid) continue;
+        if (!isset($characters[$pid])) {
+            $enemy = obl_fetch_playerdata_by_pid($pid);
+            if ($enemy) $characters[$pid] = $enemy;
+        }
+    }
+
+    $candidates = array();
+    foreach ($characters as $pid => $enemy) {
+        if ($pid === $player_pid || (int)($enemy['type'] ?? 0) <= 0) continue;
+        $row = obl_fetch_queue_by_pid($pid);
+        $participation = 'blocked';
+        $reason = 'TARGET_MEMBERSHIP_INCONSISTENT';
+        if ($row) {
+            if ($qid !== null && (int)$row['qid'] === $qid && (int)$row['active'] === 1
+                && (int)($enemy['bid'] ?? 0) === $qid && (string)($enemy['action'] ?? '') === 'battle') {
+                $participation = 'member';
+                $reason = null;
+            } elseif ($qid !== null && (int)$row['qid'] === $qid && (int)$row['active'] === 0) {
+                $participation = 'left';
+                $reason = 'TARGET_LEFT_BATTLE';
+            } else {
+                $participation = 'other_battle';
+                $reason = 'TARGET_IN_OTHER_BATTLE';
+            }
+        } elseif ((int)($enemy['bid'] ?? 0) === 0 && (string)($enemy['action'] ?? '') === '') {
+            $participation = 'joinable';
+            $reason = null;
+        } elseif ((int)($enemy['bid'] ?? 0) > 0 || (string)($enemy['action'] ?? '') === 'battle') {
+            $participation = 'other_battle';
+            $reason = 'TARGET_IN_OTHER_BATTLE';
+        }
+        if ((int)($enemy['hp'] ?? 0) <= 0 || (int)($enemy['state'] ?? 0) !== 0) {
+            $participation = 'blocked';
+            $reason = 'TARGET_DEAD';
+        }
+        if ((int)($enemy['pgroup'] ?? 0) !== (int)$pdata['pgroup']) {
+            $participation = 'blocked';
+            $reason = 'TARGET_OTHER_REGION';
+        }
+        $selectable = in_array($participation, array('member', 'joinable'), true) && $reason === null;
+        $candidates[] = array(
+            'pid' => $pid,
+            'relation' => 'hostile',
+            'participation' => $participation,
+            'selectable' => $selectable,
+            'reason' => $reason,
+            'character' => obl_state_simplify_enemy_data($enemy),
+        );
+    }
+    usort($candidates, function ($a, $b) use ($queue_by_pid) {
+        $ap = (string)$a['participation'];
+        $bp = (string)$b['participation'];
+        $ak = $ap === 'member' ? [0, (int)($queue_by_pid[$a['pid']]['myorder'] ?? PHP_INT_MAX), $a['pid']] : [1, $a['pid'], $a['pid']];
+        $bk = $bp === 'member' ? [0, (int)($queue_by_pid[$b['pid']]['myorder'] ?? PHP_INT_MAX), $b['pid']] : [1, $b['pid'], $b['pid']];
+        return $ak <=> $bk;
+    });
+    $suggested = null;
+    foreach ($candidates as $candidate) {
+        if (!empty($candidate['selectable'])) { $suggested = (int)$candidate['pid']; break; }
+    }
+    return obl_state_response_success(array(
+        'qid' => $qid,
+        'suggestedTargetPid' => $suggested,
+        'candidates' => $candidates,
+    ));
 }
 
 function obl_state_fetch_discovered_enemies($pgroup) {

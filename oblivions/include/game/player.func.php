@@ -57,6 +57,15 @@ function obl_fetch_playerdata_by_pid($pid) {
 	return $pdata;
 }
 
+function obl_fetch_playerdata_by_pid_for_update($pid) {
+    global $db, $tablepre;
+    $result = $db->query("SELECT * FROM {$tablepre}oblplayers WHERE pid = " . (int)$pid . " LIMIT 1 FOR UPDATE");
+    $pdata = $db->fetch_array($result);
+    if (!$pdata) return false;
+    obl_format_playerdata($pdata);
+    return $pdata;
+}
+
 /**
  * 批量获取玩家数据
  *

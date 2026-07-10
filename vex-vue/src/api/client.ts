@@ -215,6 +215,7 @@ export interface CommandResult {
   redirect?: string | null;
   timer?: number | null;
   error?: string | null;
+  lockReason?: string | null;
   message?: string | null;
   messageIsHtml?: boolean;
   status?: number;

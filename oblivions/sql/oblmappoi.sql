@@ -18,4 +18,4 @@ CREATE TABLE bra_oblmappoi (
 
   PRIMARY KEY (iaid),
   INDEX idx_pgroup_pls (pgroup, pls)
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

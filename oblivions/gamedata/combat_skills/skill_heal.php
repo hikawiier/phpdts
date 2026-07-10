@@ -20,6 +20,5 @@ function skill_heal_execute(CombatContext $ctx): void {
 
     $ctx->declareEffect('heal', [
         'value'      => $heal_value,
-        'target_pid' => (int)($ctx->actor_data['pid'] ?? 0),
     ]);
 }

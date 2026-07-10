@@ -43,6 +43,9 @@ class dbstuff {
 		else $this->query_log[] = $sql;
 		$result = mysqli_query ( $this -> con, $sql );
 		if (! $result && $type != 'SILENT') {
+			if (!empty($GLOBALS['obl_db_throw_on_error'])) {
+				throw new RuntimeException('MySQL Query Error: ' . mysqli_error($this->con) . ' SQL=' . $sql, (int)mysqli_errno($this->con));
+			}
 			$this->halt ( 'MySQL Query Error', $sql );
 		}
 		if(strpos($sql,'UPDATE')===0){

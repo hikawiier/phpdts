@@ -33,11 +33,18 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             break;
         case 'battle.start':
             error_log("[combat_engine] routed to new system: battle.start (pid={$pdata['pid']})");
+            $latest = obl_fetch_playerdata_by_pid_for_update((int)$pdata['pid']);
+            if (!$latest) return array('ok' => false, 'code' => 'ACTOR_NOT_FOUND');
+            obl_format_playerdata($latest);
+            $pdata = $latest;
             return combat_start_battle($pdata, $payload['actions']);
         case 'battle.submit_turn':
             error_log("[combat_engine] routed to new system: battle.submit_turn (pid={$pdata['pid']})");
-            combat_dispatch('player_turn', $pdata, $payload['actions']);
-            break;
+            $latest = obl_fetch_playerdata_by_pid_for_update((int)$pdata['pid']);
+            if (!$latest) return array('ok' => false, 'code' => 'ACTOR_NOT_FOUND');
+            obl_format_playerdata($latest);
+            $pdata = $latest;
+            return combat_dispatch('player_turn', $pdata, $payload['actions']);
         case 'combat.can_engage':
             // L0 可达性查询：前端"点击敌人发起战斗"前的预判
             // 返回 reachable / max_attack_range / move_power / distance / reason
@@ -55,11 +62,11 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
         case 'combat.preview_single':
             // L1 即时校验：单次 action 合法性预判
             $act_id = (string)($payload['act_id'] ?? '');
-            $target_pid = (int)($payload['target_pid'] ?? 0);
-            if ($act_id === '' || $target_pid < 0) {
+            $aim_intent = $payload['aim_intent'] ?? ($payload['target_pid'] ?? null);
+            if ($act_id === '' || $aim_intent === null) {
                 return array('ok' => false, 'code' => 'INVALID_PARAMS');
             }
-            $result = combat_preview_single($pdata, $act_id, $target_pid);
+            $result = combat_preview_single($pdata, $act_id, $aim_intent);
             return array('ok' => true, 'data' => $result);
 
         case 'combat.preview_chain':

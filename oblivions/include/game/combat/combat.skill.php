@@ -39,6 +39,51 @@ if (!defined('IN_GAME')) {
  *
  * @return array [act_id => config, ...]
  */
+function combat_skill_validate_config(string $act_id, array $config): void {
+    $aim = is_array($config['aim'] ?? null) ? $config['aim'] : [];
+    $capture = is_array($config['capture'] ?? null) ? $config['capture'] : [];
+    $execution = is_array($config['execution'] ?? null) ? $config['execution'] : [];
+    $aim_resolver = (string)($aim['resolver'] ?? '');
+    $capture_resolver = (string)($capture['resolver'] ?? '');
+    $participation = (string)($capture['participation'] ?? '');
+    $order = (string)($capture['order'] ?? '');
+    $relation = (string)($capture['relation'] ?? '');
+    $empty_policy = (string)($execution['empty_policy'] ?? '');
+
+    $fail = static function (string $message) use ($act_id): void {
+        throw new UnexpectedValueException("Invalid combat skill config '{$act_id}': {$message}");
+    };
+
+    if (!isset($GLOBALS['combat_aim_resolvers'][$aim_resolver])) $fail("unknown aim resolver '{$aim_resolver}'");
+    if (!isset($GLOBALS['combat_target_capturers'][$capture_resolver])) $fail("unknown capture resolver '{$capture_resolver}'");
+    if (!in_array($participation, ['none', 'members_only', 'join_if_unengaged'], true)) $fail("invalid participation '{$participation}'");
+    if (!in_array($order, ['single', 'queue', 'queue_then_pid', 'pid'], true)) $fail("invalid order '{$order}'");
+    if (!in_array($relation, ['any', 'self', 'hostile', 'friendly'], true)) $fail("invalid relation '{$relation}'");
+    if (!in_array($empty_policy, ['fail', 'execute'], true)) $fail("invalid empty_policy '{$empty_policy}'");
+
+    $contracts = [
+        'identity' => ['aim' => ['tile', 'self', 'none'], 'participation' => 'none', 'order' => 'single'],
+        'direct_character' => ['aim' => ['pid'], 'participation' => 'join_if_unengaged', 'order' => 'single'],
+        'battle_hostiles' => ['aim' => ['none'], 'participation' => 'members_only', 'order' => 'queue'],
+        'tile_characters' => ['aim' => ['tile'], 'participation' => 'join_if_unengaged', 'order' => 'queue_then_pid'],
+    ];
+    $contract = $contracts[$capture_resolver] ?? null;
+    if ($contract !== null) {
+        if (!in_array($aim_resolver, $contract['aim'], true)) $fail("capture '{$capture_resolver}' is incompatible with aim '{$aim_resolver}'");
+        if ($participation !== $contract['participation']) $fail("capture '{$capture_resolver}' requires participation '{$contract['participation']}'");
+        if ($order !== $contract['order']) $fail("capture '{$capture_resolver}' requires order '{$contract['order']}'");
+    }
+
+    $delivery = is_array($config['delivery'] ?? null) ? $config['delivery'] : [];
+    if (!array_key_exists('types', $delivery) || !is_array($delivery['types'])) {
+        $fail('delivery.types must be a string array');
+    }
+    $delivery_types = $delivery['types'];
+    foreach ($delivery_types as $delivery_type) {
+        if (!is_string($delivery_type) || $delivery_type === '') $fail('delivery type must be a non-empty string');
+    }
+}
+
 function combat_skill_load_all_configs(): array {
     static $config_cache = null;
     if ($config_cache === null) {
@@ -49,8 +94,12 @@ function combat_skill_load_all_configs(): array {
             return $config_cache;
         }
         $config_cache = require $config_file;
-        if (!is_array($config_cache)) {
-            $config_cache = [];
+        if (!is_array($config_cache)) $config_cache = [];
+        foreach ($config_cache as $act_id => $config) {
+            if (!is_string($act_id) || !is_array($config)) {
+                throw new UnexpectedValueException('Combat skill config entries must be keyed arrays');
+            }
+            combat_skill_validate_config($act_id, $config);
         }
     }
     return $config_cache;

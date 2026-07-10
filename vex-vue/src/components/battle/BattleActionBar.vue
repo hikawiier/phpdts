@@ -19,9 +19,9 @@ const battleStore = useBattleStore();
 <template>
   <div class="flex-1 overflow-y-auto min-h-0">
     <!-- 玩家回合：装填区 -->
-    <PreloadArea v-if="battleStore.isPlayerTurn" />
+    <PreloadArea v-show="battleStore.isPlayerTurn" />
     <!-- NPC 回合：等待提示 -->
-    <div v-else class="text-fg-dim text-[10px] py-2 text-center">
+    <div v-show="!battleStore.isPlayerTurn" class="text-fg-dim text-[10px] py-2 text-center">
       敌人正在行动...
     </div>
   </div>

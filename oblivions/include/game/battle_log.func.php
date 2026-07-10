@@ -173,6 +173,17 @@ class BattleLogCollector {
         return $this->entries;
     }
 
+    public function checkpoint(): int {
+        return count($this->entries);
+    }
+
+    public function rollbackTo(int $checkpoint): void {
+        $checkpoint = max(0, min($checkpoint, count($this->entries)));
+        if ($checkpoint < count($this->entries)) {
+            $this->entries = array_slice($this->entries, 0, $checkpoint);
+        }
+    }
+
     /**
      * 本请求是否有战斗日志
      * @return bool
@@ -212,17 +223,24 @@ function obl_battle_log_get_old_max() {
  * @param int $pid      玩家 ID
  */
 function obl_battle_log_persist($logger, $groomid, $pid) {
-    if (!$logger || !$logger->hasEntries()) return;
+    if (!$logger || !$logger->hasEntries()) return true;
 
     $new_entries = $logger->getEntries();
     $log_file = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_' . (int)$groomid . '_' . (int)$pid . '.json';
     $obl_battle_log_dir = dirname($log_file);
-    if (!is_dir($obl_battle_log_dir)) @mkdir($obl_battle_log_dir, 0755, true);
+    if (!is_dir($obl_battle_log_dir) && !@mkdir($obl_battle_log_dir, 0755, true) && !is_dir($obl_battle_log_dir)) {
+        error_log('[battle_log] Failed to create log directory: ' . $obl_battle_log_dir);
+        return false;
+    }
 
     // 1. 读取现有文件
     $existing = [];
     if (file_exists($log_file)) {
-        $raw = file_get_contents($log_file);
+        $raw = @file_get_contents($log_file);
+        if ($raw === false) {
+            error_log('[battle_log] Failed to read log file: ' . $log_file);
+            return false;
+        }
         $existing = json_decode($raw, true);
         if (!is_array($existing)) $existing = [];
     }
@@ -245,7 +263,12 @@ function obl_battle_log_persist($logger, $groomid, $pid) {
 
     // 4. 追加并写回
     $merged = array_merge($existing, $new_entries);
-    file_put_contents($log_file, json_encode($merged, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    $encoded = json_encode($merged, JSON_UNESCAPED_UNICODE);
+    if ($encoded === false || @file_put_contents($log_file, $encoded, LOCK_EX) === false) {
+        error_log('[battle_log] Failed to write log file: ' . $log_file);
+        return false;
+    }
+    return true;
 }
 
 /**

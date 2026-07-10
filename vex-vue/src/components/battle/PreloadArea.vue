@@ -21,9 +21,11 @@ import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
+import { useBattleStore } from '@/stores/battle';
 import { useToastStore } from '@/stores/toast';
 import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
+import { findSelectableCombatTarget } from '@/utils/combat-targeting';
 import type { Skill, CombatViewModel, CombatTargetViewModel, CombatantViewModel } from '@/types/api';
 import type { Character } from '@/types/character';
 import type { PreloadInitEventData } from '@/types/events';
@@ -39,8 +41,7 @@ type TargetIntent =
   | { type: 'pid'; id: number }
   | { type: 'tile'; id: number }
   | { type: 'self' }
-  | { type: 'none' }
-  | { type: 'all' };
+  | { type: 'none' };
 interface QueueItem {
   id: number;
   act_id: string;
@@ -54,18 +55,32 @@ const pendingTargetMode = ref<'enemy' | 'tile'>('enemy');
 const enemyPid = ref<number>(0);
 const playerPid = ref<number>(0);
 const combatContext = ref<CombatViewModel | null>(null);
+const sessionKey = ref<string>('');
 
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
+const battleStore = useBattleStore();
 
 // ══════════════════════════════════════════════════
 // 初始化（监听 battle:preload-init 事件）
 // ══════════════════════════════════════════════════
 
 async function initPreloadArea(data: PreloadInitEventData): Promise<void> {
+  const nextQid = data.combatContext?.qid ?? null;
+  const nextSessionKey = data.mode === 'in-battle'
+    ? `in-battle:${nextQid ?? 'none'}`
+    : `pre-battle:${data.playerPid || 0}`;
+  if (sessionKey.value === nextSessionKey) {
+    onPreloadContextRefresh(data);
+    await fetchSkillList();
+    return;
+  }
+  sessionKey.value = nextSessionKey;
   mode.value = data.mode;
   combatContext.value = data.combatContext || null;
-  enemyPid.value = combatContext.value?.defaultTargetPid || data.enemyPid || 0;
+  enemyPid.value = data.mode === 'pre-battle'
+    ? (data.enemyPid || battleStore.combatTargets.suggestedTargetPid || 0)
+    : (battleStore.combatTargets.suggestedTargetPid || combatContext.value?.suggestedTargetPid || data.enemyPid || 0);
   playerPid.value = data.playerPid || 0;
   queue.value = [];
   aimMode.value = false;
@@ -261,7 +276,7 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
 }
 
 function skillRangeText(skill: Skill): string {
-  if (skill.target !== 'enemy') return '';
+  if (skill.aimType !== 'pid') return '';
   return ` R:${getSkillActionRange(skill)}`;
 }
 
@@ -287,26 +302,14 @@ function onSkillClick(actId: string): void {
     return;
   }
 
-  if (actId === 'escape' || skill.target === 'none') {
+  if (skill.aimType === 'none') {
     addToQueue(actId, { type: 'none' });
-  } else if (skill.target === 'self') {
+  } else if (skill.aimType === 'self') {
     addToQueue(actId, { type: 'self' });
-  } else if (skill.target === 'all') {
-    addToQueue(actId, { type: 'all' });
-  } else if (skill.target === 'tiles' || skill.target === 'tile') {
+  } else if (skill.aimType === 'tile') {
     enterAimMode(actId, 'tile');
   } else {
-    // enemy 目标：MVP 单敌人战斗，直接使用当前敌人 PID
-    // 未来多敌人时可启用瞄准模式：enterAimMode(actId)
-    if (enemyPid.value > 0) {
-      if (!isEnemyInSkillRange(skill, enemyPid.value, getPlannedActorPls())) {
-        useToastStore().showToast('目标距离过远，无法装填该技能', 'warning', 3000);
-        return;
-      }
-      addToQueue(actId, { type: 'pid', id: enemyPid.value });
-    } else {
-      enterAimMode(actId, 'enemy');
-    }
+    enterAimMode(actId, 'enemy');
   }
 }
 
@@ -344,6 +347,9 @@ function enterAimMode(actId: string, targetMode: 'enemy' | 'tile' = 'enemy'): vo
     actionRange,
     targetMode,
     originPls: getPlannedActorPls(),
+    focusedTargetPid: mode.value === 'pre-battle'
+      ? (enemyPid.value || battleStore.combatTargets.suggestedTargetPid || null)
+      : (battleStore.combatTargets.suggestedTargetPid || enemyPid.value || null),
   });
 }
 
@@ -370,6 +376,17 @@ function onTargetSelect(data: unknown): void {
 
   const pid = typeof data === 'number' ? data : (data as { pid?: number })?.pid;
   if (typeof pid !== 'number') return;
+
+  const candidate = findSelectableCombatTarget(
+    battleStore.combatTargets,
+    battleStore.currentQid,
+    pid,
+    targetPid => characterStore.getCharacter(targetPid),
+  );
+  if (!candidate) {
+    useToastStore().showToast('目标状态已变化，请重新选择', 'warning', 3000);
+    return;
+  }
 
   const skill = skills.value.find((s) => s.act_id === pendingActId.value);
   if (skill && !isEnemyInSkillRange(skill, pid, getPlannedActorPls())) {
@@ -429,7 +446,6 @@ function getTargetDisplayText(target: TargetIntent): string {
   if (target.type === 'self') return '自己';
   if (target.type === 'none') return '无目标';
   if (target.type === 'tile') return `位置${target.id}`;
-  if (target.type === 'all') return '全部敌人';
 
   const pid = parseInt(String(target.id));
   if (pid === parseInt(String(playerPid.value))) return '自己';
@@ -502,7 +518,16 @@ function onPreloadInit(data: unknown): void {
   if (data) initPreloadArea(data as PreloadInitEventData);
 }
 
+function onPreloadContextRefresh(data: unknown): void {
+  if (!data) return;
+  const next = data as PreloadInitEventData;
+  combatContext.value = next.combatContext || combatContext.value;
+  enemyPid.value = battleStore.combatTargets.suggestedTargetPid || next.enemyPid || enemyPid.value;
+  playerPid.value = next.playerPid || playerPid.value;
+}
+
 function onBattleEnded(): void {
+  sessionKey.value = '';
   mode.value = '';
   queue.value = [];
   aimMode.value = false;
@@ -522,6 +547,7 @@ function onPreloadClear(): void {
 
 onMounted(() => {
   dataManager.listen('battle:preload-init', onPreloadInit);
+  dataManager.listen('battle:preload-context-refresh', onPreloadContextRefresh);
   dataManager.listen('battle:aim-target-selected', onTargetSelect);
   dataManager.listen('battle:aim-exit', onAimExit);
   dataManager.listen('battle:preload-clear', onPreloadClear);
@@ -530,6 +556,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   dataManager.unlisten('battle:preload-init', onPreloadInit);
+  dataManager.unlisten('battle:preload-context-refresh', onPreloadContextRefresh);
   dataManager.unlisten('battle:aim-target-selected', onTargetSelect);
   dataManager.unlisten('battle:aim-exit', onAimExit);
   dataManager.unlisten('battle:preload-clear', onPreloadClear);

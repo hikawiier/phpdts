@@ -18,6 +18,7 @@ import { useBattleStore } from '@/stores/battle';
 import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP } from '@/composables/useMapRender';
 import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapReachability';
 import type { TileInfo } from '@/types/api';
+import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 
 // ─── 回调注入（由 useMapBusiness 调用） ───
 let _onKeyMove: ((pls: string | number) => Promise<void> | void) | null = null;
@@ -303,9 +304,13 @@ export function initMapInteraction(
     if (uiStore.modalOpen || uiStore.playerDrawerOpen || uiStore.inventoryDrawerOpen) return;
     // 瞄准模式下地图点击/键盘移动由 AimMode 独占消费，不能触发真实移动
     if (uiStore.mapInputMode === 'aim') return;
-    // 战斗演出播放期间禁止键盘操作
+    // 战斗事务期间地图命令输入由战斗 UI 独占。
     const battleStore = useBattleStore();
-    if (battleStore.battleModalOpen) return;
+    if (isBattleMapInputLocked({
+      currentMode: battleStore.currentMode,
+      isPlayingBattleLog: battleStore.isPlayingBattleLog,
+      isProcessingBattle: battleStore.isProcessingBattle,
+    })) return;
 
     let dx = 0, dy = 0;
     switch (e.key) {

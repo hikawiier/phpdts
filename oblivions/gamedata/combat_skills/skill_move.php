@@ -27,21 +27,7 @@ function skill_move_execute(CombatContext $ctx): void {
     $to_pls = (int)($target_data['pls'] ?? 0);
     $from_pls = (int)($ctx->actor_data['pls'] ?? 0);
 
-    if ($ctx->dry_run) {
-        $distance = obl_get_distance(
-            (int)($ctx->actor_data['pgroup'] ?? 0),
-            $from_pls,
-            $to_pls
-        );
-    } else {
-        $result = obl_perform_move_core($ctx->actor_data, $to_pls);
-        if (!$result['success']) {
-            $ctx->success = false;
-            $ctx->failure_reason = 'move_failed:' . $result['reason'];
-            return;
-        }
-        $distance = (int)($result['distance'] ?? 0);
-    }
+    $distance = obl_get_distance((int)($ctx->actor_data['pgroup'] ?? 0), $from_pls, $to_pls);
 
     $ctx->declareEffect('move', [
         'from_pls' => $from_pls,

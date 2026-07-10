@@ -88,7 +88,7 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		if ($current['type'] == 0) {
 			# 战斗状态机：仅当状态为 PROCESSING 时触发 player_turn
 			obl_battle_state_transition($qid, 'player_turn');
-			obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'game_map'));
+			obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'combat_targets', 'game_map'));
 			obl_tick_ctx_add_domain_event($ctx, 'player_turn_ready', array(
 				'qid' => $qid,
 				'pid' => (int)$current['pid'],
@@ -121,7 +121,7 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$result = combat_dispatch('npc_turn', $npc_data, $atk_act, [
 			'allow_empty_actions' => true,
 		]);
-		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'battle_log', 'enemies', 'game_map'));
+		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'battle_log', 'enemies', 'combat_targets', 'game_map'));
 		obl_tick_ctx_add_domain_event($ctx, 'npc_turn_resolved', array(
 			'qid' => $qid,
 			'pid' => (int)$npc_data['pid'],
@@ -185,7 +185,7 @@ function obl_tick_phase_idle_npc($delta, &$ctx) {
 	}
 
 	if ($moved > 0) {
-		obl_tick_ctx_add_changed_scopes($ctx, array('enemies', 'game_map'));
+		obl_tick_ctx_add_changed_scopes($ctx, array('enemies', 'combat_targets', 'game_map'));
 		obl_tick_ctx_add_domain_event($ctx, 'idle_npc_moved', array(
 			'count' => $moved,
 			'pgroup' => $group,

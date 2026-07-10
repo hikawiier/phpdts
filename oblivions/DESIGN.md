@@ -33,11 +33,11 @@
 
 **战斗系统边界**：`combat/` 是唯一战斗执行主流程；`battle/` 是仍被复用的 shared combat infrastructure，负责队列、状态机 hook、共享数值与 battle log 持久化。旧 `battle.entry.php` / `battle.main.php` 不再存在于运行时心智模型里。
 
-**战斗 UI 数据源**：前端战斗态优先相信后端 `player_info.combat_context`，而不是从敌人列表或本地状态拼战斗视图。地图实体、预装填目标和是否可提交回合都从 Combat ViewModel 派生。
+**战斗 UI 数据源**：`player_info.combat_context` 提供当前 qid、队列成员和提交权限；独立的 `combat_targets` scope 提供全部展示候选及 `member/joinable/left/other_battle/blocked` 投影。前端战斗会话以规范化后的 `qid` 为身份，点击敌人的 PID 只作为 suggested/focused target，不能代替战场身份或后端合法性判断。
 
 **前端战斗播放边界（四层架构）**：battlelog.v2 是语义事件流；后端原料层 emit 事件，Director（`directV2`）负责把事件转脚本，PlaybackPlan（`planPlaybackV2`）负责排序/并发/等待策略，Runner/ActorExecutor（`battle-playback-runner.ts` / `battle-actor-executor.ts`）负责真实动画执行。不要把动画时序散落回组件事件里。
 
-**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback: { id, params }, refresh, server_state } }`。`feedback.id + params` 复用 `log-templates.ts` 模板，由前端 `command-feedback.ts` 渲染文案。后端不输出用户可见文案。
+**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback, refresh, server_state, ...domainData }, warnings? }`。战斗命令的领域结果位于 `data.actions[]`，每项含 `resolvedAim`、`capturedTargetCount` 和逐目标结果；日志落盘失败在数据库提交后以 `warnings=['BATTLELOG_PERSIST_FAILED']` 返回，客户端不得重放命令。
 
 **三套日志系统职责**（物理隔离）：
 
@@ -210,7 +210,7 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 **event_type 细分与原料补全**：
 
-后端 emit 的 battlelog.v2 事件按 `event_type` 分为 9 种（`round_start` / `turn_start` / `action_start` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice`）。每个 event_type 对应明确的最小参数集：消除占位符（未提供字段记为 null）、消除 extra 滥用（所有字段为正式字段）、补全名称和 HP 快照（前端无需查 API）。
+后端 render channel 当前使用 11 种 battlelog.v2 `event_type`：`round_start` / `turn_start` / `action_start` / `action_delivery` / `combatant_joined` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice`。`action_delivery` 始终引用 ResolvedAim，`effect_applied` 始终引用具体 ResolutionTarget；`combatant_joined` 必须先于该角色的 effect。
 
 **render/debug 分离**：
 
@@ -260,7 +260,7 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 
 **Category B（绝对状态）**：`dead`（`state=1`）、`escaped`（已逃跑）、`hidden`（隐身）。通过 `$battle_cache['tag_mutations'][pid]` 缓存，同一 `battle_main` 调用内跨 action 可见，随 cache 销毁自动清零。
 
-**配置驱动规则匹配**：`target_rules.require`（白名单）和 `target_rules.forbid`（黑名单），由 `combat_check_target_rules()` 对标签集做匹配，失败时 emit 日志并跳过当前 action/target。
+**配置驱动规则匹配**：技能配置把瞄准规则放在 `aim.rules`，把具体角色规则放在 `capture.rules`。规则由 `combat_check_target_rules()` 对当前 ResolvedAim 或当前 TargetResolutionUnit 的标签集执行；单目标失败只产生 skipped，其他目标继续。
 
 ### 1.13 战斗入口 (Battle Entry)
 
@@ -279,9 +279,10 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 | `npc_turn` | tick 结算 NPC 回合 | 已有队列中推进（允许空动作） |
 
 **核心约束**：
-- 所有触发源不做任何合法性判断，只传 raw `$actions`
-- actions 解析/校验统一由 dispatch 内部完成
-- 目标合法性（存在/射程/死亡等）由战斗执行阶段的 Tag 系统拦截
+- 所有触发源只提交逐动作 AimIntent，不提交 roster 或 occupant PID 集合
+- actions 解析、Aim、Capture、Participation 和 target rules 统一由 combat 内部完成
+- `battle.start` 以第一项成功 hostile action 的合法角色目标建立 initial roster；此前 utility 正常执行，后续首次接触的敌人走动态 append-tail
+- 最终没有成功 hostile action 时整个 `battle.start` 标记 rollback-only，前序 utility 不得提交
 
 **队列生命周期后处理**：`battle_manage_queue` 返回后，调用方通过 `result.disbanded` 区分两条清理路径——解散时调 `battle_state_clear`（退队列、清 bid/action、AP 回满），存活时由 step 6 prepare 为下一顺位者恢复 AP 并保存。前者是"战斗结束打扫干净"，后者是"下一个人准备上场"，互不重叠。
 
@@ -301,9 +302,11 @@ Oblivions 模式的日志传递机制。后端只输出事件结构（发生了�
 战斗技能由 `gamedata/combat_skill_config.php` 声明静态规则，由 `gamedata/combat_skills/skill_{act_id}.php` 提供执行 hook。
 
 配置负责描述：
-- 技能身份、目标类型、射程、AP 消耗、排序权重
-- `target_rules.require/forbid` 等可验证规则
-- effect/preview 所需的参数
+- `aim.resolver/rules`：玩家选择如何解析为后端 ResolvedAim
+- `capture.resolver/relation/participation/order/rules`：动作捕获哪些有序 ResolutionTarget
+- `execution.empty_policy`：无成功目标时失败还是仍完成投送
+- `delivery.types: string[]`：按顺序播放的投射、爆炸、移动目的地 cue
+- 射程、AP、CD、排序权重和 effect 参数
 
 hook 负责声明效果：
 
@@ -313,7 +316,7 @@ function skill_xxx_execute(CombatContext $ctx): void {
 }
 ```
 
-核心约束：hook 不直接写 DB，不绕过 `CombatContext` 修改战斗状态；实际写入由 effect applier / pipeline persist 阶段统一处理。这样配置、校验、预览、执行可以共享同一套语义。
+核心约束：hook 不直接写 DB，不自行查询或修改任意 PID，只对 current target 声明 effect；actor effect 必须显式 `scope=actor`。move 的真实位置写入也由 effect applier 完成。这样 verify、preview 和 execute 共享同一套 Aim/Capture/TargetResolutionUnit 语义。
 
 ### 1.16 PlannedState / Effect Projector / 动作链
 
@@ -329,16 +332,24 @@ function skill_xxx_execute(CombatContext $ctx): void {
 
 ### 1.17 Combat ViewModel
 
-`player_info.combat_context` 是战斗 UI 的后端权威视图。它把 `battle_queue`、战斗状态机、参战者快照和可选目标整理成一个前端可直接消费的结构。
+`player_info.combat_context` 是当前战场成员和回合权限的后端权威视图；`combat_targets` 是自由瞄准候选的独立权威 scope。两者职责不能合并：前者只描述当前 qid，后者还必须展示可动态加入和被阻止的已发现角色。
 
 核心字段包括：
 - `state` / `currentActorPid` / `canSubmitTurn`：用于决定按钮与提交权限
 - `combatants`：用于战斗地图实体和血量/AP 展示
-- `validTargets` / `defaultTargetPid`：用于预装填目标选择
+- `validTargets`：当前 qid 内的 active 目标兼容投影
+- `suggestedTargetPid`：只用于初始 focus，不自动写入 QueueItem
+- `combat_targets.qid/candidates[]`：候选的 relation、participation、selectable、reason 和角色投影
 
-设计理由：前端不能在 battle mode 下继续用“当前区域 enemies 列表”拼战斗视图。战斗成员可能未发现、已逃跑、刚清场或位置变化；这些都是战斗上下文问题，应由后端一次性给出当前可见真相。
+设计理由：前端不能用 enemies 列表或 suggested PID 推断 qid membership。地图/CharacterHub 可以展示角色，`combat_context` 决定当前战场成员，`combat_targets` 决定可展示和可提交候选，具体技能执行仍由后端重新校验。
 
-### 1.18 BattlePlaybackPlan
+### 1.18 请求事务与目标 SAVEPOINT
+
+Command 与 heartbeat 都遵循 `GET_LOCK -> BEGIN -> reload -> execute/tick -> COMMIT -> persist battlelog -> release lock`。所有可写 Oblivions 表使用 InnoDB；DB adapter 在事务中通过 request-local throw-on-error flag 抛出 SQL 失败。shutdown guard 在事务仍 active 的 fatal/异常收口中 rollback，并兜底释放 room lock；COMMIT 后 fatal 不可能撤销已提交状态。当前 request_id 尚无服务端去重账本，因此客户端只能先 State reconcile，不能自动重放不确定结果的命令。
+
+每个真实 TargetResolutionUnit 还在 Participation enlist 前建立 SAVEPOINT 和 BattleLogCollector checkpoint。可恢复的单目标 enlist/effect 失败只撤销本目标的 DB、内存和事件，保留此前目标的成功结果；SQL/PHP/commit 异常必须越过该层，由请求事务回滚全部写入。collector 仅在 commit 后落盘，文件失败返回 warning，不能回滚已提交领域状态。
+
+### 1.19 BattlePlaybackPlan
 
 前端战斗播放分四层（详见 §2.7）：
 
@@ -351,7 +362,7 @@ function skill_xxx_execute(CombatContext $ctx): void {
 
 设计边界：组件只呈现状态，不承担时序推理；动画排序不应靠全局事件临时串联。战斗域动画和非战斗域动画都应进入明确的编排序列，避免同一帧内互相抢表现。
 
-### 1.19 TickFrameResult 与 changedScopes
+### 1.20 TickFrameResult 与 changedScopes
 
 TickFrameResult 是一次 pending tick 结算的结构化结果。它记录：
 - phases：`combat_domain` / `world_ai_domain` / `post_domain` 的执行结果
@@ -412,7 +423,7 @@ $obl_log->emit('move.success', 'move', [
 
 战斗日志采用"持久化 → 前端拉取 → 标记"的统一单路径流程，替代"命令响应附带 battlelog"的双路径方案：
 
-- 后端 emit battlelog 后持久化到文件（`played=0`），命令响应只返回 `{}`
+- 后端在数据库 commit 后把 collector 持久化到文件（`played=0`）；命令响应可返回 action/target results，但不内嵌 battlelog
 - 前端通过 `battle_log` API 拉取未播放条目，播放后调 mark 接口标记 `played=1`
 - `played=1` 的条目保留在文件中作为历史记录，游戏重置时清理
 
@@ -430,9 +441,9 @@ $obl_log->emit('move.success', 'move', [
 
 **设计理由**：mark 请求的唯一目的是"修改文件中某些条目的 played 字段"，即使被伪造也无严重后果（最多让玩家少看一条 battlelog），不值得走完整的 auth + DB 流程。
 
-### 2.6 flock 并发锁 + 前端 5 层锁
+### 2.6 房间 GET_LOCK + 玩家 flock + 前端 5 层锁
 
-前端 `commandQueue._checkLocks(command)` 提供 5 层细粒度锁（`canExecute` 与 `execute` 共用，避免行为分叉），后端 `flock` 提供独占文件锁兜底：
+前端 `commandQueue._checkLocks(command)` 提供 5 层细粒度锁；后端先用 MySQL `GET_LOCK('game_state_{groomid}')` 串行化整个房间的 command/heartbeat，再由 Command Bus 的玩家级 `flock` 防止同一 PID 重入。GET_LOCK 不是事务，取得房间锁后仍必须显式 BEGIN/COMMIT/ROLLBACK。
 
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
@@ -441,17 +452,14 @@ $obl_log->emit('move.success', 'move', [
 | 前端第 3 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
 | 前端第 4 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
 | 前端第 5 层：PROCESSING | `playerStore.oblBattleState === 'PROCESSING'` | 仅拦截 `spec.advancesTick=true` 命令 | 状态机过渡到 `PLAYER_TURN` 或 `IDLE` 时自动释放 |
+| 后端房间锁 | `obl_runtime_acquire_room_lock()` / MySQL `GET_LOCK` | 同一 groomid 的 command 与 heartbeat 串行 | 正常 finally 或 shutdown guard `RELEASE_LOCK` |
 | 后端文件锁 | `obl_command_bus.php: obl_command_acquire_lock() flock(LOCK_EX\|LOCK_NB)` | 同一玩家 PID 的独占文件锁 | 进程结束/脚本 exit 时 OS 自动释放 |
 
 **`isLocked` 语义边界**：`isLocked` getter 只包含第 1+2 层（全局锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制。`pendingNpc` getter 仍从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`。
 
 > 完整 5 层锁架构与 `COMMAND_REGISTRY` 三维度分类详见 [vex-vue/CODEBASE.md §3.1](../vex-vue/CODEBASE.md#31-五层并发锁)。
 
-**为什么选 flock 而非 DB 锁**：
-- flock 在进程异常退出时由 OS 自动释放，不会死锁
-- DB 锁需要额外的"超时清理"逻辑，复杂度高
-- 单机部署足够，无需分布式锁
-- 性能优于 DB 锁
+**为什么同时保留两种后端锁**：房间 GET_LOCK 覆盖 NPC heartbeat、多个玩家和共享世界写入；玩家 flock 是 Command Bus 内的廉价重入保护。两者都不替代 InnoDB 行锁和请求事务，shutdown guard 必须兜底释放房间锁。
 
 ### 2.7 战斗演出架构
 
@@ -459,17 +467,17 @@ $obl_log->emit('move.success', 'move', [
 
 1. **后端原料层**（PHP `BattleLogCollector`）
    - emit 时补全名称、HP 快照、边界标记字段（`bl_turn_num`/`bl_round_num`）
-   - 按 `event_type` 精细区分事件类型（9 种），设置默认 `debug` 标记控制前端可见性
+   - 按 `event_type` 精细区分 11 种 render 事件，设置默认 `debug` 标记控制前端可见性
    - 不预判前端如何消费，专注提供完整的原始事件结构
 
 2. **前端导演层**（`battle-director-v2.ts`）
    - 同步纯函数，输入 battlelog.v2 events → 输出 `BattlePlayScriptV2`
-   - 按 `action_uid` 聚合 `action_start`/`effect_applied`/`action_end` 三元组 → 构建分层段（round_intro/turn/battle_end/system）
+   - 按 `action_uid` 聚合 action、delivery、joined、effects 与 action_end → 构建分层段（round_intro/turn/battle_end/system）
    - 不涉及网络、不涉及 DOM、不涉及组件状态
 
 3. **前端播放计划层**（`planPlaybackV2()`）
    - 将语义脚本转成 `BattlePlaybackPlan` / `PlaybackStep[]`
-   - 明确准备地图、动作动画、清场、文本、伤害残留的顺序、并发与等待策略
+   - 明确准备地图、action delivery、动态成员准备、动作动画、清场、文本和伤害残留的顺序与等待策略
 
 4. **前端执行层**（`battle-playback-runner.ts` + `battle-actor-executor.ts` + 组件）
    - Runner 执行 playback steps
@@ -729,6 +737,8 @@ oblgame 持久化 obl_tick/obl_pretick
   round_start        ← 一轮开始边界
   turn_start         ← 一回合开始边界（含 actor 快照）
   action_start       ← 动作开始（含 action_uid / actor / targets）
+  action_delivery    ← ResolvedAim 投送 cue，可有多个
+  combatant_joined   ← 动态成员入列，先于该成员 effect
   effect_applied     ← 效果应用（含 action_uid / effect_type / target / delta）
   action_end         ← 动作结束（含 action_uid / success / reason）
   combatant_cleared  ← 参战者退场
@@ -1073,17 +1083,19 @@ Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` �
 
 ### 核心概念
 
-**CombatContext**：单 action 执行上下文，封装 actor/battle_cache 引用 + per-target effects/snapshot。是管道各阶段共享的唯一状态载体。
+**CombatContext**：单 action 执行上下文，封装 actor/battle_cache 引用、ResolvedAim、一次捕获的 ResolutionTargetSet、当前目标 effects/snapshot、target results、resource/delivery 状态。
 
-**Pipeline 管道**：8 阶段 attack / 7 阶段 utility / 1 阶段 passive。per-target 迭代 + per-target 短路（check_rules 失败只跳过该 target）。
+**Pipeline 管道**：`AimResolver -> ResolutionTargetCapturer -> foreach TargetResolutionUnit`。每个目标从规则、Participation、SAVEPOINT、effect、post-check 到 persist 完整结束后才进入下一个目标，不再由多个 stage 分别遍历整组 targets。
+
+**Participation**：角色目标被分类为 `member/joinable/left/other_battle/blocked`。joinable 在 effect 前通过 `battle_queue_append_tail()` 以 `done=0` 追加当前 qid 末尾；unsafe delete-and-insert join 已删除。
 
 **AP Wallet 模型**：verify 阶段维护 `pending_ap_spent` 计数器，按排序后顺序累计检查 AP。通过的 action 写入 `_ap_cost` 字段，execute/persist 从 action 读取（不重算）。
 
-**失败分级**：普通失败（AP 不够/目标不存在/射程不够/规则 forbid）跳过自己；actor 级终止（已死/已逃离/战斗结束）中断后续全部。
+**失败分级**：Aim/配置失败是动作失败；单目标规则、Participation 或可恢复 effect 失败通过目标 SAVEPOINT 回滚后记为 skipped；actor 级终止中断剩余目标和动作；SQL/PHP 异常回滚整条请求。
 
 **Tag 纯读约束**：Cat A（每次重算）+ Cat B（从 tag_mutations 读）均不写 mutation。mutation 只由 post_check/effect applier 写入。
 
-**引用硬约束**：self 目标 `target_data = &$actor_data`；persist 保存内存引用，禁止重新 fetch。
+**最新状态硬约束**：CapturedResolutionTargetSet 冻结身份和 capture facts，不冻结角色属性。每个目标轮到时重新绑定本命令内存/锁定后的最新角色状态；self 继续引用 actor。
 
 ### 入口与切换
 
@@ -1097,7 +1109,7 @@ Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` �
 
 钩子函数签名：`skill_{act_id}_execute(CombatContext $ctx): void`
 
-钩子内调 `$ctx->declareEffect($type, $payload)` 声明效果。禁止直接改 actor_data / battle_cache / tag_mutations（move 除外）/ 调 obl_save_player。
+钩子内调 `$ctx->declareEffect($type, $payload)` 声明 current target 效果。禁止直接改 actor_data / battle_cache / tag_mutations、查询任意 PID 或调 `obl_save_player()`；move 也必须由 effect applier 写入。
 
 ---
 

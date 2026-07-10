@@ -42,12 +42,21 @@ import { useBattleStore } from '@/stores/battle';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { useUiStore } from '@/stores/ui';
 import type { MapEntity } from '@/types/map-entity';
+import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
 const battleStore = useBattleStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const uiStore = useUiStore();
+
+function isMapCommandInputLocked(): boolean {
+  return isBattleMapInputLocked({
+    currentMode: battleStore.currentMode,
+    isPlayingBattleLog: battleStore.isPlayingBattleLog,
+    isProcessingBattle: battleStore.isProcessingBattle,
+  });
+}
 
 // ─── DOM 引用（供布局计算 + 交互事件使用） ───
 const gridRef = ref<HTMLElement | null>(null);
@@ -100,6 +109,7 @@ function entityClass(entity: MapEntity): Record<string, boolean> {
 // ─── 单元格事件处理 ───
 function onCellClick(cell: CellData): void {
   if (uiStore.mapInputMode === 'aim') return;
+  if (isMapCommandInputLocked()) return;
   if (cell.isEmpty) return;
   if (cell.hasEnemy && cell.enemy) {
     // 敌人格：触发战斗确认
@@ -116,6 +126,7 @@ function onCellClick(cell: CellData): void {
 
 function onCellEnter(cell: CellData): void {
   if (uiStore.mapInputMode === 'aim') return;
+  if (isMapCommandInputLocked()) return;
   if (cell.isEmpty || cell.isCurrent || cell.hasEnemy) return;
   if (cell.isReachable) {
     triggerCellHover(cell.pls);
@@ -124,10 +135,23 @@ function onCellEnter(cell: CellData): void {
 
 function onCellLeave(cell: CellData): void {
   if (uiStore.mapInputMode === 'aim') return;
+  if (isMapCommandInputLocked()) return;
   if (cell.isEmpty || cell.isCurrent || cell.hasEnemy) return;
   if (cell.isReachable) {
     triggerCellLeave();
   }
+}
+
+function onEntityClick(entity: MapEntity, event: MouseEvent): void {
+  if (!entity.characterPid) return;
+  if (uiStore.mapInputMode === 'aim') {
+    // AimMode 在 mapGrid 上统一处理点击，并负责同格消歧与最新候选校验。
+    return;
+  }
+  if (isMapCommandInputLocked()) return;
+  event.stopPropagation();
+  const character = characterStore.getCharacter(entity.characterPid);
+  if (character && character.type > 0) triggerEnemyClick(character as never);
 }
 
 // ─── HP 危险/恢复触发 ───
@@ -227,7 +251,6 @@ onUnmounted(() => {
         :key="cell.key"
         :class="cell.classList"
         :data-pls="cell.pls || undefined"
-        :data-enemy-pid="cell.hasEnemy && cell.enemy ? String(cell.enemy.pid) : undefined"
         :style="cell.styleObj"
         :title="cell.title"
         @click="onCellClick(cell)"
@@ -279,6 +302,8 @@ onUnmounted(() => {
         class="entity"
         :class="entityClass(entity)"
         :data-entity-id="entity.id"
+        :data-character-pid="entity.characterPid || undefined"
+        @click="onEntityClick(entity, $event)"
       >
         <img class="entity-img" :src="entity.img" :alt="entity.id" :style="imgStyle(entity)" />
       </div>

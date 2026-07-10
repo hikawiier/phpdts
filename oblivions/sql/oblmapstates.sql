@@ -13,4 +13,4 @@ CREATE TABLE bra_oblmapstates (
   flags varchar(255) NOT NULL default '',               -- 扩展状态标记(JSON)
 
   PRIMARY KEY (pgroup, pls)
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

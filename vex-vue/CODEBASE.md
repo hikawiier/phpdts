@@ -123,7 +123,6 @@ vex-vue/
     │   │   ├── BattleHeader.vue        # 战斗头部（敌人名称 + 位置）
     │   │   ├── BattleModal.vue         # 战斗演出模态框（播放 battlelog + HP 条）
     │   │   ├── BattleMode.vue          # 战斗模式容器
-    │   │   ├── CollisionAnimation.vue  # 碰撞动画（冲刺 + 抖动）
     │   │   ├── DamageNumber.vue        # 残留伤害数字
     │   │   └── PreloadArea.vue         # 装填区（技能列表 + AP 条 + 队列 + 执行/清空）
     │   ├── inventory/
@@ -243,7 +242,7 @@ vex-vue/
 事件总线用于模块间解耦通信。例如：
 - `mapStore.loadMap()` 完成后 `broadcast('map:loaded')`
 - `tileActionStore` / `inventoryStore` / `logStore` 监听 `map:loaded` 后自行刷新
-- 战斗演出时 `battleStore` `broadcast('battle:play-action-animation')` 触发 `CollisionAnimation` 组件
+- 战斗演出由 `BattlePlaybackRunner` 直接调用 `battle-actor-executor.ts`，不再通过组件事件分发动作时序
 
 **对称注册模式**：每个 store 提供 `registerListeners()` 方法，在 `App.vue` 的 `onMounted` 中统一调用一次（内部用 `_listenersRegistered` 标志防重复）。
 
@@ -253,7 +252,7 @@ vex-vue/
 
 ```
 normal（探索）
-  ↓ 玩家点击敌人 → startBattle(enemyPid)
+  ↓ 玩家点击敌人 → startBattle(clickedPid，仅作为初始 focus)
   ↓ 切换到 battle 模式 + 初始化装填区（pre-battle）
   ↓ 玩家装填动作 → 点击执行 → battle.start
 battle（战斗）
@@ -303,16 +302,18 @@ battle（战斗）
 | `pre-battle` | 玩家点击敌人后、战斗开始前 | `battle.start` | 玩家预装填动作序列后提交，直接进入战斗 |
 | `in-battle` | 战斗中玩家回合 | `battle.submit_turn` | 玩家每回合装填动作并执行 |
 
-装填区通过监听 `battle:preload-init` 事件初始化，事件数据含 `mode` / `enemyPid` / `playerPid`。
+装填区通过 `battle:preload-init` 完成一次 session 初始化并清空旧 QueueItem；同一 qid 内的后续状态更新使用 `battle:preload-context-refresh`，不得覆盖已装填动作。事件中的 `enemyPid` 是 suggested/focused PID，不是战斗身份；真实 session identity 是 `battleStore.currentQid: number|null`。
 
 ### 3.5 瞄准模式（AimMode）
 
-部分技能 `target='enemy'` 且无明确目标时触发瞄准：
+技能列表使用 `aimType` / `selectionMode` / `captureResolver`。所有 `aimType='pid' && selectionMode='explicit'` 技能在 pre-battle 和 in-battle 都必须进入 AimMode，即使已有 suggested target：
 - 进入瞄准 → `broadcast('battle:aim-mode')` → `AimMode` 组件接管地图选目标
 - 选定目标 → `AimMode` `broadcast('battle:aim-target-selected')` → `PreloadArea.onTargetSelect`
 - 退出瞄准 → `broadcast('battle:aim-exit')`
 
-`uiStore.battleBtnState` 三态（`normal`/`battle`/`aim`）通过监听这些事件同步。
+候选来自 `battleStore.combatTargets.candidates`，展示集合与可提交集合分离：`member/joinable` 可选，`left/other_battle/blocked` 保留展示但不可提交。敌人锚点是独立 `[data-character-pid]` entity；同格多个角色点击时显示消歧菜单，键盘方向键循环、Enter 确认、Escape 退出。候选变化、角色移动/死亡和 qid 变化会重新校验焦点及可选状态。
+
+suggested PID 只预高亮。每个 QueueItem 保存自己的 AimIntent，因此同一动作链可以分别选择 A、B、C；提交前再次检查最新 candidate，后端 execute 仍是最终权威。
 
 ### 3.6 心跳守护进程与 NPC 轮询
 
@@ -372,7 +373,7 @@ obl_runtime_boot('heartbeat') + obl_tick_orchestrator_heartbeat()
 │  Components（.vue）                                          │
 │  ├─ 读取 store 状态（ref/computed）响应式渲染                │
 │  ├─ 调用 store action 触发业务逻辑                           │
-│  └─ 监听 dataManager 事件触发动画（如 CollisionAnimation）    │
+│  └─ 展示 store/runner 已编排的状态与演出结果                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Composables（use*.ts）                                      │
 │  ├─ 纯逻辑层（无响应式状态，或仅模块级缓存）                  │
@@ -457,7 +458,7 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 | `battle:aim-exit` | PreloadArea/AimMode | uiStore | 退出瞄准模式 |
 | `battle:aim-target-selected` | AimMode | PreloadArea | 瞄准选定目标 |
 | `battle:preload-init` | battleStore | PreloadArea | 初始化装填区 |
-| `battle:play-action-animation` | battleStore | CollisionAnimation | 播放 v2 动作动画计划 |
+| `battle:preload-context-refresh` | battleStore | PreloadArea | 同一 session 刷新 context/candidates，不清空 QueueItem |
 | `battle:play-damage-numbers` | battleStore | DamageNumber | 播放 v2 effect visual plan 残留伤害数字 |
 | `preload:executed` | PreloadArea | battleStore | 装填区执行完成，刷新战斗状态 |
 | `log:force-scroll` | logStore | useLogScroll | 强制日志滚动到底部 |
@@ -499,6 +500,7 @@ sendOblCommand(envelope)                  // POST oblivions/api/command.php
 | `obl_log` | 结构化日志条目数组 | logStore | 不缓存 |
 | `battle_log` | 战斗日志条目数组（played=0） | battleStore | 不缓存 |
 | `enemies` | 当前区域敌人列表 | mapStore, battleStore | 不缓存 |
+| `combat_targets` | qid + suggestedTargetPid + display/selectable candidates + character projection | battleStore, AimMode, PreloadArea | 不缓存 |
 | `skill_list` | 技能列表 + player_ap | PreloadArea | 不缓存 |
 
 **响应格式**：
@@ -634,7 +636,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 | `tileActionStore` | 地图格动作 | `tileActions`/`modalOpen`/`modalType` | `handleExplore()`/`handleSearch(iaid)`/`handlePickup(iid)`/`handlePickupAll(items)`/`handleSwitchRegion()` |
 | `inventoryStore` | 背包 + 装备 | `inventoryData`/`equipment`(computed) | `loadInventory()`/`handleDiscard(slot)` |
 | `logStore` | 游戏日志 | `entries`/`lastTs` | `refreshLog(forceScroll)` |
-| `battleStore` | 战斗状态机 | `currentMode`/`isPlayingBattleLog`/`isProcessingBattle`/`battleModalOpen` | `startBattle(enemyPid)`/`refreshBattle()`/`fetchAndPlayBattleLog()`/`notifyModalClosed()` |
+| `battleStore` | 战斗 session、候选与演出 | `currentMode`/`currentQid`/`combatContext`/`combatTargets`/`isPlayingBattleLog`/`battleModalOpen` | `startBattle(clickedPid)`/`loadCombatTargets()`/`refreshBattle()`/`fetchAndPlayBattleLog()` |
 | `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
 | `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
 | `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(envelope)` / `canExecute(command)` |
@@ -712,25 +714,26 @@ BattleLogCollector     battle-director-v2.ts     battle-director-v2.ts        ba
 - `battle-director-v2.ts` **导演层**：同步纯函数 `directV2(events)`，输入 `BattleLogV2Event[]` → 输出 `BattlePlayScriptV2`，不做 DOM 操作
 - `battle-director-v2.ts` **计划层**：同步纯函数 `planPlaybackV2(script)`，输入 `BattlePlayScriptV2` → 输出 `BattlePlaybackPlan`（含 `PlaybackStep[]` + `awaitPolicy` + `timeout`），与导演同文件
 - `battle-playback-runner.ts` **执行器**：`runBattlePlaybackPlan(plan, runtime)` 按 `PlaybackStep` 顺序执行，提供超时兜底，调用 actor-executor 和模态框
-- `battle-actor-executor.ts` **演员**：单 actor 动画执行（`prepareBattlefield` / `playActionAnimation` / `playCombatantCleared`），不涉及文案或 HP 更新
+- `battle-actor-executor.ts` **演员**：执行 action delivery、动态成员准备、动作和清场动画（`playActionDelivery` / `playCombatantJoined` / `playActionAnimation` / `playCombatantCleared`），不涉及文案或 HP 更新
 - `BattleModal.vue` **模态框**：演出组件，直接播放 v2 text cue，并按 effect delta 更新 HP 条
 
 ### 8.2 三类核心输出类型
 
 **BattleSegmentV2.kind**：`round_intro`（一轮开始）| `turn`（一回合动作）| `battle_end`（战斗终结）| `system`（系统展示）
 
-**DirectedActionV2**：包含 `actionUid/actionId/actor/targets/effects/success/animation/text`，演员层不再读旧 phase。
+**DirectedActionV2**：包含 `actionUid/actionId/actor/targets/deliveries/joinedCombatants/effects/success/animation/text`，演员层不再读旧 phase。
 
 **DirectedEffectV2**：包含 `effectUid/type/source/target/value/delta/visual/text`，伤害数字和 HP 更新均从 effect 读取。
 
-**PlaybackStep.kind**（计划层产物）：`prepare_map`（等地图就绪）| `segment_context`（更新敌人名/位置）| `action_animation`（单动作动画）| `combatant_cleared`（参战者退场）| `modal_text`（模态框文本）| `damage_linger`（残留伤害数字）。每个 step 携带 `awaitPolicy`（`none`/`completion`/`duration`）和 `timeout`。
+**PlaybackStep.kind**（计划层产物）：`prepare_map` | `segment_context` | `action_delivery` | `combatant_joined` | `action_animation` | `combatant_cleared` | `modal_text` | `damage_linger`。每个 step 携带 `awaitPolicy` 和 `timeout`。
 
 ### 8.3 整体流程（新版）
 
 ```
-玩家点击敌人 → battleStore.startBattle(enemyPid)
+玩家点击敌人 → battleStore.startBattle(clickedPid)
   ├─ 切换战斗模式 + 初始化装填区（pre-battle / in-battle）
-  └─ broadcast('battle:started')
+  ├─ clickedPid 只作为 focused target，currentQid=null
+  └─ 拉取 combat_targets
 
 玩家装填动作 → 点击执行 → 提交 battle.start / battle.submit_turn
   ↓ broadcast('preload:executed')
@@ -752,7 +755,9 @@ battleStore.onPreloadExecuted()
             │    └─ runBattlePlaybackPlan(plan, runtime)（执行器）
             │         按 PlaybackStep 顺序执行：
             │           segment_context → 更新敌人名称/位置
-            │           prepare_map     → 等待 mapGrid + player actor 就绪
+            │           prepare_map       → 等待 mapGrid + player actor 就绪
+            │           action_delivery   → 按 ResolvedAim 播放投射/图格爆炸
+            │           combatant_joined  → 准备并高亮新加入角色
             │           action_animation → playActionAnimation（actor-executor）
             │           combatant_cleared → playCombatantCleared（actor-executor）
             │           modal_text       → playSegmentInModal（BattleModal.vue）
@@ -807,7 +812,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 **planPlaybackV2 按 segment.kind 生成 PlaybackStep 序列**：
 - `round_intro` 段：单个 `modal_text` step（`alwaysShowHeader: true`）
 - `battle_end` 段：单个 `modal_text` step（`isBattleEnd: true`）
-- `turn` 段：`segment_context` → `prepare_map` → 每个 action 一个 `action_animation` step → 每个 `combatant_cleared` notice 一个 step → `modal_text` → `damage_linger`
+- `turn` 段：`segment_context` → `prepare_map` → 每个 action 的 ordered delivery steps → joined steps → action animation → cleared steps → `modal_text` → `damage_linger`
 
 **runBattlePlaybackPlan 执行策略**：
 - `awaitPolicy: 'none'`：fire-and-forget（如 `damage_linger`）
@@ -841,10 +846,12 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | 函数 | 说明 |
 |------|------|
 | `prepareBattlefield()` | 等待 `mapGrid` 和 player actor 就绪（最多 10 次重试） |
+| `playActionDelivery(action, delivery)` | 按 ResolvedAim 锚点播放 projectile/explosion cue；空目标 grenade 仍可播放 |
+| `playCombatantJoined(joined)` | 对后端确认加入的稳定 PID actor 播放准备/高亮，不重建实体 |
 | `playActionAnimation(action, currentPid)` | 按 `action.animation.kind` 分发：melee_hit/projectile/area_burst/move/escape/none |
 | `playCombatantCleared(notice, currentPid)` | 参战者退场动画：玩家调 `onDie`/`onFlee`，NPC 调 `playFadeOut` |
 
-`battle-director-v2.fixture.ts` 提供最小回归样例，覆盖 `round_start/turn_start/action_start/effect_applied/action_end/action_failed/combatant_cleared/battle_end`。
+`battle-director-v2.fixture.ts` 提供回归样例，覆盖 `round_start/turn_start/action_start/action_delivery/combatant_joined/effect_applied/action_end/action_failed/combatant_cleared/battle_end`，并校验 delivery/joined PlaybackStep。
 
 ### 8.7 BattleLogV2Event 字段类型
 
@@ -881,7 +888,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | `renderBattleLogEntryHtml` / `renderDirectedEntryHtml` | `BattleModal.vue` 直接播放 text cue |
 
 **保留的组件/逻辑**：
-- `CollisionAnimation` + `DamageNumber`：动画和伤害数字组件保留，数据源改为 action/effect visual plan
+- `DamageNumber`：继续消费 effect visual plan，并按 `[data-character-pid]` 定位具体角色
 - `BattleModal` sleep reject + 30s 超时兜底：保留
 - NPC 回合轮询（`startNpcTurnRefresh`/`stopNpcTurnRefresh`）：保留
 - `command-queue.ts` + `isProcessingBattle` 锁：保留
@@ -1051,7 +1058,6 @@ App.vue
 │   │   └── MapContainer.vue
 │   │       ├── MapGrid.vue          # v-for 渲染地图格 + 实体层（entities v-for）+ 迷雾
 │   │       │   └── （角色层 .actor × N 与 .map-cell × N 同级，详见 §10.3）
-│   │       ├── CollisionAnimation.vue  # 战斗动作动画（监听 battle:play-action-animation）
 │   │       ├── DamageNumber.vue     # 残留伤害数字（监听 battle:play-damage-numbers）
 │   │       └── 缩放控件 + 立绘调试按钮（弹/倒，直调 playerAvatarStore）
 │   └── RightPanel.vue
@@ -1080,7 +1086,7 @@ RightPanel.vue (battle mode)
 ### 10.2 组件通信模式
 
 1. **Store 驱动**：组件读取 store 的 ref/computed 响应式渲染，调用 store action 触发业务
-2. **事件触发动画**：store `broadcast` 事件 → 组件 `listen` 后执行 DOM 动画（如 `CollisionAnimation`）
+2. **计划驱动动画**：Director/Planner 生成 PlaybackStep，Runner 直接调用 ActorExecutor；组件事件只保留 UI 通知和伤害数字等非主时序用途
 3. **Teleport to body**：模态框类组件（`Modal`/`BattleModal`）使用 `<Teleport to="body">` 避免 `position: fixed` 与父级 `transform` 冲突
 4. **watch store 触发**：`BattleModal` 通过 `watch(() => battleStore.battleModalOpen)` 触发播放；`useMapEntities` 通过 `watch(() => playerAvatarStore.intentSeq)` 派发动画
 
@@ -1322,7 +1328,7 @@ perf.clear();
 | `vex/js/battle.js` | `stores/battle.ts` |
 | —（新增） | `stores/battle-director-v2.ts`（导演+计划）+ `stores/battle-playback-runner.ts`（执行器）+ `stores/battle-actor-executor.ts`（演员） |
 | `vex/js/battle-modal.js` | `components/battle/BattleModal.vue` |
-| `vex/js/battle-animation.js` | `components/battle/CollisionAnimation.vue` + `DamageNumber.vue` + `stores/battle-actor-executor.ts` |
+| `vex/js/battle-animation.js` | `components/battle/DamageNumber.vue` + `stores/battle-playback-runner.ts` + `stores/battle-actor-executor.ts` |
 | `vex/js/battle-render.js` | `stores/battle-director-v2.ts` text cue + `BattleModal.vue` |
 | `vex/js/battle-preload.js` | `components/battle/PreloadArea.vue` |
 | `vex/js/utils.js` | `api/client.ts` + `utils/format.ts` |

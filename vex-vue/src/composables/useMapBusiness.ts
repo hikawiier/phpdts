@@ -28,6 +28,7 @@ import { setRenderCallbacks, getZoomLevel } from '@/composables/useMapRender';
 import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer } from '@/composables/useMapInteraction';
 import { perf } from '@/utils/perf';
 import type { Character } from '@/types/character';
+import { isBattleMapInputLocked, isSilentMapCommandLock } from '@/stores/battle-ui-policy';
 
 /**
  * 点击移动 / 点击当前格探索
@@ -39,6 +40,12 @@ import type { Character } from '@/types/character';
 export async function clickMove(areaId: string | number): Promise<void> {
   if (areaId === undefined || areaId === null) return;
   const mapStore = useMapStore();
+  const battleStore = useBattleStore();
+  if (isBattleMapInputLocked({
+    currentMode: battleStore.currentMode,
+    isPlayingBattleLog: battleStore.isPlayingBattleLog,
+    isProcessingBattle: battleStore.isProcessingBattle,
+  })) return;
 
   // 点击当前格 → 触发探索（广播事件，tile-action 监听执行）
   if (String(areaId) === String(mapStore.curLoc)) {
@@ -85,6 +92,7 @@ export async function clickMove(areaId: string | number): Promise<void> {
 
       perf.report();
     } else {
+      if (result.error === 'LOCKED' && isSilentMapCommandLock(result.lockReason)) return;
       const message = result.message || result.error || '';
       debugBus.emit('action', 'clickMove:failed', { target: areaId, error: result.error, message });
       dataManager.broadcast('ui:toast', {
@@ -121,7 +129,7 @@ export async function handleEnemyClick(enemy: Character): Promise<void> {
     return;
   }
 
-  const engageData = (result.gamedata?.data as {
+  const engageData = (result.gamedata as {
     reachable: boolean;
     max_attack_range: number;
     move_power: number;

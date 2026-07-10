@@ -26,7 +26,6 @@ import { dataManager } from '@/stores/data-manager';
 import { usePlayerStore } from '@/stores/player';
 import { useBattleStore } from '@/stores/battle';
 import { useInventoryStore } from '@/stores/inventory';
-import { useMapStore } from '@/stores/map';
 import { COMMAND_REGISTRY } from '@/stores/command-registry';
 
 class CommandQueue {
@@ -96,7 +95,12 @@ class CommandQueue {
     // ── 前置检查：复用 _checkLocks（与 canExecute 共用，保证一致） ──
     const lockReason = this._lockReason(command);
     if (lockReason !== null) {
-      return { success: false, error: 'LOCKED', message: `当前状态不可执行此操作：${lockReason}` };
+      return {
+        success: false,
+        error: 'LOCKED',
+        lockReason,
+        message: `当前状态不可执行此操作：${lockReason}`,
+      };
     }
 
     const spec = COMMAND_REGISTRY[command];
@@ -136,13 +140,6 @@ class CommandQueue {
       if (!isHeartbeatSoftFailed(heartbeat)) {
         for (const scope of changedScopes) {
           dataManager.invalidate(scope);
-        }
-        if (changedScopes.includes('game_map') || changedScopes.includes('enemies')) {
-          try {
-            await useMapStore().loadMap();
-          } catch (e) {
-            console.error('[CommandQueue] map refresh after heartbeat error:', e);
-          }
         }
       }
 

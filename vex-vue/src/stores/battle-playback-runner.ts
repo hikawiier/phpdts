@@ -1,6 +1,8 @@
 import { dataManager } from '@/stores/data-manager';
 import {
+  playActionDelivery,
   playActionAnimation,
+  playCombatantJoined,
   playCombatantCleared,
   prepareBattlefield,
 } from './battle-actor-executor';
@@ -50,6 +52,10 @@ function createStepTask(step: PlaybackStep, runtime: BattlePlaybackRuntime): Pro
       return runtime.updateSegmentContext(step.segment, runtime.npcPid);
     case 'prepare_map':
       return prepareBattlefield();
+    case 'action_delivery':
+      return playActionDelivery(step.action, step.delivery);
+    case 'combatant_joined':
+      return playCombatantJoined(step.joined);
     case 'action_animation':
       return playActionAnimation(step.action, runtime.currentPid);
     case 'combatant_cleared':

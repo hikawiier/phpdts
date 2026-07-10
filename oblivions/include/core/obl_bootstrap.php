@@ -49,6 +49,10 @@ require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.main.php'
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.runtime.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.context.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.planned_state.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.aim.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.target_capture.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.participation.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.target_unit.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.core.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.pipeline.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect.php';

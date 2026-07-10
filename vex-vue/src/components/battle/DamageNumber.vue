@@ -52,18 +52,12 @@ function clearAllTimers(): void {
 // DOM 元素查询
 // ══════════════════════════════════════════════════
 
-/** 获取玩家地图元素（当前格） */
-function getPlayerElement(): HTMLElement | null {
+/** 按角色 PID 获取地图实体；cell 仅作为玩家尚未挂载时的兜底。 */
+function getCharacterElement(pid: number, player = false): HTMLElement | null {
   const grid = document.getElementById('mapGrid');
   if (!grid) return null;
-  return grid.querySelector<HTMLElement>('.map-cell.current');
-}
-
-/** 获取敌人地图元素 */
-function getEnemyElement(enemyPid: number): HTMLElement | null {
-  const grid = document.getElementById('mapGrid');
-  if (!grid) return null;
-  return grid.querySelector<HTMLElement>(`[data-enemy-pid="${enemyPid}"]`);
+  return grid.querySelector<HTMLElement>(`[data-character-pid="${pid}"]`)
+    ?? (player ? grid.querySelector<HTMLElement>('.map-cell.current') : null);
 }
 
 // ══════════════════════════════════════════════════
@@ -143,10 +137,12 @@ defineExpose({
 
 function getTargetElement(effect: DirectedEffectV2, enemyPid: number): HTMLElement | null {
   const snapshot = effect.target.snapshot;
-  if (snapshot?.type === 0 || effect.target.id === 'player') return getPlayerElement();
-  if (snapshot && snapshot.type > 0) return getEnemyElement(snapshot.pid);
-  if (effect.target.pid && effect.target.pid > 0) return getEnemyElement(effect.target.pid);
-  return getEnemyElement(enemyPid);
+  if (snapshot?.type === 0 || effect.target.id === 'player') {
+    return getCharacterElement(snapshot?.pid ?? effect.target.pid ?? 0, true);
+  }
+  if (snapshot && snapshot.type > 0) return getCharacterElement(snapshot.pid);
+  if (effect.target.pid && effect.target.pid > 0) return getCharacterElement(effect.target.pid);
+  return getCharacterElement(enemyPid);
 }
 </script>
 

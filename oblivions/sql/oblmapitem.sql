@@ -28,4 +28,4 @@ CREATE TABLE bra_oblmapitem (
   PRIMARY KEY (iid),
   INDEX idx_pgroup_pls (pgroup, pls),
   INDEX idx_iaid (iaid)
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

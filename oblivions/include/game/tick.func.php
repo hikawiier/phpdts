@@ -586,8 +586,7 @@ function obl_tick_dispatch($delta, &$ctx) {
                 'delta' => $delta,
             ), 'api');  // request 来源：tick 事件处理通常在 oblivions/api/heartbeat.php 请求中触发
         }
-        obl_tick_frame_result_finalize($ctx);
-        return;  // 异常时不推进 tick，直接返回
+        throw $e;
     }
 
     // 末尾：统一推进 tick（如果 battle_npc phase 请求推进）
@@ -625,7 +624,7 @@ function obl_resolve_tick_events($delta) {
                 'delta' => $delta,
             ), 'api');
         }
-        return obl_tick_frame_result_init($delta);
+        throw new RuntimeException('Tick player fetch failed for user ' . (string)$cuser);
     }
 
     $ctx = array(

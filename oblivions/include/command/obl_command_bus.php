@@ -59,6 +59,7 @@ function obl_command_api_handle($envelope) {
                 obl_tick_prepare_pending_battle_actor_scope($command, isset($pdata['pid']) ? (int)$pdata['pid'] : 0);
             }
             $dispatch = obl_command_handler_dispatch($command, $payload, $pdata);
+            if (!empty($dispatch['rollback'])) $GLOBALS['obl_transaction_rollback_only'] = true;
             $feedback = obl_command_feedback_result($command, $feedback_snapshot);
             if (!$dispatch['ok']) {
                 $response = obl_command_response_error($dispatch['code'], isset($dispatch['message']) ? $dispatch['message'] : '', null, $request_id);
@@ -79,18 +80,19 @@ function obl_command_api_handle($envelope) {
                 );
             } else {
                 $dispatched = true;
-                obl_command_after_dispatch($command, $contract, $pdata);
+                if (empty($contract['read_only'])) obl_command_after_dispatch($command, $contract, $pdata);
                 $response_data = obl_command_build_response_data($command, $contract, $pdata);
                 // 允许 handler 返回额外数据（如 combat.can_engage 的 L0 可达性查询结果）
                 if (isset($dispatch['data']) && is_array($dispatch['data'])) {
-                    $response_data['data'] = $dispatch['data'];
+                    $response_data = array_merge($response_data, $dispatch['data']);
                 }
                 $response = obl_command_response_success($request_id, $response_data, 'OK');
             }
         }
 
-        obl_command_persist_logs($pdata);
-        obl_command_save_and_tick($command, $contract, $pdata, $dispatched, isset($obl_runtime_ctx) ? $obl_runtime_ctx : null);
+        if (empty($contract['read_only'])) {
+            obl_command_save_and_tick($command, $contract, $pdata, $dispatched, isset($obl_runtime_ctx) ? $obl_runtime_ctx : null);
+        }
         return $response;
     } catch (Throwable $e) {
         if (isset($obl_error_log) && $obl_error_log) {
@@ -99,10 +101,7 @@ function obl_command_api_handle($envelope) {
                 'message' => $e->getMessage(),
             ), 'command');
         }
-        if (isset($pdata) && is_array($pdata)) {
-            obl_command_persist_logs($pdata);
-        }
-        return obl_command_response_error('INTERNAL_ERROR', $e->getMessage(), null, $request_id);
+        throw $e;
     }
 }
 

@@ -60,6 +60,21 @@ export interface DirectedEffectV2 {
   text?: TextCue;
 }
 
+export interface DirectedDeliveryV2 {
+  rawLogId: number;
+  type: string;
+  resolvedAim: CombatTargetView;
+}
+
+export interface DirectedCombatantJoinedV2 {
+  rawLogId: number;
+  qid: number | null;
+  combatant: CombatantView;
+  sourceActionUid: string;
+  myorder: number;
+  done: number;
+}
+
 export interface DirectedActionV2 {
   actionUid: string;
   rawLogId: number;
@@ -67,6 +82,8 @@ export interface DirectedActionV2 {
   actor: CombatantView;
   targets: CombatTargetView[];
   effects: DirectedEffectV2[];
+  deliveries: DirectedDeliveryV2[];
+  joinedCombatants: DirectedCombatantJoinedV2[];
   success: boolean;
   reason?: string | null;
   animation: ActionAnimationPlan;
@@ -102,6 +119,8 @@ export interface BattlePlayScriptV2 {
 export type PlaybackStepKind =
   | 'prepare_map'
   | 'segment_context'
+  | 'action_delivery'
+  | 'combatant_joined'
   | 'action_animation'
   | 'combatant_cleared'
   | 'modal_text'
@@ -132,6 +151,20 @@ export interface ActionAnimationStep extends PlaybackStepBase {
   action: DirectedActionV2;
 }
 
+export interface ActionDeliveryStep extends PlaybackStepBase {
+  kind: 'action_delivery';
+  segment: BattleSegmentV2;
+  action: DirectedActionV2;
+  delivery: DirectedDeliveryV2;
+}
+
+export interface CombatantJoinedStep extends PlaybackStepBase {
+  kind: 'combatant_joined';
+  segment: BattleSegmentV2;
+  action: DirectedActionV2;
+  joined: DirectedCombatantJoinedV2;
+}
+
 export interface CombatantClearedStep extends PlaybackStepBase {
   kind: 'combatant_cleared';
   segment: BattleSegmentV2;
@@ -156,6 +189,8 @@ export interface DamageLingerStep extends PlaybackStepBase {
 export type PlaybackStep =
   | PrepareMapStep
   | SegmentContextStep
+  | ActionDeliveryStep
+  | CombatantJoinedStep
   | ActionAnimationStep
   | CombatantClearedStep
   | ModalTextStep
@@ -265,6 +300,8 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
           actor,
           targets,
           effects: [],
+          deliveries: [],
+          joinedCombatants: [],
           success: true,
           animation: decideActionAnimation(actionId, actor, targets),
           text: [buildActionText(actionId, actor, targets)],
@@ -280,6 +317,34 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
       const effect = toDirectedEffect(event);
       item.action.effects.push(effect);
       item.action.animation = deriveActionAnimationFromEffects(item.action);
+      continue;
+    }
+
+    if (event.event_type === 'action_delivery') {
+      const actionUid = String(payload.action_uid ?? event.action_uid ?? '');
+      const item = pending.get(actionUid);
+      if (!item) continue;
+      item.action.deliveries.push({
+        rawLogId: event.log_id,
+        type: String(payload.delivery_type ?? 'none'),
+        resolvedAim: toResolvedAimView(payload.resolved_aim),
+      });
+      continue;
+    }
+
+    if (event.event_type === 'combatant_joined') {
+      const actionUid = String(payload.source_action_uid ?? payload.action_uid ?? event.action_uid ?? '');
+      const item = pending.get(actionUid);
+      const combatant = toCombatantView(payload.combatant);
+      if (!item || !combatant) continue;
+      item.action.joinedCombatants.push({
+        rawLogId: event.log_id,
+        qid: payload.qid === null || payload.qid === undefined ? event.qid : Number(payload.qid),
+        combatant,
+        sourceActionUid: actionUid,
+        myorder: Number(payload.myorder ?? 0),
+        done: Number(payload.done ?? 0),
+      });
       continue;
     }
 
@@ -441,6 +506,30 @@ export function planPlaybackV2(script: BattlePlayScriptV2): BattlePlaybackPlan {
     });
 
     for (const action of segment.actions) {
+      for (const delivery of action.deliveries) {
+        steps.push({
+          id: `${nextId('action_delivery', segment)}-${action.actionUid}-${delivery.rawLogId}`,
+          kind: 'action_delivery',
+          segment,
+          action,
+          delivery,
+          awaitPolicy: delivery.type === 'none' ? 'none' : 'completion',
+          timeout: 1400,
+        });
+      }
+
+      for (const joined of action.joinedCombatants) {
+        steps.push({
+          id: `${nextId('combatant_joined', segment)}-${action.actionUid}-${joined.combatant.pid}`,
+          kind: 'combatant_joined',
+          segment,
+          action,
+          joined,
+          awaitPolicy: 'completion',
+          timeout: 1000,
+        });
+      }
+
       steps.push({
         id: `${nextId('action_animation', segment)}-${action.actionUid}`,
         kind: 'action_animation',
@@ -522,6 +611,26 @@ function toTargetView(ref: CombatTargetRef): CombatTargetView {
       pgroup: Number(ref.pgroup) || 0,
       pls: Number(ref.pls) || 0,
     };
+  }
+  return { id: 'none', kind: 'none' };
+}
+
+function toResolvedAimView(value: unknown): CombatTargetView {
+  if (!value || typeof value !== 'object') return { id: 'none', kind: 'none' };
+  const aim = value as Record<string, unknown>;
+  const kind = String(aim.kind ?? 'none');
+  if (kind === 'tile') {
+    const pgroup = Number(aim.pgroup ?? 0);
+    const pls = Number(aim.pls ?? 0);
+    return { id: `tile-${pgroup}-${pls}`, kind: 'tile', pgroup, pls };
+  }
+  if (kind === 'character') {
+    const pid = Number(aim.pid ?? 0);
+    return { id: pid > 0 ? `pid-${pid}` : 'none', kind: 'pid', pid };
+  }
+  if (kind === 'self') {
+    const pid = Number(aim.pid ?? 0);
+    return { id: pid > 0 ? `pid-${pid}` : 'player', kind: 'self', pid };
   }
   return { id: 'none', kind: 'none' };
 }

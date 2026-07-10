@@ -24,6 +24,8 @@ export type AppEvent =
   // ── M6 战斗演出事件（Runner → 组件单向触发） ──
   | 'battle:play-damage-numbers'
   | 'battle:preload-init'
+  | 'battle:preload-context-refresh'
+  | 'battle:combat-targets-updated'
   // ── M6 瞄准模式事件（组件间通信） ──
   | 'battle:aim-target-selected'
 

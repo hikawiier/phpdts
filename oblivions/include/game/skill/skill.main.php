@@ -363,6 +363,7 @@ function skill_get_available_list(&$pdata) {
     foreach ($pdata['skillpara'] as $skill_id => $state) {
         $config = skill_get_config($skill_id);
         if (!$config) continue;
+        $combat_config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$skill_id) : null;
 
         $lstact = isset($state['lstact']) ? (int)$state['lstact'] : 0;
         $cd = isset($config['cd']) ? (int)$config['cd'] : 0;
@@ -381,7 +382,9 @@ function skill_get_available_list(&$pdata) {
             'apcost'       => $apcost,
             'cd'           => $cd,
             'finisher'     => isset($config['finisher']) ? (int)$config['finisher'] : 0,
-            'target'       => isset($config['target']) ? $config['target'] : 'self',
+            'aimType'      => isset($combat_config['aim']['resolver']) ? (string)$combat_config['aim']['resolver'] : 'none',
+            'selectionMode'=> in_array(($combat_config['aim']['resolver'] ?? 'none'), array('pid', 'tile'), true) ? 'explicit' : 'implicit',
+            'captureResolver' => isset($combat_config['capture']['resolver']) ? (string)$combat_config['capture']['resolver'] : 'identity',
             'range_mode'   => $range_mode,
             'range_max'    => $range_max,
             'range_bonus'  => $range_bonus,

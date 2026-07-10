@@ -34,7 +34,8 @@ import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
 import { useMapStore } from '@/stores/map';
-import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy, CombatViewModel } from '@/types/api';
+import { useCharacterStore } from '@/stores/character';
+import type { BattleLogRawEntry, BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse } from '@/types/api';
 import {
   directV2,
   isBattleLogV2Event,
@@ -43,6 +44,10 @@ import {
   type BattleSegmentV2,
 } from './battle-director-v2';
 import { runBattlePlaybackPlan, type SegmentPlayOptions } from './battle-playback-runner';
+import {
+  DeferredVisualScopes,
+  shouldCommitBattleVisualState,
+} from './battle-ui-policy';
 
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
@@ -90,9 +95,11 @@ export const useBattleStore = defineStore('battle', () => {
   // ── 战斗状态 ──
   const currentMode = ref<'normal' | 'battle'>('normal');
   const currentEnemyPid = ref<number>(0);
+  const currentQid = ref<number | null>(null);
   const currentGroomid = ref<number>(0);
   const currentPid = ref<number>(0);
   const combatContext = ref<CombatViewModel | null>(null);
+  const combatTargets = ref<CombatTargetsResponse>({ qid: null, suggestedTargetPid: null, candidates: [] });
   const isPlayingBattleLog = ref<boolean>(false);
   const isProcessingBattle = ref<boolean>(false);
 
@@ -113,6 +120,9 @@ export const useBattleStore = defineStore('battle', () => {
   // ── 守护进程定时器（不响应式，仅内部使用） ──
   let daemonTimer: ReturnType<typeof setTimeout> | null = null;
   let daemonRunning = false;
+  let combatTargetsRequestGeneration = 0;
+  const deferredVisualScopes = new DeferredVisualScopes();
+  let characterProjectionDeferred = false;
 
   // ── 模态框播放完成回调（内部使用） ──
   let _modalResolve: (() => void) | null = null;
@@ -138,8 +148,8 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   function resolveEnemyPid(battleQueue: BattleQueue | null, context: CombatViewModel | null): number {
-    if (context?.defaultTargetPid && context.defaultTargetPid > 0) {
-      return context.defaultTargetPid;
+    if (context?.suggestedTargetPid && context.suggestedTargetPid > 0) {
+      return context.suggestedTargetPid;
     }
     return extractEnemyPid(battleQueue);
   }
@@ -153,7 +163,34 @@ export const useBattleStore = defineStore('battle', () => {
     return enemies;
   }
 
-  async function applyHeartbeatChangedScopes(heartbeat: OblHeartbeatResponse): Promise<void> {
+  async function loadCombatTargets(): Promise<CombatTargetsResponse> {
+    const generation = ++combatTargetsRequestGeneration;
+    const result = await dataManager.fetch('combat_targets', true);
+    if (generation !== combatTargetsRequestGeneration) return combatTargets.value;
+    const expectedQid = combatContext.value?.qid ?? currentQid.value;
+    const raw = result.status === 'success' && result.data
+      ? result.data as CombatTargetsResponse
+      : { qid: expectedQid, suggestedTargetPid: null, candidates: [] };
+    const next: CombatTargetsResponse = {
+      qid: raw.qid === null ? null : Number(raw.qid),
+      suggestedTargetPid: raw.suggestedTargetPid === null ? null : Number(raw.suggestedTargetPid),
+      candidates: Array.isArray(raw.candidates)
+        ? raw.candidates.map(candidate => ({ ...candidate, pid: Number(candidate.pid) }))
+        : [],
+    };
+    if (next.qid !== expectedQid) return combatTargets.value;
+    combatTargets.value = next;
+    const enemies = next.candidates.flatMap(candidate => candidate.character ? [candidate.character] : []);
+    if (enemies.length > 0) {
+      const characterStore = useCharacterStore();
+      characterStore.mergeEnemies(enemies);
+      characterStore.mergeCombatContext(combatContext.value);
+    }
+    dataManager.broadcast('battle:combat-targets-updated', next);
+    return next;
+  }
+
+  function deferHeartbeatChangedScopes(heartbeat: OblHeartbeatResponse): void {
     const changedScopes = getHeartbeatChangedScopes(heartbeat);
     if (changedScopes.length === 0) return;
 
@@ -161,14 +198,31 @@ export const useBattleStore = defineStore('battle', () => {
       dataManager.invalidate(scope);
     }
 
+    deferredVisualScopes.record(changedScopes);
+  }
+
+  function deferPlayerInfoProjection(playerInfo: PlayerInfo): void {
+    usePlayerStore().setPlayerInfo(playerInfo, { syncCharacters: false });
+    characterProjectionDeferred = true;
+  }
+
+  async function flushDeferredVisualState(): Promise<void> {
+    const changedScopes = deferredVisualScopes.snapshot();
+
     try {
+      if (characterProjectionDeferred) {
+        usePlayerStore().syncCharacterProjection();
+      }
       if (changedScopes.includes('game_map')) {
         await useMapStore().loadMap();
       } else if (changedScopes.includes('enemies')) {
         await refreshMapEnemies();
       }
+      if (changedScopes.includes('combat_targets')) await loadCombatTargets();
+      characterProjectionDeferred = false;
+      deferredVisualScopes.commit(changedScopes);
     } catch (e) {
-      console.error('[Battle] map sync after heartbeat error:', e);
+      console.error('[Battle] deferred visual state sync error:', e);
     }
   }
 
@@ -232,7 +286,14 @@ export const useBattleStore = defineStore('battle', () => {
   async function _daemonBeat(): Promise<void> {
     try {
       const heartbeat = await oblHeartbeat();
-      await applyHeartbeatChangedScopes(heartbeat);
+      deferHeartbeatChangedScopes(heartbeat);
+      const playerStore = usePlayerStore();
+      if (currentMode.value === 'normal'
+        && !isPlayingBattleLog.value
+        && !isProcessingBattle.value
+        && playerStore.oblBattleState !== 'PROCESSING') {
+        await flushDeferredVisualState();
+      }
     } catch {
       // 静默失败，下次心跳重试
     }
@@ -276,18 +337,21 @@ export const useBattleStore = defineStore('battle', () => {
    * battlelog 的拉取播放由 refreshBattle() 独立调用。
    */
   function enterBattleMode(enemyPid: number, playerTurn: boolean, context: CombatViewModel | null = combatContext.value): void {
-    if (currentMode.value === 'battle' && currentEnemyPid.value === enemyPid) {
-      updateActionPanel(playerTurn);
+    const nextQid = context?.qid ?? null;
+    if (currentMode.value === 'battle' && currentQid.value === nextQid && nextQid !== null) {
+      currentEnemyPid.value = enemyPid;
+      updateActionPanel(playerTurn, context, false);
       return;
     }
 
     currentMode.value = 'battle';
     currentEnemyPid.value = enemyPid;
+    currentQid.value = nextQid;
 
     // 敌人名称暂空，等 playback segment_context step 从 battlelog 提取后更新
     enemyName.value = '';
 
-    updateActionPanel(playerTurn, context);
+    updateActionPanel(playerTurn, context, true);
 
     // 玩家小人：被动遭遇战也触发战斗开始意图
     usePlayerAvatarStore().onBattleStart();
@@ -302,12 +366,17 @@ export const useBattleStore = defineStore('battle', () => {
     if (currentMode.value === 'normal') return;
 
     currentMode.value = 'normal';
+    combatTargetsRequestGeneration++;
     currentEnemyPid.value = 0;
+    currentQid.value = null;
     combatContext.value = null;
+    combatTargets.value = { qid: null, suggestedTargetPid: null, candidates: [] };
     enemyName.value = '';
     isPlayerTurn.value = false;
     battleModalOpen.value = false;
     currentSegment.value = null;
+    deferredVisualScopes.clear();
+    characterProjectionDeferred = false;
 
     dataManager.invalidate('enemies');
     dataManager.broadcast('battle:ended');
@@ -319,13 +388,13 @@ export const useBattleStore = defineStore('battle', () => {
   /**
    * 更新动作面板：玩家顺位时显示装填区，否则显示等待提示
    */
-  function updateActionPanel(playerTurn: boolean, context: CombatViewModel | null = combatContext.value): void {
+  function updateActionPanel(playerTurn: boolean, context: CombatViewModel | null = combatContext.value, initialize = false): void {
     isPlayerTurn.value = playerTurn;
     if (playerTurn) {
       nextTick(() => {
-        dataManager.broadcast('battle:preload-init', {
+        dataManager.broadcast(initialize ? 'battle:preload-init' : 'battle:preload-context-refresh', {
           mode: 'in-battle',
-          enemyPid: context?.defaultTargetPid || currentEnemyPid.value,
+          enemyPid: combatTargets.value.suggestedTargetPid || context?.suggestedTargetPid || currentEnemyPid.value,
           playerPid: currentPid.value,
           combatContext: context,
         });
@@ -347,6 +416,7 @@ export const useBattleStore = defineStore('battle', () => {
 
     currentMode.value = 'battle';
     currentEnemyPid.value = enemyPid;
+    currentQid.value = null;
     combatContext.value = null;
     isPlayerTurn.value = true;
 
@@ -362,6 +432,7 @@ export const useBattleStore = defineStore('battle', () => {
     });
 
     dataManager.broadcast('battle:started', { enemyPid });
+    void loadCombatTargets();
 
     // 玩家小人：战斗开始意图
     usePlayerAvatarStore().onBattleStart();
@@ -397,14 +468,12 @@ export const useBattleStore = defineStore('battle', () => {
       // （经 game:tick-advanced 事件传入），直接复用，避免重复 POST heartbeat。
       const heartbeat = prefetchedHeartbeat ?? await oblHeartbeat();
       if (isHeartbeatSoftFailed(heartbeat)) return; // tick 未推进，等下一轮
-      if (!prefetchedHeartbeat) {
-        await applyHeartbeatChangedScopes(heartbeat);
-      }
+      deferHeartbeatChangedScopes(heartbeat);
       const result = await dataManager.fetch('player_info', true);
       if (result.status !== 'success' || !result.data) return;
 
       const playerInfo = result.data as PlayerInfo;
-      usePlayerStore().setPlayerInfo(playerInfo);
+      deferPlayerInfoProjection(playerInfo);
       const action = playerInfo.action || '';
       const battleQueue = playerInfo.battle_queue || null;
       const nextCombatContext = playerInfo.combat_context || null;
@@ -431,6 +500,9 @@ export const useBattleStore = defineStore('battle', () => {
       // 拉取并播放 battlelog —— 播完钩子内部触发后端校验
       // fetchAndPlayBattleLog 播完后会调 verifyBattleStateAndDecide，由后端校验决定退出还是继续
       await fetchAndPlayBattleLog();
+      if (currentMode.value === 'normal' && action !== 'battle') {
+        await flushDeferredVisualState();
+      }
     } catch (e) {
       console.error('[Battle] refreshBattle error:', e);
       useToastStore().showToast('战斗数据异常，请刷新', 'error', 4000, false, 'battle-error');
@@ -458,20 +530,24 @@ export const useBattleStore = defineStore('battle', () => {
 
     const afterHeartbeat = await oblHeartbeat();
     if (isHeartbeatSoftFailed(afterHeartbeat)) return; // 锁忙，等下一轮
-    await applyHeartbeatChangedScopes(afterHeartbeat);
+    deferHeartbeatChangedScopes(afterHeartbeat);
 
     const afterResult = await dataManager.fetch('player_info', true);
     if (afterResult.status !== 'success' || !afterResult.data) return;
 
     const afterInfo = afterResult.data as PlayerInfo;
-    usePlayerStore().setPlayerInfo(afterInfo);
+    deferPlayerInfoProjection(afterInfo);
     combatContext.value = afterInfo.combat_context || null;
 
     const afterAction = afterInfo.action || '';
+    const afterBattleState = afterInfo.obl_battle_state;
+    if (shouldCommitBattleVisualState(afterAction, afterBattleState)) {
+      await flushDeferredVisualState();
+    }
     if (afterAction === 'battle') {
       // 继续战斗
       currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
-      if (afterInfo.obl_battle_state === 'PLAYER_TURN') {
+      if (afterBattleState === 'PLAYER_TURN') {
         const toastStore = useToastStore();
         toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
       }
@@ -658,6 +734,7 @@ export const useBattleStore = defineStore('battle', () => {
   async function onPreloadExecuted(): Promise<void> {
     dataManager.invalidate('player_info');
     dataManager.invalidate('enemies');
+    dataManager.invalidate('combat_targets');
 
     await refreshBattle();
   }
@@ -691,17 +768,22 @@ export const useBattleStore = defineStore('battle', () => {
 
   /** 重置为初始状态（退出战斗/切换角色时） */
   function reset(): void {
+    combatTargetsRequestGeneration++;
     currentMode.value = 'normal';
     currentEnemyPid.value = 0;
+    currentQid.value = null;
     currentGroomid.value = 0;
     currentPid.value = 0;
     combatContext.value = null;
+    combatTargets.value = { qid: null, suggestedTargetPid: null, candidates: [] };
     isPlayingBattleLog.value = false;
     isProcessingBattle.value = false;
     isPlayerTurn.value = false;
     enemyName.value = '';
     battleModalOpen.value = false;
     currentSegment.value = null;
+    deferredVisualScopes.clear();
+    characterProjectionDeferred = false;
     stopNpcTurnRefresh();
     if (_modalResolve) {
       _modalResolve();
@@ -713,7 +795,9 @@ export const useBattleStore = defineStore('battle', () => {
     // 状态
     currentMode,
     currentEnemyPid,
+    currentQid,
     combatContext,
+    combatTargets,
     currentGroomid,
     currentPid,
     isPlayingBattleLog,
@@ -737,6 +821,7 @@ export const useBattleStore = defineStore('battle', () => {
     startBattle,
     // 主刷新
     refreshBattle,
+    loadCombatTargets,
     // battlelog 播放
     fetchAndPlayBattleLog,
     notifyModalClosed,

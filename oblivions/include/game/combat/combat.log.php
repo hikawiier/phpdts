@@ -27,13 +27,15 @@ function combat_log_v2_enabled(): bool {
 function combat_log_v2_next_event_uid(string $event_type): string {
     static $seq = 0;
     $seq++;
-    return 'blv2-' . $event_type . '-' . time() . '-' . $seq;
+    $request_uid = (string)($GLOBALS['obl_request_uid'] ?? 'request-unknown');
+    return 'blv2-' . $request_uid . '-' . $event_type . '-' . $seq;
 }
 
 function combat_log_v2_make_action_uid(array $actor_data, string $act_id, int $seq): string {
     $qid = (int)($actor_data['bid'] ?? 0);
     $pid = (int)($actor_data['pid'] ?? 0);
-    return 'q' . $qid . '-p' . $pid . '-a' . $seq . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
+    $request_uid = (string)($GLOBALS['obl_request_uid'] ?? 'request-unknown');
+    return $request_uid . '-q' . $qid . '-p' . $pid . '-a' . $seq . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
 }
 
 function combat_log_v2_combatant_snapshot($data): ?array {
@@ -170,9 +172,44 @@ function combat_log_v2_action_start(CombatContext $ctx): void {
             'action_uid' => $ctx->action_uid,
             'action_id' => $ctx->act_id,
             'actor' => combat_log_v2_combatant_snapshot($ctx->actor_data),
+            'resolved_aim' => $ctx->resolved_aim,
             'targets' => $targets,
             'ap_cost' => (int)$ctx->ap_cost,
             'tags' => $ctx->config['tags'] ?? [],
+        ],
+    ]);
+}
+
+function combat_log_v2_action_delivery(CombatContext $ctx, string $delivery_type, array $resolved_aim): void {
+    if (!$ctx->log || !combat_log_v2_enabled()) return;
+    combat_log_v2_emit($ctx->log, [
+        'event_type' => 'action_delivery',
+        'action_uid' => $ctx->action_uid,
+        'action_id' => $ctx->act_id,
+        'payload' => [
+            'qid' => (int)($ctx->actor_data['bid'] ?? 0),
+            'action_uid' => $ctx->action_uid,
+            'action_id' => $ctx->act_id,
+            'delivery_type' => $delivery_type,
+            'resolved_aim' => $resolved_aim,
+            'actor' => combat_log_v2_combatant_snapshot($ctx->actor_data),
+        ],
+    ]);
+}
+
+function combat_log_v2_combatant_joined(CombatContext $ctx, array $target_data, int $myorder): void {
+    if (!$ctx->log || !combat_log_v2_enabled()) return;
+    combat_log_v2_emit($ctx->log, [
+        'event_type' => 'combatant_joined',
+        'action_uid' => $ctx->action_uid,
+        'target_pid' => (int)($target_data['pid'] ?? 0),
+        'payload' => [
+            'qid' => (int)($ctx->actor_data['bid'] ?? 0),
+            'combatant' => combat_log_v2_combatant_snapshot($target_data),
+            'source_actor_pid' => (int)($ctx->actor_data['pid'] ?? 0),
+            'source_action_uid' => $ctx->action_uid,
+            'myorder' => $myorder,
+            'done' => 0,
         ],
     ]);
 }

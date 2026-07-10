@@ -15,11 +15,14 @@
 // - click/mousemove 用事件委托（绑定在 mapGrid 上，检查 event.target.closest）
 // ══════════════════════════════════════════════════
 
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
 import { findPath } from '@/composables/useMapReachability';
+import { useBattleStore } from '@/stores/battle';
+import type { CombatTargetCandidate } from '@/types/api';
+import { findSelectableCombatTarget } from '@/utils/combat-targeting';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
@@ -28,6 +31,15 @@ const aimTargetMode = ref<'enemy' | 'tile'>('enemy');
 const aimOriginPls = ref<number | null>(null);
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
+const battleStore = useBattleStore();
+const focusedTargetPid = ref<number | null>(null);
+interface DisambiguationState {
+  left: number;
+  top: number;
+  candidates: CombatTargetCandidate[];
+  focusedPid: number | null;
+}
+const disambiguation = ref<DisambiguationState | null>(null);
 
 // ── SVG 路径线数据 ──
 interface AimLineData {
@@ -96,6 +108,33 @@ function isEnemyInActionRange(pid: number): boolean {
   return Math.max(0, path.length - 1) <= range;
 }
 
+function isEnemySelectable(pid: number): boolean {
+  return Boolean(findSelectableCombatTarget(
+    battleStore.combatTargets,
+    battleStore.currentQid,
+    pid,
+    targetPid => characterStore.getCharacter(targetPid),
+  ));
+}
+
+function candidateIsSelectable(candidate: CombatTargetCandidate | undefined): boolean {
+  return Boolean(candidate)
+    && isEnemySelectable(Number(candidate?.pid))
+    && isEnemyInActionRange(Number(candidate?.pid));
+}
+
+function candidateLabel(candidate: CombatTargetCandidate): string {
+  const character = characterStore.getCharacter(Number(candidate.pid));
+  return character?.name || `目标 ${candidate.pid}`;
+}
+
+function candidateStatus(candidate: CombatTargetCandidate | undefined): string {
+  if (!candidate) return '不可选择';
+  if (candidateIsSelectable(candidate)) return candidate.participation === 'joinable' ? '可加入' : '参战中';
+  if (candidate.selectable && !isEnemyInActionRange(Number(candidate.pid))) return '距离过远';
+  return candidate.reason || candidate.participation;
+}
+
 function isTileInActionRange(pls: number): boolean {
   const range = Math.max(0, Number(aimActionRange.value || 1));
   const originPls = aimOriginPls.value ?? mapStore.curLoc;
@@ -108,6 +147,7 @@ function isTileInActionRange(pls: number): boolean {
 function applyAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
+  clearAimTargetable();
 
   if (aimTargetMode.value === 'tile') {
     const cells = grid.querySelectorAll<HTMLElement>('[data-pls]');
@@ -126,14 +166,22 @@ function applyAimTargetable(): void {
       }
     });
   } else {
-  const enemyCells = grid.querySelectorAll<HTMLElement>('[data-enemy-pid]');
-  enemyCells.forEach((cell) => {
-    const pid = parseInt(cell.getAttribute('data-enemy-pid') || '0');
-    cell.classList.remove('aim-targetable', 'aim-out-of-range');
-    if (pid > 0 && isEnemyInActionRange(pid)) {
-      cell.classList.add('aim-targetable');
+  const enemyEntities = grid.querySelectorAll<HTMLElement>('[data-character-pid]');
+  enemyEntities.forEach((entity) => {
+    const pid = parseInt(entity.getAttribute('data-character-pid') || '0');
+    entity.classList.remove('aim-targetable', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
+    const candidate = battleStore.combatTargets.candidates.find(item => Number(item.pid) === pid);
+    if (!candidate) return;
+    if (pid > 0 && isEnemySelectable(pid) && isEnemyInActionRange(pid)) {
+      entity.classList.add('aim-targetable');
+      entity.dataset.aimStatus = 'selectable';
+      entity.title = '可选择目标';
+      if (pid === focusedTargetPid.value) entity.classList.add('aim-focused');
     } else {
-      cell.classList.add('aim-out-of-range');
+      const outOfRange = isEnemySelectable(pid);
+      entity.classList.add(outOfRange ? 'aim-out-of-range' : 'aim-blocked');
+      entity.dataset.aimStatus = outOfRange ? 'out-of-range' : 'blocked';
+      entity.title = outOfRange ? '目标距离过远' : candidateStatus(candidate);
     }
   });
   }
@@ -152,9 +200,13 @@ function clearAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
 
-  const markedCells = grid.querySelectorAll<HTMLElement>('.aim-targetable, .aim-hover, .aim-out-of-range');
+  const markedCells = grid.querySelectorAll<HTMLElement>('.aim-targetable, .aim-hover, .aim-out-of-range, .aim-blocked, .aim-focused');
   markedCells.forEach((cell) => {
-    cell.classList.remove('aim-targetable', 'aim-hover', 'aim-out-of-range');
+    cell.classList.remove('aim-targetable', 'aim-hover', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
+    if (cell.dataset.aimStatus) {
+      delete cell.dataset.aimStatus;
+      cell.removeAttribute('title');
+    }
   });
 
   if (_onMouseMove) grid.removeEventListener('mousemove', _onMouseMove);
@@ -173,7 +225,7 @@ function onAimMouseMove(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
   const selector = aimTargetMode.value === 'tile'
     ? '[data-pls].aim-targetable'
-    : '[data-enemy-pid].aim-targetable';
+    : '[data-character-pid].aim-targetable';
   const aimCell = target?.closest?.(selector) as HTMLElement | null;
 
   // 清除所有敌人格的 aim-hover，仅高亮当前
@@ -206,9 +258,37 @@ function onAimMouseLeave(): void {
 
 function onAimClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
+  if (aimTargetMode.value === 'enemy') {
+    const entity = target?.closest?.('[data-character-pid]') as HTMLElement | null;
+    if (!entity) return;
+    e.stopPropagation();
+    const pid = parseInt(entity.getAttribute('data-character-pid') || '0');
+    const clicked = characterStore.getCharacter(pid);
+    if (!clicked || clicked.type <= 0) return;
+    const sameTileCandidates = battleStore.combatTargets.candidates.filter(candidate => {
+      const character = characterStore.getCharacter(Number(candidate.pid));
+      return Boolean(character && character.type > 0
+        && String(character.pgroup) === String(clicked.pgroup)
+        && String(character.pls) === String(clicked.pls));
+    });
+    if (sameTileCandidates.length > 1) {
+      disambiguation.value = {
+        left: Math.max(4, Math.min(e.clientX + 8, window.innerWidth - 220)),
+        top: Math.max(4, Math.min(e.clientY + 8, window.innerHeight - 180)),
+        candidates: sameTileCandidates,
+        focusedPid: candidateIsSelectable(sameTileCandidates.find(item => Number(item.pid) === pid) as CombatTargetCandidate)
+          ? pid
+          : (sameTileCandidates.find(candidateIsSelectable)?.pid ?? null),
+      };
+      return;
+    }
+    confirmEnemyTarget(pid);
+    return;
+  }
+
   const selector = aimTargetMode.value === 'tile'
     ? '[data-pls].aim-targetable'
-    : '[data-enemy-pid].aim-targetable';
+    : '[data-character-pid].aim-targetable';
   const aimCell = target?.closest?.(selector) as HTMLElement | null;
   if (!aimCell) return;
 
@@ -218,13 +298,46 @@ function onAimClick(e: MouseEvent): void {
     if (pls > 0) {
       dataManager.broadcast('battle:aim-target-selected', { pls });
     }
-  } else {
-    const pid = parseInt(aimCell.getAttribute('data-enemy-pid') || '0');
-    if (pid > 0) {
-    // 通知 PreloadArea 目标已选定
-      dataManager.broadcast('battle:aim-target-selected', { pid });
-    }
   }
+}
+
+function confirmEnemyTarget(pid: number): void {
+  if (!isEnemySelectable(pid) || !isEnemyInActionRange(pid)) return;
+  disambiguation.value = null;
+  dataManager.broadcast('battle:aim-target-selected', { pid });
+}
+
+function onDisambiguationSelect(candidate: CombatTargetCandidate): void {
+  if (!candidateIsSelectable(candidate)) return;
+  confirmEnemyTarget(Number(candidate.pid));
+}
+
+function refreshDisambiguation(): void {
+  const current = disambiguation.value;
+  if (!current || current.candidates.length === 0) return;
+  const anchorCharacter = current.candidates
+    .map(candidate => characterStore.getCharacter(Number(candidate.pid)))
+    .find(Boolean);
+  if (!anchorCharacter) {
+    disambiguation.value = null;
+    return;
+  }
+  const candidates = battleStore.combatTargets.candidates.filter(candidate => {
+    const character = characterStore.getCharacter(Number(candidate.pid));
+    return Boolean(character && character.type > 0 && character.state === 0
+      && String(character.pgroup) === String(anchorCharacter.pgroup)
+      && String(character.pls) === String(anchorCharacter.pls));
+  });
+  if (candidates.length <= 1) {
+    disambiguation.value = null;
+    return;
+  }
+  const focusedStillValid = candidates.some(candidate => Number(candidate.pid) === current.focusedPid && candidateIsSelectable(candidate));
+  disambiguation.value = {
+    ...current,
+    candidates,
+    focusedPid: focusedStillValid ? current.focusedPid : (candidates.find(candidateIsSelectable)?.pid ?? null),
+  };
 }
 
 // ══════════════════════════════════════════════════
@@ -276,6 +389,7 @@ function onAimMode(data?: unknown): void {
     actionRange?: number | string;
     targetMode?: 'enemy' | 'tile';
     originPls?: number | string | null;
+    focusedTargetPid?: number | string | null;
   };
   aimActionRange.value = Math.max(0, Number(payload.actionRange || 1));
   aimTargetMode.value = payload.targetMode === 'tile' ? 'tile' : 'enemy';
@@ -283,6 +397,9 @@ function onAimMode(data?: unknown): void {
     ? Number(payload.originPls)
     : Number(mapStore.curLoc);
   aimOriginPls.value = Number.isFinite(originPls) && originPls > 0 ? originPls : null;
+  const focused = Number(payload.focusedTargetPid || 0);
+  focusedTargetPid.value = Number.isFinite(focused) && focused > 0 ? focused : null;
+  disambiguation.value = null;
   aimModeActive.value = true;
   applyAimTargetable();
 }
@@ -291,6 +408,8 @@ function onAimExit(): void {
   aimModeActive.value = false;
   aimTargetMode.value = 'enemy';
   aimOriginPls.value = null;
+  focusedTargetPid.value = null;
+  disambiguation.value = null;
   clearAimTargetable();
   clearAimLine();
 }
@@ -314,11 +433,48 @@ onMounted(() => {
   // ESC 键退出瞄准模式
   _onKeyDown = (e: KeyboardEvent) => {
     if (aimModeActive.value && e.key === 'Escape') {
+      if (disambiguation.value) {
+        disambiguation.value = null;
+        return;
+      }
       exitAimMode();
+    } else if (aimModeActive.value && aimTargetMode.value === 'enemy' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
+      const pool = disambiguation.value?.candidates ?? battleStore.combatTargets.candidates;
+      const selectable = pool.filter(candidateIsSelectable);
+      if (selectable.length === 0) return;
+      const activePid = disambiguation.value?.focusedPid ?? focusedTargetPid.value;
+      const current = selectable.findIndex(c => Number(c.pid) === activePid);
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        const candidate = selectable[current >= 0 ? current : 0];
+        confirmEnemyTarget(Number(candidate.pid));
+        return;
+      }
+      e.preventDefault();
+      const delta = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = (current + delta + selectable.length) % selectable.length;
+      const nextPid = Number(selectable[nextIndex].pid);
+      if (disambiguation.value) disambiguation.value.focusedPid = nextPid;
+      else {
+        focusedTargetPid.value = nextPid;
+        applyAimTargetable();
+      }
     }
   };
   document.addEventListener('keydown', _onKeyDown);
 });
+
+watch(
+  () => [battleStore.combatTargets, characterStore.aliveList.map(c => `${c.pid}:${c.pgroup}:${c.pls}:${c.state}`).join('|')],
+  () => {
+    if (aimModeActive.value) nextTick(() => {
+      applyAimTargetable();
+      refreshDisambiguation();
+    });
+  },
+  { deep: true },
+);
 
 onUnmounted(() => {
   dataManager.unlisten('battle:aim-mode', onAimMode);
@@ -357,6 +513,33 @@ onUnmounted(() => {
       />
     </svg>
   </Teleport>
+  <Teleport to="body">
+    <div
+      v-if="disambiguation"
+      class="aim-disambiguation"
+      :style="{ left: `${disambiguation.left}px`, top: `${disambiguation.top}px` }"
+      role="menu"
+      aria-label="选择同格目标"
+      @click.stop
+    >
+      <button
+        v-for="candidate in disambiguation.candidates"
+        :key="candidate.pid"
+        type="button"
+        class="aim-disambiguation-item"
+        :class="{
+          focused: disambiguation.focusedPid === Number(candidate.pid),
+          blocked: !candidateIsSelectable(candidate),
+        }"
+        :disabled="!candidateIsSelectable(candidate)"
+        role="menuitem"
+        @click="onDisambiguationSelect(candidate)"
+      >
+        <span>{{ candidateLabel(candidate) }}</span>
+        <span class="aim-disambiguation-status">{{ candidateStatus(candidate) }}</span>
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -394,8 +577,61 @@ onUnmounted(() => {
 }
 
 :global(.aim-out-of-range) {
-  opacity: 0.45;
+  outline: 1px dashed rgba(255, 190, 90, 0.8);
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.35);
   cursor: not-allowed;
+}
+
+:global(.aim-blocked) {
+  outline: 1px dotted rgba(150, 150, 150, 0.7);
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.52);
+  cursor: not-allowed;
+}
+
+:global(.aim-focused) {
+  outline-width: 2px;
+  filter: brightness(1.2);
+}
+
+.aim-disambiguation {
+  position: fixed;
+  z-index: 530;
+  width: 210px;
+  border: 1px solid #777;
+  background: #090909;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.65);
+  padding: 4px;
+}
+
+.aim-disambiguation-item {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #ddd;
+  padding: 4px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aim-disambiguation-item.focused {
+  border-color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.aim-disambiguation-item.blocked {
+  color: #777;
+  cursor: not-allowed;
+}
+
+.aim-disambiguation-status {
+  color: #999;
+  font-size: 10px;
+  white-space: nowrap;
 }
 </style>
 
