@@ -392,7 +392,7 @@ function skill_get_available_list(&$pdata) {
                 'available_ap' => (int)$range_projection['available_ap'],
                 'base_apcost' => (int)$range_projection['base_apcost'],
             ),
-            'category'     => isset($definition['category']) ? $definition['category'] : 'utility',
+            'category'     => isset($definition['category']) ? $definition['category'] : 'assault',
             'hidden'       => !empty($definition['hidden']) || !empty($combat_config['hidden']),
             'lstact'       => $lstact,
             'current_tick' => $current_tick,

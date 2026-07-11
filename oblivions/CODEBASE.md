@@ -1,7 +1,7 @@
 # Oblivions 子系统 — 代码库参考手册
 
 > 帮助 AI 智能体快速查阅 Oblivions 模式的后端架构、API 接口、数据结构和代码规范。
-> 概念与设计原则：[DESIGN.md](./DESIGN.md) | 项目文档总入口：[AGENTS.md](../../AGENTS.md) | 前端文档：[vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md)
+> 框架、设计原则、设计意图：[Dian.md](oblivions/Dian.md) | 概念词典、风格定义、核心原则约束、设计哲学：[DESIGN.md](./DESIGN.md) | 前端代码库：[vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md)
 
 ---
 
@@ -1860,5 +1860,5 @@ commandQueue.execute({ command: 'craft.execute', request_id, payload: { slots: [
 
 ---
 
-**文档结束。** 概念定义与设计原则见 [DESIGN.md](./DESIGN.md)，结构化日志系统的完整 ID 清单见 `vex-vue/src/data/log-templates.ts`，Toast 即时反馈机制详见 [vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md)。
+**文档结束。** 
 

@@ -1,7 +1,7 @@
 # vex-vue 前端项目 — 代码库说明
 
 > 帮助 AI 智能体快速了解 vex-vue 前端的架构、模块职责、数据流、API 对接约定和战斗演出系统。
-> 项目文档总入口：[AGENTS.md](../AGENTS.md) | 后端文档：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
+> 框架、设计原则、设计意图：[Dian.md](../oblivions/Dian.md) | 概念词典、风格定义、核心原则约束、设计哲学：[DESIGN.md](../oblivions/DESIGN.md) | 后端代码库：[oblivions/CODEBASE.md](../oblivions/CODEBASE.md)
 
 ---
 

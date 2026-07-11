@@ -6,12 +6,12 @@ if (!defined('IN_GAME')) {
 // Static skill identity and lifetime metadata. Combat mechanics live only in
 // combat_skill_config.php.
 return array(
-    'move'             => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => false),
-    'unarmed_strike'   => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
-    'escape'           => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => false),
-    'heal'             => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => false),
+    'move'             => array('category' => 'maneuver', 'lifetime' => 'permanent', 'hidden' => false),
+    'unarmed_strike'   => array('category' => 'assault',  'lifetime' => 'permanent', 'hidden' => false),
+    'escape'           => array('category' => 'maneuver', 'lifetime' => 'permanent', 'hidden' => false),
+    'heal'             => array('category' => 'support',  'lifetime' => 'permanent', 'hidden' => false),
     'throw'            => array(
-        'category' => 'attack',
+        'category' => 'assault',
         'lifetime' => 'equipment',
         'hidden' => false,
         'equipment_grant' => array(
@@ -20,11 +20,11 @@ return array(
             'any_kinds' => array('WC'),
         ),
     ),
-    'whirlwind'        => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
-    'execute'          => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
-    'vampiric_bite'    => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
-    'grenade'          => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
-    'idle'             => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => true),
+    'whirlwind'        => array('category' => 'assault',  'lifetime' => 'permanent', 'hidden' => false),
+    'execute'          => array('category' => 'assault',  'lifetime' => 'permanent', 'hidden' => false),
+    'vampiric_bite'    => array('category' => 'assault',  'lifetime' => 'permanent', 'hidden' => false),
+    'grenade'          => array('category' => 'assault',  'lifetime' => 'permanent', 'hidden' => false),
+    'idle'             => array('category' => 'maneuver', 'lifetime' => 'permanent', 'hidden' => true),
     'flustered'        => array(
         'category' => 'passive',
         'lifetime' => 'effect',

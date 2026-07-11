@@ -398,6 +398,8 @@ export interface Skill {
   cd: string;
   /** 是否为终结技（1=是，0=否），终结技永远在队列末尾执行 */
   finisher: number;
+  /** 技能功能分类（后端 skill_definition_config.php 提供，前端直接使用） */
+  category: 'maneuver' | 'assault' | 'support' | 'passive';
   /** 当前 tick（冷却剩余，后端返回字符串） */
   current_tick: string;
   /** 上一动作 tick（后端返回字符串） */
