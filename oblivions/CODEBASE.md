@@ -48,8 +48,13 @@
 | `obl_use_item` | `item.use` |
 | `obl_organize` | `inventory.organize` |
 | `obl_craft` | `craft.execute` |
+| `obl_wait` | `world.wait` |
 | `obl_battle_start` | `battle.start` |
 | `obl_battle_action` | `battle.submit_turn` |
+| — | `combat.can_engage` |
+| — | `combat.preview_single` |
+| — | `combat.preview_targets` |
+| — | `combat.preview_chain` |
 
 **Command API 响应契约**：`{ status, code, request_id, data: { feedback, refresh, server_state, ...domainData }, warnings? }`。战斗命令把 action/target results 展平在 `data.actions[]`；commit 后 battlelog 文件失败通过 `warnings=['BATTLELOG_PERSIST_FAILED']` 返回。
 
@@ -67,7 +72,7 @@
 
 **核心目录补充**：
 - `include/core/` 共 8 个文件：`obl_bootstrap.php` / `obl_runtime.php` / `obl_command.php`（@deprecated） / `obl_command_response.php` / `obl_json_request.php` / `obl_tick_orchestrator.php` / `obl_game_repository.php` / `obl_gamevars.php`
-- `include/command/` 共 5 个文件：`obl_command_bus.php` / `obl_command_contract.php` / `obl_command_handlers.php`（新路径）+ `oblivions_router.php` / `oblivions_commands.php`（旧 deprecated 路径）
+- `include/command/` 共 3 个文件：`obl_command_bus.php` / `obl_command_contract.php` / `obl_command_handlers.php`（旧 `oblivions_router.php` / `oblivions_commands.php` 已删除）
 
 **不可破的边界**：
 - 不升级旧根 `command.php` 为 JSON；Oblivions 新写操作只走 `oblivions/api/command.php`
@@ -122,9 +127,7 @@ oblivions/
 │   ├── command/
 │   │   ├── obl_command_bus.php      # Command Bus 核心（contract/payload 校验 + auth + flock + gate + dispatch + save_and_tick）
 │   │   ├── obl_command_contract.php # 命令 contract 定义（allowed_actions/advances_tick/payload_schema/battle_state_required 等）
-│   │   ├── obl_command_handlers.php # 新命令名 → domain 函数的 switch 适配器（map.move/.../battle.submit_turn）
-│   │   ├── oblivions_router.php     # 旧 deprecated 路由（分发到 cmd_handle_obl_*，含 actions JSON 解析）
-│   │   └── oblivions_commands.php   # 旧 deprecated 命令处理器（cmd_handle_obl_explore/search/pickup/discard + battle_start/battle_action）
+│   │   └── obl_command_handlers.php # 新命令名 → domain 函数的 switch 适配器（map.move/.../battle.submit_turn）
 │   ├── gamectl/
 │   │   ├── init.func.php         # 游戏初始化（obl_rs_game 主入口 + obl_init_enemies 敌人生成 + 建表/地图/迷雾生成）
 │   │   └── state.func.php        # 游戏状态机（触发 obl_rs_game）
@@ -153,7 +156,6 @@ oblivions/
 │       │   ├── combat.core.php           # 唯一战斗入口与主循环
 │       │   ├── combat.pipeline.php       # Aim -> Capture -> TargetResolutionUnit 编排
 │       │   ├── combat.effect.php         # damage/heal/move/escape/ap_change 实际应用
-│       │   ├── combat.target.php         # 旧目标入口兼容 facade
 │       │   ├── combat.skill.php          # 战斗技能配置与 hook 加载
 │       │   ├── combat.ap.php             # AP 计算器注册与消费
 │       │   ├── combat.tag.php            # 目标 Tag 派生与规则匹配
@@ -786,6 +788,7 @@ Content-Type: application/json
 | `map.move` | 移动到目标格 |
 | `map.explore` | 探索当前格 |
 | `poi.search` | 搜索 POI |
+| `world.wait` | 等待时间经过 |
 | `item.pickup` | 拾取道具 |
 | `item.discard` | 丢弃道具 |
 | `item.use` | 使用道具 |
@@ -793,6 +796,10 @@ Content-Type: application/json
 | `craft.execute` | 执行合成 |
 | `battle.start` | 开始战斗 |
 | `battle.submit_turn` | 提交玩家回合战斗动作队列 |
+| `combat.can_engage` | L0 交战可达性查询（只读） |
+| `combat.preview_single` | L1 单动作校验（只读） |
+| `combat.preview_targets` | L1.5 多目标可达性预览（只读） |
+| `combat.preview_chain` | L2 整条动作链模拟（只读） |
 
 ### 6.3 Command API 执行流程
 
