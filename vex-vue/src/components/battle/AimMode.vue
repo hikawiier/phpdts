@@ -6,7 +6,7 @@
 // 职责：
 // - 监听 battle:aim-mode / battle:aim-exit 事件
 // - 瞄准模式下标记敌人格为可选目标（.aim-targetable class）
-// - mousemove 实时绘制 SVG 贝塞尔曲线（AP 栏 → 光标/敌人）
+// - mousemove 实时绘制 SVG 贝塞尔曲线（玩家立绘 → 光标/敌人）
 // - 点击敌人格确认目标 → broadcast 'battle:aim-target-selected'
 //
 // 实现说明：
@@ -26,6 +26,7 @@ import { findSelectableCombatTarget } from '@/utils/combat-targeting';
 import { useAimTargetingStore } from '@/stores/aim-targeting';
 import type { AimModeEventData } from '@/types/events';
 import { useToastStore } from '@/stores/toast';
+import { buildAimLineGeometry } from '@/utils/aim-line-geometry';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
@@ -56,20 +57,13 @@ interface AimLineData {
 }
 const aimLine = ref<AimLineData>({ startX: 0, startY: 0, endX: 0, endY: 0, visible: false });
 
-// ── 贝塞尔曲线路径 computed ──
-const pathData = computed<string>(() => {
-  if (!aimLine.value.visible) return '';
+// ── 贝塞尔曲线与末端切线 computed ──
+const lineGeometry = computed(() => {
+  if (!aimLine.value.visible) {
+    return { pathData: '', arrowAngle: 0, lineEndX: 0, lineEndY: 0 };
+  }
   const { startX, startY, endX, endY } = aimLine.value;
-
-  // 柔化三次贝塞尔曲线：两端切线水平，平滑过渡
-  const dx = Math.abs(startX - endX);
-  const offset = Math.max(40, dx * 0.35);
-  const cp1X = startX - offset;
-  const cp1Y = startY;
-  const cp2X = endX + offset;
-  const cp2Y = endY;
-
-  return `M ${startX} ${startY} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}`;
+  return buildAimLineGeometry(startX, startY, endX, endY);
 });
 
 // ── 事件处理函数引用（用于 add/removeEventListener） ──
@@ -86,13 +80,23 @@ function getMapGrid(): HTMLElement | null {
   return document.getElementById('mapGrid');
 }
 
-/** 获取 AP 栏元素作为瞄准线起点 */
-function getAimStartElement(): HTMLElement | null {
-  return (
-    document.querySelector<HTMLElement>('.ap-bar-container') ||
-    document.getElementById('preloadQueueArea') ||
-    document.getElementById('battleActionBar')
-  );
+/** 获取玩家立绘上半身位置作为瞄准线起点 */
+function getAimStartPoint(): { x: number; y: number } | null {
+  const image = document.querySelector<HTMLElement>('[data-entity-id="player"] .entity-img');
+  if (image) {
+    const rect = image.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height * 0.38,
+    };
+  }
+  const entity = document.querySelector<HTMLElement>('[data-entity-id="player"]');
+  if (!entity) return null;
+  const rect = entity.getBoundingClientRect();
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  };
 }
 
 // ══════════════════════════════════════════════════
@@ -329,21 +333,17 @@ function refreshDisambiguation(): void {
 // ══════════════════════════════════════════════════
 
 /**
- * 绘制瞄准路径线（AP 栏左边缘 → 指定坐标）
+ * 绘制瞄准路径线（玩家立绘上半身 → 指定坐标）
  *
  * 更新 aimLine ref，由 computed pathData 驱动 SVG 渲染。
  */
 function drawAimLine(endX: number, endY: number): void {
-  const startEl = getAimStartElement();
-  if (!startEl) return;
-
-  const startRect = startEl.getBoundingClientRect();
-  const startX = startRect.left;
-  const startY = startRect.top + startRect.height / 2;
+  const start = getAimStartPoint();
+  if (!start) return;
 
   aimLine.value = {
-    startX,
-    startY,
+    startX: start.x,
+    startY: start.y,
     endX,
     endY,
     visible: true,
@@ -496,21 +496,27 @@ onUnmounted(() => {
       v-show="aimLine.visible"
       class="aim-line-overlay"
     >
-      <path :d="pathData" />
-      <circle
+      <path :d="lineGeometry.pathData" class="aim-line-stroke aim-line-outer" />
+      <path :d="lineGeometry.pathData" class="aim-line-stroke aim-line-border" />
+      <path :d="lineGeometry.pathData" class="aim-line-stroke aim-line-core" />
+      <g
         v-if="aimLine.visible"
-        :cx="aimLine.startX"
-        :cy="aimLine.startY"
-        r="3"
-        class="aim-dot"
-      />
-      <circle
-        v-if="aimLine.visible"
-        :cx="aimLine.endX"
-        :cy="aimLine.endY"
-        r="3"
-        class="aim-dot"
-      />
+        class="aim-arrow"
+        :transform="`translate(${aimLine.endX} ${aimLine.endY}) rotate(${lineGeometry.arrowAngle})`"
+      >
+        <path
+          class="aim-arrow-stroke aim-line-outer"
+          d="M -16 0 L -5 0 M -8 -3.5 L 0 0 L -8 3.5"
+        />
+        <path
+          class="aim-arrow-stroke aim-line-border"
+          d="M -16 0 L -5 0 M -8 -3.5 L 0 0 L -8 3.5"
+        />
+        <path
+          class="aim-arrow-stroke aim-line-core"
+          d="M -16 0 L -5 0 M -8 -3.5 L 0 0 L -8 3.5"
+        />
+      </g>
     </svg>
   </Teleport>
   <Teleport to="body">
@@ -553,17 +559,44 @@ onUnmounted(() => {
   z-index: 500;
 }
 
-.aim-line-overlay path {
+.aim-line-stroke {
   fill: none;
-  stroke: #ff6b6b;
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-  opacity: 0.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 9 8;
+  animation: aim-line-flow 0.9s linear infinite;
 }
 
-.aim-line-overlay .aim-dot {
-  fill: #ff6b6b;
-  opacity: 0.8;
+.aim-line-outer {
+  stroke: #fff;
+  stroke-width: 7;
+  opacity: 0.92;
+}
+
+.aim-line-border {
+  stroke: #050505;
+  stroke-width: 5;
+}
+
+.aim-line-core {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.aim-arrow-stroke {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes aim-line-flow {
+  to { stroke-dashoffset: -17; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aim-line-stroke {
+    animation: none;
+  }
 }
 
 :global(.aim-targetable) {

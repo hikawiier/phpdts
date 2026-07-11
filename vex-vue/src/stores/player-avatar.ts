@@ -18,9 +18,16 @@
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { PlayerAvatarIntent } from '@/types/player-avatar';
 import type { AttackKind } from '@/types/actor-runtime';
+
+export type PlayerAppearance = 'normal' | 'battle';
+
+const PLAYER_APPEARANCE_IMAGES: Record<PlayerAppearance, string> = {
+  normal: '/img/3.png',
+  battle: '/img/3_a.png',
+};
 
 export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   const intent = ref<PlayerAvatarIntent>('idle');
@@ -32,6 +39,9 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   const isFled = ref(false);
   const lastAttackTargetId = ref<string | null>(null);
   const lastAttackKind = ref<AttackKind>('melee');
+  const currentAppearance = ref<PlayerAppearance>('normal');
+  const desiredAppearance = ref<PlayerAppearance>('normal');
+  const currentImage = computed(() => PLAYER_APPEARANCE_IMAGES[currentAppearance.value]);
 
   // ── 内部：派发意图 ──
   // 防抖：同一意图 50ms 内重复触发只执行一次
@@ -58,12 +68,17 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   // ── 游戏事件接入（预留接口） ──
   function onEnter(): void       { dispatchWithRecovery('enter'); }
   function onMove(): void        { dispatchWithRecovery('move'); }
-  function onBattleStart(): void { dispatchWithRecovery('battle-start'); }
+  function onBattleStart(): void {
+    desiredAppearance.value = 'battle';
+    dispatchWithRecovery('battle-start');
+  }
   function onBattleEnd(): void {
+    desiredAppearance.value = 'normal';
     // flee 后 player alpha=0，退出战斗时需恢复可见性
     if (isFled.value) {
       isFled.value = false;
-      dispatchWithRecovery('enter');  // 触发 setDown+popUp（alpha:0→1）恢复可见
+      pendingIntent.value = 'battle-end';
+      dispatchIntent('enter');  // 恢复可见后由 notifyUp 继续切回普通形态
       return;
     }
     dispatchWithRecovery('battle-end');
@@ -103,6 +118,23 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     hpRatio.value = ratio;
   }
 
+  function commitAppearance(appearance: PlayerAppearance): void {
+    currentAppearance.value = appearance;
+  }
+
+  function resetAppearance(): void {
+    desiredAppearance.value = 'normal';
+    currentAppearance.value = 'normal';
+  }
+
+  function preloadAppearanceImages(): void {
+    if (typeof Image === 'undefined') return;
+    for (const src of Object.values(PLAYER_APPEARANCE_IMAGES)) {
+      const image = new Image();
+      image.src = src;
+    }
+  }
+
   return {
     intent,
     intentSeq,
@@ -113,6 +145,9 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     isFled,
     lastAttackTargetId,
     lastAttackKind,
+    currentAppearance,
+    desiredAppearance,
+    currentImage,
     onEnter,
     onMove,
     onBattleStart,
@@ -129,6 +164,9 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     notifyUp,
     notifyDown,
     setHpRatio,
+    commitAppearance,
+    resetAppearance,
+    preloadAppearanceImages,
     dispatchIntent,
   };
 });

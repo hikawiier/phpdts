@@ -28,6 +28,10 @@ function sameTile(left: MapEntity | undefined, right: MapEntity): boolean {
     && Number(left.pls) === Number(right.pls);
 }
 
+export function isRegionTransition(left: MapEntity | undefined, right: MapEntity): boolean {
+  return Boolean(left) && Number(left?.pgroup) !== Number(right.pgroup);
+}
+
 function calcMoveTier(fromX: number, fromY: number, target: SceneAnchor): MoveTier {
   const gridDist = Math.max(
     Math.abs(target.point.x - fromX) / target.cellWidth,
@@ -74,7 +78,10 @@ function actorElements(root: HTMLElement): ActorElements | null {
   const action = root.querySelector<HTMLElement>('.actor-action');
   const visibility = root.querySelector<HTMLElement>('.actor-visibility');
   const pose = root.querySelector<HTMLElement>('.actor-pose');
-  return action && visibility && pose ? { anchor: root, action, visibility, pose } : null;
+  const debugLabel = root.querySelector<HTMLElement>('.actor-debug-label') ?? undefined;
+  return action && visibility && pose
+    ? { anchor: root, action, visibility, pose, debugLabel }
+    : null;
 }
 
 export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
@@ -169,6 +176,23 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
       handle.finished,
       visibilityHandle?.finished ?? Promise.resolve(),
     ]);
+    lease.release({ reconcile: true });
+    if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+  }
+
+  async function playRegionArrival(entity: MapEntity, lease: PresentationLease): Promise<void> {
+    await nextTick();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    if (lease.released || worldMoves.get(entity.id) !== lease) return;
+    const runtime = getActorById(entity.id);
+    const anchor = resolveAnchor(entity);
+    if (!runtime || !anchor) {
+      lease.release({ reconcile: true });
+      if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+      return;
+    }
+    runtime.projectAnchor(anchor);
+    await lease.play({ kind: 'arrive' }).finished;
     lease.release({ reconcile: true });
     if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
   }
@@ -358,9 +382,10 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
         if (!runtime) continue;
         const existing = worldMoves.get(entity.id);
         existing?.release({ reconcile: false });
+        const regionTransition = isRegionTransition(previousEntity, entity);
         const lease = runtime.acquire({
           owner: 'world',
-          channels: ['spatial', 'pose', 'visibility'],
+          channels: regionTransition ? ['pose', 'visibility'] : ['spatial', 'pose', 'visibility'],
           sessionId: `world:${mapStore.projectionRevision}:${runtime.generation}`,
           replaceEqualOwner: true,
         });
@@ -369,7 +394,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
           continue;
         }
         worldMoves.set(entity.id, lease);
-        void playWorldMove(entity, lease);
+        void (regionTransition ? playRegionArrival(entity, lease) : playWorldMove(entity, lease));
       }
 
       nextTick(() => requestAnimationFrame(() => {
@@ -394,8 +419,48 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
       const sessionId = `player-intent:${playerAvatarStore.intentSeq}:${runtime.generation}`;
       if (intent === 'move') return;
 
-      if (intent === 'battle-start' || intent === 'battle-end'
-        || intent === 'low-hp' || intent === 'normal-hp' || intent === 'idle') {
+      if (intent === 'battle-start' || intent === 'battle-end') {
+        const targetAppearance = intent === 'battle-start' ? 'battle' : 'normal';
+        if (playerAvatarStore.currentAppearance === targetAppearance) {
+          const visibleLease = runtime.acquire({
+            owner: 'battle',
+            channels: ['pose', 'visibility'],
+            sessionId,
+            replaceEqualOwner: true,
+          });
+          if (!visibleLease) return;
+          await visibleLease.play({ kind: 'reset-visible' }).finished;
+          visibleLease.release();
+          return;
+        }
+        const transformLease = runtime.acquire({
+          owner: 'battle',
+          channels: ['pose', 'visibility'],
+          sessionId,
+          replaceEqualOwner: true,
+        });
+        if (!transformLease) return;
+        const [result] = await Promise.all([
+          transformLease.play({
+            kind: 'transform-appearance',
+            swap: () => {
+              if (playerAvatarStore.desiredAppearance === targetAppearance) {
+                playerAvatarStore.commitAppearance(targetAppearance);
+              }
+            },
+          }).finished,
+          transformLease.play({ kind: 'reset-visible' }).finished,
+        ]);
+        if (result.status !== 'completed'
+          && playerAvatarStore.desiredAppearance === targetAppearance
+          && playerAvatarStore.currentAppearance !== targetAppearance) {
+          playerAvatarStore.commitAppearance(targetAppearance);
+        }
+        transformLease.release();
+        return;
+      }
+
+      if (intent === 'low-hp' || intent === 'normal-hp' || intent === 'idle') {
         const lease = runtime.acquire({ owner: 'ambient', channels: ['pose'], sessionId: `ambient:${runtime.generation}` });
         lease?.play({ kind: 'idle' });
         return;

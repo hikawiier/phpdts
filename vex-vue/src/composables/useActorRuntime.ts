@@ -10,6 +10,7 @@ import {
   popUp,
   setDown,
   startIdle,
+  transformAppearance,
   updateEntityZIndex,
 } from '@/animations/actorAnimations';
 import type {
@@ -50,7 +51,6 @@ class TimelineHandle implements CueAnimationHandle {
   private readonly cuePromises = new Map<string, Promise<AnimationResult>>();
   private readonly cueResolvers = new Map<string, (result: AnimationResult) => void>();
   private settled = false;
-  private cueTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly timeline: gsap.core.Animation,
@@ -64,10 +64,9 @@ class TimelineHandle implements CueAnimationHandle {
         this.cueResolvers.set('impact', resolve);
       });
       this.cuePromises.set('impact', promise);
-      this.cueTimer = setTimeout(() => {
-        this.cueTimer = null;
+      (this.timeline as gsap.core.Timeline).call(() => {
         this.resolveCue('impact', { status: 'completed' });
-      }, impactAt);
+      }, undefined, impactAt / 1000);
     }
   }
 
@@ -92,10 +91,6 @@ class TimelineHandle implements CueAnimationHandle {
   private settle(result: AnimationResult): void {
     if (this.settled) return;
     this.settled = true;
-    if (this.cueTimer !== null) {
-      clearTimeout(this.cueTimer);
-      this.cueTimer = null;
-    }
     for (const name of this.cueResolvers.keys()) this.resolveCue(name, result);
     this.resolveFinished(result);
     this.onSettled(result);
@@ -144,6 +139,7 @@ class ActorRuntimeImpl implements ActorRuntime {
   private readonly channelOwners = new Map<ActorChannel, RuntimeLease>();
   private readonly leases = new Set<RuntimeLease>();
   private readonly channelHandles = new Map<ActorChannel, AnimationHandle>();
+  private readonly debugCommands = new Map<AnimationHandle, { label: string; sessionId: string | null }>();
   private pendingAnchor: SceneAnchor | null = null;
   private currentAnchor: SceneAnchor | null = null;
   private terminal = false;
@@ -165,6 +161,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (this.down) setDown(elements);
     else gsap.set(elements.pose, { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 });
     if (this.currentAnchor) this.writeAnchor(this.currentAnchor);
+    this.renderDebugLabel();
   }
 
   acquire(request: LeaseRequest): PresentationLease | null {
@@ -313,6 +310,9 @@ class ActorRuntimeImpl implements ActorRuntime {
       case 'arrive':
         animation = arriveAnim(elements);
         break;
+      case 'transform-appearance':
+        animation = transformAppearance(elements.pose, command.swap);
+        break;
       case 'move': {
         const from = this.getScenePoint();
         const target = command.target.point;
@@ -357,11 +357,6 @@ class ActorRuntimeImpl implements ActorRuntime {
       case 'hit':
         animation = hitAnim(elements.action, elements.pose, command.direction);
         break;
-      case 'join-cue':
-        animation = gsap.timeline()
-          .to(elements.pose, { scaleX: 1.12, scaleY: 1.12, duration: 0.18, ease: 'power2.out' })
-          .to(elements.pose, { scaleX: 1, scaleY: 1, duration: 0.32, ease: 'elastic.out(1, 0.5)' });
-        break;
       case 'fall':
         this.down = true;
         animation = fall(elements);
@@ -379,8 +374,15 @@ class ActorRuntimeImpl implements ActorRuntime {
       if (result.status === 'completed') onCompleted?.();
       this.traceAnimation(command.kind, result.status, result.reason);
       this.removeHandle(handle);
+      this.debugCommands.delete(handle);
+      this.renderDebugLabel();
     });
     for (const channel of required) this.channelHandles.set(channel, handle);
+    this.debugCommands.set(handle, {
+      label: `${lease.owner} / ${debugCommandName(command)}`,
+      sessionId: lease.sessionId,
+    });
+    this.renderDebugLabel();
     return handle;
   }
 
@@ -450,6 +452,17 @@ class ActorRuntimeImpl implements ActorRuntime {
     }
   }
 
+  private renderDebugLabel(): void {
+    const label = this.elements?.debugLabel;
+    if (!label) return;
+    const commands = [...this.debugCommands.values()];
+    const active = commands.length > 0 ? commands[commands.length - 1] : null;
+    label.textContent = active?.label ?? '';
+    label.hidden = active === null;
+    if (active?.sessionId) label.title = active.sessionId;
+    else label.removeAttribute('title');
+  }
+
   private writeAnchor(anchor: SceneAnchor): void {
     if (!this.elements) return;
     gsap.set(this.elements.anchor, {
@@ -464,18 +477,24 @@ class ActorRuntimeImpl implements ActorRuntime {
   }
 }
 
+function debugCommandName(command: ActorCommand): string {
+  if (command.kind === 'move') return `move:${command.tier}`;
+  if (command.kind === 'attack') return `attack:${command.attackKind}`;
+  return command.kind;
+}
+
 function requiredChannels(command: ActorCommand): ActorChannel[] {
   switch (command.kind) {
     case 'idle': return ['pose'];
     case 'enter':
     case 'arrive':
     case 'fall': return ['pose', 'visibility'];
+    case 'transform-appearance': return ['pose'];
     case 'move': return command.tier === 'long'
       ? ['spatial', 'pose', 'visibility']
       : ['spatial', 'pose'];
     case 'attack':
     case 'hit': return ['action', 'pose'];
-    case 'join-cue': return ['pose'];
     case 'fade':
     case 'reset-visible': return ['visibility'];
   }

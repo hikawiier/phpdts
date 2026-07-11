@@ -636,7 +636,7 @@ F5 重载后 actor 会播放约 1 秒的 enter/popup。若首个真实移动在 
 
 观测规则：
 
-1. 开发环境默认、生产构建通过 `?actor_debug=1` 显式开启现有 DebugBus 环形缓冲，记录 PlaybackStep start/settle，字段至少包含 step id、kind、actor id、raw log id。
+1. 开发环境默认、生产构建通过 `?debug=actor` 显式开启现有 DebugBus 环形缓冲，记录 PlaybackStep start/settle，字段至少包含 step id、kind、actor id、raw log id。
 2. Actor registry 必须记录 register/unregister 及 Runtime generation；MapGrid ref 卸载必须记录触发实体 id。
 3. battle/terminal lease 获取必须记录成功或失败，失败需区分 inactive session、actor missing 与 Runtime acquire rejected。
 4. Runtime 动画必须记录 command start/settle，settle 保留 completed/cancelled/skipped 和 reason；DOM 缺失、lease channel 缺失不得无痕跳过。

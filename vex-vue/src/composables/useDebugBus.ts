@@ -13,11 +13,12 @@
 // ══════════════════════════════════════════════════
 
 import type { DebugBusEntry, DebugStateSnapshot } from '@/types/events';
+import { isDebugEnabled } from '@/utils/debug-flags';
 
 const MAX_BUFFER = 200;
 
 export const actorTraceEnabled = import.meta.env.DEV
-  || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('actor_debug') === '1');
+  || isDebugEnabled('actor');
 
 class DebugBus {
   private _buffer: DebugBusEntry[] = [];

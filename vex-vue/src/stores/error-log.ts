@@ -8,11 +8,11 @@
 //   - refreshErrorLog()：拉取 obl_error + 增量过滤 + 诊断模式 Toast
 //   - 事件驱动：监听 game:action-completed（POST 命令后即时检测并推进 lastTs）
 //   - 独立轮询：兜底检测非命令路径产生的错误（如 tick 结算异常）
-//     默认关闭，URL 参数 ?poll_error=1 开启
+//     默认关闭，URL 参数 ?debug=error-poll 开启
 //
 // Event Log 职责重置后，普通业务拒绝由 Command API response 负责；
 // obl_error_log 是诊断流，默认不再作为普通 UI 提示通道。
-// 仅 ?debug=ai 或 ?poll_error=1 时弹出诊断 Toast。
+// 仅 ?debug=ai 或 ?debug=error-poll 时弹出诊断 Toast。
 //
 // 设计依据：oblivions/docs/vex-vue 错误日志检测与展示设计方案.md
 // ══════════════════════════════════════════════════
@@ -23,14 +23,13 @@ import { dataManager } from '@/stores/data-manager';
 import { useToastStore } from '@/stores/toast';
 import type { ErrorLogEntry, OblErrorLogResponse } from '@/types/api';
 import type { ApiResponse } from '@/api/client';
+import { isDebugEnabled } from '@/utils/debug-flags';
 
 /** 独立轮询周期（毫秒） */
 const POLLING_INTERVAL = 5000;
 
 function shouldShowDiagnosticToasts(): boolean {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  return params.get('debug') === 'ai' || params.get('poll_error') === '1';
+  return isDebugEnabled('ai') || isDebugEnabled('error-poll');
 }
 
 /**
@@ -149,7 +148,7 @@ export const useErrorLogStore = defineStore('error-log', () => {
   /**
    * 启动独立轮询
    *
-   * 默认不启动；由 App.vue 根据 URL 参数 ?poll_error=1 决定是否调用。
+   * 默认不启动；由 App.vue 根据 URL 参数 ?debug=error-poll 决定是否调用。
    */
   function startPolling(): void {
     if (polling.value) return;

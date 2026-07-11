@@ -396,33 +396,6 @@
     }
 }
 
-/* ═══ 瞄准模式：路径线 SVG 覆盖层 ═══ */
-
-#aimLineOverlay {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 400;
-}
-
-#aimLineOverlay path {
-    fill: none;
-    stroke: rgba(255, 80, 80, 0.5);
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-dasharray: 6 4;
-    animation: aim-line-dash 0.8s linear infinite;
-}
-
-#aimLineOverlay .aim-dot {
-    fill: rgba(255, 80, 80, 0.7);
-    stroke: none;
-}
-
-@keyframes aim-line-dash {
-    to { stroke-dashoffset: -10; }
-}
-
 /* ═══ 地图战斗模式 ═══ */
 /* 战斗模式下地图视觉特征 */
 

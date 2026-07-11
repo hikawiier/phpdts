@@ -35,6 +35,26 @@ function skill_get_all_definitions() {
             if (!in_array($lifetime, array('permanent', 'equipment', 'effect'), true)) {
                 throw new UnexpectedValueException('Invalid skill lifetime: ' . $skill_id);
             }
+            if ($lifetime === 'equipment') {
+                $grant = $definition['equipment_grant'] ?? null;
+                if (!is_array($grant)) {
+                    throw new UnexpectedValueException('Missing equipment grant: ' . $skill_id);
+                }
+                $slots = $grant['slots'] ?? array();
+                $tags = $grant['any_tags'] ?? array();
+                $kinds = $grant['any_kinds'] ?? array();
+                if (!is_array($slots) || empty($slots)) {
+                    throw new UnexpectedValueException('Invalid equipment grant slots: ' . $skill_id);
+                }
+                foreach ($slots as $slot) {
+                    if (!in_array($slot, array('wep', 'wep2', 'arb', 'arh', 'ara', 'arf', 'art'), true)) {
+                        throw new UnexpectedValueException('Unknown equipment grant slot: ' . $skill_id . ':' . $slot);
+                    }
+                }
+                if (!is_array($tags) || !is_array($kinds) || (empty($tags) && empty($kinds))) {
+                    throw new UnexpectedValueException('Equipment grant requires tags or kinds: ' . $skill_id);
+                }
+            }
             foreach (($definition['capability_denies'] ?? array()) as $capability) {
                 if (function_exists('actor_capability_is_known') && !actor_capability_is_known((string)$capability)) {
                     throw new UnexpectedValueException('Unknown capability in skill definition: ' . $skill_id . ':' . $capability);
@@ -270,6 +290,16 @@ function skill_strip_temporary(&$skillpara) {
  * @param array &$pdata
  */
 function skill_inject_equipment(&$skillpara, &$pdata) {
+    foreach (skill_get_all_definitions() as $skill_id => $definition) {
+        if (($definition['lifetime'] ?? '') !== 'equipment') continue;
+        if (!skill_equipment_grant_matches($definition['equipment_grant'] ?? array(), $pdata)) continue;
+        if (!isset($skillpara[$skill_id]) || !is_array($skillpara[$skill_id])) {
+            $skillpara[$skill_id] = array('lstact' => 0);
+        } elseif (!isset($skillpara[$skill_id]['lstact'])) {
+            $skillpara[$skill_id]['lstact'] = 0;
+        }
+    }
+
     if (!function_exists('skill_get_equipment_injectors')) return;
     $injectors = skill_get_equipment_injectors();
     foreach ($injectors as $func) {
@@ -277,6 +307,24 @@ function skill_inject_equipment(&$skillpara, &$pdata) {
             $func($skillpara, $pdata);
         }
     }
+}
+
+function skill_equipment_grant_matches($grant, &$pdata) {
+    if (!is_array($grant)) return false;
+    $slots = isset($grant['slots']) && is_array($grant['slots']) ? $grant['slots'] : array();
+    $tags = isset($grant['any_tags']) && is_array($grant['any_tags']) ? $grant['any_tags'] : array();
+    $kinds = isset($grant['any_kinds']) && is_array($grant['any_kinds']) ? $grant['any_kinds'] : array();
+
+    foreach ($slots as $slot) {
+        $item_id = isset($pdata[$slot . 'id']) ? (string)$pdata[$slot . 'id'] : '';
+        $kind = isset($pdata[$slot . 'k']) ? (string)$pdata[$slot . 'k'] : '';
+        if ($kind !== '' && in_array($kind, $kinds, true)) return true;
+        if ($item_id === '' || !function_exists('item_has_tag')) continue;
+        foreach ($tags as $tag) {
+            if (item_has_tag($item_id, (string)$tag)) return true;
+        }
+    }
+    return false;
 }
 
 /**

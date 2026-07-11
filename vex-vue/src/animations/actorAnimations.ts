@@ -154,6 +154,52 @@ export function arriveAnim(elements: ActorElements): gsap.core.Timeline {
   return tl;
 }
 
+export function transformAppearance(
+  pose: HTMLElement,
+  swap: () => void,
+): gsap.core.Timeline {
+  gsap.killTweensOf(pose);
+  const reducedMotion = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const tl = gsap.timeline();
+
+  if (reducedMotion) {
+    tl.call(swap);
+    tl.set(pose, { x: 0, y: 0, rotation: 0, rotationY: 0, scaleX: 1, scaleY: 1 });
+    return tl;
+  }
+
+  tl.set(pose, {
+    x: 0,
+    rotation: 0,
+    rotationY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    transformPerspective: 480,
+    transformOrigin: '50% 65%',
+  });
+  tl.to(pose, {
+    rotationY: 90,
+    scaleX: 0.08,
+    scaleY: 1.06,
+    y: -4,
+    duration: 0.22,
+    ease: 'power2.in',
+  });
+  tl.call(swap);
+  tl.set(pose, { rotationY: -90 });
+  tl.to(pose, {
+    rotationY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    y: 0,
+    duration: 0.34,
+    ease: 'back.out(1.35)',
+  });
+  tl.set(pose, { rotationY: 0, transformPerspective: 0 });
+  return tl;
+}
+
 export function fadeOut(visibility: HTMLElement): gsap.core.Timeline {
   gsap.killTweensOf(visibility);
   return gsap.timeline().to(visibility, {

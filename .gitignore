@@ -127,3 +127,4 @@ debug_autologin.php
 # Node
 node_modules/
 /.trae
+/vex-vue/public/img/temp

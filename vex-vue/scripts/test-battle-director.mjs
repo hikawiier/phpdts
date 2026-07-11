@@ -27,6 +27,37 @@ const server = await createServer({
 });
 
 try {
+  const debugFlagsModule = await server.ssrLoadModule('/src/utils/debug-flags.ts');
+  const debugCases = [
+    ['?debug=ai', 'ai'],
+    ['?debug=actor,labels', 'actor,labels'],
+    ['?debug=ai&debug=error-poll', 'ai,error-poll'],
+    ['?debug=unknown,labels', 'labels'],
+    ['?debug=all', 'actor,ai,error-poll,labels'],
+  ];
+  for (const [search, expected] of debugCases) {
+    const actual = [...debugFlagsModule.parseDebugFlags(search)].sort().join(',');
+    if (actual !== expected) throw new Error(`debug flags mismatch for ${search}: ${actual}`);
+  }
+  const aimLineGeometry = await server.ssrLoadModule('/src/utils/aim-line-geometry.ts');
+  const rightwardAim = aimLineGeometry.buildAimLineGeometry(0, 0, 100, 0);
+  if (!rightwardAim.pathData.includes('C 22 -12,')) {
+    throw new Error(`rightward aim curve mismatch: ${rightwardAim.pathData}`);
+  }
+  if (!(rightwardAim.arrowAngle > 5 && rightwardAim.arrowAngle < 8)) {
+    throw new Error(`rightward aim arrow angle mismatch: ${rightwardAim.arrowAngle}`);
+  }
+  const arrowGapDistance = Math.hypot(
+    100 - rightwardAim.lineEndX,
+    0 - rightwardAim.lineEndY,
+  );
+  if (Math.abs(arrowGapDistance - 23) > 0.001 || rightwardAim.pathData.endsWith('100 0')) {
+    throw new Error(`aim line did not stop before arrow: ${rightwardAim.pathData}`);
+  }
+  const stationaryAim = aimLineGeometry.buildAimLineGeometry(10, 20, 10, 20);
+  if (stationaryAim.pathData !== 'M 10 20 L 10 20' || stationaryAim.arrowAngle !== 0) {
+    throw new Error('stationary aim geometry mismatch');
+  }
   const fixture = await server.ssrLoadModule('/src/stores/battle-director-v2.fixture.ts');
   fixture.assertBattleDirectorV2Fixture();
   const actorRuntimeFixture = await server.ssrLoadModule('/src/stores/actor-runtime.fixture.ts');

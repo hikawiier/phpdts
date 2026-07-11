@@ -10,7 +10,16 @@ return array(
     'unarmed_strike'   => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
     'escape'           => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => false),
     'heal'             => array('category' => 'utility', 'lifetime' => 'permanent', 'hidden' => false),
-    'throw'            => array('category' => 'attack',  'lifetime' => 'equipment', 'hidden' => false),
+    'throw'            => array(
+        'category' => 'attack',
+        'lifetime' => 'equipment',
+        'hidden' => false,
+        'equipment_grant' => array(
+            'slots' => array('wep', 'wep2'),
+            'any_tags' => array('tag_weapon_throwing'),
+            'any_kinds' => array('WC'),
+        ),
+    ),
     'whirlwind'        => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
     'execute'          => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),
     'vampiric_bite'    => array('category' => 'attack',  'lifetime' => 'permanent', 'hidden' => false),

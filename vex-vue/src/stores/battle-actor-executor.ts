@@ -1,8 +1,18 @@
 import { nextTick } from 'vue';
 import { getActorById } from '@/composables/actorRegistry';
 import { isCueAnimationHandle } from '@/composables/useActorRuntime';
-import { resolveActionSpec } from '@/animations/action-specs';
-import { createExplosionOverlay, createProjectileOverlay } from './battle-overlay-executor';
+import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
+import {
+  isExplosionDelivery,
+  isProjectileDelivery,
+  resolveBattleAnimationChain,
+  type BattleAnimationCue,
+} from '@/animations/action-specs';
+import {
+  createExplosionOverlay,
+  createProjectileOverlay,
+  createUnarmedHitPopup,
+} from './battle-overlay-executor';
 import type { AnimationHandle } from '@/types/actor-runtime';
 import type { SceneGeometry, ScenePoint } from '@/types/scene';
 import type { BattlePresentationSession } from './battle-presentation-session';
@@ -10,8 +20,6 @@ import type {
   CombatantView,
   CombatTargetView,
   DirectedActionV2,
-  DirectedCombatantJoinedV2,
-  DirectedDeliveryV2,
   DirectedEffectV2,
   DirectedNoticeV2,
 } from './battle-director-v2';
@@ -74,85 +82,237 @@ export function prepareBattlefield(context: BattleActorExecutionContext): Playba
   });
 }
 
-export function playActionAnimation(
+export function playActionChoreography(
   action: DirectedActionV2,
   context: BattleActorExecutionContext,
 ): PlaybackExecutionTask {
-  if (action.deliveries.some(delivery => isImpactDelivery(delivery.type))) {
-    return playDeliveredEffectReactions(action, context);
-  }
   switch (action.animation.kind) {
     case 'move': return playMoveAction(action, context);
-    case 'melee_hit':
-    case 'projectile': return playDamageAction(action, context);
-    case 'area_burst': return playAreaDamageAction(action, context);
     case 'escape':
-    case 'none':
-    default: return completedTask();
+      return completedTask();
+    default:
+      break;
   }
-}
+  if (action.animation.kind === 'none'
+    && action.deliveries.every(delivery => delivery.type === 'none')) return completedTask();
 
-function playDeliveredEffectReactions(
-  action: DirectedActionV2,
-  context: BattleActorExecutionContext,
-): PlaybackExecutionTask {
+  const spec = resolveBattleAnimationChain(action);
   return createTask(async scope => {
-    for (const effect of action.effects.filter(isDamageHpDrop)) {
-      if (scope.cancelled || !effect.target.snapshot) return;
-      const targetId = combatantEntityId(effect.target.snapshot);
-      const target = getActorById(targetId);
-      const lease = context.presentation.getLease(targetId, ['action', 'pose']);
-      if (!target || !lease) continue;
-      const direction = directionBetween(getActorById(combatantEntityId(action.actor))?.getScenePoint(), target.getScenePoint());
-      const handle = scope.add(lease.play({ kind: 'hit', direction }));
-      await handle.finished;
+    traceChoreography(action, 'choreography:start', {
+      animation: action.animation,
+      hitTrigger: spec.hitTrigger,
+      targets: action.targets,
+      deliveries: action.deliveries,
+      effects: action.effects.map(effect => ({
+        effectUid: effect.effectUid,
+        type: effect.type,
+        target: effect.target,
+        delta: effect.delta,
+      })),
+    });
+    await playCueStage('attackBefore', spec.attackBefore, action, context, scope);
+    if (scope.cancelled) return;
+
+    traceChoreography(action, 'stage:start', { stage: 'attackMain', cues: spec.attackMain ? [spec.attackMain] : [] });
+    const attackMain = spec.attackMain
+      ? startCue('attackMain', spec.attackMain, action, context, scope)
+      : [];
+    traceChoreography(action, 'stage:start', { stage: 'attackConcurrent', cues: spec.attackConcurrent });
+    const attackConcurrent = startCues('attackConcurrent', spec.attackConcurrent, action, context, scope);
+    const attackHandles = [...attackMain, ...attackConcurrent];
+
+    if (spec.hitTrigger === 'attack-impact') {
+      const impactHandle = attackMain.find(isCueAnimationHandle);
+      if (impactHandle) await impactHandle.cue('impact');
+      else await waitHandles(attackMain);
+      traceChoreography(action, 'trigger:impact', { source: impactHandle ? 'actor-cue' : 'attack-main-settle' });
+      if (scope.cancelled) return;
+      await Promise.all([
+        waitHandles(attackHandles),
+        playHitSequence(spec, action, context, scope),
+      ]);
+      traceChoreography(action, 'stage:settle', { stage: 'attackMain+attackConcurrent' });
+      if (scope.cancelled) return;
+      await playCueStage('attackAfter', spec.attackAfter, action, context, scope);
+      traceChoreography(action, 'choreography:settle');
+      return;
     }
+
+    await waitHandles(attackHandles);
+    traceChoreography(action, 'stage:settle', { stage: 'attackMain+attackConcurrent' });
+    if (scope.cancelled) return;
+    await playCueStage('attackAfter', spec.attackAfter, action, context, scope);
+    if (scope.cancelled) return;
+    await playHitSequence(spec, action, context, scope);
+    traceChoreography(action, 'choreography:settle');
   });
 }
 
-export function playActionDelivery(
+type ChoreographyStage =
+  | 'attackBefore'
+  | 'attackMain'
+  | 'attackConcurrent'
+  | 'attackAfter'
+  | 'hitBefore'
+  | 'hitMain'
+  | 'hitConcurrent'
+  | 'hitAfter';
+
+async function playHitSequence(
+  spec: ReturnType<typeof resolveBattleAnimationChain>,
   action: DirectedActionV2,
-  delivery: DirectedDeliveryV2,
   context: BattleActorExecutionContext,
-): PlaybackExecutionTask {
-  if (delivery.type === 'none') return completedTask();
-  return createTask(async scope => {
-    if (!context.scene.active) throw new Error('Battle scene was replaced during delivery playback');
-    const targetScene = resolveTargetScenePoint(delivery.resolvedAim, action, context);
-    const targetViewport = targetScene ? context.scene.sceneToViewport(targetScene) : null;
-    if (!targetViewport || scope.cancelled) return;
-    if (delivery.type === 'projectile' || delivery.type === 'projectile_to_tile') {
-      const attackerId = combatantEntityId(action.actor);
-      const attacker = getActorById(attackerId);
-      const attackerPoint = attacker?.getScenePoint();
-      const startViewport = attackerPoint ? context.scene.sceneToViewport(attackerPoint) : null;
-      const lease = context.presentation.getLease(attackerId, ['action', 'pose']);
-      if (lease) scope.add(lease.play({ kind: 'attack', target: targetScene ?? undefined, attackKind: 'ranged' }));
-      if (startViewport) {
-        const projectile = scope.add(createProjectileOverlay(startViewport, targetViewport));
-        await projectile.finished;
-      }
-    }
-    if (delivery.type === 'explosion' || delivery.type === 'explosion_at_tile') {
-      await scope.add(createExplosionOverlay(targetViewport)).finished;
-    }
+  scope: TaskScope,
+): Promise<void> {
+  await playCueStage('hitBefore', spec.hitBefore, action, context, scope);
+  if (scope.cancelled) return;
+  traceChoreography(action, 'stage:start', { stage: 'hitMain', cues: spec.hitMain ? [spec.hitMain] : [] });
+  const hitMain = spec.hitMain ? startCue('hitMain', spec.hitMain, action, context, scope) : [];
+  traceChoreography(action, 'stage:start', { stage: 'hitConcurrent', cues: spec.hitConcurrent });
+  const hitConcurrent = startCues('hitConcurrent', spec.hitConcurrent, action, context, scope);
+  await waitHandles([...hitMain, ...hitConcurrent]);
+  traceChoreography(action, 'stage:settle', { stage: 'hitMain+hitConcurrent' });
+  if (scope.cancelled) return;
+  await playCueStage('hitAfter', spec.hitAfter, action, context, scope);
+}
+
+async function playCueStage(
+  stage: ChoreographyStage,
+  cues: readonly BattleAnimationCue[],
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): Promise<void> {
+  traceChoreography(action, 'stage:start', { stage, cues });
+  await waitHandles(startCues(stage, cues, action, context, scope));
+  traceChoreography(action, 'stage:settle', { stage });
+}
+
+function startCues(
+  stage: ChoreographyStage,
+  cues: readonly BattleAnimationCue[],
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): AnimationHandle[] {
+  return cues.flatMap(cue => startCue(stage, cue, action, context, scope));
+}
+
+function startCue(
+  stage: ChoreographyStage,
+  cue: BattleAnimationCue,
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): AnimationHandle[] {
+  if (scope.cancelled || !context.scene.active) return [];
+  traceChoreography(action, 'cue:start', { stage, cue });
+  if (cue === 'actor-melee' || cue === 'actor-ranged') {
+    const attackerId = combatantEntityId(action.actor);
+    const lease = context.presentation.getLease(attackerId, ['action', 'pose']);
+    if (!lease) return [];
+    const target = resolvePrimaryTargetScenePoint(action, context);
+    const handle = scope.add(lease.play({
+      kind: 'attack',
+      target: target ?? undefined,
+      attackKind: cue === 'actor-melee' ? 'melee' : 'ranged',
+    }));
+    traceHandle(action, stage, cue, handle, { target });
+    return [handle];
+  }
+  if (cue === 'target-hit') return startTargetHits(action, context, scope);
+  if (cue === 'projectile-delivery') return startProjectileDeliveries(action, context, scope);
+  if (cue === 'unarmed-hit-popup') return startUnarmedHitPopups(action, context, scope);
+  return startExplosionDeliveries(action, context, scope);
+}
+
+function startTargetHits(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): AnimationHandle[] {
+  const attacker = getActorById(combatantEntityId(action.actor));
+  const targets = damagedCombatants(action);
+  return targets.flatMap(targetView => {
+    const target = getActorById(combatantEntityId(targetView));
+    const lease = context.presentation.getLease(combatantEntityId(targetView), ['action', 'pose']);
+    if (!target || !lease) return [];
+    const handle = scope.add(lease.play({
+      kind: 'hit',
+      direction: directionBetween(attacker?.getScenePoint(), target.getScenePoint()),
+    }));
+    traceHandle(action, 'hitMain', 'target-hit', handle, {
+      targetId: combatantEntityId(targetView),
+      targetPid: targetView.pid,
+    });
+    return [handle];
   });
 }
 
-function isImpactDelivery(type: string): boolean {
-  return type === 'projectile'
-    || type === 'projectile_to_tile'
-    || type === 'explosion'
-    || type === 'explosion_at_tile';
+function startUnarmedHitPopups(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): AnimationHandle[] {
+  return damagedCombatants(action).flatMap(targetView => {
+    const targetId = combatantEntityId(targetView);
+    const point = getActorById(targetId)?.getScenePoint();
+    const at = point ? context.scene.sceneToViewport(point) : null;
+    if (!at) return [];
+    const handle = scope.add(createUnarmedHitPopup(at));
+    traceHandle(action, 'hitConcurrent', 'unarmed-hit-popup', handle, {
+      targetId,
+      targetPid: targetView.pid,
+      at,
+    });
+    return [handle];
+  });
 }
 
-export function playCombatantJoined(
-  joined: DirectedCombatantJoinedV2,
+function startProjectileDeliveries(
+  action: DirectedActionV2,
   context: BattleActorExecutionContext,
-): PlaybackExecutionTask {
-  const actorId = combatantEntityId(joined.combatant);
-  const lease = context.presentation.getLease(actorId, ['pose']);
-  return lease ? taskFromHandle(lease.play({ kind: 'join-cue' })) : completedTask();
+  scope: TaskScope,
+): AnimationHandle[] {
+  const attackerPoint = getActorById(combatantEntityId(action.actor))?.getScenePoint();
+  const from = attackerPoint ? context.scene.sceneToViewport(attackerPoint) : null;
+  if (!from) return [];
+  return action.deliveries.filter(delivery => isProjectileDelivery(delivery.type)).flatMap(delivery => {
+    const target = resolveTargetScenePoint(delivery.resolvedAim, action, context);
+    const to = target ? context.scene.sceneToViewport(target) : null;
+    if (!to) return [];
+    const handle = scope.add(createProjectileOverlay(from, to));
+    traceHandle(action, 'attackAfter', 'projectile-delivery', handle, {
+      rawLogId: delivery.rawLogId,
+      resolvedAim: delivery.resolvedAim,
+      from,
+      to,
+    });
+    return [handle];
+  });
+}
+
+function startExplosionDeliveries(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+  scope: TaskScope,
+): AnimationHandle[] {
+  return action.deliveries.filter(delivery => isExplosionDelivery(delivery.type)).flatMap(delivery => {
+    const target = resolveTargetScenePoint(delivery.resolvedAim, action, context);
+    const at = target ? context.scene.sceneToViewport(target) : null;
+    if (!at) return [];
+    const handle = scope.add(createExplosionOverlay(at));
+    traceHandle(action, 'hitConcurrent', 'explosion-delivery', handle, {
+      rawLogId: delivery.rawLogId,
+      resolvedAim: delivery.resolvedAim,
+      at,
+    });
+    return [handle];
+  });
+}
+
+function waitHandles(handles: readonly AnimationHandle[]): Promise<void> {
+  return Promise.all(handles.map(handle => handle.finished)).then(() => undefined);
 }
 
 export function playCombatantCleared(
@@ -206,75 +366,21 @@ function playMoveAction(
   return lease ? taskFromHandle(lease.play({ kind: 'move', target: anchor, tier, hold: true })) : completedTask();
 }
 
-function playDamageAction(
-  action: DirectedActionV2,
-  context: BattleActorExecutionContext,
-): PlaybackExecutionTask {
-  return createTask(async scope => {
-    const effect = action.effects.find(isDamageHpDrop);
-    const defenderView = effect?.target.snapshot;
-    if (!defenderView) return;
-    const attackerId = combatantEntityId(action.actor);
-    const defenderId = combatantEntityId(defenderView);
-    const attacker = getActorById(attackerId);
-    const defender = getActorById(defenderId);
-    const attackerLease = context.presentation.getLease(attackerId, ['action', 'pose']);
-    const defenderLease = context.presentation.getLease(defenderId, ['action', 'pose']);
-    if (!attacker || !defender || !attackerLease || !defenderLease) return;
-    const spec = resolveActionSpec(action.actionId);
-    const attack = scope.add(attackerLease.play({
-      kind: 'attack',
-      target: defender.getScenePoint() ?? undefined,
-      attackKind: spec.attacker.kind,
-    }));
-    if (isCueAnimationHandle(attack)) await attack.cue('impact');
-    if (scope.cancelled) return;
-    const hit = scope.add(defenderLease.play({
-      kind: 'hit',
-      direction: directionBetween(attacker.getScenePoint(), defender.getScenePoint()),
-    }));
-    await Promise.all([attack.finished, hit.finished]);
-  });
-}
-
-function playAreaDamageAction(
-  action: DirectedActionV2,
-  context: BattleActorExecutionContext,
-): PlaybackExecutionTask {
-  return createTask(async scope => {
-    const targets = uniqueCombatants(action.effects
-      .filter(isDamageHpDrop)
-      .map(effect => effect.target.snapshot)
-      .filter((target): target is CombatantView => Boolean(target)));
-    if (targets.length === 0) return;
-    const attackerId = combatantEntityId(action.actor);
-    const attacker = getActorById(attackerId);
-    const attackerLease = context.presentation.getLease(attackerId, ['action', 'pose']);
-    if (!attacker || !attackerLease) return;
-    const primary = getActorById(combatantEntityId(targets[0]));
-    const attack = scope.add(attackerLease.play({
-      kind: 'attack', target: primary?.getScenePoint() ?? undefined, attackKind: 'ranged',
-    }));
-    if (isCueAnimationHandle(attack)) await attack.cue('impact');
-    if (scope.cancelled) return;
-    const hits = targets.flatMap(target => {
-      const targetId = combatantEntityId(target);
-      const defender = getActorById(targetId);
-      const lease = context.presentation.getLease(targetId, ['action', 'pose']);
-      if (!defender || !lease) return [];
-      return [scope.add(lease.play({
-        kind: 'hit', direction: directionBetween(attacker.getScenePoint(), defender.getScenePoint()),
-      }))];
-    });
-    await Promise.all([attack.finished, ...hits.map(handle => handle.finished)]);
-  });
-}
-
 function taskFromHandle(handle: AnimationHandle): PlaybackExecutionTask {
   return {
     finished: handle.finished.then(() => undefined),
     cancel: reason => handle.cancel(reason),
   };
+}
+
+function resolvePrimaryTargetScenePoint(
+  action: DirectedActionV2,
+  context: BattleActorExecutionContext,
+): ScenePoint | null {
+  const target = action.targets.find(candidate => candidate.kind !== 'none')
+    ?? action.deliveries.find(delivery => delivery.type !== 'none')?.resolvedAim
+    ?? action.effects.find(effect => effect.target.kind !== 'none')?.target;
+  return target ? resolveTargetScenePoint(target, action, context) : null;
 }
 
 function resolveTargetScenePoint(
@@ -338,4 +444,49 @@ function uniqueCombatants(combatants: CombatantView[]): CombatantView[] {
 
 function combatantEntityId(combatant: CombatantView): string {
   return combatant.type === 0 ? 'player' : `enemy-${combatant.pid}`;
+}
+
+function damagedCombatants(action: DirectedActionV2): CombatantView[] {
+  return uniqueCombatants(action.effects
+    .filter(isDamageHpDrop)
+    .map(effect => effect.target.snapshot)
+    .filter((target): target is CombatantView => Boolean(target)));
+}
+
+function traceHandle(
+  action: DirectedActionV2,
+  stage: ChoreographyStage,
+  cue: BattleAnimationCue,
+  handle: AnimationHandle,
+  data: Record<string, unknown>,
+): void {
+  traceChoreography(action, 'handle:start', { stage, cue, ...data });
+  void handle.finished.then(result => {
+    traceChoreography(action, 'handle:settle', { stage, cue, result, ...data });
+  });
+}
+
+function traceChoreography(
+  action: DirectedActionV2,
+  step: string,
+  data: Record<string, unknown> = {},
+): void {
+  if (!actorTraceEnabled) return;
+  const entry = {
+    ts: Date.now(),
+    batchSeq: (globalThis as Record<string, unknown>).__battleChoreographyActiveBatchV1 ?? null,
+    step,
+    actionUid: action.actionUid,
+    actionId: action.actionId,
+    actorPid: action.actor.pid,
+    ...data,
+  };
+  debugBus.emit('battle-choreography', step, entry);
+  const root = globalThis as Record<string, unknown>;
+  const trace = Array.isArray(root.__battleChoreographyTraceV1)
+    ? root.__battleChoreographyTraceV1 as unknown[]
+    : [];
+  trace.push(entry);
+  if (trace.length > 400) trace.splice(0, trace.length - 400);
+  root.__battleChoreographyTraceV1 = trace;
 }

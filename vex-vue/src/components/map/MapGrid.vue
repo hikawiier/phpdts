@@ -45,6 +45,7 @@ import type { MapEntity } from '@/types/map-entity';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { selectAimTileFromMapObject, useAimTargetingStore, type AimTileVisualState } from '@/stores/aim-targeting';
+import { isDebugEnabled } from '@/utils/debug-flags';
 
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
@@ -53,6 +54,7 @@ const playerAvatarStore = usePlayerAvatarStore();
 const uiStore = useUiStore();
 const presentationScene = usePresentationSceneStore();
 const aimTargetingStore = useAimTargetingStore();
+const actorLabelsEnabled = isDebugEnabled('labels');
 
 function isMapCommandInputLocked(): boolean {
   return isBattleMapInputLocked({
@@ -226,6 +228,8 @@ watch(
 onMounted(() => {
   if (!gridRef.value || !containerRef.value) return;
 
+  playerAvatarStore.preloadAppearanceImages();
+
   // 1. 注册业务回调（渲染/交互/事件监听/DebugBus）
   setupMapCallbacks();
 
@@ -337,6 +341,11 @@ onUnmounted(() => {
         :data-pls="entity.pls || undefined"
         @click="onEntityClick(entity, $event)"
       >
+        <span
+          v-if="actorLabelsEnabled"
+          class="actor-debug-label"
+          aria-hidden="true"
+        ></span>
         <div class="actor-action">
           <div class="actor-visibility">
             <div class="actor-pose">

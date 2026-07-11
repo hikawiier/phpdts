@@ -14,6 +14,7 @@ import { useEntitiesStore } from '@/stores/entities';
 import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
 import {
   createCancellableProjectedRemoval,
+  isRegionTransition,
   isScenePointAtAnchor,
 } from '@/composables/useMapEntities';
 import { closePresentationSessionOwnership } from '@/stores/battle';
@@ -23,6 +24,7 @@ import type { AnimationResult, PresentationLease } from '@/types/actor-runtime';
 import type { SceneAnchor } from '@/types/scene';
 import type { BattlePlaybackPlan, BattleSegmentV2 } from '@/stores/battle-director-v2';
 import type { BattlePresentationSession } from '@/stores/battle-presentation-session';
+import type { MapEntity } from '@/types/map-entity';
 
 function anchor(pgroup: number, pls: number, x: number, y: number): SceneAnchor {
   return {
@@ -48,6 +50,7 @@ export function assertActorRuntimeContractFixture(): void {
   assertPostureAndEscapeContract();
   assertTerminalAbortContract();
   assertCombatTargetResolutionContract();
+  assertRegionTransitionContract();
 }
 
 export async function assertDataManagerRefreshContractFixture(): Promise<void> {
@@ -122,17 +125,19 @@ export async function assertPlaybackSceneGuardFixture(): Promise<void> {
 export async function assertPlaybackTimeoutCancellationFixture(): Promise<void> {
   const segment: BattleSegmentV2 = { kind: 'turn', actions: [], notices: [] };
   const combatant = { id: 'enemy-3', pid: 3, type: 1, name: 'enemy', hp: 10, mhp: 10 };
-  const joined = { rawLogId: 1, qid: 1, combatant, sourceActionUid: 'a1', myorder: 1, done: 0 };
+  const notice = {
+    type: 'combatant_cleared' as const,
+    rawLogId: 1,
+    combatant,
+    reason: 'death',
+    text: { html: 'enemy cleared', tone: 'system' as const },
+  };
   const plan: BattlePlaybackPlan = {
     schema: 'battleplayback.v1',
     script: { schema: 'battleplay.v2', segments: [segment], rawLogIds: [1] },
     steps: [{
-      id: 'timeout-cancel', kind: 'combatant_joined', awaitPolicy: 'completion', timeout: 5,
-      segment, action: {
-        actionUid: 'a1', rawLogId: 1, actionId: 'attack', actor: combatant,
-        targets: [], effects: [], deliveries: [], joinedCombatants: [joined],
-        success: true, animation: { kind: 'none' }, text: [],
-      }, joined,
+      id: 'timeout-cancel', kind: 'combatant_cleared', awaitPolicy: 'completion', timeout: 5,
+      segment, notice,
     }],
   };
   let cancelled = false;
@@ -789,6 +794,21 @@ function createActorElements(): ActorElements {
     visibility: createDomLikeElement(),
     pose: createDomLikeElement(),
   };
+}
+
+function assertRegionTransitionContract(): void {
+  const entity = (pgroup: number, pls: number): MapEntity => ({
+    id: 'player',
+    kind: 'actor',
+    actorKind: 'player',
+    pgroup,
+    pls,
+    img: '/img/3.png',
+  });
+  assert(!isRegionTransition(entity(1, 2), entity(1, 3)),
+    'same-region movement was classified as a region transition');
+  assert(isRegionTransition(entity(1, 2), entity(2, 2)),
+    'pgroup change was not classified as a region transition');
 }
 
 function createDomLikeElement(): HTMLElement {

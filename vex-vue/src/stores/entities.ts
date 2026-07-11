@@ -17,11 +17,13 @@ import { defineStore } from 'pinia';
 import { computed } from 'vue';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
+import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import type { MapEntity } from '@/types/map-entity';
 
 export const useEntitiesStore = defineStore('entities', () => {
   const mapStore = useMapStore();
   const characterStore = useCharacterStore();
+  const playerAvatarStore = usePlayerAvatarStore();
 
   // ── 所有地图实体（响应式，从 CharacterHub 的权威 map roster 派生） ──
   // 注：不依赖 playerAvatarStore.isDown，避免 isDown 变化触发 entities 重算
@@ -39,7 +41,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         characterPid: c.pid,
         pls: isPlayer ? (playerTile?.pls ?? c.pls) : c.pls,
         pgroup: isPlayer ? (playerTile?.pgroup ?? c.pgroup) : c.pgroup,
-        img: isPlayer ? '/img/1.png' : `/img/n_${c.type}.png`,
+        img: isPlayer ? playerAvatarStore.currentImage : `/img/n_${c.type}.png`,
         imgHeightRatio: 1.25,
         inCombat: c.combat?.inCombat ?? false,
       });

@@ -1,5 +1,11 @@
 import type { BattleLogV2Event } from '@/types/api';
-import { directV2, planPlaybackV2, type ActionDeliveryStep, type BattlePlayScriptV2 } from './battle-director-v2';
+import { resolveBattleAnimationChain } from '@/animations/action-specs';
+import {
+  directV2,
+  planPlaybackV2,
+  type ActionChoreographyStep,
+  type BattlePlayScriptV2,
+} from './battle-director-v2';
 
 const PLAYER = {
   pid: 100,
@@ -211,11 +217,11 @@ export function assertBattleDirectorV2Fixture(): void {
   const action = turn?.actions[0];
   const effect = action?.effects[0];
   const plan = planPlaybackV2(script);
-  const joinedStepIndex = plan.steps.findIndex(step => step.kind === 'combatant_joined');
-  const firstActionStepIndex = plan.steps.findIndex(step => step.kind === 'action_animation' && step.action.actionUid === 'fixture-a1');
+  const firstActionStepIndex = plan.steps.findIndex(step =>
+    step.kind === 'action_choreography' && step.action.actionUid === 'fixture-a1');
   const emptyGrenade = turn?.actions.find(item => item.actionUid === 'fixture-grenade-empty');
-  const deliverySteps = plan.steps.filter((step): step is ActionDeliveryStep =>
-    step.kind === 'action_delivery' && step.action.actionUid === 'fixture-grenade-empty');
+  const grenadeSteps = plan.steps.filter(step =>
+    step.kind === 'action_choreography' && step.action.actionUid === 'fixture-grenade-empty');
   const battleEndSteps = plan.steps
     .filter(step => step.segment === battleEnd)
     .map(step => step.kind);
@@ -224,16 +230,28 @@ export function assertBattleDirectorV2Fixture(): void {
   if (!turn || turn.notices.length < 2) throw new Error('fixture turn notices missing');
   if (!action || action.actionUid !== 'fixture-a1') throw new Error('fixture action missing');
   if (!effect || effect.visual.kind !== 'damage_number') throw new Error('fixture damage visual missing');
-  if (joinedStepIndex < 0 || firstActionStepIndex < 0 || joinedStepIndex >= firstActionStepIndex) {
-    throw new Error('fixture combatant_joined ordering mismatch');
+  const meleeChain = resolveBattleAnimationChain(action);
+  if (meleeChain.hitTrigger !== 'attack-impact'
+    || meleeChain.attackMain !== 'actor-melee'
+    || meleeChain.hitMain !== 'target-hit'
+    || !meleeChain.hitConcurrent.includes('unarmed-hit-popup')) {
+    throw new Error('fixture melee choreography mapping mismatch');
+  }
+  if (firstActionStepIndex < 0 || action.joinedCombatants[0]?.combatant.pid !== ENEMY.pid) {
+    throw new Error('fixture combatant_joined fact was not retained without a visual step');
   }
   if (!emptyGrenade || emptyGrenade.effects.length !== 0
     || emptyGrenade.deliveries.map(delivery => delivery.type).join(',') !== 'projectile_to_tile,explosion_at_tile') {
     throw new Error('fixture empty grenade delivery missing');
   }
-  if (deliverySteps.length !== 2
-    || deliverySteps.map(step => step.delivery.type).join(',') !== 'projectile_to_tile,explosion_at_tile') {
-    throw new Error('fixture delivery playback order mismatch');
+  if (grenadeSteps.length !== 1 || grenadeSteps[0].awaitPolicy !== 'completion') {
+    throw new Error('fixture action did not collapse to one choreography step');
+  }
+  const grenadeChain = resolveBattleAnimationChain(emptyGrenade);
+  if (grenadeChain.hitTrigger !== 'attack-after'
+    || !grenadeChain.attackAfter.includes('projectile-delivery')
+    || !grenadeChain.hitConcurrent.includes('explosion-delivery')) {
+    throw new Error('fixture projectile choreography mapping mismatch');
   }
   assertMoveThenDeliveryOrder();
   assertEscapeThenClearOrder();
@@ -339,7 +357,7 @@ function assertEscapeThenClearOrder(): void {
     .flatMap(action => action.effects)
     .find(effect => effect.effectUid === 'fixture-flustered-effect');
   const escapeIndex = plan.steps.findIndex(step =>
-    step.kind === 'action_animation' && step.action.actionUid === 'fixture-escape');
+    step.kind === 'action_choreography' && step.action.actionUid === 'fixture-escape');
   const clearIndex = plan.steps.findIndex(step =>
     step.kind === 'combatant_cleared' && step.notice.combatant?.pid === escapingEnemy.pid);
   if (escapeIndex < 0 || clearIndex <= escapeIndex) {
@@ -439,14 +457,15 @@ function assertMoveThenDeliveryOrder(): void {
     }),
   ];
   const plan = planPlaybackV2(directV2(events));
-  const moveIndex = plan.steps.findIndex(step => step.kind === 'action_animation' && step.action.actionUid === 'fixture-move');
-  const deliverySteps = plan.steps.filter((step): step is ActionDeliveryStep =>
-    step.kind === 'action_delivery' && step.action.actionUid === 'fixture-after-move-grenade');
-  const firstDeliveryIndex = deliverySteps.length > 0 ? plan.steps.indexOf(deliverySteps[0]) : -1;
-  if (moveIndex < 0 || deliverySteps.length !== 2 || firstDeliveryIndex <= moveIndex) {
+  const moveIndex = plan.steps.findIndex(step =>
+    step.kind === 'action_choreography' && step.action.actionUid === 'fixture-move');
+  const grenadeStep = plan.steps.find((step): step is ActionChoreographyStep =>
+    step.kind === 'action_choreography' && step.action.actionUid === 'fixture-after-move-grenade');
+  const grenadeIndex = grenadeStep ? plan.steps.indexOf(grenadeStep) : -1;
+  if (moveIndex < 0 || grenadeIndex <= moveIndex) {
     throw new Error('fixture move/delivery playback order mismatch');
   }
-  if (deliverySteps.some(step => step.delivery.resolvedAim.pls !== 1005)) {
+  if (!grenadeStep || grenadeStep.action.deliveries.some(delivery => delivery.resolvedAim.pls !== 1005)) {
     throw new Error('fixture delivery resolved aim mismatch');
   }
 }

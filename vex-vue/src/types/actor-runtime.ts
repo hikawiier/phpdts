@@ -11,6 +11,7 @@ export interface ActorElements {
   action: HTMLElement;
   visibility: HTMLElement;
   pose: HTMLElement;
+  debugLabel?: HTMLElement;
 }
 
 export interface AnimationResult {
@@ -31,10 +32,10 @@ export type ActorCommand =
   | { kind: 'idle' }
   | { kind: 'enter' }
   | { kind: 'arrive' }
+  | { kind: 'transform-appearance'; swap: () => void }
   | { kind: 'move'; target: SceneAnchor; tier: MoveTier; hold?: boolean }
   | { kind: 'attack'; target?: ScenePoint; attackKind: AttackKind }
   | { kind: 'hit'; direction: -1 | 0 | 1 }
-  | { kind: 'join-cue' }
   | { kind: 'fall' }
   | { kind: 'fade' }
   | { kind: 'reset-visible' };
@@ -76,14 +77,4 @@ export interface ActorRuntime {
   consumeBattleExitAnimated(sessionId: string): boolean;
   consumeRemovalDisposition(): RemovalDisposition;
   dispose(): void;
-}
-
-export interface ActionAnimationSpec {
-  attacker: {
-    kind: AttackKind;
-    impactAt: number;
-  };
-  target: {
-    duration: number;
-  };
 }

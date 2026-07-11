@@ -202,7 +202,7 @@ $obl_battle_log->emit(...)
 
 ```txt
 ?debug=ai
-?poll_error=1
+?debug=error-poll
 ```
 
 已显式 renderer：

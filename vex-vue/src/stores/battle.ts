@@ -40,12 +40,14 @@ import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
 import type { ApiAction } from '@/api/endpoints';
 import { getSceneGeometry } from '@/composables/sceneRegistry';
+import { actorTraceEnabled } from '@/composables/useDebugBus';
 import type { BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse } from '@/types/api';
 import type { PresentationAnimationRun } from '@/types/presentation-scene';
 import {
   directV2,
   isBattleLogV2Event,
   planPlaybackV2,
+  type BattlePlaybackPlan,
   type BattlePlayScriptV2,
   type BattleSegmentV2,
 } from './battle-director-v2';
@@ -67,6 +69,8 @@ export const NPC_TURN_REFRESH_INTERVAL = 1000;
 
 /** 守护进程快心跳间隔（毫秒）— PROCESSING 时尽快推进 NPC / battlelog */
 const DAEMON_BEAT_FAST_INTERVAL = 300;
+
+if (actorTraceEnabled) initializeBattleDebugGlobals();
 
 /** 守护进程慢心跳间隔（毫秒）— 非 PROCESSING 时降低空转请求 */
 const DAEMON_BEAT_IDLE_INTERVAL = 1000;
@@ -616,6 +620,7 @@ export const useBattleStore = defineStore('battle', () => {
         const enemyPid = resolveEnemyPid(battleQueue, nextCombatContext);
         const playerTurn = battleState === 'PLAYER_TURN';
         enterBattleMode(enemyPid, playerTurn, nextCombatContext);
+        await loadCombatTargets();
 
         if (battleState === 'PROCESSING') {
           startNpcTurnRefresh();
@@ -697,10 +702,11 @@ export const useBattleStore = defineStore('battle', () => {
       if (authorityHead < batch.batch_seq) break;
       if (v2Events.length > 0) {
         const scriptV2 = directV2(v2Events);
-        if (import.meta.env.DEV) {
+        if (actorTraceEnabled) {
           (globalThis as Record<string, unknown>).__battleScriptV2 = scriptV2;
           (globalThis as Record<string, unknown>).__battleRawEventsV2 = v2Events;
           (globalThis as Record<string, unknown>).__presentationBatchV1 = batch;
+          captureBattleDebugBatch(batch.batch_seq, v2Events, scriptV2);
         }
 
         if (scriptV2.segments.length > 0) {
@@ -774,8 +780,9 @@ export const useBattleStore = defineStore('battle', () => {
    */
   async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise<void> {
     const plan = planPlaybackV2(script);
-    if (import.meta.env.DEV) {
+    if (actorTraceEnabled) {
       (globalThis as Record<string, unknown>).__battlePlaybackPlanV2 = plan;
+      captureBattleDebugPlan(activePresentationBatchSeq, plan);
     }
 
     const scene = await waitForSceneGeometry();
@@ -1113,6 +1120,7 @@ export const useBattleStore = defineStore('battle', () => {
     activePresentationBatchSeq = null;
     authorityRefreshGeneration++;
     pendingAuthorityScopes.clear();
+    usePlayerAvatarStore().resetAppearance();
     usePresentationSceneStore().reset();
     stopNpcTurnRefresh();
     coveredWait?.resolve();
@@ -1167,3 +1175,49 @@ export const useBattleStore = defineStore('battle', () => {
     reset,
   };
 });
+
+interface BattleDebugBatchSnapshot {
+  batchSeq: number;
+  capturedAt: number;
+  rawEvents: readonly unknown[];
+  script: BattlePlayScriptV2;
+  plan: BattlePlaybackPlan | null;
+}
+
+function captureBattleDebugBatch(
+  batchSeq: number,
+  rawEvents: readonly unknown[],
+  script: BattlePlayScriptV2,
+): void {
+  initializeBattleDebugGlobals();
+  const root = globalThis as Record<string, unknown>;
+  const batches = Array.isArray(root.__battleDebugBatchesV1)
+    ? root.__battleDebugBatchesV1 as BattleDebugBatchSnapshot[]
+    : [];
+  batches.push({ batchSeq, capturedAt: Date.now(), rawEvents, script, plan: null });
+  if (batches.length > 20) batches.splice(0, batches.length - 20);
+  root.__battleDebugBatchesV1 = batches;
+  root.__battleChoreographyActiveBatchV1 = batchSeq;
+}
+
+function captureBattleDebugPlan(batchSeq: number | null, plan: BattlePlaybackPlan): void {
+  const root = globalThis as Record<string, unknown>;
+  const batches = Array.isArray(root.__battleDebugBatchesV1)
+    ? root.__battleDebugBatchesV1 as BattleDebugBatchSnapshot[]
+    : [];
+  const snapshot = batchSeq === null
+    ? batches[batches.length - 1]
+    : [...batches].reverse().find(item => item.batchSeq === batchSeq);
+  if (snapshot) snapshot.plan = plan;
+}
+
+function initializeBattleDebugGlobals(): void {
+  const root = globalThis as Record<string, unknown>;
+  if (!Array.isArray(root.__battleDebugBatchesV1)) root.__battleDebugBatchesV1 = [];
+  if (!Array.isArray(root.__battleChoreographyTraceV1)) root.__battleChoreographyTraceV1 = [];
+  root.__battleChoreographyTraceJsonV1 = () => JSON.stringify(root.__battleChoreographyTraceV1 ?? [], null, 2);
+  root.__battleDebugBundleJsonV1 = () => JSON.stringify({
+    batches: root.__battleDebugBatchesV1 ?? [],
+    trace: root.__battleChoreographyTraceV1 ?? [],
+  }, null, 2);
+}

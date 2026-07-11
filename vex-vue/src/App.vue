@@ -46,6 +46,7 @@ import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
 import WorldWaitButton from '@/components/actions/WorldWaitButton.vue';
+import { isDebugEnabled } from '@/utils/debug-flags';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
@@ -62,10 +63,7 @@ const craftStore = useCraftStore();
 const isBattleActive = computed(() => battleStore.currentMode === 'battle');
 
 // ── ?debug=ai 时加 .debug-ai 类（显示 tick 调试） ──
-const isDebugAi = computed(() => {
-  if (typeof window === 'undefined') return false;
-  return new URLSearchParams(window.location.search).get('debug') === 'ai';
-});
+const isDebugAi = computed(() => isDebugEnabled('ai'));
 
 // ── 全局键盘快捷键（与现有 app.js 一致） ──
 // ESC: 合成模态框 > 通用模态框 > 右抽屉 > 左抽屉（优先级，合成模态框最优先）
@@ -110,10 +108,9 @@ onMounted(async () => {
   // 启动前端守护进程心跳（纯后端 tick 激活，200ms 间隔）
   battleStore.startDaemonPoll();
 
-  // 错误日志独立轮询：默认关闭，URL 参数 ?poll_error=1 开启
+  // 错误日志独立轮询：默认关闭，URL 参数 ?debug=error-poll 开启
   // 事件驱动（game:action-completed）始终生效，轮询仅作兜底
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('poll_error') === '1') {
+  if (isDebugEnabled('error-poll')) {
     errorLogStore.startPolling();
   }
 

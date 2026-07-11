@@ -563,7 +563,7 @@ error_log 持久化与 state scope 保留。
 前端 error-log store 仍会拉取并推进 lastTs，但普通 UI 默认不再 Toast 诊断事件。
 仅在诊断模式显示 error_log Toast：
   ?debug=ai
-  ?poll_error=1
+  ?debug=error-poll
 
 command.rejected / battle_entry.empty_actions 等不再作为普通业务反馈来源。
 ```

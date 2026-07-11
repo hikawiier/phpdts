@@ -22,6 +22,7 @@ import LogEntry from './LogEntry.vue';
 import LogUnreadBtn from './LogUnreadBtn.vue';
 import { renderLogEntry } from '@/data/log-templates';
 import type { LogEntry as LogEntryType } from '@/types/api';
+import { isDebugEnabled } from '@/utils/debug-flags';
 
 const logStore = useLogStore();
 const { isAtBottom, unreadCount, scrollToBottom, bindScroll } = useLogScroll();
@@ -30,10 +31,7 @@ const { isAtBottom, unreadCount, scrollToBottom, bindScroll } = useLogScroll();
 const scrollerRef = ref<HTMLElement | null>(null);
 
 /** debug 日志开关：?debug=ai 启用时显示 debug 日志（默认隐藏） */
-const isDebugLogMode = (() => {
-  if (typeof window === 'undefined') return false;
-  return new URLSearchParams(window.location.search).get('debug') === 'ai';
-})();
+const isDebugLogMode = isDebugEnabled('ai');
 
 /**
  * 日志区不渲染黑名单：这些事件仅触发 Toast / 模态框，不在日志面板留痕

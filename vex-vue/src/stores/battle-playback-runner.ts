@@ -2,9 +2,7 @@
 // 职责：遍历 steps → 创建执行任务 → 处理场景保护 → 执行完成回调
 import { dataManager } from '@/stores/data-manager';
 import {
-  playActionDelivery,
-  playActionAnimation,
-  playCombatantJoined,
+  playActionChoreography,
   playCombatantCleared,
   prepareBattlefield,
   type BattleActorExecutionContext,
@@ -80,7 +78,7 @@ function describeStep(step: PlaybackStep): Record<string, unknown> {
       rawLogId: step.notice.rawLogId,
     };
   }
-  if (step.kind === 'action_animation' || step.kind === 'action_delivery') {
+  if (step.kind === 'action_choreography') {
     return {
       stepId: step.id,
       kind: step.kind,
@@ -127,12 +125,8 @@ function createStepTask(step: PlaybackStep, runtime: BattlePlaybackRuntime): Pla
       return promiseTask(runtime.updateSegmentContext(step.segment, runtime.npcPid));
     case 'prepare_map':
       return prepareBattlefield(actorContext);
-    case 'action_delivery':
-      return playActionDelivery(step.action, step.delivery, actorContext);
-    case 'combatant_joined':
-      return playCombatantJoined(step.joined, actorContext);
-    case 'action_animation':
-      return playActionAnimation(step.action, actorContext);
+    case 'action_choreography':
+      return playActionChoreography(step.action, actorContext);
     case 'combatant_cleared':
       return playCombatantCleared(step.notice, actorContext);
     case 'battle_end_overlay_enter':

@@ -127,9 +127,7 @@ export interface BattlePlayScriptV2 {
 export type PlaybackStepKind =
   | 'prepare_map'
   | 'segment_context'
-  | 'action_delivery'
-  | 'combatant_joined'
-  | 'action_animation'
+  | 'action_choreography'
   | 'combatant_cleared'
   | 'battle_end_overlay_enter'
   | 'presentation_scene_handoff'
@@ -156,24 +154,10 @@ export interface SegmentContextStep extends PlaybackStepBase {
   segment: BattleSegmentV2;
 }
 
-export interface ActionAnimationStep extends PlaybackStepBase {
-  kind: 'action_animation';
+export interface ActionChoreographyStep extends PlaybackStepBase {
+  kind: 'action_choreography';
   segment: BattleSegmentV2;
   action: DirectedActionV2;
-}
-
-export interface ActionDeliveryStep extends PlaybackStepBase {
-  kind: 'action_delivery';
-  segment: BattleSegmentV2;
-  action: DirectedActionV2;
-  delivery: DirectedDeliveryV2;
-}
-
-export interface CombatantJoinedStep extends PlaybackStepBase {
-  kind: 'combatant_joined';
-  segment: BattleSegmentV2;
-  action: DirectedActionV2;
-  joined: DirectedCombatantJoinedV2;
 }
 
 export interface CombatantClearedStep extends PlaybackStepBase {
@@ -215,9 +199,7 @@ export interface DamageLingerStep extends PlaybackStepBase {
 export type PlaybackStep =
   | PrepareMapStep
   | SegmentContextStep
-  | ActionDeliveryStep
-  | CombatantJoinedStep
-  | ActionAnimationStep
+  | ActionChoreographyStep
   | CombatantClearedStep
   | BattleEndOverlayEnterStep
   | PresentationSceneHandoffStep
@@ -552,37 +534,16 @@ export function planPlaybackV2(script: BattlePlayScriptV2): BattlePlaybackPlan {
     });
 
     for (const action of segment.actions) {
-      for (const delivery of action.deliveries) {
-        steps.push({
-          id: `${nextId('action_delivery', segment)}-${action.actionUid}-${delivery.rawLogId}`,
-          kind: 'action_delivery',
-          segment,
-          action,
-          delivery,
-          awaitPolicy: delivery.type === 'none' ? 'none' : 'completion',
-          timeout: 1400,
-        });
-      }
-
-      for (const joined of action.joinedCombatants) {
-        steps.push({
-          id: `${nextId('combatant_joined', segment)}-${action.actionUid}-${joined.combatant.pid}`,
-          kind: 'combatant_joined',
-          segment,
-          action,
-          joined,
-          awaitPolicy: 'completion',
-          timeout: 1000,
-        });
-      }
-
       steps.push({
-        id: `${nextId('action_animation', segment)}-${action.actionUid}`,
-        kind: 'action_animation',
+        id: `${nextId('action_choreography', segment)}-${action.actionUid}`,
+        kind: 'action_choreography',
         segment,
         action,
-        awaitPolicy: action.animation.kind === 'none' ? 'none' : 'completion',
-        timeout: action.animation.kind === 'move' ? 2200 : 1400,
+        awaitPolicy: action.animation.kind === 'none'
+          && action.deliveries.every(delivery => delivery.type === 'none')
+          ? 'none'
+          : 'completion',
+        timeout: action.animation.kind === 'move' ? 2200 : 2800,
       });
     }
 
