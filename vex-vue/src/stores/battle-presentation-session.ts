@@ -1,3 +1,6 @@
+// 战斗演出会话：管理一次战斗播放期间的所有动画租赁生命周期
+// 一个 BattlePresentationSession 从战斗日志开始播放时创建，到战后场景交接完成时销毁
+// 职责：租赁（lease）管理 / terminal 标记 / 战斗退出记录 / 场景交接
 import { getActorById } from '@/composables/actorRegistry';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
 import type {
@@ -14,12 +17,14 @@ import type { TileRef } from '@/types/scene';
 
 let nextSessionId = 1;
 
+// PostCombatHandoffRun：管理战后场景交接动画的 Promise + cancel
 export interface PostCombatHandoffRun {
   readonly sessionId: string;
   readonly finished: Promise<void>;
   cancel(reason?: string): void;
 }
 
+// BattlePresentationSession 接口：定义会话对外暴露的方法
 export interface BattlePresentationSession {
   readonly id: string;
   readonly qid: number | null;
@@ -34,6 +39,8 @@ export interface BattlePresentationSession {
   abort(reason: string): void;
 }
 
+// 会话实现：维护租赁 map + terminal set + 退出记录
+// active 到 sealed 的转换标志播放阶段结束，进入场景交接阶段
 class BattlePresentationSessionImpl implements BattlePresentationSession {
   readonly id = `battle-presentation-${nextSessionId++}`;
   active = true;
@@ -44,6 +51,7 @@ class BattlePresentationSessionImpl implements BattlePresentationSession {
 
   constructor(readonly qid: number | null) {}
 
+  // 获取指定 actor 的动画租赁：如果该 actorId + channel 未被更高优先级 owner 占用
   getLease(
     actorId: string,
     channels: ActorChannel[],

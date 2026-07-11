@@ -1,9 +1,12 @@
+// 战斗覆盖层动画执行器：创建投射物和爆炸等全局视觉效果
+// 使用 Web Animations API 创建独立于地图实体的覆盖图层
 import type { AnimationHandle, AnimationResult } from '@/types/actor-runtime';
 import type { ViewportPoint } from '@/types/scene';
 
 const DELIVERY_PROJECTILE_DURATION = 360;
 const DELIVERY_EXPLOSION_DURATION = 420;
 
+// 创建投射物飞行动画：从起点到终点的红色弹道覆盖层
 export function createProjectileOverlay(from: ViewportPoint, to: ViewportPoint): AnimationHandle {
   const el = document.createElement('div');
   el.setAttribute('aria-hidden', 'true');
@@ -20,6 +23,7 @@ export function createProjectileOverlay(from: ViewportPoint, to: ViewportPoint):
   return nativeAnimationHandle(animation, el);
 }
 
+// 创建爆炸动画：在指定位置产生扩散消散的红色圆形覆盖层
 export function createExplosionOverlay(at: ViewportPoint): AnimationHandle {
   const el = document.createElement('div');
   el.setAttribute('aria-hidden', 'true');
@@ -36,6 +40,7 @@ export function createExplosionOverlay(at: ViewportPoint): AnimationHandle {
   return nativeAnimationHandle(animation, el);
 }
 
+// 将 Web Animation 对象包装为统一的 AnimationHandle 接口
 function nativeAnimationHandle(animation: Animation, el: HTMLElement): AnimationHandle {
   let settled = false;
   let resolveFinished!: (result: AnimationResult) => void;

@@ -50,6 +50,7 @@ function combat_ap_budget_register(string $calc_id, callable $projector): void {
     $GLOBALS['combat_ap_budget_projectors'][$calc_id] = $projector;
 }
 
+// AP 预算投影：根据 ap_calc 类型调用对应的 budget projector，返回可用 AP 的射程预算
 function combat_ap_project_budget(array $actor_data, array $config, ?int $available_ap = null): ?array {
     $calc_id = (string)($config['ap_calc'] ?? 'fixed');
     if ($calc_id === '') $calc_id = 'fixed';

@@ -270,10 +270,7 @@ function obl_state_has_busy_battle() {
     return (bool)$db->fetch_array($result);
 }
 
-/** @deprecated 使用 obl_state_has_busy_battle */
-function obl_state_has_npc_acting() {
-    return obl_state_has_busy_battle();
-}
+
 
 function obl_state_find_stale($cutoff, $state) {
     global $db, $tablepre;

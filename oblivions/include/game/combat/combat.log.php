@@ -16,14 +16,17 @@ if (!defined('IN_GAME')) {
 
 BattleLogCollector::registerPhase('battlelog_v2', false);
 
+// 返回当前 battlelog 版本标识（v2）
 function combat_log_v2_mode(): string {
     return 'v2';
 }
 
+// 是否启用 v2 日志格式（始终 true，v1 格式已废弃）
 function combat_log_v2_enabled(): bool {
     return true;
 }
 
+// 生成全局唯一事件 UID：格式 "blv2-{request_uid}-{event_type}-{seq}"
 function combat_log_v2_next_event_uid(string $event_type): string {
     static $seq = 0;
     $seq++;
@@ -31,6 +34,8 @@ function combat_log_v2_next_event_uid(string $event_type): string {
     return 'blv2-' . $request_uid . '-' . $event_type . '-' . $seq;
 }
 
+// 生成 action 级唯一标识：格式 "{operation_key}-q{qid}-p{pid}-a{seq}-{act_id}"
+// 用于关联同一 action 链下的所有事件
 function combat_log_v2_make_action_uid(array $actor_data, string $act_id, int $seq): string {
     $qid = (int)($actor_data['bid'] ?? 0);
     $pid = (int)($actor_data['pid'] ?? 0);
@@ -39,6 +44,7 @@ function combat_log_v2_make_action_uid(array $actor_data, string $act_id, int $s
     return $operation_key . '-q' . $qid . '-p' . $pid . '-a' . $seq . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
 }
 
+// 对 combatant 数据做标准化 snapshot（用于日志事件中的 combatant 字段）
 function combat_log_v2_combatant_snapshot($data): ?array {
     if (!is_array($data)) return null;
     $pid = (int)($data['pid'] ?? 0);
@@ -58,6 +64,7 @@ function combat_log_v2_combatant_snapshot($data): ?array {
     ];
 }
 
+// 生成 target 引用（用于日志中的 target_ref 字段），区分 self / tile / pid 三种 kind
 function combat_log_v2_target_ref(CombatContext $ctx, array $target): array {
     $target_data = $target['target_data'] ?? null;
     if ($ctx->target_type === 'self') {
@@ -85,6 +92,7 @@ function combat_log_v2_target_ref(CombatContext $ctx, array $target): array {
     return ['kind' => 'none'];
 }
 
+// 返回 actor 自身的 target ref（用于 action 失败/异常场景的 self 引用）
 function combat_log_v2_actor_target_ref(CombatContext $ctx): array {
     return [
         'kind' => 'self',
@@ -93,6 +101,7 @@ function combat_log_v2_actor_target_ref(CombatContext $ctx): array {
     ];
 }
 
+// 发射 round_start 事件：新回合开始时的先攻排序结果
 function combat_log_v2_round_start($log, int $qid, array $rolls, int $ambush_pid = 0): void {
     if (!$log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($log, [
@@ -106,6 +115,7 @@ function combat_log_v2_round_start($log, int $qid, array $rolls, int $ambush_pid
     ]);
 }
 
+// 发射 turn_start 事件：当前 combatant 回合开始并恢复 AP
 function combat_log_v2_turn_start($log, array $actor_data, int $ap_recovered = 0): void {
     if (!$log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($log, [
@@ -120,6 +130,8 @@ function combat_log_v2_turn_start($log, array $actor_data, int $ap_recovered = 0
     ]);
 }
 
+// 日志发射统一入口：将事件结构格式化后写到 BattleLogCollector
+// 根据 channel 区分 render（前端播放）和 debug（诊断日志）
 function combat_log_v2_emit($log, array $event): void {
     if (!$log || !combat_log_v2_enabled()) return;
 
@@ -153,6 +165,7 @@ function combat_log_v2_emit($log, array $event): void {
     ], $debug);
 }
 
+// 发射 action_start 事件：记录 action 的 actor / 目标 / AP 消耗和标签
 function combat_log_v2_action_start(CombatContext $ctx): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     if ($ctx->v2_action_started) return;
@@ -181,6 +194,7 @@ function combat_log_v2_action_start(CombatContext $ctx): void {
     ]);
 }
 
+// 发射 action_delivery 事件：记录技能的投射/覆盖效果（delivery_type 如 projectile / explosion）
 function combat_log_v2_action_delivery(CombatContext $ctx, string $delivery_type, array $resolved_aim): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($ctx->log, [
@@ -198,6 +212,7 @@ function combat_log_v2_action_delivery(CombatContext $ctx, string $delivery_type
     ]);
 }
 
+// 发射 combatant_joined 事件：新 combatant 加入队列（动态参战）
 function combat_log_v2_combatant_joined(CombatContext $ctx, array $target_data, int $myorder): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($ctx->log, [
@@ -215,6 +230,7 @@ function combat_log_v2_combatant_joined(CombatContext $ctx, array $target_data, 
     ]);
 }
 
+// 发射 effect_applied 事件：记录 effect 类型/值和作用对象
 function combat_log_v2_effect_applied(CombatContext $ctx, string $effect_type, array $payload): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     $effect_uid = $ctx->action_uid . '-e' . (count($ctx->v2_effect_uids) + 1);
@@ -242,6 +258,7 @@ function combat_log_v2_effect_applied(CombatContext $ctx, string $effect_type, a
     ]);
 }
 
+// 发射 action_end 事件：记录 action 的成功/失败状态和 AP 消耗
 function combat_log_v2_action_end(CombatContext $ctx): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     if ($ctx->v2_action_ended) return;
@@ -264,6 +281,7 @@ function combat_log_v2_action_end(CombatContext $ctx): void {
     ]);
 }
 
+// 发射 action_failed 事件：记录 action 失败的完整原因链
 function combat_log_v2_action_failed($log, array $actor_data, string $act_id, string $reason, array $extra = [], ?string $action_uid = null): void {
     if (!$log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($log, [
@@ -283,6 +301,7 @@ function combat_log_v2_action_failed($log, array $actor_data, string $act_id, st
     ]);
 }
 
+// 从 ctx 状态发射 action_failed：整合 action_end（如已开始）+ failed 事件
 function combat_log_v2_action_failed_from_context(CombatContext $ctx, string $reason, array $extra = []): void {
     if (!$ctx->log || !combat_log_v2_enabled()) return;
 
@@ -298,6 +317,7 @@ function combat_log_v2_action_failed_from_context(CombatContext $ctx, string $re
     combat_log_v2_action_failed($ctx->log, $ctx->actor_data, $ctx->act_id, $reason, $extra, $ctx->action_uid);
 }
 
+// 发射 combatant_cleared 事件：记录 combatant 因为 dead/escaped 等原因离开战场
 function combat_log_v2_combatant_cleared(
     $log,
     array $combatant_data,
@@ -323,6 +343,7 @@ function combat_log_v2_combatant_cleared(
     ]);
 }
 
+// 发射 battle_end 事件：记录战斗结束的原因、胜者和幸存者列表
 function combat_log_v2_battle_end($log, string $reason, int $winner_pid = 0, array $survivors = []): void {
     if (!$log || !combat_log_v2_enabled()) return;
     combat_log_v2_emit($log, [

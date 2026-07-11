@@ -3,6 +3,7 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// 射程系统错误日志：输出到 obl_error_log 或 error_log，用于诊断射程配置问题
 function combat_range_log_error(string $reason, string $act_id, array $extra = array()): void {
     global $obl_error_log;
     $params = array_merge(array('reason' => $reason, 'act_id' => $act_id), $extra);
@@ -13,6 +14,8 @@ function combat_range_log_error(string $reason, string $act_id, array $extra = a
     }
 }
 
+// 射程解析主入口（基于技能配置）：解析 range.mode 并计算 base_range + effective_range
+// 支持 5 种模式：fixed（固定）/ inherit（继承角色射程）/ additive（加算加成）/ capped_additive（加算封顶）/ move_power（移动力）
 function combat_range_resolve_config(array $actor_data, array $config, string $act_id = ''): array {
     $range_config = isset($config['range']) && is_array($config['range'])
         ? $config['range']
@@ -71,6 +74,7 @@ function combat_range_resolve_config(array $actor_data, array $config, string $a
     );
 }
 
+// 射程解析辅助入口（基于 act_id 自动查配置）
 function combat_range_resolve_base(array $actor_data, string $act_id): array {
     $config = function_exists('combat_skill_get_config') ? combat_skill_get_config($act_id) : null;
     if (!is_array($config)) {
@@ -90,11 +94,13 @@ function combat_range_resolve_base(array $actor_data, string $act_id): array {
     return combat_range_resolve_config($actor_data, $config, $act_id);
 }
 
+// 返回可用于射程计算的可用 AP：如果已预扣资源则用预扣前值，否则用当前 AP
 function combat_spatial_available_ap(CombatContext $ctx): int {
     if ($ctx->resources_reserved) return max(0, (int)$ctx->ap_before);
     return max(0, (int)($ctx->actor_data['ap'] ?? 0));
 }
 
+// 获取空间判断的目标数据：优先使用传入的 resolved_target，否则从 ctx.currentTarget 读取
 function combat_spatial_target_data(CombatContext $ctx, ?array $resolved_target = null): ?array {
     if (is_array($resolved_target)) return $resolved_target;
     $target = $ctx->getCurrentTarget();
@@ -102,6 +108,8 @@ function combat_spatial_target_data(CombatContext $ctx, ?array $resolved_target 
     return is_array($target_data) ? $target_data : null;
 }
 
+// 空间判断主入口：综合射程、距离、AP 预算，判定目标是否可达、在射程内、可支付
+// 返回结果含 distance / reachable / within_range / affordable / allowed 五项判定
 function combat_spatial_decide(CombatContext $ctx, ?array $resolved_target = null): array {
     $target_data = combat_spatial_target_data($ctx, $resolved_target);
     $available_ap = combat_spatial_available_ap($ctx);

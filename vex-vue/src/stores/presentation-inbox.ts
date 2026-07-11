@@ -1,7 +1,10 @@
+// 演出批次收件箱：缓存来自 command/heartbeat 响应的实时演出事件
+// 按 batch_seq 顺序消费，支持 gap 检测与权威回退（F5 冷启动时的展示快进）
 import type { CommandResult, OblHeartbeatResponse } from '@/api/client';
 import type { PresentationBatchV1 } from '@/types/api';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
+// 校验是否为有效的 presentation.v1 batch 结构
 function isPresentationBatch(value: unknown): value is PresentationBatchV1 {
   if (!value || typeof value !== 'object') return false;
   const batch = value as Partial<PresentationBatchV1>;
@@ -11,12 +14,15 @@ function isPresentationBatch(value: unknown): value is PresentationBatchV1 {
     && Array.isArray(batch.events);
 }
 
+// PresentationInbox 类：管理 batch 序列的存储和顺序消费
+// cursor 表示已消费的 batch_seq；pending 缓存在等待消费的 batch
+// gapHead 表示检测到跳号（需要快进到权威最新）
 class PresentationInbox {
   private cursor: number | null = null;
   private observedHead = 0;
   private readonly pending = new Map<number, PresentationBatchV1>();
 
-  /** player_info cold boot: historical batches are already represented by authority. */
+  // 初始化：设置起始 cursor（从权威快照的 headSeq 开始，跳过已代表的历史 batch）
   initialize(headSeq: number): void {
     if (this.cursor !== null) return;
     this.cursor = Math.max(0, Number(headSeq) || 0);

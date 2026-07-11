@@ -16,6 +16,7 @@ if (!isset($GLOBALS['combat_effect_projectors'])) {
     $GLOBALS['combat_effect_projectors'] = [];
 }
 
+// 注册 effect 投影器：type 对应 effect 类型（damage/heal/move/escape 等）
 function combat_effect_projector_register(string $type, callable $projector): void {
     $GLOBALS['combat_effect_projectors'][$type] = $projector;
 }
@@ -27,6 +28,7 @@ function combat_effect_project_store_target(CombatContext $ctx, array $target_da
     combat_planned_state_put_player($ctx->battle_cache, $target_data);
 }
 
+// 投影 damage effect：按 value 扣减目标 HP，标记死亡
 function combat_effect_project_damage(CombatContext $ctx, array $effect): bool {
     $target_data = &combat_effect_resolve_target_data($ctx, $effect);
     if ((int)($target_data['pid'] ?? 0) <= 0) {
@@ -47,6 +49,7 @@ function combat_effect_project_damage(CombatContext $ctx, array $effect): bool {
     return true;
 }
 
+// 投影 heal effect：按 value 增加目标 HP，不超过 mhp 上限
 function combat_effect_project_heal(CombatContext $ctx, array $effect): bool {
     $target_data = &combat_effect_resolve_target_data($ctx, $effect);
     if ((int)($target_data['pid'] ?? 0) <= 0) {
@@ -64,6 +67,7 @@ function combat_effect_project_heal(CombatContext $ctx, array $effect): bool {
     return true;
 }
 
+// 投影 move effect：验证空间决定（spatial decision）一致后更新 actor 的 pls
 function combat_effect_project_move(CombatContext $ctx, array $effect): bool {
     $payload = isset($effect['payload']) && is_array($effect['payload']) ? $effect['payload'] : [];
     $to_pls = (int)($payload['to_pls'] ?? 0);
@@ -91,6 +95,7 @@ function combat_effect_project_move(CombatContext $ctx, array $effect): bool {
     return true;
 }
 
+// 投影 escape effect：标记 actor 为 escaped 状态
 function combat_effect_project_escape(CombatContext $ctx, array $effect): bool {
     $actor_pid = (int)($ctx->actor_data['pid'] ?? 0);
     if ($actor_pid <= 0) return false;
@@ -100,6 +105,7 @@ function combat_effect_project_escape(CombatContext $ctx, array $effect): bool {
     return true;
 }
 
+// 投影 skill_effect_apply effect：调用 skill_effect_apply 注册持久效果（如 flustered）
 function combat_effect_project_skill_effect_apply(CombatContext $ctx, array $effect): bool {
     $payload = isset($effect['payload']) && is_array($effect['payload']) ? $effect['payload'] : [];
     $skill_id = trim((string)($payload['skill_id'] ?? ''));
@@ -131,6 +137,7 @@ function combat_effect_project_skill_effect_apply(CombatContext $ctx, array $eff
     return true;
 }
 
+// 投影 ap_change effect：按 delta 调整 actor 的 AP 值
 function combat_effect_project_ap_change(CombatContext $ctx, array $effect): bool {
     $delta = (int)($effect['payload']['delta'] ?? 0);
     $ctx->actor_data['ap'] = max(0, (int)($ctx->actor_data['ap'] ?? 0) + $delta);
@@ -138,6 +145,7 @@ function combat_effect_project_ap_change(CombatContext $ctx, array $effect): boo
     return true;
 }
 
+// 遍历当前 target 的所有 effects，依次调用对应的 projector
 function combat_effect_project_all(CombatContext $ctx): void {
     $effects = $ctx->getCurrentEffects();
     if (empty($effects)) return;

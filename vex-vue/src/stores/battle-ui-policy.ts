@@ -1,3 +1,4 @@
+// 战斗 UI 策略函数集合：界定战斗模式下地图输入/命令锁/演出提交边界
 import type { BattleState } from '@/types/api';
 
 export interface BattleMapInputState {

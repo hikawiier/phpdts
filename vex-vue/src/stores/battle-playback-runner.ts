@@ -1,3 +1,5 @@
+// 战斗播放运行器：消费 PlaybackStep 列表，按 awaitPolicy 执行动画/日志/场景切换
+// 职责：遍历 steps → 创建执行任务 → 处理场景保护 → 执行完成回调
 import { dataManager } from '@/stores/data-manager';
 import {
   playActionDelivery,
@@ -22,6 +24,7 @@ export interface SegmentPlayOptions {
   isBattleEnd?: boolean;
 }
 
+// 播放运行时上下文：包含当前 PID、NPC PID、场景几何、演出会话
 export interface BattlePlaybackRuntime {
   currentPid: number;
   npcPid: number;
@@ -34,6 +37,7 @@ export interface BattlePlaybackRuntime {
   playBattleEndModalContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
 }
 
+// 播放入口：遍历所有 PlaybackStep 并串行执行
 export async function runBattlePlaybackPlan(
   plan: BattlePlaybackPlan,
   runtime: BattlePlaybackRuntime,

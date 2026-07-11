@@ -1,13 +1,18 @@
+// 实体动画函数库：所有地图实体的 GSAP 动画实现
+// 每个函数接收 ActorElements（anchor/pose/visibility），不关心实体身份
+// 调用方（useMapEntities / battle-actor-executor）负责决定何时播放何种动画
 import gsap from 'gsap';
 import type { ActorElements, AttackKind } from '@/types/actor-runtime';
 
 const Z_STANDING = 10;
 
+// 根据 Y 坐标更新实体的 z-index，实现 Y-sorting
 export function updateEntityZIndex(anchor: HTMLElement): void {
   const y = Number(gsap.getProperty(anchor, 'y')) || 0;
   anchor.style.zIndex = String(Z_STANDING + Math.round(y));
 }
 
+// 设置实体为倒地位：缩小旋转 + 透明度归零，用于死亡/场景切换
 export function setDown(elements: ActorElements): void {
   gsap.killTweensOf(elements.pose);
   gsap.killTweensOf(elements.visibility);
@@ -16,6 +21,7 @@ export function setDown(elements: ActorElements): void {
   updateEntityZIndex(elements.anchor);
 }
 
+// 启动待机呼吸动画：Y 轴微缩放循环，让实体看起来有生命感
 export function startIdle(pose: HTMLElement): gsap.core.Tween {
   gsap.killTweensOf(pose);
   gsap.set(pose, { x: 0, y: 0, scaleY: 1, scaleX: 1, rotation: 0 });
@@ -29,6 +35,8 @@ export function startIdle(pose: HTMLElement): gsap.core.Tween {
   });
 }
 
+// 弹出动画：实体从地面弹出到正常站立位置，带弹性效果
+// 用于新实体出现在地图上时的入场动效
 export function popUp(elements: ActorElements): gsap.core.Timeline {
   gsap.killTweensOf(elements.pose);
   gsap.killTweensOf(elements.visibility);
@@ -45,6 +53,7 @@ export function popUp(elements: ActorElements): gsap.core.Timeline {
   return tl;
 }
 
+// 倒下动画：实体旋转 + 缩小归零，用于死亡/退场效果
 export function fall(elements: ActorElements): gsap.core.Timeline {
   gsap.killTweensOf(elements.pose);
   gsap.killTweensOf(elements.visibility);

@@ -8,6 +8,8 @@ import type {
 import { escapeHtml } from '@/utils/format';
 import { getStatusLocale } from '@/data/status-locale';
 
+// 战斗导演系统（v2）：将后端 battlelog v2 事件流编导为语义化的播控脚本
+// 职责：事件分组 → DirectedAction → PlaybackStep，供播放管道消费
 export type BattleSegmentKindV2 = 'round_intro' | 'turn' | 'battle_end' | 'system';
 
 export interface CombatantView {

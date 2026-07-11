@@ -1,6 +1,8 @@
+// 战斗瞄准工具函数：会话匹配、候选目标筛选、按 pid 搜索
 import type { CombatTargetCandidate, CombatTargetsResponse } from '@/types/api';
 import type { Character } from '@/types/character';
 
+// 检查 targets 响应对应的战斗会话是否与当前 qid 一致
 export function combatTargetSessionMatches(
   targets: CombatTargetsResponse,
   currentQid: number | null,

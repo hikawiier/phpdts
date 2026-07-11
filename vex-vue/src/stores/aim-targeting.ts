@@ -12,6 +12,8 @@ import type {
   CombatPreviewTargetOption,
 } from '@/types/api';
 
+// 瞄准目标 Store：管理战斗中的瞄准会话（选择敌人或选择格子）
+// 通过后端 combat_preview API 获取可选目标列表，提供格子/角色两种瞄准模式
 export type AimTargetMode = 'enemy' | 'tile';
 export type AimTileVisualState = 'none' | 'targetable' | 'out-of-range' | 'blocked';
 

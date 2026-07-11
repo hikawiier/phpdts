@@ -11,6 +11,10 @@ import type {
 } from '@/types/presentation-scene';
 import type { TileRef } from '@/types/scene';
 
+// 演出场景 Store：管理战斗/世界之间的视觉状态过渡
+// 核心职责：idle（空闲）→ playing（播放中）→ rebasing（重投影）→ idle 的生命周期
+// 在 rebase 阶段处理战后实体的位置投影动画
+
 function cloneEntities(entities: readonly MapEntity[]): MapEntity[] {
   return entities.map(entity => ({ ...entity }));
 }
@@ -26,6 +30,8 @@ function sameTile(left: TileRef | null, right: TileRef | null): boolean {
   return Boolean(left && right && left.pgroup === right.pgroup && left.pls === right.pls);
 }
 
+// 派生战后交接任务：根据权威实体位置和战斗退出信息，决定每个退出角色的视觉策略
+// 策略：settle-in-place（就地就位）| retreat（撤退）| hidden-relocate-arrive（隐式迁移）| remove（移除）
 export function derivePostCombatHandoffs(
   exits: readonly BattleExitPresentation[],
   authoritativeEntities: readonly MapEntity[],
@@ -44,6 +50,7 @@ export function derivePostCombatHandoffs(
   });
 }
 
+// 派生重投影中需要播放移动动画的角色 ID 列表：比较前后实体位置的差异
 export function deriveRebaseMoveActorIds(
   previousEntities: readonly MapEntity[],
   authoritativeEntities: readonly MapEntity[],

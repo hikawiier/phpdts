@@ -3,6 +3,7 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// 记录无效 effect 实例日志（诊断用途）
 function skill_effect_log_invalid(string $skill_id, string $reason): void {
     global $obl_error_log;
     if (isset($obl_error_log) && $obl_error_log) {
@@ -15,12 +16,14 @@ function skill_effect_log_invalid(string $skill_id, string $reason): void {
     }
 }
 
+// 获取效果技能定义：从 skill_definition_config 读取并验证 lifetime=effect
 function skill_effect_definition(string $skill_id): ?array {
     $definition = function_exists('skill_get_definition') ? skill_get_definition($skill_id) : null;
     if (!$definition || ($definition['lifetime'] ?? '') !== 'effect') return null;
     return $definition;
 }
 
+// 格式化 effect 实例：校验结构、标准化字段、计算起止 tick
 function skill_effect_format_instance(string $skill_id, $instance): ?array {
     if (!is_array($instance)) {
         skill_effect_log_invalid($skill_id, 'not_array');
@@ -71,6 +74,7 @@ function skill_effect_format_instance(string $skill_id, $instance): ?array {
     );
 }
 
+// 格式化技能状态中的 effect_instances：标准化 + 计算 expires_at_tick
 function skill_effect_format_skill_state(string $skill_id, array &$state): void {
     $definition = skill_effect_definition($skill_id);
     if (!$definition) {
@@ -94,6 +98,7 @@ function skill_effect_format_skill_state(string $skill_id, array &$state): void 
     if (!isset($state['lstact'])) $state['lstact'] = 0;
 }
 
+// 验证 activation 配置：boundary 格式 + boundary_id/delay_ticks 范围
 function skill_effect_validate_activation(array $activation): array {
     $boundary = trim((string)($activation['boundary'] ?? ''));
     if ($boundary === '' || !preg_match('/^[a-z][a-z0-9_]{0,63}$/', $boundary)) {
@@ -109,10 +114,13 @@ function skill_effect_validate_activation(array $activation): array {
     );
 }
 
+// 获取当前游戏刻（用于 effect 生命周期判断）
 function skill_effect_current_tick(): int {
     return function_exists('obl_tick_get') ? (int)obl_tick_get() : 0;
 }
 
+// 应用持久效果：创建或替换 effect instance（当前仅支持 refresh stacking）
+// 在 actor.skillpara 中写入 effect_instances 记录
 function skill_effect_apply(
     array &$actor,
     string $skill_id,
@@ -162,6 +170,7 @@ function skill_effect_apply(
     return $instance;
 }
 
+// 检查 effect instance 在指定 tick 是否处于 active 状态
 function skill_effect_is_active(array $instance, int $evaluation_tick): bool {
     if (($instance['state'] ?? '') !== 'active') return false;
     $starts = isset($instance['starts_at_tick']) ? (int)$instance['starts_at_tick'] : PHP_INT_MAX;

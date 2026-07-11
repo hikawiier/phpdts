@@ -208,11 +208,6 @@ function obl_battle_state_set_next_pid($qid, $pid) {
     obl_state_set_next_pid($qid, $pid);
 }
 
-/** @deprecated 使用 obl_battle_state_has_busy_battle */
-function obl_battle_state_has_npc_acting() {
-    return obl_battle_state_has_busy_battle();
-}
-
 /**
  * 找出卡死的战场（指定状态超时）
  *

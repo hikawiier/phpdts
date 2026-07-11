@@ -3,6 +3,8 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// Capability 提供者（注册为 effect_skills）：遍历所有 active effect，
+// 检查其 definition 中的 capability_denies 列表，若匹配则返回 blocked sources
 function skill_effect_capability_provider(array &$actor, string $capability, array $context): array {
     $tick = isset($context['evaluation_tick']) ? (int)$context['evaluation_tick'] : 0;
     $sources = array();
@@ -23,10 +25,12 @@ function skill_effect_capability_provider(array &$actor, string $capability, arr
     return array('allowed' => empty($sources), 'sources' => $sources);
 }
 
+// 注册效果技能的能力提供者到 actor_capability 系统
 function skill_effect_register_capability_provider(): void {
     actor_capability_register_provider('effect_skills', 'skill_effect_capability_provider');
 }
 
+// 投影角色当前效果状态列表：供 API 返回给前端展示
 function skill_effect_project_statuses(array &$actor, int $evaluation_tick, bool $public = true): array {
     $statuses = array();
     foreach (($actor['skillpara'] ?? array()) as $skill_id => $skill_state) {
@@ -66,6 +70,7 @@ function skill_effect_project_statuses(array &$actor, int $evaluation_tick, bool
     return $statuses;
 }
 
+// 投影单能力的判定结果：allowed + 来源 status_ids + 最早过期 tick
 function skill_effect_project_capability_decision(
     array &$actor,
     string $capability,
@@ -89,6 +94,7 @@ function skill_effect_project_capability_decision(
     return $projected;
 }
 
+// 批量投影多个能力的判定结果（用于 player_info API 中 status 字段）
 function skill_effect_project_capabilities(
     array &$actor,
     array $capabilities,

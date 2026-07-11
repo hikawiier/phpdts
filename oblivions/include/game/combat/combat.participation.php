@@ -3,10 +3,13 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// 参与状态枚举：member（已是成员）/ joinable（可加入）/ left（已离开）/ other_battle（在其他战斗）/ blocked（被阻止）/ not_applicable（不适用，非角色目标）
 function combat_participation_result(string $state, ?string $reason = null): array {
     return ['state' => $state, 'reason' => $reason];
 }
 
+// 关系过滤：根据技能配置的 capture.relation 判定目标是否与 actor 兼容
+// relation 取值：'any'（不限）、'self'（仅自身）、'hostile'（敌对）、'friendly'（友好）
 function combat_participation_relation_allowed(CombatContext $ctx, array $target_data): bool {
     $relation = (string)($ctx->config['capture']['relation'] ?? 'any');
     if ($relation === 'any') return true;
@@ -20,6 +23,8 @@ function combat_participation_relation_allowed(CombatContext $ctx, array $target
     return false;
 }
 
+// 参与状态分类（数据层）：从已获取的 target_data + queue_row 判定目标参与状态
+// 决策流：policy → 有效性检查 → 关系过滤 → queue 成员检查 → capability 检查 → 结论
 function combat_participation_classify_data(CombatContext $ctx, array $target_data, $queue_row = null): array {
     $policy = (string)($ctx->config['capture']['participation'] ?? 'none');
     if ($policy === 'none') return combat_participation_result('not_applicable');
@@ -64,6 +69,8 @@ function combat_participation_classify_data(CombatContext $ctx, array $target_da
     return combat_participation_result('joinable');
 }
 
+// 参与状态分类（目标层）：从 capture 生成的 target 数据判定参与状态
+// 非 character 类型直接返回 not_applicable；dry-run 优先读取模拟状态
 function combat_participation_classify(CombatContext $ctx, array $target): array {
     if (($target['kind'] ?? '') !== 'character') return combat_participation_result('not_applicable');
     $data = $target['target_data'] ?? null;
@@ -81,6 +88,8 @@ function combat_participation_classify(CombatContext $ctx, array $target): array
     return combat_participation_classify_data($ctx, $data, $row ?: null);
 }
 
+// 参与状态分类（加锁版）：使用 FOR UPDATE 锁定目标行后进行分类
+// 仅在实际结算阶段（非 dry-run）使用，防止竞态
 function combat_participation_classify_locked(CombatContext $ctx, array &$target_data): array {
     $pid = (int)($target_data['pid'] ?? 0);
     $locked = obl_fetch_playerdata_by_pid_for_update($pid);
@@ -90,6 +99,8 @@ function combat_participation_classify_locked(CombatContext $ctx, array &$target
     return combat_participation_classify_data($ctx, $target_data, $row ?: null);
 }
 
+// 将 joinable 目标正式入列：dry-run 模拟写入，实际结算调用 battle_queue_append_tail
+// 已 member / not_applicable 的目标跳过；blocked 目标返回失败
 function combat_participation_enlist(CombatContext $ctx, array &$target, array $decision): array {
     $state = (string)($decision['state'] ?? 'blocked');
     if ($state === 'member' || $state === 'not_applicable') {

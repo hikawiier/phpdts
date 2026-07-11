@@ -62,7 +62,6 @@ require_once GAME_ROOT . './oblivions/include/game/combat/combat.target_unit.php
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.core.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.pipeline.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect.php';
-require_once GAME_ROOT . './oblivions/include/game/combat/combat.target.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.skill.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.ap.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.range.php';

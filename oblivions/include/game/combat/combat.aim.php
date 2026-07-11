@@ -3,14 +3,18 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// AimResolver 注册表：将前端意图（intent）解析为领域目标（resolved_aim）
+// 支持四种解析器：pid（角色）、tile（格子）、self（自身）、none（无目标）
 if (!isset($GLOBALS['combat_aim_resolvers'])) {
     $GLOBALS['combat_aim_resolvers'] = [];
 }
 
+// 注册 Aim 解析器到全局注册表
 function combat_aim_register(string $name, callable $resolver): void {
     $GLOBALS['combat_aim_resolvers'][$name] = $resolver;
 }
 
+// 角色目标解析：从 intent.id 读取 pid，优先从 planned_state 取，fallback 到 DB
 function combat_aim_resolve_pid(CombatContext $ctx, array $intent): ?array {
     $pid = (int)($intent['id'] ?? 0);
     if ($pid <= 0) return null;
@@ -26,6 +30,7 @@ function combat_aim_resolve_pid(CombatContext $ctx, array $intent): ?array {
     ];
 }
 
+// 格子目标解析：从 intent.id 读取 pls，验证格子存在于地图数据中
 function combat_aim_resolve_tile(CombatContext $ctx, array $intent): ?array {
     $pls = (int)($intent['id'] ?? 0);
     $pgroup = (int)($ctx->actor_data['pgroup'] ?? 0);
@@ -41,6 +46,7 @@ function combat_aim_resolve_tile(CombatContext $ctx, array $intent): ?array {
     ];
 }
 
+// 自身目标解析：返回当前 actor 自身
 function combat_aim_resolve_self(CombatContext $ctx, array $intent): ?array {
     return [
         'kind' => 'self',
@@ -51,10 +57,13 @@ function combat_aim_resolve_self(CombatContext $ctx, array $intent): ?array {
     ];
 }
 
+// 无目标解析：用于不需要瞄准的技能（如 heal / world.wait）
 function combat_aim_resolve_none(CombatContext $ctx, array $intent): ?array {
     return ['kind' => 'none', 'pid' => 0, 'pgroup' => 0, 'pls' => 0, 'source_intent' => $intent];
 }
 
+// Aim 解析主入口：按 skill config 中定义的 resolver，将前端意图解析为领域目标
+// 步骤：取 resolver 名 → 校验 intent type 匹配 → 调用 resolver → 写回 resolved_aim
 function combat_aim_resolve(CombatContext $ctx): void {
     $aim = is_array($ctx->config['aim'] ?? null) ? $ctx->config['aim'] : [];
     $resolver_name = (string)($aim['resolver'] ?? 'none');
@@ -87,6 +96,7 @@ function combat_aim_resolve(CombatContext $ctx): void {
     $ctx->aim_kind = (string)$resolved['kind'];
 }
 
+// Aim 规则检查：先做 observation 判定（目标是否可见），再对已解析目标执行技能配置的额外规则
 function combat_aim_check_rules(CombatContext $ctx): array {
     $observation = combat_observation_decide($ctx, $ctx->resolved_aim);
     if (empty($observation['allowed'])) {

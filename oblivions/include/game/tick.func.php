@@ -164,11 +164,6 @@ function obl_tick_has_busy_battle() {
     return false;
 }
 
-/** @deprecated 使用 obl_tick_has_busy_battle */
-function obl_tick_is_pending_npc() {
-    return obl_tick_has_busy_battle();
-}
-
 #=============================================================================
 # 模块 3：命令推进判定（从 player.func.php 迁移）
 #=============================================================================

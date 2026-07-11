@@ -1,8 +1,11 @@
+// Oblivions 命令发送 API：封装 POST 请求到后端 command.php 端点
+// 自动处理 request_id、JSON 序列化、错误响应、演出事件收件箱
 import { API_BASE, fetchWithTimeout, type CommandResult } from './client';
 import { renderCommandFeedback } from '@/data/command-feedback';
 import { perf } from '@/utils/perf';
 import type { PresentationBatchV1 } from '@/types/api';
 
+// 命令请求信封：command/request_id/payload/expected/client
 export interface OblCommandEnvelope<TPayload = unknown> {
   command: string;
   request_id?: string;
@@ -15,6 +18,7 @@ export interface OblCommandEnvelope<TPayload = unknown> {
   };
 }
 
+// 命令响应格式：status / code / data / presentation 事件
 export interface OblCommandResponse<TData = Record<string, unknown>> {
   status: 'success' | 'error';
   code: string;
@@ -26,6 +30,7 @@ export interface OblCommandResponse<TData = Record<string, unknown>> {
   presentation?: PresentationBatchV1;
 }
 
+// 生成唯一请求 ID：格式 "obl-{timestamp36}-{random}"
 function createRequestId(): string {
   const random = Math.random().toString(36).slice(2, 10);
   return `obl-${Date.now().toString(36)}-${random}`;

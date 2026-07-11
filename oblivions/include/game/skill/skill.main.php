@@ -262,70 +262,6 @@ function skill_strip_temporary(&$skillpara) {
 }
 
 /**
- * 动作合法性校验（由 battle_act_verify 调用）
- *
- * 职责：
- * 1. 查 skill_config 获取技能配置，不存在则失败
- * 2. 检查 actor 是否拥有该技能（skillpara 中有对应 key）
- * 3. 检查 CD：current_tick - lstact >= cd，否则失败
- * 4. 检查 AP：ap >= apcost，否则失败
- * 5. 调用 {skill_id}_verify_check()（由 modules 模块加载），存在则执行扩展校验
- * 6. 校验通过：扣除 AP，更新 lstact = current_tick，返回 true
- * 7. 校验失败：返回 false
- *
- * @param array &$actor_data 先攻者数据
- * @param string $act_id 动作 ID
- * @param BattleLogCollector &$obl_battle_log
- * @param array &$battle_cache
- * @return bool 校验是否通过
- */
-function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache) {
-    global $gamevars;
-
-    # 1. 查配置
-    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$act_id) : null;
-    if (!$config) {
-        return false;
-    }
-
-    # 2. 检查是否拥有该技能
-    if (!isset($actor_data['skillpara'][$act_id])) {
-        return false;
-    }
-
-    # 3. 检查 CD
-    $current_tick = isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0;
-    $lstact = isset($actor_data['skillpara'][$act_id]['lstact']) ? (int)$actor_data['skillpara'][$act_id]['lstact'] : 0;
-    $cd = isset($config['cd']) ? (int)$config['cd'] : 0;
-    if ($cd > 0 && ($current_tick - $lstact) < $cd) {
-        return false;
-    }
-
-    # 4. 检查 AP
-    $apcost = isset($config['apcost']) ? (int)$config['apcost'] : 0;
-    if ($apcost > 0 && (int)$actor_data['ap'] < $apcost) {
-        return false;
-    }
-
-    # 5. 技能扩展校验：{skill_id}_verify_check（由 modules 模块加载）
-    $verify_func = $act_id . '_verify_check';
-    if (function_exists($verify_func)) {
-        if (!$verify_func($actor_data, $obl_battle_log, $battle_cache)) {
-            return false;
-        }
-    }
-
-
-    # 6. 校验通过：扣除 AP，更新 lstact
-    if ($apcost > 0) {
-        $actor_data['ap'] -= $apcost;
-    }
-    $actor_data['skillpara'][$act_id]['lstact'] = $current_tick;
-    return true;
-}
-
-
-/**
  * 注入装备临时技能。
  *
  * 这里只做通用 hook 调度；具体技能逻辑由 skill/modules/*.skill.php 注册。
@@ -340,28 +276,6 @@ function skill_inject_equipment(&$skillpara, &$pdata) {
         if (function_exists($func)) {
             $func($skillpara, $pdata);
         }
-    }
-}
-
-/**
- * 技能执行（历史旧 battle_once_execute 调用；new combat 技能执行走 combat/skill 模块）
- *
- * 职责：
- * 1. 调用 {skill_id}_calc() 执行技能的非伤害处理（由 modules 模块加载）
- * 2. 无 calc 函数的技能直接跳过（伤害由 obl_calc_damage + battle_apply_damage 处理）
- *
- * 调用时机：在 obl_calc_damage() + battle_apply_damage() 之前
- *
- * @param array &$actor_data 先攻者数据
- * @param string $act_id 动作 ID
- * @param array &$target_data 目标数据
- * @param BattleLogCollector &$obl_battle_log
- * @param array &$battle_cache
- */
-function skill_execute(&$actor_data, $act_id, &$target_data, &$obl_battle_log, &$battle_cache) {
-    $calc_func = $act_id . '_calc';
-    if (function_exists($calc_func)) {
-        $calc_func($actor_data, $target_data, $obl_battle_log, $battle_cache);
     }
 }
 

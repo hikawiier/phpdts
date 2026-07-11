@@ -22,14 +22,4 @@ function obl_get_config() {
     return $cfg;
 }
 
-/**
- * 读取战斗引擎标识。
- *
- * 旧 battle/ 执行链已下线；保留函数仅兼容少量历史调用方。
- * 新代码不应再通过配置分支选择旧引擎。
- *
- * @return string
- */
-function obl_get_combat_engine(): string {
-    return 'new';
-}
+

@@ -3,6 +3,7 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// 按 boundary 激活 pending 状态的 effect：在指定边界触发时转为 active
 function skill_effect_activate_boundary(
     array &$actor,
     string $boundary,
@@ -30,6 +31,7 @@ function skill_effect_activate_boundary(
     return $activated;
 }
 
+// GC 回收已过期的 active effect 实例，清除空 skillpara 记录
 function skill_effect_gc(array &$actor, int $current_tick): bool {
     $changed = false;
     if (!isset($actor['skillpara']) || !is_array($actor['skillpara'])) return false;
@@ -55,12 +57,14 @@ function skill_effect_gc(array &$actor, int $current_tick): bool {
     return $changed;
 }
 
+// 计算下一个可行动 tick（用于 capability 评估 + 命令门控）
 function skill_effect_next_action_tick(): int {
     $tick = function_exists('obl_tick_get') ? (int)obl_tick_get() : 0;
     $pretick = function_exists('obl_tick_get_pretick') ? (int)obl_tick_get_pretick() : $tick;
     return max($tick, $pretick + 1);
 }
 
+// tick post 监听器：在每个 tick 结束后对玩家+敌人执行 GC 回收过期效果
 function skill_effect_tick_post_listener($delta, &$ctx): void {
     $tick = function_exists('obl_tick_get') ? (int)obl_tick_get() : 0;
     $player = &$ctx['player'];
@@ -81,6 +85,7 @@ function skill_effect_tick_post_listener($delta, &$ctx): void {
     }
 }
 
+// 向 tick 系统注册 post 监听器（幂等，避免重复注册）
 function skill_effect_register_tick_listener(): void {
     if (!function_exists('obl_tick_register_listener')) return;
     foreach (obl_tick_get_listeners('post') as $listener) {

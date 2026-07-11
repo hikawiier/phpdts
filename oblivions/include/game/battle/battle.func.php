@@ -4,16 +4,16 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Shared combat infrastructure — 轻量状态 / 规则 / turn hook
+// Shared combat infrastructure — 轻量状态 / AP恢复 / turn hook
 //
 // 说明：
 // - 旧 battle engine 的主执行链已下线，但本文件不是死代码。
 // - 当前仍由 new combat / queue 层复用：
 //   - 轻量 action= battle/'' 切换
 //   - AP 恢复
-//   - 目标规则匹配
 //   - actor 可行动检查
 //   - turn 生命周期 hook
+// - Tag 系统、射程/距离检查、旧 damage 应用已迁移至 combat/（2026-07-11 清理）
 //
 // 已被 combat/ 替代的职责：
 //   - `battle_state_clear` 的主要退出清理由 `combat_state_clear` 接管
@@ -74,175 +74,8 @@ function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
     }
 }
 
-function battle_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache)
-{
-    #单个动作校验函数：检验动作合法性，检验动作执行者是不是真的有这个动作、满不满足AP需求，并且实际扣除AP；成功返回true，失败返回false；
-    #委托给技能系统的 skill_act_verify 处理：查配置、检查拥有、检查CD、检查AP、自动引用 verify 文件
-    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-    return skill_act_verify($actor_data, $act_id, $obl_battle_log, $battle_cache);
-}
-
-function battle_target_distance_check(&$actor_data, &$target_data, $act_id, &$battle_cache)
-{
-    $actor_pgroup = isset($actor_data['pgroup']) ? (int)$actor_data['pgroup'] : 0;
-    $target_pgroup = isset($target_data['pgroup']) ? (int)$target_data['pgroup'] : 0;
-    $actor_pls = isset($actor_data['pls']) ? (int)$actor_data['pls'] : 0;
-    $target_pls = isset($target_data['pls']) ? (int)$target_data['pls'] : 0;
-
-    $range_meta = function_exists('obl_get_action_range_meta')
-        ? obl_get_action_range_meta($actor_data, $act_id)
-        : array('action_range' => 1, 'range_mode' => 'fixed', 'range_max' => 1, 'range_bonus' => 0, 'base_range' => 1);
-    $actor_range = (int)$range_meta['action_range'];
-
-    $distance = -1;
-    $pass = false;
-
-    if ($actor_pgroup > 0 && $target_pgroup > 0 && $actor_pgroup === $target_pgroup && $actor_pls > 0 && $target_pls > 0) {
-        $distance = obl_get_distance($actor_pgroup, $actor_pls, $target_pls);
-        $pass = ($distance >= 0 && $distance <= $actor_range);
-    }
-
-    // 记录最近一次射程检查，供诊断日志补充 distance/range。
-    $battle_cache['last_range_check'] = array(
-        'actor_pid'    => isset($actor_data['pid']) ? (int)$actor_data['pid'] : 0,
-        'target_pid'   => isset($target_data['pid']) ? (int)$target_data['pid'] : 0,
-        'action_id'    => $act_id,
-        'distance'     => $distance,
-        'range'        => $actor_range,
-        'range_mode'   => isset($range_meta['range_mode']) ? $range_meta['range_mode'] : 'fixed',
-        'range_max'    => isset($range_meta['range_max']) ? (int)$range_meta['range_max'] : 1,
-        'range_bonus'  => isset($range_meta['range_bonus']) ? (int)$range_meta['range_bonus'] : 0,
-        'base_range'   => isset($range_meta['base_range']) ? (int)$range_meta['base_range'] : 1,
-        'pass'         => $pass,
-    );
-
-    return $pass;
-}
-
-function battle_apply_damage(&$actor_data, &$target_data, $damage, &$obl_battle_log, &$battle_cache)
-{
-    #伤害应用函数，输入目标数据、伤害数值，实际扣除目标HP，并且记录战斗日志
-    $target_data['hp'] -= $damage;
-    if ($target_data['hp'] < 0) {
-        $target_data['hp'] = 0;
-    }
-}
-
-// ================================================================
-// Tag 系统 / Tag system
-//
-// 目标状态标记统一描述。Cat A 始终从当前 actor/target 重算；Cat B 通过
-// $battle_cache['tag_mutations'][pid] 缓存，跨 action 可见。
-// 配套设计：oblivions/docs/战斗执行阶段重构设计案.md §2
-// ================================================================
-
-/**
- * 单 tag 派生函数：目标已死（Cat B 首次派生用）
- */
-function battle_tag_dead(&$target_data): bool {
-    return (int)$target_data['state'] === 1;
-}
-
-/**
- * 单 tag 派生函数：目标是自己
- */
-function battle_tag_self(&$actor_data, &$target_data): bool {
-    return (int)$target_data['pid'] === (int)$actor_data['pid'];
-}
-
-/**
- * 单 tag 派生函数：目标超出当前 actor 射程
- */
-function battle_tag_out_of_range(&$actor_data, &$target_data, $act_id, &$battle_cache): bool {
-    return !battle_target_distance_check($actor_data, $target_data, $act_id, $battle_cache);
-}
-
-/**
- * 构建目标标签集（统一入口）
- *
- * Cat A（self/out_of_range）始终从当前 actor/target 重算；
- * Cat B（dead/escaped/hidden）从 $battle_cache['tag_mutations'][pid] 读取缓存，
- * 首次构建时从 DB 派生 dead，并将全量 Cat B 写回 tag_mutations。
- *
- * @param array  &$actor_data   动作者数据
- * @param array  &$target_data   目标数据
- * @param string $act_id         动作 ID（预留，便于未来动作驱动派生）
- * @param array  &$battle_cache
- * @return array [tag_name => bool, ...]
- */
-function battle_build_target_tags(&$actor_data, &$target_data, $act_id, &$battle_cache): array {
-    $tags = [];
-    $pid = (int)$target_data['pid'];
-
-    // ── Cat A：始终重算（依赖当前 actor，不可缓存）──
-    $tags['self'] = battle_tag_self($actor_data, $target_data);
-
-    // out_of_range 前置条件：self 目标永不在射程外（复用 self 判断，避免重复 pid 比较）
-    $tags['out_of_range'] = !$tags['self']
-        ? battle_tag_out_of_range($actor_data, $target_data, $act_id, $battle_cache)
-        : false;
-
-    // ── Cat B：从缓存读取可变状态 tag ──
-    $cached = $battle_cache['tag_mutations'][$pid] ?? null;
-    if ($cached !== null) {
-        $tags['dead']    = !empty($cached['dead']);
-        $tags['escaped'] = !empty($cached['escaped']);
-        $tags['hidden']  = !empty($cached['hidden']);
-    } else {
-        // 首次构建：从 DB 派生 dead，escaped/hidden 默认 false
-        $tags['dead']    = battle_tag_dead($target_data);
-        $tags['escaped'] = false;
-        $tags['hidden']  = false;
-    }
-
-    // 只写 Cat B 到 tag_mutations（Cat A 每次重算）
-    $battle_cache['tag_mutations'][$pid] = [
-        'dead'    => $tags['dead'],
-        'escaped' => $tags['escaped'],
-        'hidden'  => $tags['hidden'],
-    ];
-
-    return $tags;
-}
-
-// ================================================================
-// 动作-目标规则匹配 / Action-target rule matching
-// 配套设计：§3
-// ================================================================
-
-/**
- * 白名单+黑名单规则匹配
- *
- * @param array $config 技能配置（需含 target_rules）
- * @param array $tags   battle_build_target_tags 返回的标签集
- * @return array ['pass' => bool, 'reason' => string|null]
- */
-function battle_check_target_rules($config, array $tags): array {
-    $rules = $config['target_rules'] ?? null;
-    if (!$rules) return ['pass' => true, 'reason' => null];
-
-    if (!empty($rules['require'])) {
-        foreach ($rules['require'] as $tag) {
-            if (empty($tags[$tag])) {
-                return ['pass' => false, 'reason' => "require:{$tag}"];
-            }
-        }
-    }
-
-    if (!empty($rules['forbid'])) {
-        foreach ($rules['forbid'] as $tag) {
-            if (!empty($tags[$tag])) {
-                return ['pass' => false, 'reason' => "forbid:{$tag}"];
-            }
-        }
-    }
-
-    return ['pass' => true, 'reason' => null];
-}
-
 // ================================================================
 // Actor 行动资格检查 / Actor can-act check
-// 配套设计：§6.1
 // ================================================================
 
 /**

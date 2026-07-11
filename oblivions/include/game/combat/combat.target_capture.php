@@ -10,11 +10,14 @@ if (!isset($GLOBALS['combat_target_capturer_validators'])) {
     $GLOBALS['combat_target_capturer_validators'] = [];
 }
 
+// 注册目标捕获器：capturer 负责根据 aim 生成 target 列表，validator 负责校验捕获有效性
 function combat_target_capture_register(string $name, callable $capturer, callable $validator): void {
     $GLOBALS['combat_target_capturers'][$name] = $capturer;
     $GLOBALS['combat_target_capturer_validators'][$name] = $validator;
 }
 
+// 按 pid 获取玩家数据：读取优先级 runtime_players > planned_state > DB
+// 确保在同一 action 链内读取到最新的计划状态
 function combat_target_capture_player(CombatContext $ctx, int $pid): ?array {
     if ($pid <= 0) return null;
     if ((int)($ctx->actor_data['pid'] ?? 0) === $pid) return $ctx->actor_data;
@@ -26,6 +29,7 @@ function combat_target_capture_player(CombatContext $ctx, int $pid): ?array {
     return is_array($data) ? $data : null;
 }
 
+// 将玩家数据包装为标准 target 结构（kind='character'）
 function combat_target_capture_character(array $data, array $facts = []): array {
     $pid = (int)($data['pid'] ?? 0);
     return [
@@ -44,11 +48,13 @@ function combat_target_capture_character(array $data, array $facts = []): array 
     ];
 }
 
+// 直接角色捕获：从 aim 中读取 pid 并捕获为单目标列表
 function combat_target_capture_direct_character(CombatContext $ctx, array $aim): array {
     $data = combat_target_capture_player($ctx, (int)($aim['pid'] ?? 0));
     return $data ? [combat_target_capture_character($data)] : [];
 }
 
+// 获取战斗队列中的先攻顺序（pid => myorder），用于多目标排序
 function combat_target_capture_queue_order(CombatContext $ctx): array {
     $order = [];
     if (isset($ctx->battle_cache['_queue_order']) && is_array($ctx->battle_cache['_queue_order'])) {
@@ -63,6 +69,7 @@ function combat_target_capture_queue_order(CombatContext $ctx): array {
     return $order;
 }
 
+// 捕获当前战场中所有非自身的敌对 combatant（用于 AOE 技能如 whirlwind）
 function combat_target_capture_battle_hostiles(CombatContext $ctx, array $aim): array {
     $actor_pid = (int)($ctx->actor_data['pid'] ?? 0);
     $order = combat_target_capture_queue_order($ctx);
@@ -79,6 +86,7 @@ function combat_target_capture_battle_hostiles(CombatContext $ctx, array $aim): 
     return $targets;
 }
 
+// 格子内角色捕获：从指定格子的 DB + planned_state + runtime 三源合并 pid 列表，去重后捕获
 function combat_target_capture_tile_characters(CombatContext $ctx, array $aim): array {
     $pgroup = (int)($aim['pgroup'] ?? 0);
     $pls = (int)($aim['pls'] ?? 0);
@@ -106,6 +114,7 @@ function combat_target_capture_tile_characters(CombatContext $ctx, array $aim): 
     return $targets;
 }
 
+// 恒等捕获：self 角色打包为 self target；其余（tile/none）逐字段透传
 function combat_target_capture_identity(CombatContext $ctx, array $aim): array {
     if (($aim['kind'] ?? '') === 'self') {
         $target = combat_target_capture_character($ctx->actor_data);
@@ -122,6 +131,7 @@ function combat_target_capture_identity(CombatContext $ctx, array $aim): array {
     ]];
 }
 
+// 目标结构校验：确保每个 target 符合标准结构（kind/pid/data 一致性），去重
 function combat_target_capture_validate_structure(array $targets): ?array {
     $seen = [];
     $validated = [];
@@ -143,6 +153,7 @@ function combat_target_capture_validate_structure(array $targets): ?array {
     return $validated;
 }
 
+// 内置捕获器校验：根据 resolver 类型（direct_character/battle_hostiles/tile_characters/identity）执行特定规则校验
 function combat_target_capture_validate_builtin(CombatContext $ctx, string $resolver, array $validated): ?array {
     if ($resolver === 'direct_character') {
         if (count($validated) !== 1 || ($validated[0]['kind'] ?? '') !== 'character') return null;
@@ -172,6 +183,7 @@ function combat_target_capture_validate_builtin(CombatContext $ctx, string $reso
     return $validated;
 }
 
+// 目标排序：按技能配置的 capture.order（single/queue/pid/queue_then_pid）对 target 列表排序
 function combat_target_capture_order(CombatContext $ctx, array $targets): ?array {
     $order = (string)($ctx->config['capture']['order'] ?? 'single');
     if ($order === 'single' && count($targets) > 1) return null;
@@ -190,6 +202,8 @@ function combat_target_capture_order(CombatContext $ctx, array $targets): ?array
     return $targets;
 }
 
+// 目标捕获主入口：按 config.capture.resolver 调用注册的 capturer → validate_structure → validate_builtin → order
+// 幂等保护：一次调用后设 ctx.captured_target_set，后续直接跳过
 function combat_capture_resolution_targets(CombatContext $ctx): void {
     if (!empty($ctx->captured_target_set)) return;
     $capture = is_array($ctx->config['capture'] ?? null) ? $ctx->config['capture'] : [];

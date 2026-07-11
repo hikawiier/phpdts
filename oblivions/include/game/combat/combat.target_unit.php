@@ -3,6 +3,7 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+// 构建单个 target 的结算结果，包含 pid / status / participation / effects
 function combat_target_unit_result(array $target, string $status, ?string $reason, string $participation, array $effects = []): array {
     return [
         'pid' => (int)($target['pid'] ?? 0),
@@ -13,6 +14,8 @@ function combat_target_unit_result(array $target, string $status, ?string $reaso
     ];
 }
 
+// 绑定最新数据：在 per-target resolution 执行前，重新读取目标的当前状态
+// 实际结算阶段使用 FOR UPDATE 锁定行，dry-run 只从计划状态读取
 function combat_target_unit_bind_latest(CombatContext $ctx, int $index): ?array {
     $target = &$ctx->targets[$index];
     $kind = (string)($target['kind'] ?? 'none');
@@ -35,6 +38,7 @@ function combat_target_unit_bind_latest(CombatContext $ctx, int $index): ?array 
     return $row ?: null;
 }
 
+// 对当前 target 执行技能 capture 阶段配置的规则校验
 function combat_target_unit_check_rules(CombatContext $ctx): array {
     $original = $ctx->config['rules'] ?? ['forbid' => []];
     $ctx->config['rules'] = ['forbid' => array_values($ctx->config['capture']['rules'] ?? [])];
@@ -44,6 +48,8 @@ function combat_target_unit_check_rules(CombatContext $ctx): array {
     return $result;
 }
 
+// 预扣资源（AP）：在 action 执行前保留 actor 的 AP，确保消耗一致性
+// 仅执行一次，幂等保护
 function combat_action_reserve_resources(CombatContext $ctx): void {
     if ($ctx->resources_reserved) return;
     $ctx->resources_reserved = true;
@@ -53,6 +59,7 @@ function combat_action_reserve_resources(CombatContext $ctx): void {
     $ctx->storeRuntimePlayer($ctx->actor_data);
 }
 
+// 恢复未提交的预扣资源：当 action 失败时回滚 AP 到预扣前的状态
 function combat_action_restore_uncommitted_resources(CombatContext $ctx): void {
     if (!$ctx->resources_reserved || $ctx->resources_committed) return;
     $ctx->actor_data['ap'] = $ctx->ap_before;
@@ -60,6 +67,7 @@ function combat_action_restore_uncommitted_resources(CombatContext $ctx): void {
     $ctx->storeRuntimePlayer($ctx->actor_data);
 }
 
+// 提交资源：将预扣的 AP 正式写入 DB（仅实际结算阶段，dry-run 跳过）
 function combat_action_commit_resources(CombatContext $ctx): void {
     if ($ctx->resources_committed) return;
     combat_action_reserve_resources($ctx);
@@ -70,10 +78,13 @@ function combat_action_commit_resources(CombatContext $ctx): void {
     obl_save_player($ctx->actor_data);
 }
 
+// Action 开始：发射 action_start 日志事件（仅实际结算阶段）
 function combat_action_begin(CombatContext $ctx): void {
     if (!$ctx->v2_action_started && !$ctx->dry_run) combat_log_v2_action_start($ctx);
 }
 
+// Action 交付：调用技能 execute 钩子执行实际效果（dry-run 跳过）
+// 每个 action 仅执行一次，幂等保护
 function combat_action_delivery(CombatContext $ctx): void {
     if ($ctx->delivery_executed) return;
     $ctx->delivery_executed = true;
@@ -90,6 +101,7 @@ function combat_action_delivery(CombatContext $ctx): void {
     }
 }
 
+// 声明当前 target 的 effects：调用技能 execute 钩子，检查是否成功声明了 effect
 function combat_target_unit_declare_effects(CombatContext $ctx): bool {
     combat_skill_load_module($ctx->act_id);
     $func = "skill_{$ctx->act_id}_execute";
@@ -103,6 +115,7 @@ function combat_target_unit_declare_effects(CombatContext $ctx): bool {
     return $ctx->success && !empty($ctx->getCurrentEffects());
 }
 
+// 持久化 target 与 actor 的最新状态到 runtime 缓存和 DB（dry-run 跳过 DB 写入）
 function combat_target_unit_persist(CombatContext $ctx): void {
     $target = &$ctx->getCurrentTarget();
     $data = $target['target_data'] ?? null;
@@ -114,6 +127,7 @@ function combat_target_unit_persist(CombatContext $ctx): void {
     if (!$ctx->dry_run) obl_save_player($ctx->actor_data);
 }
 
+// 当目标 combatant 标记为 terminated（dead/escaped）时，根据 tag_mutations 中的原因发射清场日志并清理状态
 function combat_target_unit_clear_current_if_needed(CombatContext $ctx): void {
     $target = &$ctx->getCurrentTarget();
     $data = &$target['target_data'];
@@ -150,6 +164,7 @@ function combat_target_unit_clear_current_if_needed(CombatContext $ctx): void {
     }
 }
 
+// 开启 DB SAVEPOINT：为 per-target 结算设置回滚点，业务失败时可回滚到此点
 function combat_target_unit_savepoint_begin(CombatContext $ctx, int $index): ?string {
     if ($ctx->dry_run) return null;
     global $db;
@@ -158,6 +173,7 @@ function combat_target_unit_savepoint_begin(CombatContext $ctx, int $index): ?st
     return $name;
 }
 
+// 回滚到指定 SAVEPOINT（业务失败时，撤销当前 target 的 DB 变更）
 function combat_target_unit_savepoint_rollback(?string $name): void {
     if ($name === null) return;
     global $db;
@@ -165,12 +181,15 @@ function combat_target_unit_savepoint_rollback(?string $name): void {
     $db->query("RELEASE SAVEPOINT {$name}");
 }
 
+// 释放 SAVEPOINT（当前 target 成功结算后，不再需要保留回滚点）
 function combat_target_unit_savepoint_release(?string $name): void {
     if ($name === null) return;
     global $db;
     $db->query("RELEASE SAVEPOINT {$name}");
 }
 
+// 单 target 完整结算：绑定最新数据 → 规则校验 → 参与状态分类 → 声明 effect → delivery → enlist → 应用效果 → persist
+// 使用 SAVEPOINT 保证原子性：业务失败时回滚到结算前状态，actor 继续执行后续 target
 function combat_resolve_target_unit(CombatContext $ctx, int $index): array {
     $ctx->current_target_index = $index;
     $target = &$ctx->targets[$index];
@@ -254,6 +273,8 @@ function combat_resolve_target_unit(CombatContext $ctx, int $index): array {
     return combat_target_unit_result($target, 'resolved', null, $enlist['participation'] ?? $decision['state'], $target['effects'] ?? []);
 }
 
+// 逐目标结算循环：遍历 ctx.targets，每个 target 调用 combat_resolve_target_unit
+// 支持 empty_policy='execute'（无 target 时仍执行 delivery）/ empty_policy='fail'（无 target 时失败回滚）
 function combat_target_units_run(CombatContext $ctx): void {
     $empty_policy = (string)($ctx->config['execution']['empty_policy'] ?? 'fail');
     combat_action_reserve_resources($ctx);
