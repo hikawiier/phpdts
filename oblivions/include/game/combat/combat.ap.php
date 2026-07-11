@@ -32,6 +32,9 @@ if (!defined('IN_GAME')) {
 if (!isset($GLOBALS['combat_ap_calculators'])) {
     $GLOBALS['combat_ap_calculators'] = [];
 }
+if (!isset($GLOBALS['combat_ap_budget_projectors'])) {
+    $GLOBALS['combat_ap_budget_projectors'] = [];
+}
 
 /**
  * 注册 AP 计算器
@@ -41,6 +44,21 @@ if (!isset($GLOBALS['combat_ap_calculators'])) {
  */
 function combat_ap_register(string $calc_id, callable $calculator): void {
     $GLOBALS['combat_ap_calculators'][$calc_id] = $calculator;
+}
+
+function combat_ap_budget_register(string $calc_id, callable $projector): void {
+    $GLOBALS['combat_ap_budget_projectors'][$calc_id] = $projector;
+}
+
+function combat_ap_project_budget(array $actor_data, array $config, ?int $available_ap = null): ?array {
+    $calc_id = (string)($config['ap_calc'] ?? 'fixed');
+    if ($calc_id === '') $calc_id = 'fixed';
+    $projector = $GLOBALS['combat_ap_budget_projectors'][$calc_id] ?? null;
+    if (!$projector) return null;
+    $available_ap = $available_ap === null
+        ? max(0, (int)($actor_data['ap'] ?? 0))
+        : max(0, $available_ap);
+    return call_user_func($projector, $actor_data, $config, $available_ap);
 }
 
 // ================================================================
@@ -128,3 +146,12 @@ function combat_ap_calculate(CombatContext $ctx): int {
 
 combat_ap_register('fixed',         'combat_ap_calc_fixed');
 combat_ap_register('move_distance', 'combat_ap_calc_move_distance');
+combat_ap_budget_register('move_distance', static function (array $actor_data, array $config, int $available_ap): array {
+    $base_apcost = max(0, (int)($config['apcost'] ?? 0));
+    $move_power = max(0, (int)obl_get_move_power($actor_data));
+    return array(
+        'effective_range' => $available_ap >= $base_apcost ? $move_power * $available_ap : 0,
+        'available_ap' => $available_ap,
+        'base_apcost' => $base_apcost,
+    );
+});

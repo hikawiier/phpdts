@@ -19,4 +19,13 @@ if (!defined('IN_GAME')) {
  */
 function skill_escape_execute(CombatContext $ctx): void {
     $ctx->declareEffect('escape', []);
+    $ctx->declareEffect('skill_effect_apply', [
+        'skill_id' => 'flustered',
+        'scope' => 'actor',
+        'activation' => [
+            'boundary' => 'battle_disband',
+            'boundary_id' => (int)($ctx->actor_data['bid'] ?? 0),
+            'delay_ticks' => 1,
+        ],
+    ]);
 }

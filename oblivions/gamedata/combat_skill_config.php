@@ -36,7 +36,7 @@ return [
     // ── move：utility 管道 + tile 目标 + 动态 AP + move 特例副作用 ──
     'move' => [
         'pipeline' => 'utility',
-        'aim'      => ['resolver' => 'tile', 'rules' => ['tile_impassable', 'tile_occupied', 'tile_unreachable', 'tile_out_of_range']],
+        'aim'      => ['resolver' => 'tile', 'observation' => 'controller_known', 'rules' => ['tile_impassable', 'tile_occupied', 'tile_unreachable', 'tile_out_of_range']],
         'capture'  => ['resolver' => 'identity', 'relation' => 'any', 'participation' => 'none', 'order' => 'single', 'rules' => []],
         'execution'=> ['empty_policy' => 'fail'],
         'delivery' => ['types' => []],
@@ -55,7 +55,7 @@ return [
     // ── unarmed_strike：attack 管道完整 8 阶段 + pid 目标 + 死亡检测 ──
     'unarmed_strike' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'pid', 'rules' => ['out_of_range']],
+        'aim'           => ['resolver' => 'pid', 'observation' => 'detected', 'rules' => ['out_of_range']],
         'capture'       => ['resolver' => 'direct_character', 'relation' => 'hostile', 'participation' => 'join_if_unengaged', 'order' => 'single', 'rules' => ['self', 'dead', 'escaped', 'out_of_range']],
         'execution'     => ['empty_policy' => 'fail'],
         'delivery'      => ['types' => []],
@@ -75,7 +75,7 @@ return [
     // ── escape：none 目标不查 DB + escape 效果 + tag_mutations ──
     'escape' => [
         'pipeline' => 'utility',
-        'aim'      => ['resolver' => 'none', 'rules' => []],
+        'aim'      => ['resolver' => 'none', 'observation' => 'none', 'rules' => []],
         'capture'  => ['resolver' => 'identity', 'relation' => 'any', 'participation' => 'none', 'order' => 'single', 'rules' => []],
         'execution'=> ['empty_policy' => 'fail'],
         'delivery' => ['types' => []],
@@ -93,7 +93,7 @@ return [
     // ── heal：self 目标引用 + heal 效果上限 mhp ──
     'heal' => [
         'pipeline'  => 'utility',
-        'aim'       => ['resolver' => 'self', 'rules' => []],
+        'aim'       => ['resolver' => 'self', 'observation' => 'none', 'rules' => []],
         'capture'   => ['resolver' => 'identity', 'relation' => 'self', 'participation' => 'none', 'order' => 'single', 'rules' => ['dead']],
         'execution' => ['empty_policy' => 'fail'],
         'delivery'  => ['types' => []],
@@ -113,7 +113,7 @@ return [
     // throw_distance 计算器由 skill_throw.php 模块注册（combat_ap_register）
     'throw' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'pid', 'rules' => ['out_of_range']],
+        'aim'           => ['resolver' => 'pid', 'observation' => 'detected', 'rules' => ['out_of_range']],
         'capture'       => ['resolver' => 'direct_character', 'relation' => 'hostile', 'participation' => 'join_if_unengaged', 'order' => 'single', 'rules' => ['self', 'dead', 'escaped', 'out_of_range']],
         'execution'     => ['empty_policy' => 'fail'],
         'delivery'      => ['types' => ['projectile']],
@@ -133,7 +133,7 @@ return [
     // ── whirlwind：battle_hostiles 捕获 + per-target 迭代 + effects per-target 不重复 ──
     'whirlwind' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'none', 'rules' => []],
+        'aim'           => ['resolver' => 'none', 'observation' => 'none', 'rules' => []],
         'capture'       => ['resolver' => 'battle_hostiles', 'relation' => 'hostile', 'participation' => 'members_only', 'order' => 'queue', 'rules' => ['dead', 'escaped', 'out_of_range']],
         'execution'     => ['empty_policy' => 'fail'],
         'delivery'      => ['types' => []],
@@ -153,7 +153,7 @@ return [
     // ── execute：终结技排序 + 低血量倍率 ──
     'execute' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'pid', 'rules' => ['out_of_range']],
+        'aim'           => ['resolver' => 'pid', 'observation' => 'detected', 'rules' => ['out_of_range']],
         'capture'       => ['resolver' => 'direct_character', 'relation' => 'hostile', 'participation' => 'join_if_unengaged', 'order' => 'single', 'rules' => ['self', 'dead', 'escaped', 'out_of_range']],
         'execution'     => ['empty_policy' => 'fail'],
         'delivery'      => ['types' => []],
@@ -175,7 +175,7 @@ return [
     // ── vampiric_bite：damage + heal 多效果 FIFO ──
     'vampiric_bite' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'pid', 'rules' => ['out_of_range']],
+        'aim'           => ['resolver' => 'pid', 'observation' => 'detected', 'rules' => ['out_of_range']],
         'capture'       => ['resolver' => 'direct_character', 'relation' => 'hostile', 'participation' => 'join_if_unengaged', 'order' => 'single', 'rules' => ['self', 'dead', 'escaped', 'out_of_range']],
         'execution'     => ['empty_policy' => 'fail'],
         'delivery'      => ['types' => []],
@@ -196,7 +196,7 @@ return [
     // ── grenade：tile 目标 + damage 多 pid 展开 ──
     'grenade' => [
         'pipeline'      => 'attack',
-        'aim'           => ['resolver' => 'tile', 'rules' => ['tile_impassable', 'tile_out_of_range']],
+        'aim'           => ['resolver' => 'tile', 'observation' => 'controller_known', 'rules' => ['tile_impassable', 'tile_out_of_range']],
         'capture'       => ['resolver' => 'tile_characters', 'relation' => 'hostile', 'participation' => 'join_if_unengaged', 'order' => 'queue_then_pid', 'rules' => ['self', 'dead', 'escaped']],
         'execution'     => ['empty_policy' => 'execute'],
         'delivery'      => ['types' => ['projectile_to_tile', 'explosion_at_tile']],
@@ -216,7 +216,7 @@ return [
     // ── idle：NPC 专属发呆技能（玩家不可见）──
     'idle' => [
         'pipeline' => 'utility',
-        'aim'      => ['resolver' => 'none', 'rules' => []],
+        'aim'      => ['resolver' => 'none', 'observation' => 'none', 'rules' => []],
         'capture'  => ['resolver' => 'identity', 'relation' => 'any', 'participation' => 'none', 'order' => 'single', 'rules' => []],
         'execution'=> ['empty_policy' => 'execute'],
         'delivery' => ['types' => []],

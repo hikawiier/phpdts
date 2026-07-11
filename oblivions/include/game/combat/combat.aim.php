@@ -77,7 +77,10 @@ function combat_aim_resolve(CombatContext $ctx): void {
     $resolved = call_user_func($resolver, $ctx, $intent);
     if (!is_array($resolved)) {
         $ctx->success = false;
-        $ctx->failure_reason = 'AIM_NOT_FOUND';
+        $observation = (string)($ctx->config['aim']['observation'] ?? 'none');
+        $ctx->failure_reason = in_array($observation, array('revealed', 'detected', 'visible'), true)
+            ? 'TARGET_NOT_VISIBLE'
+            : 'AIM_NOT_FOUND';
         return;
     }
     $ctx->resolved_aim = $resolved;
@@ -85,6 +88,10 @@ function combat_aim_resolve(CombatContext $ctx): void {
 }
 
 function combat_aim_check_rules(CombatContext $ctx): array {
+    $observation = combat_observation_decide($ctx, $ctx->resolved_aim);
+    if (empty($observation['allowed'])) {
+        return array('pass' => false, 'reason' => (string)($observation['reason'] ?? 'TARGET_NOT_VISIBLE'));
+    }
     $rules = array_values($ctx->config['aim']['rules'] ?? []);
     if (empty($rules)) return ['pass' => true, 'reason' => null];
     $saved_targets = $ctx->targets;

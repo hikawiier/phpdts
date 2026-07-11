@@ -22,24 +22,38 @@ return static function (TestRoom $room): array {
                     'tag_mutations' => [],
                 ];
                 $gamevars = ['obl_tick' => 10, 'obl_pretick' => 10];
+                skill_effect_apply($actor, 'flustered', [
+                    'kind' => 'skill',
+                    'skill_id' => 'escape',
+                    'action_uid' => 'escape-handoff-action',
+                ], [
+                    'boundary' => 'battle_disband',
+                    'boundary_id' => 61,
+                    'delay_ticks' => 1,
+                ], 'fx-escape-handoff');
                 combat_state_clear((int)$actor['pid'], 'escaped', $actor, $cache, new BattleLogCollector());
-                test_assert(!empty($actor['oblpara']['post_combat_handoff_pending']), 'escape records pending post-battle handoff');
-                test_assert(!isset($actor['oblpara']['world_ai_resume_tick']), 'escape does not anchor resume tick before battle end');
+                $pending = $actor['skillpara']['flustered']['effect_instances']['fx-escape-handoff'] ?? null;
+                test_same('pending', (string)($pending['state'] ?? ''), 'escape records pending flustered');
+                test_same(61, (int)($pending['activation']['boundary_id'] ?? 0), 'pending flustered remains bound to source qid');
 
                 // 战斗继续多个 tick；绝对时间不能让交接冷却提前过期。
                 $gamevars['obl_tick'] = 13;
                 $log = new BattleLogCollector();
                 battle_disband_cleanup(61, $survivor, $log);
                 $actor = $room->fetch((int)$actor['pid']);
-                test_assert(empty($actor['oblpara']['post_combat_handoff_pending']), 'disband consumes pending handoff marker');
-                test_same(14, (int)$actor['oblpara']['world_ai_resume_tick'], 'disband anchors first post-battle frame');
+                $active = $actor['skillpara']['flustered']['effect_instances']['fx-escape-handoff'] ?? null;
+                test_same('active', (string)($active['state'] ?? ''), 'disband activates matching flustered');
+                test_same(14, (int)($active['starts_at_tick'] ?? 0), 'disband anchors first post-battle frame');
+                test_same(15, (int)($active['expires_at_tick'] ?? 0), 'flustered uses exclusive one-tick expiry');
 
                 $ctx = ['battle_actor_scope' => [], 'actor_behaviors' => []];
                 $gamevars['obl_tick'] = 14;
-                test_same('post_combat_handoff', obl_actor_world_ai_block_reason($actor, $ctx), 'first post-battle frame is blocked');
+                test_same('capability:status_blocked', obl_actor_world_ai_block_reason($actor, $ctx), 'first post-battle frame is blocked by capability');
                 $gamevars['obl_tick'] = 15;
                 test_same('', obl_actor_world_ai_block_reason($actor, $ctx), 'actor resumes world AI on later frame');
-                test_assert(!isset($room->fetch((int)$actor['pid'])['oblpara']['world_ai_resume_tick']), 'expired handoff marker is persisted away');
+                test_assert(skill_effect_gc($actor, 15), 'expired flustered is collected');
+                obl_save_player($actor);
+                test_assert(!isset($room->fetch((int)$actor['pid'])['skillpara']['flustered']), 'expired flustered is persisted away');
             } finally {
                 $gamevars = $original_gamevars;
             }
@@ -57,6 +71,17 @@ return static function (TestRoom $room): array {
             $ctx = new CombatContext($actor, 'escape', $config, $log, $cache);
             $ctx->action_uid = 'retreat-action';
             test_assert(combat_effect_escape($ctx, []), 'escape effect succeeds');
+            test_assert(combat_effect_skill_effect_apply($ctx, [
+                'payload' => [
+                    'skill_id' => 'flustered',
+                    'scope' => 'actor',
+                    'activation' => [
+                        'boundary' => 'battle_disband',
+                        'boundary_id' => 51,
+                        'delay_ticks' => 1,
+                    ],
+                ],
+            ]), 'escape applies pending flustered');
             test_same(17, (int)$actor['pls'], 'retreat chooses deterministic farthest free neighbor');
 
             $ctx->targets = [['target_data' => []]];
@@ -64,13 +89,60 @@ return static function (TestRoom $room): array {
             combat_target_unit_clear_current_if_needed($ctx);
 
             $events = $log->getEntries();
-            $effect = current(array_values(array_filter($events, static fn(array $event): bool => ($event['event_type'] ?? '') === 'effect_applied')));
+            $effects = array_values(array_filter($events, static fn(array $event): bool => ($event['event_type'] ?? '') === 'effect_applied'));
+            $effect = $effects[0];
+            $statusEffect = $effects[1];
             $cleared = current(array_values(array_filter($events, static fn(array $event): bool => ($event['event_type'] ?? '') === 'combatant_cleared')));
             test_same(1, (int)$effect['payload']['delta']['pls_before'], 'escape effect records origin');
             test_same(17, (int)$effect['payload']['delta']['pls_after'], 'escape effect records authoritative target');
             test_same('retreat', (string)$effect['payload']['detail']['visual_policy'], 'escape effect selects retreat visual policy');
             test_same(17, (int)$cleared['payload']['detail']['retreat_target']['pls'], 'clear event forwards retreat target to presentation');
             test_same('retreat', (string)$cleared['payload']['detail']['visual_policy'], 'clear event forwards retreat visual policy');
+            test_same('status', (string)$statusEffect['effect_type'], 'status effect is emitted after escape effect');
+            test_same((string)$effect['effect_uid'], (string)$cleared['payload']['by_effect_uid'], 'clear event remains linked to escape effect uid');
+        },
+        'active_flustered_blocks_dynamic_participation_and_pipeline_actor' => static function () use ($room): void {
+            global $gamevars;
+            $original_gamevars = $gamevars;
+            $room->resetData();
+            try {
+                $gamevars = ['obl_tick' => 20, 'obl_pretick' => 20];
+                $attacker = $room->player('capability-attacker', 0, ['action' => 'battle', 'bid' => 70, 'pls' => 1]);
+                $member = $room->player('capability-member', 1, ['action' => 'battle', 'bid' => 70, 'pls' => 1]);
+                $joinable = $room->player('capability-joinable', 1, ['pls' => 1]);
+                $room->queue($attacker, 70, 1);
+                $room->queue($member, 70, 2);
+                skill_effect_apply($joinable, 'flustered', ['kind' => 'test'], [
+                    'boundary' => 'immediate',
+                    'boundary_id' => 0,
+                    'delay_ticks' => 0,
+                    'evaluation_tick' => 20,
+                ], 'fx-joinable-blocked');
+
+                $cache = combat_cache_create($attacker, false);
+                $config = combat_action_config_with_target(
+                    combat_skill_get_config('unarmed_strike'),
+                    ['target' => ['type' => 'pid', 'id' => (int)$joinable['pid']]]
+                );
+                $ctx = new CombatContext($attacker, 'unarmed_strike', $config, new BattleLogCollector(), $cache);
+                $target = combat_target_capture_character($joinable);
+                $decision = combat_participation_classify($ctx, $target);
+                test_same('blocked', (string)$decision['state'], 'active flustered target cannot dynamically participate');
+                test_same('TARGET_CAPABILITY_BLOCKED', (string)$decision['reason'], 'participation exposes structured capability reason');
+
+                skill_effect_apply($attacker, 'flustered', ['kind' => 'test'], [
+                    'boundary' => 'immediate',
+                    'boundary_id' => 0,
+                    'delay_ticks' => 0,
+                    'evaluation_tick' => 20,
+                ], 'fx-actor-blocked');
+                $pipeline = new CombatContext($attacker, 'unarmed_strike', $config, new BattleLogCollector(), $cache);
+                combat_pipeline_run($pipeline);
+                test_assert(!$pipeline->success, 'pipeline rejects anomalous active flustered actor');
+                test_same('CAPABILITY_BLOCKED:combat_action', (string)$pipeline->failure_reason, 'pipeline reports combat_action capability');
+            } finally {
+                $gamevars = $original_gamevars;
+            }
         },
         'dead_a_and_skipped_b_do_not_block_c' => static function () use ($room): void {
             $room->resetData();
@@ -78,6 +150,7 @@ return static function (TestRoom $room): array {
             $a = $room->player('continue-a', 1, ['pls' => 1, 'hp' => 1]);
             $b = $room->player('continue-b-friendly', 0, ['pls' => 1, 'hp' => 100]);
             $c = $room->player('continue-c', 1, ['pls' => 1, 'hp' => 100]);
+            $room->reveal(1);
             $room->queue($actor, 8, 1); $room->queue($a, 8, 2); $room->queue($b, 8, 3); $room->queue($c, 8, 4);
             $cache = combat_cache_create($actor, false); $log = new BattleLogCollector();
             $config = combat_action_config_with_target(combat_skill_get_config('grenade'), ['target' => ['type' => 'tile', 'id' => 1]]);
@@ -152,6 +225,7 @@ return static function (TestRoom $room): array {
             $friendly = $room->player('aoe-classify-friendly', 0, ['pls' => 1, 'hp' => 100]);
             $dead = $room->player('aoe-classify-dead', 1, ['pls' => 1, 'hp' => 0, 'state' => 1]);
             $other = $room->player('aoe-classify-other', 1, ['pls' => 1, 'hp' => 100]);
+            $room->reveal(1);
             $room->queue($actor, 8, 1); $room->queue($member, 8, 2); $room->queue($other, 88, 1);
             $cache = combat_cache_create($actor, false); $log = new BattleLogCollector();
             $config = combat_action_config_with_target(combat_skill_get_config('grenade'), ['target' => ['type' => 'tile', 'id' => 1]]);
@@ -198,6 +272,7 @@ return static function (TestRoom $room): array {
         'multi_target_resolution_follows_queue_order' => static function () use ($room): void {
             $room->resetData();
             $actor = $room->player('ordered-actor', 0, ['pls' => 1, 'att' => 8]);
+            $room->reveal(1);
             $late = $room->player('ordered-late', 1, ['pls' => 1, 'hp' => 100]);
             $early = $room->player('ordered-early', 1, ['pls' => 1, 'hp' => 100]);
             $room->queue($actor, 9, 1); $room->queue($early, 9, 2); $room->queue($late, 9, 3);
@@ -225,6 +300,7 @@ return static function (TestRoom $room): array {
         'multi_target_commits_resources_once_and_all_failed_commits_nothing' => static function () use ($room): void {
             $room->resetData();
             $actor = $room->player('resource-actor', 0, ['pls' => 1, 'ap' => 20, 'att' => 8]);
+            $room->reveal(1);
             $a = $room->player('resource-a', 1, ['pls' => 1, 'hp' => 100]);
             $b = $room->player('resource-b', 1, ['pls' => 1, 'hp' => 100]);
             $room->queue($actor, 12, 1); $room->queue($a, 12, 2); $room->queue($b, 12, 3);
@@ -289,6 +365,7 @@ return static function (TestRoom $room): array {
         'initial_grenade_filters_other_qid_without_blocking_roster' => static function () use ($room): void {
             $room->resetData();
             $actor = $room->player('initial-aoe-actor', 0, ['pls' => 1, 'att' => 8]);
+            $room->reveal(1);
             $a = $room->player('initial-aoe-a', 1, ['pls' => 1, 'hp' => 100]);
             $b = $room->player('initial-aoe-b', 1, ['pls' => 1, 'hp' => 100]);
             $c = $room->player('initial-aoe-c', 1, ['pls' => 1, 'hp' => 100]);
@@ -321,6 +398,7 @@ return static function (TestRoom $room): array {
             $room->resetData();
             $actor = $room->player('utility-report-actor', 0, ['pls' => 1, 'att' => 8]);
             $target = $room->player('utility-report-target', 1, ['pls' => 2, 'hp' => 100]);
+            $room->reveal(2);
             obl_runtime_transaction_begin();
             try {
                 $result = combat_start_battle($actor, [
@@ -345,6 +423,7 @@ return static function (TestRoom $room): array {
             $room->resetData();
             $actor = $room->player('move-overlay-actor', 0, ['pls' => 1, 'att' => 8]);
             $target = $room->player('move-overlay-target', 1, ['pls' => 6, 'hp' => 100]);
+            $room->reveal(3, 6);
             test_same(5, obl_get_distance(1, 1, 6), 'target starts outside grenade range');
             test_same(2, obl_get_distance(1, 3, 6), 'move destination brings target into grenade range');
             obl_runtime_transaction_begin();
@@ -368,6 +447,7 @@ return static function (TestRoom $room): array {
         'empty_grenade_emits_two_delivery_events' => static function () use ($room): void {
             $room->resetData();
             $actor = $room->player('grenadier', 0, ['pls' => 1]);
+            $room->reveal(4);
             $cache = combat_cache_create($actor, false);
             $log = new BattleLogCollector();
             $config = combat_skill_get_config('grenade');

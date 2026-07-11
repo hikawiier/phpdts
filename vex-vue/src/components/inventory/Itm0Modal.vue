@@ -6,7 +6,8 @@
 //
 // 设计理由：
 //   itm0 状态下玩家无法进行其他操作（前后端均有拦截），因此模态框
-//   不可"关闭"——只有 [使用] / [尝试堆叠合并] / [丢到地上] 动作能真正消除它
+//   不可"关闭"——[使用] / [尝试堆叠合并] / [丢到地上] 能真正消除它，
+//   [等待] 是持续状态框架保留的零资源时间推进出口，不会处理 itm0。
 //   （通过清空 itm0）。这避免了"假关闭"的误导，强制玩家正面处理。
 //   itm0 的道具可被直接使用（与旧 phpdts "手持道具可直接使用"语义一致），
 //   使用后若道具被消耗（数量/耐久归零），itm0 自动清空，模态框消失。
@@ -20,8 +21,10 @@ import { commandQueue } from '@/stores/command-queue';
 import type { InventoryItem } from '@/types/api';
 import { getItemName, isInfinite } from '@/data/item-locale';
 import { getItmkName } from '@/data/itmk-locale';
+import { useTileActionStore } from '@/stores/tileAction';
 
 const inventoryStore = useInventoryStore();
+const tileActionStore = useTileActionStore();
 
 const itm0 = computed<InventoryItem | null>(() => inventoryStore.itm0);
 
@@ -35,6 +38,10 @@ function onUseItm0(): void {
 
 function onDiscardItm0(): void {
   inventoryStore.handleDiscardItm0();
+}
+
+function onWait(): void {
+  void tileActionStore.handleWait();
 }
 
 function slotDisplayName(item: InventoryItem): string {
@@ -62,7 +69,7 @@ function slotMeta(item: InventoryItem): string {
         </span>
       </div>
       <div class="modal-body">
-        <p class="itm0-desc">在做其他事前，得先处理掉手头的东西……</p>
+        <p class="itm0-desc">手持道具会限制其他操作；也可以先等待一刻。</p>
         <div class="itm0-item">
           <span class="slot-num">[0]</span>
           <span class="slot-name">{{ slotDisplayName(itm0) }}</span>
@@ -72,6 +79,12 @@ function slotMeta(item: InventoryItem): string {
       </div>
       <div class="modal-footer">
         <div class="itm0-modal-actions">
+          <button
+            class="term-btn"
+            :disabled="!commandQueue.canExecute('world.wait')"
+            :title="commandQueue.getBlockDecision('world.wait')?.message || '推进 1 tick，不处理手持道具'"
+            @click="onWait"
+          >[等待]</button>
           <button
             v-if="itm0.usable"
             class="term-btn"

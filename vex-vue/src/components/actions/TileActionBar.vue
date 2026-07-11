@@ -145,6 +145,10 @@ function onOpenCraft(): void {
   void craftStore.openModal();
 }
 
+function onWait(): void {
+  void tileActionStore.handleWait();
+}
+
 function onCheckGround(): void {
   tileActionStore.openGroundModal();
 }
@@ -225,6 +229,15 @@ function poiCountLabel(poi: Poi): string {
 
 <template>
   <div class="flex-1 overflow-y-auto min-h-0">
+    <div class="action-buttons" style="display:flex;gap:6px;margin-bottom:6px;">
+      <button
+        class="term-btn block"
+        style="flex:1;"
+        :disabled="!commandQueue.canExecute('world.wait')"
+        :title="commandQueue.getBlockDecision('world.wait')?.message || '推进 1 tick，不消耗资源'"
+        @click="onWait"
+      >[W] 等待</button>
+    </div>
     <!-- 加载中 -->
     <div v-if="tileActionStore.loading && !tileActionStore.tileActions" class="loading">scanning...</div>
 

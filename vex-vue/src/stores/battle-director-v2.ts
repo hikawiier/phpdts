@@ -6,6 +6,7 @@ import type {
   StateDelta,
 } from '@/types/api';
 import { escapeHtml } from '@/utils/format';
+import { getStatusLocale } from '@/data/status-locale';
 
 export type BattleSegmentKindV2 = 'round_intro' | 'turn' | 'battle_end' | 'system';
 
@@ -58,6 +59,7 @@ export interface DirectedEffectV2 {
   target: CombatTargetView;
   value?: number;
   delta?: StateDelta;
+  detail: Record<string, unknown>;
   visual: EffectVisualPlan;
   text?: TextCue;
 }
@@ -688,6 +690,9 @@ function toDirectedEffect(event: BattleLogV2Event): DirectedEffectV2 {
   const value = typeof payload.value === 'number'
     ? payload.value
     : (event.effect_value !== null ? Number(event.effect_value) : undefined);
+  const detail = payload.detail && typeof payload.detail === 'object'
+    ? payload.detail as Record<string, unknown>
+    : {};
 
   return {
     effectUid: String(payload.effect_uid ?? event.effect_uid ?? `effect-${event.log_id}`),
@@ -697,8 +702,9 @@ function toDirectedEffect(event: BattleLogV2Event): DirectedEffectV2 {
     target,
     value,
     delta: payload.delta,
+    detail,
     visual: decideEffectVisual(effectType, target, value),
-    text: buildEffectText(effectType, target, value),
+    text: buildEffectText(effectType, target, value, detail),
   };
 }
 
@@ -790,12 +796,28 @@ function buildActionText(actionId: string, actor: CombatantView, targets: Combat
   };
 }
 
-function buildEffectText(type: DirectedEffectV2['type'], target: CombatTargetView, value?: number): TextCue | undefined {
+function buildEffectText(
+  type: DirectedEffectV2['type'],
+  target: CombatTargetView,
+  value?: number,
+  detail: Record<string, unknown> = {},
+): TextCue | undefined {
   const name = target.name || target.id;
   if (type === 'damage') return { html: `${htmlText(name)}受到${htmlText(value ?? 0)}点伤害`, tone: 'damage' };
   if (type === 'heal') return { html: `${htmlText(name)}恢复${htmlText(value ?? 0)}点生命`, tone: 'heal' };
   if (type === 'move') return { html: `${htmlText(name)}发生了位移`, tone: 'system' };
   if (type === 'escape') return { html: `${htmlText(name)}尝试脱离战斗`, tone: 'system' };
+  if (type === 'status') {
+    const statusId = String(detail.status_id ?? detail.skill_id ?? 'status');
+    const statusName = getStatusLocale(statusId).name;
+    const activated = detail.operation === 'activate' || detail.state === 'active';
+    return {
+      html: activated
+        ? `${htmlText(name)}陷入了${htmlText(statusName)}`
+        : `${htmlText(name)}获得了${htmlText(statusName)}，战斗结束后生效`,
+      tone: 'system',
+    };
+  }
   return undefined;
 }
 

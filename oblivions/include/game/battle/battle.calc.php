@@ -59,44 +59,8 @@ function obl_get_range_fix(&$actor_data, $basic_range)
  */
 function obl_get_action_range(&$actor_data, $act_id)
 {
-    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-
-    $config = skill_get_config($act_id);
-    $base   = obl_get_range($actor_data);
-
-    if (!$config) {
-        # 配置缺失：emit error_log 记录，兜底返回 1 让战斗不中断
-        global $obl_error_log;
-        if (isset($obl_error_log) && $obl_error_log) {
-            $obl_error_log->emit('skill.config_missing', array(
-                'skill_id'  => $act_id,
-                'actor_pid' => isset($actor_data['pid']) ? (int)$actor_data['pid'] : 0,
-            ), 'command');
-        }
-        return 1;
-    }
-
-    $mode  = isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
-    $max   = isset($config['range_max']) ? (int)$config['range_max'] : 1;
-    $bonus = isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
-
-    switch ($mode) {
-        case 'inherit':
-            $range = $base;
-            break;
-        case 'additive':
-            $range = $base + $bonus;
-            break;
-        case 'capped_additive':
-            $range = min($base + $bonus, $max);
-            break;
-        case 'fixed':
-        default:
-            $range = $max;
-            break;
-    }
-
-    return max(0, (int)$range);
+    $resolved = combat_range_resolve_base($actor_data, (string)$act_id);
+    return !empty($resolved['ok']) ? (int)$resolved['base_range'] : 0;
 }
 
 /**
@@ -104,20 +68,14 @@ function obl_get_action_range(&$actor_data, $act_id)
  */
 function obl_get_action_range_meta(&$actor_data, $act_id)
 {
-    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-
-    $config = skill_get_config($act_id);
-    $base = obl_get_range($actor_data);
-    $mode = $config && isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
-    $max = $config && isset($config['range_max']) ? (int)$config['range_max'] : 1;
-    $bonus = $config && isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
-
+    $resolved = combat_range_resolve_base($actor_data, (string)$act_id);
     return array(
-        'range_mode'   => $mode,
-        'range_max'    => $max,
-        'range_bonus'  => $bonus,
-        'base_range'   => (int)$base,
-        'action_range' => obl_get_action_range($actor_data, $act_id),
+        'range_mode'   => $resolved['mode'],
+        'range_max'    => (int)$resolved['max'],
+        'range_bonus'  => (int)$resolved['bonus'],
+        'base_range'   => (int)$resolved['base_range'],
+        'action_range' => (int)$resolved['base_range'],
+        'effective_range' => $resolved['effective_range'],
     );
 }
 
@@ -140,11 +98,10 @@ function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
 {
     //伤害计算函数，输入攻击者数据、目标数据、技能参数，输出伤害数值
     //根据技能配置的 damage_type 和 damage_factor 计算伤害
-    include_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
-    $config = skill_get_config($atk_act);
+    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$atk_act) : null;
 
     // 无伤害技能返回 0
-    if (!$config || $config['damage_type'] === 'none') {
+    if (!$config || ($config['damage_type'] ?? 'none') === 'none') {
         return 0;
     }
 

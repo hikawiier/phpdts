@@ -15,7 +15,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { useCharacterStore } from '@/stores/character';
-import type { PlayerInfo, BattleState, CombatViewModel } from '@/types/api';
+import type { ActorCapability, ActorStatusProjection, CapabilityDecision, PlayerInfo, BattleState, CombatViewModel } from '@/types/api';
 import { presentationInbox } from '@/stores/presentation-inbox';
 
 export const usePlayerStore = defineStore('player', () => {
@@ -32,6 +32,12 @@ export const usePlayerStore = defineStore('player', () => {
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
   const combatContext = computed<CombatViewModel | null>(() => playerInfo.value?.combat_context ?? null);
+  const statuses = computed<ActorStatusProjection[]>(() => playerInfo.value?.statuses ?? []);
+  const capabilities = computed(() => playerInfo.value?.capabilities ?? {});
+
+  function getCapabilityDecision(capability: ActorCapability): CapabilityDecision {
+    return capabilities.value[capability] ?? { allowed: true };
+  }
 
   // ── 战斗状态机（3 态） ──
   /** 当前玩家所在战场的状态 */
@@ -123,6 +129,9 @@ export const usePlayerStore = defineStore('player', () => {
     oblTick,
     oblPretick,
     combatContext,
+    statuses,
+    capabilities,
+    getCapabilityDecision,
     oblBattleState,
     isBattleActive,
     isPlayerTurn,

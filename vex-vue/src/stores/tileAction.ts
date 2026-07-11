@@ -142,6 +142,27 @@ export const useTileActionStore = defineStore('tileAction', () => {
     }
   }
 
+  async function handleWait(): Promise<void> {
+    try {
+      const result = await commandQueue.execute({ command: 'world.wait', payload: {} });
+      if (result.success) {
+        dataManager.broadcast('game:action-completed');
+        await loadTileAction();
+      } else {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '等待失败',
+          isHtml: !!result.messageIsHtml,
+        });
+      }
+    } catch (e) {
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '等待失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
   /**
    * 搜索 POI
    *
@@ -383,6 +404,7 @@ export const useTileActionStore = defineStore('tileAction', () => {
     loadTileAction,
     // 命令处理
     handleExplore,
+    handleWait,
     handleSearch,
     handlePickup,
     handlePickupAll,

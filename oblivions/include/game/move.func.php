@@ -47,15 +47,6 @@ function obl_get_map_data($pgroup = null) {
 }
 
 /**
- * 获取当前玩家可移动的最大格数
- * 保底 1，由技能系统扩展
- * @return int
- */
-function obl_get_move_range() {
-    return 3;
-}
-
-/**
  * 计算同区域内两格之间的最短路径距离（BFS）
  * @param  int $pgroup 区域 ID
  * @param  int $from   起始 pls
@@ -106,9 +97,8 @@ function obl_tile_log_params($tile) {
 }
 
 /**
- * 获取对象的移动力（单次最大移动格数）
+ * 获取对象的移动力（每 AP 可移动格数）
  * 当前固定 3，预留扩展点：未来由装备/buff 决定
- * 与旧 obl_get_move_range() 共存：旧函数无参返回固定 3 供旧系统使用
  *
  * @param array $actor_data 对象数据（当前未使用，预留扩展）
  * @return int 移动力
@@ -124,10 +114,10 @@ function obl_get_move_power($actor_data): int {
  *
  * @param array &$actor_data  对象数据（引用，修改 pls）
  * @param int   $to_pls       目标图格 ID
- * @param int   $max_distance 最大移动距离，null 时调 obl_get_move_power
+ * @param int   $max_distance 已由调用方权威判定的最大移动距离
  * @return array ['success' => bool, 'distance' => int, 'reason' => string]
  */
-function obl_perform_move_core(&$actor_data, $to_pls, $max_distance = null): array {
+function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array {
     $to_pls = (int)$to_pls;
     $cur_pgroup = (int)$actor_data['pgroup'];
     $cur_pls = (int)$actor_data['pls'];
@@ -154,9 +144,6 @@ function obl_perform_move_core(&$actor_data, $to_pls, $max_distance = null): arr
     }
 
     // 4. 距离检查
-    if ($max_distance === null) {
-        $max_distance = obl_get_move_power($actor_data);
-    }
     $max_distance = (int)$max_distance;
 
     $distance = obl_get_distance($cur_pgroup, $cur_pls, $to_pls);
@@ -228,7 +215,7 @@ function obl_move($moveto, &$pdata) {
 
     // 4. 连通性 + 距离判定
     $neighbors = $tiles[$cur_pls]['neighbors'] ?? [];
-    $move_range = obl_get_move_range();
+    $move_range = obl_get_move_power($pdata);
 
     if (in_array($moveto, $neighbors)) {
         // 直连 → 移动

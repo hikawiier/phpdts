@@ -19,6 +19,8 @@
  * 装备索引字段（wepid/wep2id/arbid/arhid/araid/arfid/artid/itemIds）是轻量级模板 ID，
  * 不含运行时参数 JSON（wep/wepk/wepe/weps/wepsk/weppara 各槽同理 + itempara 完整结构）。
  */
+import type { ActorCapabilitiesProjection, ActorStatusProjection } from './api';
+
 export interface Character {
   // ── 身份 ──
   pid: number;
@@ -69,6 +71,9 @@ export interface Character {
 
   // ── 发现状态（仅 enemies scope 返回；player_info 不返回，mergePlayer 主动设 true）──
   discovered: boolean;
+
+  statuses: ActorStatusProjection[];
+  capabilities: ActorCapabilitiesProjection;
 
   // ── 战斗上下文派生（由 combat_context 派生，非 oblplayers 字段）──
   combat?: CombatState;

@@ -40,6 +40,12 @@ function obl_command_api_handle($envelope) {
         return obl_command_response_error('COMMAND_IN_PROGRESS', '', null, $request_id);
     }
 
+    $had_operation_key = array_key_exists('obl_command_operation_key', $GLOBALS);
+    $previous_operation_key = $GLOBALS['obl_command_operation_key'] ?? null;
+    $GLOBALS['obl_command_operation_key'] = $request_id !== ''
+        ? $request_id
+        : (string)($GLOBALS['obl_request_uid'] ?? 'request-unknown');
+
     try {
         $gate = obl_command_gate($command, $contract, $payload, $envelope, $pdata);
         $dispatched = false;
@@ -49,7 +55,8 @@ function obl_command_api_handle($envelope) {
                 $gate['code'],
                 isset($gate['message']) ? $gate['message'] : '',
                 isset($gate['details']) ? $gate['details'] : null,
-                $request_id
+                $request_id,
+                isset($gate['data']) ? $gate['data'] : null
             );
         } elseif ((int)$pdata['hp'] <= 0) {
             $response = obl_command_response_error('COMMAND_NOT_ALLOWED', '', null, $request_id);
@@ -90,6 +97,17 @@ function obl_command_api_handle($envelope) {
             }
         }
 
+        if (function_exists('obl_authority_take_changed_scopes')) {
+            $authority_scopes = obl_authority_take_changed_scopes();
+            if (!empty($authority_scopes)) {
+                if (!isset($response['data']) || !is_array($response['data'])) $response['data'] = array();
+                $existing_scopes = isset($response['data']['changed_scopes']) && is_array($response['data']['changed_scopes'])
+                    ? $response['data']['changed_scopes']
+                    : array();
+                $response['data']['changed_scopes'] = array_values(array_unique(array_merge($existing_scopes, $authority_scopes)));
+            }
+        }
+
         if (empty($contract['read_only'])) {
             obl_command_save_and_tick($command, $contract, $pdata, $dispatched, isset($obl_runtime_ctx) ? $obl_runtime_ctx : null);
         }
@@ -102,6 +120,12 @@ function obl_command_api_handle($envelope) {
             ), 'command');
         }
         throw $e;
+    } finally {
+        if ($had_operation_key) {
+            $GLOBALS['obl_command_operation_key'] = $previous_operation_key;
+        } else {
+            unset($GLOBALS['obl_command_operation_key']);
+        }
     }
 }
 
@@ -139,6 +163,46 @@ function obl_command_gate($command, $contract, $payload, $envelope, &$pdata) {
     }
     if ($itm0_pending && $command === 'item.use' && isset($payload['slot']) && (int)$payload['slot'] !== 0) {
         return array('ok' => false, 'code' => 'ITM0_PENDING');
+    }
+
+    foreach (($contract['required_capabilities'] ?? array()) as $capability) {
+        $evaluation_tick = function_exists('skill_effect_next_action_tick')
+            ? skill_effect_next_action_tick()
+            : 0;
+        $decision = actor_capability_decide($pdata, (string)$capability, array(
+            'command' => (string)$command,
+            'payload' => $payload,
+        ), $evaluation_tick);
+        if (!empty($decision['allowed'])) continue;
+        $source_ids = array();
+        $expires_at_tick = 0;
+        foreach (($decision['sources'] ?? array()) as $source) {
+            if (!is_array($source) || !empty($source['hidden'])) continue;
+            if (($source['kind'] ?? '') === 'status' && !empty($source['skill_id'])) {
+                $source_ids[(string)$source['skill_id']] = true;
+            }
+            $expires_at_tick = max($expires_at_tick, (int)($source['expires_at_tick'] ?? 0));
+        }
+        $status_id = !empty($source_ids) ? (string)array_key_first($source_ids) : '';
+        $details = array(
+            'capability' => (string)$capability,
+            'reason' => (string)($decision['reason'] ?? 'status_blocked'),
+            'source_status_ids' => array_keys($source_ids),
+            'evaluation_tick' => $evaluation_tick,
+        );
+        if ($expires_at_tick > 0) $details['expires_at_tick'] = $expires_at_tick;
+        return array(
+            'ok' => false,
+            'code' => 'CAPABILITY_BLOCKED',
+            'details' => $details,
+            'data' => array(
+                'feedback' => array(
+                    'id' => 'status.capability_blocked',
+                    'params' => array('status_id' => $status_id, 'capability' => (string)$capability),
+                ),
+                'changed_scopes' => array('player_info'),
+            ),
+        );
     }
 
     if (!empty($contract['battle_state_required'])) {
@@ -401,10 +465,20 @@ function obl_command_emit_rejected($command, &$pdata, $reason) {
 function obl_command_build_response_data($command, $contract, &$pdata) {
     $qid = isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
     $battle_state = $qid > 0 ? obl_battle_state_get($qid) : (defined('OBL_BS_IDLE') ? OBL_BS_IDLE : 'IDLE');
+    $changed_scopes = isset($contract['refresh']) && is_array($contract['refresh'])
+        ? $contract['refresh']
+        : array();
+    if (function_exists('obl_authority_take_changed_scopes')) {
+        $changed_scopes = array_values(array_unique(array_merge(
+            $changed_scopes,
+            obl_authority_take_changed_scopes()
+        )));
+    }
     return array(
         'command' => $command,
         'tick_advanced' => !empty($contract['advances_tick']),
         'refresh' => isset($contract['refresh']) ? $contract['refresh'] : array(),
+        'changed_scopes' => $changed_scopes,
         'server_state' => array(
             'pid' => (int)$pdata['pid'],
             'action' => isset($pdata['action']) ? (string)$pdata['action'] : '',

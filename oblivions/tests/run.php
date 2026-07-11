@@ -8,7 +8,7 @@ $results = [];
 $exit = 0;
 try {
     $room->create();
-    foreach (['domain_test.php', 'battle_integration_test.php', 'transaction_integration_test.php'] as $file) {
+    foreach (['range_test.php', 'skill_effect_test.php', 'domain_test.php', 'battle_integration_test.php', 'transaction_integration_test.php'] as $file) {
         $suite = require __DIR__ . '/' . $file;
         $results = array_merge($results, $suite($room));
     }

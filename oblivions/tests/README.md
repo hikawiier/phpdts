@@ -15,6 +15,9 @@ The current suite is focused regression coverage, not complete proof of every it
 
 | Covered behavior | Automated evidence |
 |---|---|
+| Skill definition/combat mechanism truth-source split; passive status excluded from preload list | `definition_and_active_skill_truth_sources` |
+| Effect pending/active/expired lifecycle, DB roundtrip, refresh overlap, invalid-instance cleanup and exclusive expiry | `pending_active_expired_roundtrip_and_refresh`, `active_to_pending_preserves_current_restriction`, `format_rejects_unbounded_active_instance` |
+| Capability unknown fail-closed, public projection, prospective command tick, itm0-safe wait, invalidation merge and stable operation UID | `capability_registry_projection_and_expired_ignore`, `command_gate_blocks_mutation_and_wait_bypasses_itm0`, `command_response_merges_boundary_invalidation`, `action_uid_prefers_stable_command_operation_key` |
 | Tile AimIntent mismatch, duplicate capture rejection, built-in tile provenance, capture-once, snapshot immutability, captured action index | `aim_capture_provenance_freeze_and_snapshot` |
 | Delivery config requires canonical ordered `types: string[]` and allows an empty list | `delivery_config_requires_ordered_types_array` |
 | Queue-member-before-joinable ordering and stable PID order | `aim_capture_direct_and_tile_order` |
@@ -42,7 +45,7 @@ The current suite is focused regression coverage, not complete proof of every it
 | Commit failure cleanup clears request-local transaction state even on a broken connection | `commit_failure_cleanup_clears_runtime_state` |
 | Optional presentation archive writer failure after commit returns warning and preserves domain state | `post_commit_battlelog_failure_returns_warning_and_keeps_state` |
 | Presentation batch sequence commits/rolls back with the domain transaction; debug events stay out of live delivery; completed-qid and authoritative state_after remain distinct | `presentation_batch_sequence_commits_and_rolls_back_with_domain_transaction` |
-| Escape chooses and emits a deterministic authoritative retreat target; an early escape remains pending across later combat ticks and only anchors its one-frame world-AI cooldown when the qid disbands | `escape_selects_and_emits_authoritative_retreat_target`, `escaped_actor_skips_first_post_battle_world_tick` |
+| Escape chooses and emits a deterministic authoritative retreat target; early escape remains pending until qid disband, then active flustered blocks the first post-battle frame; participation and pipeline gates cannot bypass it | `escape_selects_and_emits_authoritative_retreat_target`, `escaped_actor_skips_first_post_battle_world_tick`, `active_flustered_blocks_dynamic_participation_and_pipeline_actor` |
 | Preview preserves DB/files, real collector, gamevars, request/event UID sequence, and RNG; readonly Command Bus preserves debug collector | `preview_has_no_db_or_file_side_effects`, `readonly_command_bus_does_not_touch_player_or_game` |
 | Director creates ordered delivery/joined playback; target validator rejects stale qid, blocked, dead, and missing projections | `npm test` in `vex-vue` |
 

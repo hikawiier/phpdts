@@ -712,6 +712,30 @@ body::after {
     transition: color 0.12s;
 }
 .status-bar-btn:hover { color: #fff; }
+.status-bar-btn:disabled { color: #555; cursor: not-allowed; }
+.status-effect-chip {
+    color: #f0c36a;
+    border: 1px solid rgba(240,195,106,0.55);
+    padding: 1px 4px;
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.status-effects {
+    display: flex;
+    gap: 4px;
+    max-width: 45%;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.world-wait-button {
+    position: fixed;
+    right: 16px;
+    bottom: 12px;
+    z-index: 500;
+    background: #0b0b0b;
+    box-shadow: 0 0 0 2px #0b0b0b;
+}
 .status-bar-btn.debug { color: #666; }
 .status-bar-btn.debug:hover { color: #bbb; }
 .status-bar-divider {

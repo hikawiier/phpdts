@@ -91,6 +91,12 @@ function combat_effect_target_ref(CombatContext $ctx, array $target_data): array
     return ['kind' => 'none'];
 }
 
+function combat_effect_actor_operation_uid(CombatContext $ctx, string $skill_id): string {
+    $operation_key = (string)($ctx->action_uid ?? 'action-unknown');
+    $actor_pid = (int)($ctx->actor_data['pid'] ?? 0);
+    return 'fx-' . substr(hash('sha256', $operation_key . '|actor|' . $actor_pid . '|' . $skill_id), 0, 24);
+}
+
 // ================================================================
 // 内置应用器
 // ================================================================
@@ -187,13 +193,24 @@ function combat_effect_heal(CombatContext $ctx, array $effect): bool {
  */
 function combat_effect_move(CombatContext $ctx, array $effect): bool {
     $to_pls = (int)($effect['payload']['to_pls'] ?? 0);
-    $result = obl_perform_move_core($ctx->actor_data, $to_pls);
+    $target = &$ctx->getCurrentTarget();
+    $target_data = $target['target_data'] ?? null;
+    $decision = is_array($target_data) ? combat_spatial_decide($ctx, $target_data) : array('allowed' => false, 'reason' => 'target_missing');
+    $quoted = (int)($effect['payload']['spatial_decision']['target_ap_cost'] ?? -1);
+    if (empty($decision['allowed']) || $quoted < 0 || $quoted !== (int)$decision['target_ap_cost'] || $quoted !== (int)$ctx->ap_cost) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'move_spatial_changed:' . (string)($decision['reason'] ?? 'quote_mismatch');
+        return false;
+    }
+    $max_distance = $decision['effective_range'] !== null
+        ? (int)$decision['effective_range']
+        : (int)$decision['base_range'];
+    $result = obl_perform_move_core($ctx->actor_data, $to_pls, $max_distance);
     if (empty($result['success'])) {
         $ctx->success = false;
         $ctx->failure_reason = 'move_failed:' . ($result['reason'] ?? 'unknown');
         return false;
     }
-    $target = &$ctx->getCurrentTarget();
     combat_log_v2_effect_applied($ctx, 'move', [
         'target' => combat_log_v2_target_ref($ctx, $target),
         'delta' => [
@@ -318,6 +335,54 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
     return true;
 }
 
+function combat_effect_skill_effect_apply(CombatContext $ctx, array $effect): bool {
+    $payload = isset($effect['payload']) && is_array($effect['payload']) ? $effect['payload'] : [];
+    $skill_id = trim((string)($payload['skill_id'] ?? ''));
+    $scope = (string)($payload['scope'] ?? 'actor');
+    $activation = isset($payload['activation']) && is_array($payload['activation']) ? $payload['activation'] : [];
+    if ($skill_id === '' || $scope !== 'actor' || empty($activation)) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'skill_effect_apply_invalid_payload';
+        return false;
+    }
+
+    $instance_uid = combat_effect_actor_operation_uid($ctx, $skill_id);
+    try {
+        $instance = skill_effect_apply(
+            $ctx->actor_data,
+            $skill_id,
+            [
+                'kind' => 'skill',
+                'skill_id' => $ctx->act_id,
+                'action_uid' => $ctx->action_uid,
+            ],
+            $activation,
+            $instance_uid
+        );
+    } catch (Throwable $e) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'skill_effect_apply_failed:' . $e->getMessage();
+        return false;
+    }
+
+    if (!is_array($instance) || empty($instance['instance_uid'])) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'skill_effect_apply_failed';
+        return false;
+    }
+
+    combat_log_v2_effect_applied($ctx, 'status', [
+        'target' => combat_effect_target_ref($ctx, $ctx->actor_data),
+        'detail' => [
+            'operation' => 'apply',
+            'status_id' => $skill_id,
+            'instance_uid' => (string)$instance['instance_uid'],
+            'state' => (string)($instance['state'] ?? 'pending'),
+        ],
+    ]);
+    return true;
+}
+
 /**
  * ap_change 应用器：改 actor AP + emit（预留注册位 + TODO）
  *
@@ -407,4 +472,5 @@ combat_effect_register('damage',    'combat_effect_damage');
 combat_effect_register('heal',      'combat_effect_heal');
 combat_effect_register('move',      'combat_effect_move');
 combat_effect_register('escape',    'combat_effect_escape');
+combat_effect_register('skill_effect_apply', 'combat_effect_skill_effect_apply');
 combat_effect_register('ap_change', 'combat_effect_ap_change');

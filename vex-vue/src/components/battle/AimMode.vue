@@ -23,6 +23,9 @@ import { findPath } from '@/composables/useMapReachability';
 import { useBattleStore } from '@/stores/battle';
 import type { CombatTargetCandidate } from '@/types/api';
 import { findSelectableCombatTarget } from '@/utils/combat-targeting';
+import { useAimTargetingStore } from '@/stores/aim-targeting';
+import type { AimModeEventData } from '@/types/events';
+import { useToastStore } from '@/stores/toast';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
@@ -32,6 +35,8 @@ const aimOriginPls = ref<number | null>(null);
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
 const battleStore = useBattleStore();
+const aimTargetingStore = useAimTargetingStore();
+const toastStore = useToastStore();
 const focusedTargetPid = ref<number | null>(null);
 interface DisambiguationState {
   left: number;
@@ -135,13 +140,10 @@ function candidateStatus(candidate: CombatTargetCandidate | undefined): string {
   return candidate.reason || candidate.participation;
 }
 
-function isTileInActionRange(pls: number): boolean {
-  const range = Math.max(0, Number(aimActionRange.value || 1));
-  const originPls = aimOriginPls.value ?? mapStore.curLoc;
-  if (originPls === null) return false;
-  const path = findPath(originPls, pls);
-  if (!path) return false;
-  return Math.max(0, path.length - 1) <= range;
+function currentTileCandidateIds(): number[] {
+  if (!mapStore.links || mapStore.curRegion === null) return [];
+  const tiles = mapStore.links.tiles[String(mapStore.curRegion)] ?? {};
+  return Object.keys(tiles).map(Number).filter(pls => Number.isFinite(pls) && pls > 0);
 }
 
 function applyAimTargetable(): void {
@@ -149,23 +151,7 @@ function applyAimTargetable(): void {
   if (!grid) return;
   clearAimTargetable();
 
-  if (aimTargetMode.value === 'tile') {
-    const cells = grid.querySelectorAll<HTMLElement>('[data-pls]');
-    cells.forEach((cell) => {
-      const pls = parseInt(cell.getAttribute('data-pls') || '0');
-      cell.classList.remove('aim-targetable', 'aim-out-of-range');
-      if (
-        pls > 0 &&
-        !cell.classList.contains('fogged') &&
-        !cell.classList.contains('blocked') &&
-        isTileInActionRange(pls)
-      ) {
-        cell.classList.add('aim-targetable');
-      } else {
-        cell.classList.add('aim-out-of-range');
-      }
-    });
-  } else {
+  if (aimTargetMode.value !== 'tile') {
   const enemyEntities = grid.querySelectorAll<HTMLElement>('[data-character-pid]');
   enemyEntities.forEach((entity) => {
     const pid = parseInt(entity.getAttribute('data-character-pid') || '0');
@@ -200,12 +186,18 @@ function clearAimTargetable(): void {
   const grid = getMapGrid();
   if (!grid) return;
 
-  const markedCells = grid.querySelectorAll<HTMLElement>('.aim-targetable, .aim-hover, .aim-out-of-range, .aim-blocked, .aim-focused');
-  markedCells.forEach((cell) => {
-    cell.classList.remove('aim-targetable', 'aim-hover', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
-    if (cell.dataset.aimStatus) {
-      delete cell.dataset.aimStatus;
-      cell.removeAttribute('title');
+  grid.querySelectorAll<HTMLElement>('.aim-hover').forEach(element => {
+    element.classList.remove('aim-hover');
+  });
+  const markedEntities = grid.querySelectorAll<HTMLElement>(
+    '[data-character-pid].aim-targetable, [data-character-pid].aim-out-of-range, '
+    + '[data-character-pid].aim-blocked, [data-character-pid].aim-focused',
+  );
+  markedEntities.forEach((entity) => {
+    entity.classList.remove('aim-targetable', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
+    if (entity.dataset.aimStatus) {
+      delete entity.dataset.aimStatus;
+      entity.removeAttribute('title');
     }
   });
 
@@ -286,18 +278,10 @@ function onAimClick(e: MouseEvent): void {
     return;
   }
 
-  const selector = aimTargetMode.value === 'tile'
-    ? '[data-pls].aim-targetable'
-    : '[data-character-pid].aim-targetable';
-  const aimCell = target?.closest?.(selector) as HTMLElement | null;
-  if (!aimCell) return;
-
-  e.stopPropagation();
-  if (aimTargetMode.value === 'tile') {
-    const pls = parseInt(aimCell.getAttribute('data-pls') || '0');
-    if (pls > 0) {
-      dataManager.broadcast('battle:aim-target-selected', { pls });
-    }
+  const tileTarget = target?.closest?.('[data-pls]') as HTMLElement | null;
+  const pls = Number(tileTarget?.getAttribute('data-pls') || 0);
+  if (pls > 0 && aimTargetingStore.selectTile(pls)) {
+    e.stopPropagation();
   }
 }
 
@@ -385,10 +369,8 @@ function exitAimMode(): void {
 // ══════════════════════════════════════════════════
 
 function onAimMode(data?: unknown): void {
-  const payload = (data || {}) as {
-    actionRange?: number | string;
-    targetMode?: 'enemy' | 'tile';
-    originPls?: number | string | null;
+  const payload = (data || {}) as AimModeEventData & {
+    actId?: string;
     focusedTargetPid?: number | string | null;
   };
   aimActionRange.value = Math.max(0, Number(payload.actionRange || 1));
@@ -401,6 +383,12 @@ function onAimMode(data?: unknown): void {
   focusedTargetPid.value = Number.isFinite(focused) && focused > 0 ? focused : null;
   disambiguation.value = null;
   aimModeActive.value = true;
+  void aimTargetingStore.enter({
+    actId: String(payload.actId ?? payload.skillId ?? ''),
+    targetMode: aimTargetMode.value,
+    prefixActions: payload.prefixActions ?? [],
+    candidateIds: currentTileCandidateIds(),
+  });
   applyAimTargetable();
 }
 
@@ -410,6 +398,7 @@ function onAimExit(): void {
   aimOriginPls.value = null;
   focusedTargetPid.value = null;
   disambiguation.value = null;
+  aimTargetingStore.exit();
   clearAimTargetable();
   clearAimLine();
 }
@@ -421,7 +410,9 @@ function onBattleEnded(): void {
 }
 
 function onMapLoaded(): void {
-  if (aimModeActive.value) applyAimTargetable();
+  if (!aimModeActive.value) return;
+  if (aimTargetMode.value === 'tile') void aimTargetingStore.refresh(currentTileCandidateIds());
+  applyAimTargetable();
 }
 
 onMounted(() => {
@@ -469,11 +460,20 @@ watch(
   () => [battleStore.combatTargets, characterStore.aliveList.map(c => `${c.pid}:${c.pgroup}:${c.pls}:${c.state}`).join('|')],
   () => {
     if (aimModeActive.value) nextTick(() => {
-      applyAimTargetable();
+      if (aimTargetMode.value !== 'tile') applyAimTargetable();
       refreshDisambiguation();
     });
   },
   { deep: true },
+);
+
+watch(
+  () => aimTargetingStore.error,
+  error => {
+    if (aimModeActive.value && error) {
+      toastStore.showToast(error, 'error', 3000, false, 'aim-preview-error');
+    }
+  },
 );
 
 onUnmounted(() => {

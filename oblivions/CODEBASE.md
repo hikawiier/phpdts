@@ -279,8 +279,8 @@ Oblivions 模式独立数据层，玩家与 NPC 敌人统一存储。
 | **道具栏** | `itempara` | JSON 数组（七字段规范，见下方 itmpara / itempara 小节） |
 | | `itemmaxslots` | 道具栏最大格数（默认 6，index 0=itm0 缓存槽，1~itemmaxslots=普通槽） |
 | **Oblivions专属** | `tacpara` | 策略槽（JSON） |
-| | `skillpara` | 技能数据（JSON） |
-| | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range`/`battle`/`escape_skip_tick` 等） |
+| | `skillpara` | 技能数据（JSON；effect-lifetime 被动含 `effect_instances`） |
+| | `oblpara` | 杂项功能数据（JSON，含 `killnum`/`ai_type`/`vision_range`/`battle` 等） |
 | | `discovered` | 敌人发现状态（0=未发现, 1=已发现） |
 
 **`action` 字段取值**：
@@ -298,7 +298,7 @@ $oblpara['battle'] = [
 ];
 ```
 
-**`oblpara['escape_skip_tick']`**：逃跑成功时设置的标志，跳过本次命令的 tick 推进（一次性，避免 NPC 在同 tick 内再次遭遇玩家）。
+逃跑后的休整不再使用 `oblpara` 专用字段。`escape` 施加 pending `flustered` effect-skill，qid disband 后激活一 tick，并由 capability evaluator 统一限制行为。
 
 **itmpara / itempara 道具对象七字段规范**（itempara 数组元素 + 地图道具实例均遵循）：
 
@@ -1294,7 +1294,9 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 |------|----------------|------|
 | `combat.runtime.php` | `combat_ensure_battle_log` / `combat_cache_create` | 初始化全局 battle log 与 battle_cache |
 | `combat.context.php` | `CombatContext` | 单 action 执行上下文，承载 ResolvedAim、CapturedTargetSet、current target、target results 与资源/delivery 状态 |
-| `combat.aim.php` | `combat_aim_resolve` / `combat_aim_check_rules` | 把不可信 AimIntent 解析为后端权威 `pid/tile/self/none` ResolvedAim |
+| `combat.aim.php` | `combat_aim_resolve` / `combat_aim_check_rules` | 把不可信 AimIntent 解析为后端权威 `pid/tile/self/none` ResolvedAim，并接入 observation decision |
+| `combat.observation.php` | `combat_observation_decide` / `combat_observation_preload_revealed_tiles` | actor-aware 的 tile knowledge / character detection 判定；revealed set 在请求内 battle_cache 缓存 |
+| `combat.range.php` | `combat_range_resolve_base` / `combat_spatial_decide` | 五种射程模式唯一解析器；组合距离、预扣前 AP wallet、真实 AP quote 与可负担性 |
 | `combat.target_capture.php` | `combat_capture_resolution_targets` | 四个内置 Capturer；检查结构、重复 PID、entity ref、ResolvedAim/tile capture provenance，并稳定排序 |
 | `combat.target_unit.php` | `combat_target_units_run` / `combat_resolve_target_unit` | 逐目标完整结算、target SAVEPOINT、collector checkpoint、资源一次提交 |
 | `combat.participation.php` | `combat_participation_classify*` / `combat_participation_enlist` | member/joinable/left/other_battle/blocked 分类与安全动态入列 |
@@ -1303,14 +1305,14 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 | `combat.skill.php` | `combat_skill_get_config` / `combat_skill_validate_config` / `combat_skill_load_module` | 校验并加载 aim/capture/execution/delivery 技能配置 |
 | `combat.target.php` | `combat_target_resolve_all` | 旧调用兼容 facade，领域实现已拆到 aim/capture |
 | `combat.tag.php` | `combat_tag_build` / `combat_check_target_rules` | 构建当前 Aim/ResolutionTarget 标签，供 `aim.rules` / `capture.rules` 判定 |
-| `combat.ap.php` | `combat_ap_register` / `combat_ap_calculate` | AP 计算器注册与动态消耗 |
+| `combat.ap.php` | `combat_ap_register` / `combat_ap_calculate` / `combat_ap_project_budget` | AP 计算器注册、具体目标报价与同 calculator 的预算摘要 |
 | `combat.effect.php` | `combat_effect_apply_all` | 实际应用 `damage` / `heal` / `move` / `escape` / `ap_change` |
 | `combat.state.php` | `combat_state_post_check` / `combat_state_clear` / `combat_state_mark_post_battle_handoff_pending` / `combat_state_activate_post_battle_handoff` | 管理 `combatants` 与 `tag_mutations`；逃跑时登记待交接状态，qid 解散时才锚定首个战后 world-AI 跳过帧 |
 | `combat.queue.php` | `combat_queue_create_and_init` / `combat_queue_exit` | combat 层队列适配，内部复用 `battle.queue.*` |
 | `combat.planned_state.php` | `combat_planned_state_*` | dry-run/verify/preview 的计划状态读写 |
 | `combat.effect_projector.php` | `combat_effect_project_all` | 在 planned state 上投影效果，不写 DB |
 | `combat.chain.php` | `combat_chain_project` | 动作链 verify / preview 共用投影入口，返回每个 action 的成功/失败与 effects |
-| `combat.preview.php` | `combat_can_engage` / `combat_preview_single` / `combat_preview_chain` | 战斗可达性、单技能预览、动作链预览 |
+| `combat.preview.php` | `combat_can_engage` / `combat_preview_single` / `combat_preview_targets` / `combat_preview_chain` | actor-owned engagement planner、单目标预览、批量候选投影、动作链预览 |
 | `combat.log.php` | `combat_log_v2_*` | battlelog.v2 事件适配 |
 
 **战斗技能配置**：
@@ -1318,7 +1320,7 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 - 主配置：`oblivions/gamedata/combat_skill_config.php`
 - 技能 hook：`oblivions/gamedata/combat_skills/skill_{act_id}.php`
 - hook 签名：`skill_{act_id}_execute(CombatContext $ctx): void`
-- 配置形状：`aim` + `capture` + `execution.empty_policy` + `delivery.types: string[]`
+- 配置形状：`aim.resolver/observation/rules` + `capture` + `execution.empty_policy` + `delivery.types: string[]` + `range` + `ap_calc`
 - hook 只声明 current target effect；actor effect 显式 `scope=actor`，不得查询或修改任意 PID
 - 已接入 hook：`unarmed_strike` / `throw` / `escape` / `move` / `heal` / `execute` / `grenade` / `vampiric_bite` / `whirlwind`
 
@@ -1417,12 +1419,12 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `skill_get_config` | `($skill_id): array\|null` | 获取技能配置（带静态缓存） |
-| `skill_get_all_configs` | `(): array` | 加载全部技能配置 |
+| `skill_get_definition` | `($skill_id): array\|null` | 获取技能身份、生命周期、可见性与 effect 规则 |
+| `skill_get_all_definitions` | `(): array` | 加载全部技能定义 |
 | `skill_has_cd` | `($skill_id): bool` | 检查技能是否有 CD 定义 |
 | `skill_is_finisher` | `($skill_id): bool` | 检查技能是否为终结技（配置 `finisher=1`） |
 | `skill_is_usable` | `(&$actor_data, $skill_id): bool` | 检查技能是否可用（配置存在/拥有/CD/AP），不修改状态 |
-| `skill_format_skillpara` | `(&$skillpara): void` | 技能数据格式化：解码 JSON+补默认值 |
+| `skill_format_skillpara` | `(&$skillpara): void` | 技能数据格式化：补默认技能并规范 effect instances |
 | `skill_ensure_defaults` | `(&$skillpara): void` | 确保 skillpara 存在默认字段 |
 | `skill_strip_temporary` | `(&$skillpara): void` | 剥离临时技能 |
 | `skill_act_verify` | `(&$actor_data, $act_id, &$obl_battle_log, &$battle_cache): bool` | 动作校验入口：查配置/拥有/CD/AP/扣 AP |
@@ -1440,7 +1442,16 @@ NPC 敌人 AI 行为核心。NPC 数据与玩家同构（统一存 `bra_oblplaye
 | `battle_queue_append_tail` | `(&$target_data, int $qid, &$battle_cache, $log, ?CombatContext $ctx): array` | 锁定后 compare-and-append；新成员 `done=0` 排尾，不删除旧 qid 行 |
 | `battle_queue_rebuild` | `($qid, &$actor_data, &$obl_battle_log): array` | 新一轮重建 active 成员顺位 |
 | `battle_queue_exit` | `(&$actor_data, &$obl_battle_log, &$battle_cache)` | 标记当前 qid 行 `active=0`，bid 由解散清理 |
-| `battle_disband_cleanup` | `($qid, &$actor_data, &$obl_battle_log): void` | 删除队列并清理成员 action/bid/state |
+| `battle_disband_cleanup` | `($qid, &$actor_data, &$obl_battle_log): array` | 清理成员 action/bid/AP 并激活匹配的 effect boundary |
+
+### 8.14 skill_effect / actor capability
+
+| 模块 | 主要职责 |
+|------|----------|
+| `skill_effect.main.php` | effect instance 格式化、幂等 apply、refresh stacking、active 判定 |
+| `skill_effect.lifecycle.php` | boundary activation、post GC、下一可行动 tick |
+| `skill_effect.projector.php` | 公开 statuses/capabilities 投影与 hidden 来源过滤 |
+| `actor.capability.php` | 合法 capability registry、provider 聚合、deny-wins 与 unknown fail-closed |
 
 旧 `battle_queue_join()` 的 delete-by-pid 后插入语义已经删除；不得建立兼容 wrapper。
 

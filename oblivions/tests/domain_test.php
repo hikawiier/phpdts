@@ -129,5 +129,43 @@ return static function (TestRoom $room): array {
             test_same($beforeFiles, $room->fileSnapshot(), 'readonly command leaves files unchanged');
             test_same($beforeDebug, $GLOBALS['obl_combat_debug_entries'] ?? [], 'readonly command leaves debug collector unchanged');
         },
+        'observation_is_actor_aware_and_request_cached' => static function () use ($room): void {
+            global $db;
+            $room->resetData();
+            $player = $room->player('observation-player', 0, ['pls' => 1, 'ap' => 5]);
+            $npc = $room->player('observation-npc', 1, ['pls' => 1, 'ap' => 5]);
+            $hidden = $room->player('observation-hidden', 1, ['pls' => 1, 'discovered' => 0]);
+
+            $fogged = combat_preview_single($player, 'move', ['type' => 'tile', 'id' => 2]);
+            test_same('target_resolve_failed:AIM_RULE_FAILED:tile_unrevealed', (string)$fogged['reason'], 'player tile aim requires controller knowledge');
+            $npcMove = combat_preview_single($npc, 'move', ['type' => 'tile', 'id' => 2]);
+            test_assert(!empty($npcMove['pass']), 'NPC tile aim ignores player room fog');
+            $hiddenAim = combat_preview_single($player, 'unarmed_strike', ['type' => 'pid', 'id' => (int)$hidden['pid']]);
+            test_same('target_resolve_failed:AIM_RULE_FAILED:TARGET_NOT_VISIBLE', (string)$hiddenAim['reason'], 'hidden PID has generic failure');
+
+            $room->queue($player, 73, 1); $room->queue($hidden, 73, 2);
+            $player = $room->fetch((int)$player['pid']);
+            $memberAim = combat_preview_single($player, 'unarmed_strike', ['type' => 'pid', 'id' => (int)$hidden['pid']]);
+            test_assert(!empty($memberAim['pass']), 'active same-battle member remains targetable');
+
+            $room->reveal(2);
+            $cache = [];
+            $first = combat_observation_preload_revealed_tiles($cache, 1);
+            $db->query("DELETE FROM {$room->prefix}oblmapstates WHERE pgroup=1 AND pls=2");
+            $second = combat_observation_preload_revealed_tiles($cache, 1);
+            $fresh = [];
+            $third = combat_observation_preload_revealed_tiles($fresh, 1);
+            test_assert(!empty($first[2]) && !empty($second[2]) && empty($third[2]), 'revealed tiles cache is request-local, not static');
+        },
+        'can_engage_does_not_expose_pid_existence' => static function () use ($room): void {
+            $room->resetData();
+            $actor = $room->player('engage-observer');
+            $hidden = $room->player('engage-hidden', 1, ['discovered' => 0]);
+            $missing = obl_command_handler_dispatch('combat.can_engage', ['target_pid' => 99999999], $actor);
+            $undetected = obl_command_handler_dispatch('combat.can_engage', ['target_pid' => (int)$hidden['pid']], $actor);
+            test_same($missing, $undetected, 'missing and undetected PID responses are indistinguishable');
+            test_same('TARGET_NOT_VISIBLE', (string)$missing['data']['reason'], 'generic observation reason');
+            test_same(-1, (int)$missing['data']['distance'], 'generic response leaks no distance');
+        },
     ]);
 };

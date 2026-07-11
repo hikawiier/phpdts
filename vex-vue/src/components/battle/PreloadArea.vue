@@ -26,9 +26,10 @@ import { useToastStore } from '@/stores/toast';
 import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
 import { findSelectableCombatTarget } from '@/utils/combat-targeting';
-import type { Skill, CombatViewModel, CombatTargetViewModel, CombatantViewModel } from '@/types/api';
+import type { Skill, CombatAimIntent, CombatViewModel, CombatTargetViewModel, CombatantViewModel } from '@/types/api';
 import type { Character } from '@/types/character';
 import type { PreloadInitEventData } from '@/types/events';
+import { estimateMoveActionCost, getSkillBaseRange } from '@/utils/combat-action-cost';
 
 // ── 状态 ──
 const mode = ref<'pre-battle' | 'in-battle' | ''>('');
@@ -37,11 +38,7 @@ const skills = ref<Skill[]>([]);
 const visibleSkills = computed(() => skills.value.filter(s => !s.hidden));
 const playerAp = ref<number>(0);
 const playerMaxAp = ref<number>(0);
-type TargetIntent =
-  | { type: 'pid'; id: number }
-  | { type: 'tile'; id: number }
-  | { type: 'self' }
-  | { type: 'none' };
+type TargetIntent = CombatAimIntent;
 interface QueueItem {
   id: number;
   act_id: string;
@@ -146,12 +143,6 @@ const apBar = computed(() => {
 // ══════════════════════════════════════════════════
 
 
-function getSkillActionRange(skill: Skill | undefined): number {
-  if (!skill) return 1;
-  const n = Number(skill.action_range ?? skill.range_max ?? 1);
-  return Number.isFinite(n) ? Math.max(0, n) : 1;
-}
-
 function normalizePls(pls: string | number | null | undefined): number | null {
   if (pls === null || pls === undefined) return null;
   const n = Number(pls);
@@ -193,15 +184,6 @@ function getActorBasePls(): number | null {
   return normalizePls(characterStore.player?.pls ?? getCombatPlayer()?.pls ?? mapStore.curLoc);
 }
 
-function getTileAimRange(skill: Skill | undefined): number {
-  const baseRange = getSkillActionRange(skill);
-  if (!skill || skill.act_id !== 'move') return baseRange;
-
-  const baseCost = Math.max(1, Number(skill.apcost || 1));
-  const usableAp = Math.max(0, predictedAp.value);
-  return baseRange * Math.floor(usableAp / baseCost);
-}
-
 function getTileDistanceFrom(fromPls: number | null, targetPls: number): number | null {
   if (fromPls === null) return null;
   const path = findPath(fromPls, targetPls);
@@ -215,9 +197,7 @@ function estimateActionCostFrom(item: QueueItem, fromPls: number | null): number
 
   if (skill.act_id === 'move' && item.target.type === 'tile') {
     const distance = getTileDistanceFrom(fromPls, item.target.id);
-    if (distance === null) return Number(skill.apcost || 0);
-    const movePower = Math.max(1, getSkillActionRange(skill));
-    return Math.max(Number(skill.apcost || 1), Math.ceil(distance / movePower));
+    return estimateMoveActionCost(skill, distance);
   }
 
   return Number(skill.apcost || 0);
@@ -268,7 +248,7 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
     const path = findPath(originPls, combatTarget.pls);
     if (!path) return false;
     const distance = Math.max(0, path.length - 1);
-    return distance <= getSkillActionRange(skill);
+    return distance <= getSkillBaseRange(skill);
   }
 
   // 兜底：getCombatTarget 已回退到 CharacterHub，此处不再需要 mapStore.enemies
@@ -277,7 +257,7 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
 
 function skillRangeText(skill: Skill): string {
   if (skill.aimType !== 'pid') return '';
-  return ` R:${getSkillActionRange(skill)}`;
+  return ` R:${getSkillBaseRange(skill)}`;
 }
 
 function onSkillClick(actId: string): void {
@@ -341,15 +321,15 @@ function enterAimMode(actId: string, targetMode: 'enemy' | 'tile' = 'enemy'): vo
   aimMode.value = true;
   pendingActId.value = actId;
   pendingTargetMode.value = targetMode;
-  const actionRange = targetMode === 'tile' ? getTileAimRange(skill) : getSkillActionRange(skill);
   dataManager.broadcast('battle:aim-mode', {
     actId,
-    actionRange,
+    ...(targetMode === 'enemy' ? { actionRange: getSkillBaseRange(skill) } : {}),
     targetMode,
     originPls: getPlannedActorPls(),
     focusedTargetPid: mode.value === 'pre-battle'
       ? (enemyPid.value || battleStore.combatTargets.suggestedTargetPid || null)
       : (battleStore.combatTargets.suggestedTargetPid || enemyPid.value || null),
+    prefixActions: normalizeActions(queue.value),
   });
 }
 
@@ -471,8 +451,11 @@ function normalizeActions(actions: QueueItem[]): Array<{ act_id: string; target:
 // 执行装填队列
 // ══════════════════════════════════════════════════
 
+const executeCommand = computed(() => mode.value === 'pre-battle' ? 'battle.start' : 'battle.submit_turn');
+const executeBlock = computed(() => commandQueue.getBlockDecision(executeCommand.value));
+
 async function onExecute(): Promise<void> {
-  if (queue.value.length === 0) return;
+  if (queue.value.length === 0 || executeBlock.value) return;
 
   const actions = queue.value.slice();
 
@@ -656,6 +639,8 @@ defineExpose({
       <div v-if="queue.length > 0" class="flex gap-1 mt-2">
         <button
           class="obl-btn turn-active flex-1 px-2 py-2 hover:border-fg-mid hover:bg-fg-dim/10 transition-colors cursor-pointer"
+          :disabled="executeBlock !== null"
+          :title="executeBlock?.message || ''"
           @click="onExecute"
         >
           <span class="text-fg-bright font-bold">[执行]</span>

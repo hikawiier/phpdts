@@ -53,6 +53,14 @@ function combat_participation_classify_data(CombatContext $ctx, array $target_da
     }
     if ($action !== '') return combat_participation_result('blocked', 'TARGET_BUSY');
     if ($policy !== 'join_if_unengaged') return combat_participation_result('blocked', 'TARGET_NOT_MEMBER');
+    $evaluation_tick = $qid > 0 ? combat_current_evaluation_tick() : combat_next_action_evaluation_tick();
+    $capability = actor_capability_decide(
+        $target_data,
+        'participate_combat',
+        array('qid' => $qid, 'source_actor_pid' => (int)($ctx->actor_data['pid'] ?? 0)),
+        $evaluation_tick
+    );
+    if (empty($capability['allowed'])) return combat_participation_result('blocked', 'TARGET_CAPABILITY_BLOCKED');
     return combat_participation_result('joinable');
 }
 

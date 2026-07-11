@@ -138,7 +138,8 @@ function combat_target_unit_clear_current_if_needed(CombatContext $ctx): void {
                 ],
             ];
         }
-        $effect_uid = !empty($ctx->v2_effect_uids) ? end($ctx->v2_effect_uids) : null;
+        $escape_effect_uids = $ctx->v2_effect_uids_by_type['escape'] ?? [];
+        $effect_uid = !empty($escape_effect_uids) ? end($escape_effect_uids) : null;
         combat_log_v2_combatant_cleared($ctx->log, $data, $reason, $ctx->action_uid, $effect_uid, $extra);
         combat_state_clear($pid, $reason, $data, $ctx->battle_cache, $ctx->log);
     } else {
@@ -201,6 +202,8 @@ function combat_resolve_target_unit(CombatContext $ctx, int $index): array {
     $resources_before = $ctx->resources_committed;
     $action_started_before = $ctx->v2_action_started;
     $delivery_before = $ctx->delivery_executed;
+    $effect_uids_before = $ctx->v2_effect_uids;
+    $effect_uids_by_type_before = $ctx->v2_effect_uids_by_type;
     $log_checkpoint = is_object($ctx->log) && method_exists($ctx->log, 'checkpoint')
         ? $ctx->log->checkpoint()
         : null;
@@ -217,6 +220,8 @@ function combat_resolve_target_unit(CombatContext $ctx, int $index): array {
         $ctx->resources_committed = $resources_before;
         $ctx->v2_action_started = $action_started_before;
         $ctx->delivery_executed = $delivery_before;
+        $ctx->v2_effect_uids = $effect_uids_before;
+        $ctx->v2_effect_uids_by_type = $effect_uids_by_type_before;
         if ($log_checkpoint !== null) $ctx->log->rollbackTo($log_checkpoint);
         return combat_target_unit_result($target, 'skipped', $enlist['code'] ?? 'TARGET_REJECTED', 'rejected');
     }
@@ -233,6 +238,8 @@ function combat_resolve_target_unit(CombatContext $ctx, int $index): array {
         $ctx->resources_committed = $resources_before;
         $ctx->v2_action_started = $action_started_before;
         $ctx->delivery_executed = $delivery_before;
+        $ctx->v2_effect_uids = $effect_uids_before;
+        $ctx->v2_effect_uids_by_type = $effect_uids_by_type_before;
         if ($log_checkpoint !== null) $ctx->log->rollbackTo($log_checkpoint);
         $ctx->success = true;
         $ctx->failure_reason = null;

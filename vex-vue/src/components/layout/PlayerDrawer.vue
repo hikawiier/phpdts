@@ -22,6 +22,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useCharacterStore } from '@/stores/character';
 import { useUiStore } from '@/stores/ui';
 import { getPlaceName, getGenderText } from '@/utils/format';
+import { getStatusDisplayName, getStatusLocale } from '@/data/status-locale';
 
 const playerStore = usePlayerStore();
 const characterStore = useCharacterStore();
@@ -73,6 +74,7 @@ const gd = computed(() => characterStore.player?.gd ?? '');
 
 const placeName = computed(() => getPlaceName(pls.value));
 const genderText = computed(() => getGenderText(gd.value));
+const statuses = computed(() => playerStore.statuses);
 </script>
 
 <template>
@@ -139,6 +141,18 @@ const genderText = computed(() => getGenderText(gd.value));
           <div>├─ KILLS: {{ killnum }}</div>
           <div>├─ POS: {{ placeName }} [{{ pls }}]</div>
           <div>└─ STATE: {{ state }}</div>
+        </div>
+        <!-- PROFILE -->
+        <div
+          v-if="statuses.length > 0"
+          class="drawer-stat-line"
+          style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);"
+        >
+          <div class="drawer-section-title">├─ STATUS EFFECTS</div>
+          <div v-for="status in statuses" :key="status.instance_uid || status.status_id" style="margin-top:6px;">
+            <div>├─ {{ getStatusDisplayName(status) }}</div>
+            <div class="dim">{{ getStatusLocale(status.status_id).description }}</div>
+          </div>
         </div>
         <!-- PROFILE -->
         <div

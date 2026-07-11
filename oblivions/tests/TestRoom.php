@@ -82,6 +82,13 @@ final class TestRoom {
         $db->query("INSERT IGNORE INTO {$this->prefix}oblbattle_state(qid,state,next_pid,round_num,updated_at) VALUES ({$qid},'PLAYER_TURN'," . (int)$player['pid'] . ",0," . time() . ")");
     }
 
+    public function reveal(int ...$tiles): void {
+        global $db;
+        foreach (array_values(array_unique($tiles)) as $pls) {
+            $db->query("INSERT INTO {$this->prefix}oblmapstates(pgroup,pls,fog,damaged,flags) VALUES (1," . (int)$pls . ",1,0,'') ON DUPLICATE KEY UPDATE fog=1");
+        }
+    }
+
     public function tableRows(string $table): array {
         global $db;
         $rows = [];

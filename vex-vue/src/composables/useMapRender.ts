@@ -27,6 +27,7 @@ import { isReachable } from '@/composables/useMapReachability';
 import { createZoomState, ZOOM_STEP } from '@/composables/useMapZoom';
 import type { TileInfo } from '@/types/api';
 import type { Character } from '@/types/character';
+import { isTileRevealed, type FogProjection } from '@/utils/map-visibility';
 
 // ─── 渲染回调类型（由 useMapBusiness 注入） ───
 export interface RenderCallbacks {
@@ -164,8 +165,7 @@ const cells: ComputedRef<CellData[]> = computed(() => {
   const cols = regionGrid.cols || 10;
   const rows = regionGrid.rows || 10;
 
-  const fogData = mapStore.links.fog as Record<string, Record<string, number>> | undefined;
-  const regionFog = fogData && fogData[String(mapStore.curRegion)] ? fogData[String(mapStore.curRegion)] : {};
+  const fogData = mapStore.links.fog as FogProjection;
   const regionInfo = (mapStore.links.regions as Record<string, { name?: string; exit_pls?: string | number; entrance_pls?: string | number; prev_region?: string | number | null }>)[String(mapStore.curRegion)];
 
   const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as Record<string, TileInfo & { x?: number; y?: number; neighbors?: (string | number)[]; passable?: unknown; tide?: string; floor?: string; preset_safe?: unknown }> | undefined;
@@ -211,7 +211,7 @@ const cells: ComputedRef<CellData[]> = computed(() => {
       const pls = String(tileInfo.pls);
       // 统一用 String() 比较（curLoc 可能是 number，tileInfo.pls 是 string）
       const isCurrent = String(tileInfo.pls) === String(mapStore.curLoc);
-      const isFogged = !isCurrent && !regionFog[pls];
+      const isFogged = !isTileRevealed(fogData, mapStore.curRegion, pls, isCurrent);
       const isExit = !!(regionInfo && String(tileInfo.pls) === String(regionInfo.exit_pls));
       const isEntrance = !!(regionInfo && String(tileInfo.pls) === String(regionInfo.entrance_pls) && regionInfo.prev_region !== null);
       const passable = !isFalsy(tileInfo.tile.passable);

@@ -49,6 +49,9 @@ function combat_skill_validate_config(string $act_id, array $config): void {
     $order = (string)($capture['order'] ?? '');
     $relation = (string)($capture['relation'] ?? '');
     $empty_policy = (string)($execution['empty_policy'] ?? '');
+    $range = is_array($config['range'] ?? null) ? $config['range'] : array();
+    $range_mode = (string)($range['mode'] ?? '');
+    $observation = (string)($aim['observation'] ?? 'none');
 
     $fail = static function (string $message) use ($act_id): void {
         throw new UnexpectedValueException("Invalid combat skill config '{$act_id}': {$message}");
@@ -60,6 +63,14 @@ function combat_skill_validate_config(string $act_id, array $config): void {
     if (!in_array($order, ['single', 'queue', 'queue_then_pid', 'pid'], true)) $fail("invalid order '{$order}'");
     if (!in_array($relation, ['any', 'self', 'hostile', 'friendly'], true)) $fail("invalid relation '{$relation}'");
     if (!in_array($empty_policy, ['fail', 'execute'], true)) $fail("invalid empty_policy '{$empty_policy}'");
+    if (!in_array($range_mode, ['fixed', 'inherit', 'additive', 'capped_additive', 'move_power'], true)) {
+        $fail("invalid range mode '{$range_mode}'");
+    }
+    if (!isset($range['max']) || !is_numeric($range['max']) || (int)$range['max'] < 0) $fail('range.max must be a non-negative integer');
+    if (!isset($range['bonus']) || !is_numeric($range['bonus'])) $fail('range.bonus must be an integer');
+    if (!in_array($observation, ['none', 'revealed', 'controller_known', 'detected', 'visible'], true)) $fail("invalid observation '{$observation}'");
+    if (in_array($observation, ['revealed', 'controller_known'], true) && $aim_resolver !== 'tile') $fail("tile observation requires tile aim");
+    if ($observation === 'detected' && $aim_resolver !== 'pid') $fail("observation 'detected' requires pid aim");
 
     $contracts = [
         'identity' => ['aim' => ['tile', 'self', 'none'], 'participation' => 'none', 'order' => 'single'],

@@ -10,8 +10,8 @@ if (!defined('IN_GAME')) {
 // 设计原则：一切皆技能；配置驱动分类；tick 时间戳记 CD；单技能单文件自动引用
 // ================================================================
 
-# 全局缓存：技能配置（由 skill_get_all_configs() 初始化）
-$__skill_configs_cache = null;
+# 全局缓存：技能静态定义。主动战斗机制由 combat_skill_config.php 独占。
+$__skill_definitions_cache = null;
 
 /**
  * 获取技能配置（带静态缓存）
@@ -19,9 +19,30 @@ $__skill_configs_cache = null;
  * @param string $skill_id 技能 ID
  * @return array|null 配置数组，不存在返回 null
  */
-function skill_get_config($skill_id) {
-    $configs = skill_get_all_configs();
-    return isset($configs[$skill_id]) ? $configs[$skill_id] : null;
+function skill_get_definition($skill_id) {
+    $definitions = skill_get_all_definitions();
+    return isset($definitions[$skill_id]) ? $definitions[$skill_id] : null;
+}
+
+function skill_get_all_definitions() {
+    global $__skill_definitions_cache;
+    if ($__skill_definitions_cache === null) {
+        $__skill_definitions_cache = include GAME_ROOT . './oblivions/gamedata/skill_definition_config.php';
+        if (!is_array($__skill_definitions_cache)) $__skill_definitions_cache = array();
+        foreach ($__skill_definitions_cache as $skill_id => $definition) {
+            if (!is_array($definition)) throw new UnexpectedValueException('Invalid skill definition: ' . $skill_id);
+            $lifetime = (string)($definition['lifetime'] ?? '');
+            if (!in_array($lifetime, array('permanent', 'equipment', 'effect'), true)) {
+                throw new UnexpectedValueException('Invalid skill lifetime: ' . $skill_id);
+            }
+            foreach (($definition['capability_denies'] ?? array()) as $capability) {
+                if (function_exists('actor_capability_is_known') && !actor_capability_is_known((string)$capability)) {
+                    throw new UnexpectedValueException('Unknown capability in skill definition: ' . $skill_id . ':' . $capability);
+                }
+            }
+        }
+    }
+    return $__skill_definitions_cache;
 }
 
 /**
@@ -34,7 +55,7 @@ function skill_get_config($skill_id) {
  * @return bool true=有 CD 定义，false=无 CD 定义或配置不存在
  */
 function skill_has_cd($skill_id) {
-    $config = skill_get_config($skill_id);
+    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$skill_id) : null;
     if (!$config) return false;
     return isset($config['cd']) && (int)$config['cd'] > 0;
 }
@@ -49,7 +70,7 @@ function skill_has_cd($skill_id) {
  * @return bool true=是终结技，false=不是或配置不存在
  */
 function skill_is_finisher($skill_id) {
-    $config = skill_get_config($skill_id);
+    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$skill_id) : null;
     if (!$config) return false;
     return !empty($config['finisher']);
 }
@@ -68,7 +89,7 @@ function skill_is_finisher($skill_id) {
  */
 function skill_is_usable(&$actor_data, $skill_id, $target_data = null) {
     # 1. 查配置
-    $config = skill_get_config($skill_id);
+    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$skill_id) : null;
     if (!$config) return false;
 
     # 2. 检查是否拥有该技能
@@ -92,7 +113,8 @@ function skill_is_usable(&$actor_data, $skill_id, $target_data = null) {
     if ($target_data !== null && (int)$actor_data['pid'] !== (int)$target_data['pid']) {
         include_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php';
         include_once GAME_ROOT . './oblivions/include/game/move.func.php';
-        $action_range = obl_get_action_range($actor_data, $skill_id);
+        $range = combat_range_resolve_base($actor_data, (string)$skill_id);
+        $action_range = !empty($range['ok']) ? (int)$range['base_range'] : 0;
         $actor_pgroup = isset($actor_data['pgroup']) ? (int)$actor_data['pgroup'] : 0;
         $target_pgroup = isset($target_data['pgroup']) ? (int)$target_data['pgroup'] : 0;
         $actor_pls = isset($actor_data['pls']) ? (int)$actor_data['pls'] : 0;
@@ -106,22 +128,6 @@ function skill_is_usable(&$actor_data, $skill_id, $target_data = null) {
     }
 
     return true;
-}
-
-/**
- * 获取所有技能配置（带静态缓存）
- *
- * @return array 完整配置数组
- */
-function skill_get_all_configs() {
-    global $__skill_configs_cache;
-    if ($__skill_configs_cache === null) {
-        $__skill_configs_cache = include GAME_ROOT . './oblivions/gamedata/skill_config.php';
-        if (!is_array($__skill_configs_cache)) {
-            $__skill_configs_cache = array();
-        }
-    }
-    return $__skill_configs_cache;
 }
 
 /**
@@ -149,6 +155,27 @@ function skill_format_skillpara(&$skillpara) {
 
     # 3. 注入默认技能
     skill_ensure_defaults($skillpara);
+
+    foreach (array_keys($skillpara) as $skill_id) {
+        if (!is_array($skillpara[$skill_id])) {
+            unset($skillpara[$skill_id]);
+            continue;
+        }
+        $definition = skill_get_definition((string)$skill_id);
+        if (!$definition) {
+            if (isset($skillpara[$skill_id]['effect_instances'])) {
+                if (function_exists('skill_effect_log_invalid')) skill_effect_log_invalid((string)$skill_id, 'definition_missing');
+                unset($skillpara[$skill_id]);
+            }
+            continue;
+        }
+        if (($definition['lifetime'] ?? 'permanent') === 'effect' && function_exists('skill_effect_format_skill_state')) {
+            skill_effect_format_skill_state((string)$skill_id, $skillpara[$skill_id]);
+            if (empty($skillpara[$skill_id]['effect_instances'])) unset($skillpara[$skill_id]);
+        } elseif (!isset($skillpara[$skill_id]['lstact'])) {
+            $skillpara[$skill_id]['lstact'] = 0;
+        }
+    }
 
     # 4. 装备临时技能注入由调用方 obl_format_playerdata 调用 skill_inject_equipment 完成
     #    （需要 $pdata 读取装备字段，因此不能在此处调用）
@@ -220,14 +247,16 @@ function skill_strip_temporary(&$skillpara) {
     if (!is_array($skillpara)) return;
 
     foreach ($skillpara as $skill_id => $state) {
-        $config = skill_get_config($skill_id);
-        if (!$config) {
+        $definition = skill_get_definition((string)$skill_id);
+        if (!$definition) {
             # 配置中不存在的技能，保留（可能是新技能尚未入库）
             continue;
         }
         # 剥离装备临时技能
-        if (isset($config['lifetime']) && $config['lifetime'] === 'equipment') {
+        if (($definition['lifetime'] ?? 'permanent') === 'equipment') {
             unset($skillpara[$skill_id]);
+        } elseif (($definition['lifetime'] ?? '') === 'effect') {
+            if (!is_array($state) || empty($state['effect_instances'])) unset($skillpara[$skill_id]);
         }
     }
 }
@@ -254,7 +283,7 @@ function skill_act_verify(&$actor_data, $act_id, &$obl_battle_log, &$battle_cach
     global $gamevars;
 
     # 1. 查配置
-    $config = skill_get_config($act_id);
+    $config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$act_id) : null;
     if (!$config) {
         return false;
     }
@@ -361,27 +390,32 @@ function skill_get_available_list(&$pdata) {
     }
 
     foreach ($pdata['skillpara'] as $skill_id => $state) {
-        $config = skill_get_config($skill_id);
-        if (!$config) continue;
         $combat_config = function_exists('combat_skill_get_config') ? combat_skill_get_config((string)$skill_id) : null;
+        if (!$combat_config) continue;
+        $definition = skill_get_definition((string)$skill_id);
+        if (!$definition || ($definition['lifetime'] ?? '') === 'effect') continue;
 
         $lstact = isset($state['lstact']) ? (int)$state['lstact'] : 0;
-        $cd = isset($config['cd']) ? (int)$config['cd'] : 0;
-        $apcost = isset($config['apcost']) ? (int)$config['apcost'] : 0;
+        $cd = isset($combat_config['cd']) ? (int)$combat_config['cd'] : 0;
+        $apcost = isset($combat_config['apcost']) ? (int)$combat_config['apcost'] : 0;
 
         $on_cd = ($cd > 0 && ($current_tick - $lstact) < $cd);
         $available = !$on_cd && $player_ap >= $apcost;
 
-        $range_mode  = isset($config['range_mode']) ? (string)$config['range_mode'] : 'fixed';
-        $range_max   = isset($config['range_max']) ? (int)$config['range_max'] : 1;
-        $range_bonus = isset($config['range_bonus']) ? (int)$config['range_bonus'] : 0;
-        $action_range = function_exists('obl_get_action_range') ? obl_get_action_range($pdata, $skill_id) : $range_max;
+        $range_projection = combat_range_resolve_base($pdata, (string)$skill_id);
+        if (empty($range_projection['ok'])) continue;
+        $range_mode = (string)$range_projection['mode'];
+        $range_max = (int)$range_projection['max'];
+        $range_bonus = (int)$range_projection['bonus'];
+        // Legacy consumers interpret action_range as the skill's base range.
+        // Wallet-dependent reach is exposed separately as range.effective.
+        $action_range = (int)$range_projection['base_range'];
 
         $skills[] = array(
             'act_id'       => $skill_id,
             'apcost'       => $apcost,
             'cd'           => $cd,
-            'finisher'     => isset($config['finisher']) ? (int)$config['finisher'] : 0,
+            'finisher'     => !empty($combat_config['finisher']) ? 1 : 0,
             'aimType'      => isset($combat_config['aim']['resolver']) ? (string)$combat_config['aim']['resolver'] : 'none',
             'selectionMode'=> in_array(($combat_config['aim']['resolver'] ?? 'none'), array('pid', 'tile'), true) ? 'explicit' : 'implicit',
             'captureResolver' => isset($combat_config['capture']['resolver']) ? (string)$combat_config['capture']['resolver'] : 'identity',
@@ -389,8 +423,15 @@ function skill_get_available_list(&$pdata) {
             'range_max'    => $range_max,
             'range_bonus'  => $range_bonus,
             'action_range' => $action_range,
-            'category'     => isset($config['category']) ? $config['category'] : 'utility',
-            'hidden'       => !empty($config['hidden']),
+            'range'        => array(
+                'mode' => $range_mode,
+                'base' => (int)$range_projection['base_range'],
+                'effective' => $range_projection['effective_range'],
+                'available_ap' => (int)$range_projection['available_ap'],
+                'base_apcost' => (int)$range_projection['base_apcost'],
+            ),
+            'category'     => isset($definition['category']) ? $definition['category'] : 'utility',
+            'hidden'       => !empty($definition['hidden']) || !empty($combat_config['hidden']),
             'lstact'       => $lstact,
             'current_tick' => $current_tick,
             'on_cd'        => $on_cd,

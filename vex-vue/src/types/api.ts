@@ -49,7 +49,38 @@ export interface PlayerInfo {
    */
   obl_battle_state: BattleState;
   equipment: Record<string, EquipmentSlot | null>;
+  statuses?: ActorStatusProjection[];
+  capabilities?: ActorCapabilitiesProjection;
 }
+
+export type ActorCapability =
+  | 'world_ai'
+  | 'voluntary_move'
+  | 'enter_combat'
+  | 'participate_combat'
+  | 'combat_action'
+  | 'free_mutation'
+  | 'time_pass';
+
+export interface ActorStatusProjection {
+  instance_uid?: string;
+  status_id: string;
+  phase: 'pending' | 'active';
+  stacks: number;
+  starts_at_tick: number | null;
+  expires_at_tick: number | null;
+  remaining_ticks: number | null;
+  source?: { kind: string; skill_id?: string };
+}
+
+export interface CapabilityDecision {
+  allowed: boolean;
+  reason?: string;
+  source_status_ids?: string[];
+  expires_at_tick?: number | null;
+}
+
+export type ActorCapabilitiesProjection = Partial<Record<ActorCapability, CapabilityDecision>>;
 
 /**
  * 战斗状态机枚举（3 态）
@@ -141,9 +172,47 @@ export interface Tacpara {
 
 /** 技能参数（player_info.skillpara） */
 export interface Skillpara {
-  unarmed_strike?: { lstact: number };
-  escape?: { lstact: number };
-  [key: string]: { lstact: number } | undefined;
+  unarmed_strike?: SkillRuntimeState;
+  escape?: SkillRuntimeState;
+  [key: string]: SkillRuntimeState | undefined;
+}
+
+export type CombatAimIntent =
+  | { type: 'pid'; id: number }
+  | { type: 'tile'; id: number }
+  | { type: 'self' }
+  | { type: 'none' };
+
+export interface CombatPreviewAction {
+  act_id: string;
+  target: CombatAimIntent;
+  params?: Record<string, unknown>;
+}
+
+export interface CombatPreviewTargetOption {
+  selectable: boolean;
+  distance: number | null;
+  reason: string | null;
+  target_ap_cost?: number | null;
+}
+
+export interface CombatPreviewRangeProjection {
+  mode: string;
+  base: number;
+  effective?: number | null;
+  available_ap: number;
+  base_apcost: number;
+}
+
+export interface CombatPreviewTargetsResponse {
+  origin_pls: number;
+  range: CombatPreviewRangeProjection;
+  targets: Record<string, CombatPreviewTargetOption>;
+}
+
+export interface SkillRuntimeState {
+  lstact: number;
+  effect_instances?: Record<string, Record<string, unknown>>;
 }
 
 /** Oblivions 参数（player_info.oblpara） */
@@ -204,6 +273,8 @@ export interface Enemy {
   // 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）
   itemIds: string[];
   discovered: string | number;
+  statuses?: ActorStatusProjection[];
+  capabilities?: ActorCapabilitiesProjection;
 }
 
 /** 地图数据（oblivions/api/state.php?scope=game_map） */
@@ -340,6 +411,7 @@ export interface Skill {
   range_max?: string | number;
   range_bonus?: string | number;
   action_range?: string | number;
+  range?: CombatPreviewRangeProjection;
   /** 前端不显示标记（true=隐藏，后端正常返回，前端过滤） */
   hidden?: boolean;
   [key: string]: unknown;
@@ -356,7 +428,8 @@ export interface LogEntry {
     | 'discard'
     | 'system'
     | 'enemy'
-    | 'battle';
+    | 'battle'
+    | 'world';
   params: Record<string, string | number | boolean>;
   html: string | null;
   debug: boolean;

@@ -17,7 +17,7 @@
 | `oblivions/api/heartbeat.php` | Heartbeat API（前端显式驱动 tick 推进 + NPC 行动） | `obl_heartbeat_api_bootstrap.php` → Tick Orchestrator |
 | `oblivions/api/state.php` | State API（纯读，不推进 tick） | `obl_state_api_bootstrap.php` → State handlers |
 
-**命令名（新）**：`map.move` / `map.explore` / `poi.search` / `item.pickup` / `item.discard` / `item.use` / `inventory.organize` / `craft.execute` / `battle.start` / `battle.submit_turn`。旧名 `obl_explore` / `obl_battle_action` 等仅存于 deprecated 的根 `command.php` → `obl_command.php` 兼容路径，前端不再调用。
+**命令名（新）**：`map.move` / `map.explore` / `poi.search` / `world.wait` / `item.pickup` / `item.discard` / `item.use` / `inventory.organize` / `craft.execute` / `battle.start` / `battle.submit_turn`。旧名 `obl_explore` / `obl_battle_action` 等仅存于 deprecated 的根 `command.php` → `obl_command.php` 兼容路径，前端不再调用。
 
 **tick 推进两条路径**：
 1. **玩家命令路径**：Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（仅 `advancesTick=true` 的命令）
@@ -29,7 +29,7 @@
 - 一个 TickFrame 内，同一 actor 最多执行一个主动行为。
 - 主动行为只属于两个域之一：`combat` 或 `world`。
 - TickFrame 初始化 `BattleActorScope`，world AI 必须排除本 TickFrame 战斗域成员。
-- 普通离场 actor 在后续 TickFrame 按世界规则恢复资格；escaped actor 先记录 `post_combat_handoff_pending`，qid disband 时再转换为 `world_ai_resume_tick=disband_tick+1`，必须跳过首个真正的战后 world-AI TickFrame，避免退避后立即再次随机移动。
+- 普通离场 actor 在后续 TickFrame 按世界规则恢复资格；escape effect 为 actor 创建 pending `flustered` effect-skill，qid disband 时激活为 starts=`disband_tick+1`、duration=1。它通过 capability evaluator 阻止首个真正的战后 world AI、移动和参战，不依赖逃跑专用字段。
 
 **战斗系统边界**：`combat/` 是唯一战斗执行主流程；`battle/` 是仍被复用的 shared combat infrastructure，负责队列、状态机 hook、共享数值与请求内 BattleLogCollector。在线演出由 response `presentation.v1` 投递，不由 `battle/` 维护持久 played 队列。旧 `battle.entry.php` / `battle.main.php` 不再存在于运行时心智模型里。
 
@@ -37,7 +37,7 @@
 
 **前端战斗播放边界（四层架构）**：battlelog.v2 是语义事件流；后端原料层 emit 事件，Director（`directV2`）负责把事件转脚本，PlaybackPlan（`planPlaybackV2`）负责排序/并发/等待策略，Runner/ActorExecutor（`battle-playback-runner.ts` / `battle-actor-executor.ts`）负责真实动画执行。不要把动画时序散落回组件事件里。
 
-**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback, refresh, server_state, ...domainData }, presentation_head_seq, presentation?, warnings? }`。战斗命令的领域结果位于 `data.actions[]`，每项含 `resolvedAim`、`capturedTargetCount` 和逐目标结果；在线演出随 `presentation.v1` 直带。只有显式配置的可选 archive writer 失败时才可能返回 `BATTLELOG_PERSIST_FAILED`，客户端不得因此重放命令。
+**Command API 响应契约**：后端返回 `{ status, code, request_id, data: { feedback, refresh, changed_scopes, server_state, ...domainData }, presentation_head_seq, presentation?, warnings? }`。`changed_scopes` 是动态权威失效范围；`CAPABILITY_BLOCKED` 返回 capability、公开 status 来源和恢复 tick。战斗命令的领域结果位于 `data.actions[]`；在线演出随 `presentation.v1` 直带。
 
 **三套日志系统职责**（物理隔离）：
 
@@ -134,12 +134,12 @@
 
 - 游戏刻存储在 `{$tablepre}oblgame.tick` / `processed_tick`（source of truth），`$gamevars['obl_tick']` / `$gamevars['obl_pretick']` 是兼容镜像（由 `obl_gamevars_sync_to_globals()` 同步，供领域函数运行期读取）
 - **tick 推进的两条路径**（互斥，由战斗状态机管辖）：
-  1. **玩家命令路径**：玩家提交 `advancesTick=true` 的命令（`map.move` / `map.explore` / `poi.search` / `battle.start` / `battle.submit_turn`）→ Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（`obl_tick++`）
+  1. **玩家命令路径**：玩家提交 `advancesTick=true` 的命令（`map.move` / `map.explore` / `poi.search` / `world.wait` / `battle.start` / `battle.submit_turn`）→ Command Bus `obl_command_save_and_tick()` → `obl_tick_orchestrator_after_command()` → `obl_tick_advance()`（`obl_tick++`）
   2. **心跳路径**：前端显式 `POST oblivions/api/heartbeat.php` → `obl_tick_orchestrator_heartbeat()` → 检测 `obl_pretick < obl_tick` → `obl_tick_orchestrator_resolve_pending()` → `obl_resolve_tick_events()` 调度 NPC 行动
 - **NPC 行动自驱动**：NPC 行动后通过 `obl_tick_request_advance()` 请求推进 → 调度器末尾 `obl_tick_advance()`（`obl_tick++`），下次心跳检测到 pending tick 继续处理
 - **玩家操作与 NPC 回合互斥**：PROCESSING 状态时 Command Bus gate `BATTLE_BUSY` 拒绝推进 tick 的命令（防止玩家在 NPC 行动期间重复提交）
 - **同 tick 单 actor 单主动行为**：TickFrame 内每个 actor 只能执行一个主动行为；战斗行为与非战斗 world AI 共享同一个行为额度。后端通过 `ActorBehaviorLedger` 登记 `combat` / `world` 行为，通过 `BattleActorScope` 排除本 TickFrame 入口的战斗域成员。
-- **战斗结束后的下一 tick**：escape 结算只给该 actor 写入 `post_combat_handoff_pending`，不能在逃跑当刻提前计算恢复时间；qid 真正 disband 时才把 pending 转换成 `world_ai_resume_tick = disband_tick + 1`。因此即使 actor 提前逃跑、战斗又持续多个 tick，它仍会跳过首个真正的 post-battle world-AI TickFrame，下一 tick 才恢复普通 NPC 身份。该约束只作用于退出 actor，不暂停世界其他 NPC。
+- **战斗结束后的下一 tick**：escape 结算施加 pending `flustered`，qid 真正 disband 时才激活并锚定下一 TickFrame。active 状态通过统一 capability evaluator 拒绝 `world_ai`、主动移动、发起/参与战斗、战斗动作与即时 mutation；`map.explore`、`poi.search`、`world.wait` 仍可推进时间。该规则只作用于状态持有者。
 
 > post-combat AI 恢复边界与 PresentationScene 的 Actor 级 handoff 共同保证领域和视觉连续性；`battle_end` 遮罩达到覆盖态时作为战斗投影向世界投影的显式交接窗口，world animation 可在遮罩下开始。详见 [`docs/战斗演出事件消费与权威投影解耦研判.md` §12](./docs/战斗演出事件消费与权威投影解耦研判.md#12-战斗结束到世界-ai-的视觉连续性)。
 
@@ -300,6 +300,8 @@ F5/冷启动从 `player_info.presentation_head_seq` 初始化 cursor，直接显
 
 战斗技能由 `gamedata/combat_skill_config.php` 声明静态规则，由 `gamedata/combat_skills/skill_{act_id}.php` 提供执行 hook。
 
+技能身份与生命周期由 `gamedata/skill_definition_config.php` 声明；主动机制只以 `combat_skill_config.php` 为真值源。effect-lifetime 被动技能持久化在 `skillpara.effect_instances`，通过 `skill_effect/*` 生命周期与 `actor.capability.php` 参与领域判定，不进入主动技能装填列表。
+
 配置负责描述：
 - `aim.resolver/rules`：玩家选择如何解析为后端 ResolvedAim
 - `capture.resolver/relation/participation/order/rules`：动作捕获哪些有序 ResolutionTarget
@@ -446,7 +448,7 @@ $obl_log->emit('move.success', 'move', [
 
 | 层 | 位置 | 机制 | 释放时机 |
 |----|------|------|---------|
-| 前端第 1 层：HTTP/冷却 | `commandQueue._locked` / `_cooldown` | HTTP 请求期间 + 后端返回 timer 设置的冷却 | `try/finally` 末尾 / 冷却计时到期 |
+| 前端第 1 层：HTTP/冷却 | `commandQueue._locked` / `_cooldownUntil` | HTTP 请求期间 + 后端返回 timer 设置的响应式冷却截止时间 | `try/finally` 末尾 / 冷却计时到期主动清零 |
 | 前端第 2 层：itm0 | `inventoryStore.itm0 !== null` | itm0 非空时仅放行 `spec.itm0Allowed=true` 命令 | 玩家整理/丢弃后 itm0 清空 |
 | 前端第 3 层：模式 | `battleStore.currentMode` | 探索/战斗模式与命令 `spec.mode` 不匹配时拒绝 | `currentMode` 切换时 |
 | 前端第 4 层：演出水位 | `PresentationScene.phase` | 战斗提交要求 caught up；地图位置输入仅在 `rebasing` 时局部锁定 | scene 回到 `idle` |
@@ -1062,6 +1064,20 @@ afterAction !== 'battle' → exitBattleMode → currentMode='normal'
 - tick 推进只在 heartbeat 入口发生，时序可预测
 - 前端契约明确：`gameApi()` 不推进世界，`oblHeartbeat()` 才推进
 
+### 2.30 战斗空间判定与观察规则分层
+
+战斗目标合法性拆为五个互不替代的概念：
+
+1. `obl_get_distance()` 只负责地图拓扑距离，不读取技能、AP、fog 或战斗状态。
+2. `combat_range_resolve_*()` 是五种 range mode 的唯一解析入口，静态配置只来自 `combat_skill_config.php`。
+3. AP calculator 对具体目标报价；任何 tag、preview 或前端都不得根据 calculator 名称反推另一套费用公式。
+4. `combat_observation_decide()` 独立判断 tile/character 是否可被当前 controller 获取。`controller_known` 对玩家读取房间 fog，对 NPC 保留其自身 perception 规则。
+5. `combat_spatial_decide()` 组合距离、基础射程、预扣前 planned wallet 与 AP 报价，供 preview、projector 和 execute 共用。
+
+战斗动作在 verify 时按预扣前 wallet 生成报价。execute 可以重验位置、路径、通行和占用等易变事实，但不得使用已经扣款后的 `actor.ap` 重算本 action 的可负担范围。
+
+`combat.preview_targets` 是显式 tile/pid 瞄准的批量只读投影。前端只负责展示 `selectable/reason/distance`，不自行复制 occupied、range、AP 或 observation 规则。`combat.can_engage` 使用 actor-owned、CD/AP-aware 的 move+attack planner，不再使用 `max_attack_range + move_power` 近似。
+
 ---
 
 ## 三、缓存目录结构
@@ -1087,6 +1103,10 @@ Oblivions 子系统的运行时缓存文件统一存储在 `oblivions/cache/` �
 **Participation**：角色目标被分类为 `member/joinable/left/other_battle/blocked`。joinable 在 effect 前通过 `battle_queue_append_tail()` 以 `done=0` 追加当前 qid 末尾；unsafe delete-and-insert join 已删除。
 
 **AP Wallet 模型**：verify 阶段维护 `pending_ap_spent` 计数器，按排序后顺序累计检查 AP。通过的 action 写入 `_ap_cost` 字段，execute/persist 从 action 读取（不重算）。
+
+**Range / Spatial 模型**：`combat.range.php` 统一解析 fixed/inherit/additive/capped_additive/move_power；`combat_spatial_decide()` 使用预扣前 AP wallet 和真实 AP calculator 对具体目标判定。move 的 preview、planned projector 与真实 effect 必须消费同源报价。
+
+**Observation 模型**：技能通过 `aim.observation` 声明 `none/revealed/controller_known/detected/visible`。玩家不能通过直接 API 瞄准未揭示 tile 或未发现 PID；同一 qid 的有效 member 继续由 roster 授权。不存在 PID 与未发现 PID 对外返回同形 `TARGET_NOT_VISIBLE`。
 
 **失败分级**：Aim/配置失败是动作失败；单目标规则、Participation 或可恢复 effect 失败通过目标 SAVEPOINT 回滚后记为 skipped；actor 级终止中断剩余目标和动作；SQL/PHP 异常回滚整条请求。
 

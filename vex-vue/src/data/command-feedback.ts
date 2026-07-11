@@ -9,6 +9,8 @@
 
 import { LOG_TEMPLATES, renderLogEntry, type LogParams } from '@/data/log-templates';
 import type { LogEntry } from '@/types/api';
+import { getCapabilityLabel, getStatusLocale } from '@/data/status-locale';
+import type { ActorCapability } from '@/types/api';
 
 export interface CommandFeedback {
   id: string;
@@ -45,6 +47,7 @@ const COMMAND_ERROR_TEMPLATES: Record<string, ErrorTemplate> = {
   BATTLE_BUSY: '战斗处理中，请稍候。',
   STATE_CONFLICT: '客户端状态已过期，请刷新后重试。',
   DOMAIN_REJECTED: '操作未能完成。',
+  CAPABILITY_BLOCKED: '当前状态不允许执行此操作。',
 
   NO_SP: '体力不足。',
   MOVE_SAME_POSITION: '已经在当前位置。',
@@ -81,6 +84,12 @@ const COMMAND_ERROR_TEMPLATES: Record<string, ErrorTemplate> = {
  */
 const COMMAND_FEEDBACK_TEMPLATES: Record<string, ErrorTemplate> = {
   'battle_entry.empty_actions': '战斗动作不能为空。',
+  'status.capability_blocked': (params) => {
+    const statusId = String(params?.status_id ?? '');
+    const capability = String(params?.capability ?? '') as ActorCapability;
+    const statusName = statusId ? getStatusLocale(statusId).name : '当前状态';
+    return `${statusName}使你无法${getCapabilityLabel(capability)}。`;
+  },
 };
 
 function hasFeedback(value: unknown): value is CommandFeedback {

@@ -82,6 +82,8 @@ class CombatContext {
     public bool $v2_action_ended = false;
     /** @var array 本 action 已发射的 effect_uid 列表 */
     public array $v2_effect_uids = [];
+    /** @var array<string,array<int,string>> 本 action 按 effect type 分组的 effect_uid */
+    public array $v2_effect_uids_by_type = [];
 
     // ── 预校验层 ──
     public bool $dry_run = false;

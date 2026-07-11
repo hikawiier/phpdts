@@ -59,6 +59,7 @@ export interface AimModeEventData {
   actionRange?: number | string;
   /** 瞄准射程的计算原点；缺省时使用当前地图位置 */
   originPls?: number | string | null;
+  prefixActions?: import('@/types/api').CombatPreviewAction[];
   [key: string]: unknown;
 }
 

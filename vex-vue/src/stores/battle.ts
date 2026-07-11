@@ -60,6 +60,7 @@ import {
   drainBattleTicksToStable,
   shouldCommitBattleVisualState,
 } from './battle-ui-policy';
+import { getStatusLocale } from '@/data/status-locale';
 
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
@@ -537,6 +538,16 @@ export const useBattleStore = defineStore('battle', () => {
    */
   function startBattle(enemyPid: number): void {
     if (currentMode.value !== 'normal') return;
+
+    const capability = usePlayerStore().getCapabilityDecision('enter_combat');
+    if (!capability.allowed) {
+      const names = (capability.source_status_ids ?? []).map(id => getStatusLocale(id).name);
+      useToastStore().showToast(
+        `${names.join('、') || '当前状态'}使你无法发起战斗。`,
+        'error',
+      );
+      return;
+    }
 
     currentMode.value = 'battle';
     currentEnemyPid.value = enemyPid;

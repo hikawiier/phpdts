@@ -7,6 +7,8 @@
 
 export type CommandMode = 'battle' | 'explore' | 'universal';
 
+import type { ActorCapability } from '@/types/api';
+
 export interface CommandSpec {
   /** 命令在哪种 UI 模式下可执行 */
   mode: CommandMode;
@@ -14,27 +16,31 @@ export interface CommandSpec {
   advancesTick: boolean;
   /** itm0 锁定下是否允许执行（true = 允许，如整理/丢弃/使用手持道具） */
   itm0Allowed: boolean;
+  readOnly: boolean;
+  requiredCapabilities: ActorCapability[];
 }
 
 export const COMMAND_REGISTRY: Record<string, CommandSpec> = {
   // ── 探索类（advancesTick=true） ──
-  'map.move':        { mode: 'explore', advancesTick: true,  itm0Allowed: false },
-  'map.explore':     { mode: 'explore', advancesTick: true,  itm0Allowed: false },
-  'poi.search':      { mode: 'explore', advancesTick: true,  itm0Allowed: false },
+  'map.move':        { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['voluntary_move'] },
+  'map.explore':     { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
+  'poi.search':      { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
+  'world.wait':      { mode: 'explore', advancesTick: true,  itm0Allowed: true,  readOnly: false, requiredCapabilities: ['time_pass'] },
 
   // ── 探索类（advancesTick=false） ──
-  'item.pickup':        { mode: 'explore', advancesTick: false, itm0Allowed: false },
-  'item.discard':       { mode: 'explore', advancesTick: false, itm0Allowed: true  },
-  'item.use':           { mode: 'explore', advancesTick: false, itm0Allowed: true  },
-  'inventory.organize': { mode: 'explore', advancesTick: false, itm0Allowed: true  },
-  'craft.execute':      { mode: 'explore', advancesTick: false, itm0Allowed: false },
+  'item.pickup':        { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'item.discard':       { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'item.use':           { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'inventory.organize': { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'craft.execute':      { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
 
   // ── 战斗 UI 类 ──
-  'battle.start':       { mode: 'battle', advancesTick: true,  itm0Allowed: false },
-  'battle.submit_turn': { mode: 'battle', advancesTick: true,  itm0Allowed: false },
+  'battle.start':       { mode: 'battle', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['enter_combat'] },
+  'battle.submit_turn': { mode: 'battle', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['combat_action'] },
 
   // ── 战斗预校验类（read-only，不推进 tick） ──
-  'combat.can_engage':      { mode: 'explore', advancesTick: false, itm0Allowed: false },
-  'combat.preview_single':  { mode: 'battle',  advancesTick: false, itm0Allowed: false },
-  'combat.preview_chain':   { mode: 'battle',  advancesTick: false, itm0Allowed: false },
+  'combat.can_engage':      { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: true, requiredCapabilities: [] },
+  'combat.preview_single':  { mode: 'battle',  advancesTick: false, itm0Allowed: false, readOnly: true, requiredCapabilities: [] },
+  'combat.preview_chain':   { mode: 'battle',  advancesTick: false, itm0Allowed: false, readOnly: true, requiredCapabilities: [] },
+  'combat.preview_targets': { mode: 'battle',  advancesTick: false, itm0Allowed: false, readOnly: true, requiredCapabilities: [] },
 };

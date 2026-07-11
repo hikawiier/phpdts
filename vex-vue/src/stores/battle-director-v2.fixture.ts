@@ -237,6 +237,7 @@ export function assertBattleDirectorV2Fixture(): void {
   }
   assertMoveThenDeliveryOrder();
   assertEscapeThenClearOrder();
+  assertStatusActivationText();
   if (!battleEnd || battleEnd.notices[0]?.winnerPid !== PLAYER.pid) throw new Error('fixture battle_end missing');
   if (battleEndSteps.join(',') !== 'battle_end_overlay_enter,presentation_scene_handoff,battle_end_modal_content') {
     throw new Error('fixture battle_end handoff ordering mismatch');
@@ -282,7 +283,30 @@ function assertEscapeThenClearOrder(): void {
         target: { kind: 'pid', pid: escapingEnemy.pid, snapshot: escapingEnemy },
       },
     }),
-    makeEvent(204, 'action_end', {
+    makeEvent(204, 'effect_applied', {
+      actor_pid: escapingEnemy.pid,
+      target_pid: escapingEnemy.pid,
+      action_uid: 'fixture-escape',
+      effect_uid: 'fixture-flustered-effect',
+      action_id: 'escape',
+      effect_type: 'status',
+      bl_round_num: 1,
+      bl_turn_num: 2,
+      payload: {
+        action_uid: 'fixture-escape',
+        effect_uid: 'fixture-flustered-effect',
+        effect_type: 'status',
+        source: escapingEnemy,
+        target: { kind: 'pid', pid: escapingEnemy.pid, snapshot: escapingEnemy },
+        detail: {
+          operation: 'apply',
+          status_id: 'flustered',
+          instance_uid: 'fixture-flustered',
+          state: 'pending',
+        },
+      },
+    }),
+    makeEvent(205, 'action_end', {
       actor_pid: escapingEnemy.pid,
       action_uid: 'fixture-escape',
       action_id: 'escape',
@@ -296,7 +320,7 @@ function assertEscapeThenClearOrder(): void {
         success: true,
       },
     }),
-    makeEvent(205, 'combatant_cleared', {
+    makeEvent(206, 'combatant_cleared', {
       target_pid: escapingEnemy.pid,
       bl_round_num: 1,
       bl_turn_num: 2,
@@ -309,12 +333,59 @@ function assertEscapeThenClearOrder(): void {
     }),
   ];
   const plan = planPlaybackV2(directV2(events));
+  const script = directV2(events);
+  const statusEffect = script.segments
+    .flatMap(segment => segment.actions)
+    .flatMap(action => action.effects)
+    .find(effect => effect.effectUid === 'fixture-flustered-effect');
   const escapeIndex = plan.steps.findIndex(step =>
     step.kind === 'action_animation' && step.action.actionUid === 'fixture-escape');
   const clearIndex = plan.steps.findIndex(step =>
     step.kind === 'combatant_cleared' && step.notice.combatant?.pid === escapingEnemy.pid);
   if (escapeIndex < 0 || clearIndex <= escapeIndex) {
     throw new Error('fixture escape must play before combatant clear');
+  }
+  if (!statusEffect || statusEffect.visual.kind !== 'none'
+    || statusEffect.detail.status_id !== 'flustered'
+    || !statusEffect.text?.html.includes('逃跑敌人获得了狼狈，战斗结束后生效')) {
+    throw new Error('fixture status effect projection mismatch');
+  }
+}
+
+function assertStatusActivationText(): void {
+  const events: BattleLogV2Event[] = [
+    makeEvent(301, 'action_start', {
+      actor_pid: PLAYER.pid,
+      action_uid: 'fixture-status-activate',
+      action_id: 'status_activate',
+      payload: {
+        action_uid: 'fixture-status-activate',
+        action_id: 'status_activate',
+        actor: PLAYER,
+        targets: [{ kind: 'self', pid: PLAYER.pid, snapshot: PLAYER }],
+      },
+    }),
+    makeEvent(302, 'effect_applied', {
+      actor_pid: PLAYER.pid,
+      target_pid: PLAYER.pid,
+      action_uid: 'fixture-status-activate',
+      effect_uid: 'fixture-status-active',
+      action_id: 'status_activate',
+      effect_type: 'status',
+      payload: {
+        action_uid: 'fixture-status-activate',
+        effect_uid: 'fixture-status-active',
+        effect_type: 'status',
+        target: { kind: 'self', pid: PLAYER.pid, snapshot: PLAYER },
+        detail: { operation: 'activate', status_id: 'flustered', state: 'active' },
+      },
+    }),
+  ];
+  const effect = directV2(events).segments
+    .flatMap(segment => segment.actions)
+    .flatMap(action => action.effects)[0];
+  if (!effect?.text?.html.includes('测试玩家陷入了狼狈')) {
+    throw new Error('fixture active status text mismatch');
   }
 }
 

@@ -16,8 +16,6 @@ if (!defined('IN_GAME')) {
 //       预判调用，actor_data 入参即可）：
 //       * combat_get_action_range_meta(&$actor_data, $act_id)
 //           — 单技能射程元信息
-//       * combat_get_max_attack_range(&$actor_data)
-//           — actor 最大攻击射程（遍历 pid AimResolver 技能）
 //       * combat_can_engage(&$actor_data, &$target_data)
 //           — actor 能否对 target 发起战斗（前端 toast 数据源）
 //   (b) 旧 L0 stub（接受 CombatContext，后续与 pipeline 整合时再启用）：
@@ -42,13 +40,12 @@ if (!defined('IN_GAME')) {
  * 基于 combat_skill_get_config 读取新配置结构
  * $config['range'] = ['mode' => ..., 'max' => int, 'bonus' => int]。
  *
- * 复制 combat_tag_compute_range 的 5 种 mode 逻辑（不直接调它，因为它需要
- * CombatContext 参数，本函数在 L0 预判阶段尚无 ctx）：
+ * 射程由 combat_range_resolve_base 统一解析，支持 5 种 mode：
  *   - fixed           ：固定 range_max
  *   - inherit         ：继承 actor 基础射程（obl_get_range）
  *   - additive        ：actor 基础射程 + range_bonus
  *   - capped_additive ：min(actor 基础射程 + range_bonus, range_max)
- *   - move_power      ：obl_get_move_power(actor)
+ *   - move_power      ：基础值为 obl_get_move_power(actor)，有效值由 AP 预算投影
  *
  * @param array  &$actor_data 行动者数据
  * @param string $act_id      技能 ID
@@ -56,75 +53,16 @@ if (!defined('IN_GAME')) {
  *                配置缺失返回 ['range'=>0, 'mode'=>'fixed', 'max'=>0, 'bonus'=>0]
  */
 function combat_get_action_range_meta(&$actor_data, string $act_id): array {
-    $config = combat_skill_get_config($act_id);
-    if ($config === null) {
-        return ['range' => 0, 'mode' => 'fixed', 'max' => 0, 'bonus' => 0];
-    }
-
-    $range_cfg = $config['range'] ?? ['mode' => 'fixed', 'max' => 1, 'bonus' => 0];
-    $mode  = (string)($range_cfg['mode'] ?? 'fixed');
-    $max   = (int)($range_cfg['max'] ?? 1);
-    $bonus = (int)($range_cfg['bonus'] ?? 0);
-
-    switch ($mode) {
-        case 'inherit':
-            $range = obl_get_range($actor_data);
-            break;
-        case 'additive':
-            $range = obl_get_range($actor_data) + $bonus;
-            break;
-        case 'capped_additive':
-            $range = min(obl_get_range($actor_data) + $bonus, $max);
-            break;
-        case 'move_power':
-            $range = obl_get_move_power($actor_data);
-            break;
-        case 'fixed':
-        default:
-            $range = $max;
-            break;
-    }
-
-    return ['range' => (int)$range, 'mode' => $mode, 'max' => $max, 'bonus' => $bonus];
-}
-
-/**
- * 获取 actor 的最大攻击射程
- *
- * 遍历所有使用 pid AimResolver 的技能，取 action_range 最大值。
- *
- * v1 简化：不实现"装备满足"过滤（技能配置表中无装备需求字段），
- *          所有非 hidden 的 enemy 技能都算可用。
- *          implicit battle_hostiles 范围技能（whirlwind）不纳入。
- *
- * @param array &$actor_data 行动者数据
- * @return int 最大攻击射程（BFS 跳数），无可用攻击技能时返回 0
- */
-function combat_get_max_attack_range(&$actor_data): int {
-    $all_configs = combat_skill_get_all_configs();
-    if (empty($all_configs)) {
-        return 0;
-    }
-
-    $max_range = 0;
-    foreach ($all_configs as $act_id => $config) {
-        // 只看显式 PID 瞄准技能。
-        $aim_resolver = $config['aim']['resolver'] ?? 'none';
-        if ($aim_resolver !== 'pid') {
-            continue;
-        }
-        // 过滤 hidden=true（NPC 专属如 idle）
-        if (!empty($config['hidden'])) {
-            continue;
-        }
-
-        $meta = combat_get_action_range_meta($actor_data, (string)$act_id);
-        if ($meta['range'] > $max_range) {
-            $max_range = $meta['range'];
-        }
-    }
-
-    return $max_range;
+    $resolved = combat_range_resolve_base($actor_data, $act_id);
+    return array(
+        'range' => (int)$resolved['base_range'],
+        'effective_range' => $resolved['effective_range'],
+        'mode' => $resolved['mode'],
+        'max' => (int)$resolved['max'],
+        'bonus' => (int)$resolved['bonus'],
+        'ok' => !empty($resolved['ok']),
+        'reason' => $resolved['reason'],
+    );
 }
 
 /**
@@ -150,7 +88,151 @@ function combat_get_max_attack_range(&$actor_data): int {
  *                'move_power' => int, 'distance' => int,
  *                'reason' => string|null]
  */
+function combat_engagement_available_actions(array $actor_data): array {
+    $actions = [];
+    foreach (combat_skill_get_all_configs() as $act_id => $config) {
+        if (!empty($config['hidden'])
+            || (string)($config['pipeline'] ?? '') !== 'attack'
+            || (string)($config['aim']['resolver'] ?? 'none') !== 'pid'
+            || (string)($config['capture']['relation'] ?? 'any') !== 'hostile'
+            || !combat_skill_actor_owns($actor_data, (string)$act_id, $config)
+            || empty(combat_skill_cd_check($actor_data, (string)$act_id, $config)['pass'])) {
+            continue;
+        }
+        $actions[(string)$act_id] = $config;
+    }
+    ksort($actions, SORT_STRING);
+    return $actions;
+}
+
+function combat_engagement_plan(array $actor_data, array $target_data): array {
+    $attack_configs = combat_engagement_available_actions($actor_data);
+    $max_attack_range = 0;
+    foreach ($attack_configs as $act_id => $_config) {
+        $range = combat_range_resolve_base($actor_data, $act_id);
+        if (!empty($range['ok'])) $max_attack_range = max($max_attack_range, (int)($range['base_range'] ?? 0));
+    }
+
+    $move_config = combat_skill_get_config('move');
+    $move_available = is_array($move_config)
+        && combat_skill_actor_owns($actor_data, 'move', $move_config)
+        && !empty(combat_skill_cd_check($actor_data, 'move', $move_config)['pass']);
+    $move_power = $move_available ? obl_get_move_power($actor_data) : 0;
+    $plans = [];
+    $target_pid = (int)($target_data['pid'] ?? 0);
+    $base_cache = combat_cache_create($actor_data, false);
+    if ($move_available && (int)($actor_data['type'] ?? 0) === 0) {
+        combat_observation_preload_revealed_tiles($base_cache, (int)($actor_data['pgroup'] ?? 0));
+    }
+
+    foreach ($attack_configs as $act_id => $_config) {
+        $plans[] = [[
+            'act_id' => $act_id,
+            'target' => ['type' => 'pid', 'id' => $target_pid],
+            'params' => [],
+        ]];
+    }
+
+    if ($move_available) {
+        $pgroup = (int)($actor_data['pgroup'] ?? 0);
+        $map = obl_get_map_data($pgroup);
+        $tiles = $map['tiles'][$pgroup] ?? [];
+        ksort($tiles, SORT_NUMERIC);
+        foreach ($tiles as $pls => $tile) {
+            $pls = (int)$pls;
+            if ($pls === (int)($actor_data['pls'] ?? 0) || empty($tile['passable'])) continue;
+            foreach ($attack_configs as $act_id => $_config) {
+                $plans[] = [
+                    ['act_id' => 'move', 'target' => ['type' => 'tile', 'id' => $pls], 'params' => []],
+                    ['act_id' => $act_id, 'target' => ['type' => 'pid', 'id' => $target_pid], 'params' => []],
+                ];
+            }
+        }
+    }
+
+    $candidates = [];
+    foreach ($plans as $actions) {
+        $null_log = null;
+        $projection = combat_chain_project($actor_data, $actions, $base_cache, $null_log, [
+            'emit_failures' => false,
+            'check_ownership' => true,
+            'check_cd' => true,
+        ]);
+        $results = $projection['actions'] ?? [];
+        if (count($results) !== count($actions) || count(array_filter($results, static fn(array $result): bool => !empty($result['success']))) !== count($actions)) {
+            continue;
+        }
+        $approach_pls = count($actions) > 1 ? (int)($actions[0]['target']['id'] ?? 0) : (int)($actor_data['pls'] ?? 0);
+        $candidates[] = [
+            'actions' => $actions,
+            'total_ap_cost' => (int)($projection['total_ap_cost'] ?? 0),
+            'approach_pls' => $approach_pls,
+            'attack_act_id' => (string)($actions[count($actions) - 1]['act_id'] ?? ''),
+        ];
+    }
+
+    usort($candidates, static function (array $a, array $b): int {
+        return [$a['total_ap_cost'], count($a['actions']), $a['approach_pls'], $a['attack_act_id']]
+            <=> [$b['total_ap_cost'], count($b['actions']), $b['approach_pls'], $b['attack_act_id']];
+    });
+
+    return [
+        'plan' => $candidates[0] ?? null,
+        'max_attack_range' => $max_attack_range,
+        'move_power' => $move_power,
+    ];
+}
+
+function combat_engagement_not_visible_result(): array {
+    return [
+        'reachable' => false,
+        'max_attack_range' => 0,
+        'move_power' => 0,
+        'distance' => -1,
+        'reason' => 'TARGET_NOT_VISIBLE',
+        'plan' => null,
+    ];
+}
+
 function combat_can_engage(&$actor_data, &$target_data): array {
+    $evaluation_tick = combat_next_action_evaluation_tick();
+    $actor_capability = actor_capability_decide($actor_data, 'enter_combat', null, $evaluation_tick);
+    if (empty($actor_capability['allowed'])) {
+        return [
+            'reachable' => false,
+            'max_attack_range' => 0,
+            'move_power' => 0,
+            'distance' => -1,
+            'reason' => 'actor_capability_blocked',
+            'capability_failure' => skill_effect_project_capability_decision(
+                $actor_data,
+                'enter_combat',
+                $evaluation_tick,
+                true
+            ),
+            'plan' => null,
+        ];
+    }
+    if (!combat_observation_character_detected($actor_data, $target_data)) {
+        return combat_engagement_not_visible_result();
+    }
+    $target_capability = actor_capability_decide($target_data, 'participate_combat', null, $evaluation_tick);
+    if (empty($target_capability['allowed'])) {
+        return [
+            'reachable' => false,
+            'max_attack_range' => 0,
+            'move_power' => 0,
+            'distance' => -1,
+            'reason' => 'target_capability_blocked',
+            'capability_failure' => skill_effect_project_capability_decision(
+                $target_data,
+                'participate_combat',
+                $evaluation_tick,
+                true
+            ),
+            'plan' => null,
+        ];
+    }
     $actor_pgroup  = (int)($actor_data['pgroup'] ?? 0);
     $target_pgroup = (int)($target_data['pgroup'] ?? 0);
 
@@ -162,6 +244,7 @@ function combat_can_engage(&$actor_data, &$target_data): array {
             'move_power'       => 0,
             'distance'         => -1,
             'reason'           => 'cross_zone',
+            'plan'             => null,
         ];
     }
 
@@ -181,14 +264,15 @@ function combat_can_engage(&$actor_data, &$target_data): array {
             'move_power'       => $move_power,
             'distance'         => -1,
             'reason'           => 'unreachable',
+            'plan'             => null,
         ];
     }
 
-    // 3. 取最大攻击射程，判断可达性
-    //    reachable 标准：distance ≤ max_attack_range + move_power
-    //    （move_power 允许 actor 先移动靠近再攻击）
-    $max_attack_range = combat_get_max_attack_range($actor_data);
-    $reachable = ($distance <= $max_attack_range + $move_power);
+    $engagement = combat_engagement_plan($actor_data, $target_data);
+    $max_attack_range = (int)$engagement['max_attack_range'];
+    $move_power = (int)$engagement['move_power'];
+    $plan = $engagement['plan'];
+    $reachable = is_array($plan);
 
     return [
         'reachable'        => $reachable,
@@ -196,6 +280,7 @@ function combat_can_engage(&$actor_data, &$target_data): array {
         'move_power'       => $move_power,
         'distance'         => $distance,
         'reason'           => $reachable ? null : 'out_of_range',
+        'plan'             => $plan,
     ];
 }
 
@@ -242,6 +327,107 @@ function combat_preview_single(array $actor_data, string $act_id, $aim_intent): 
         'resolved_aim' => $result['resolved_aim'] ?? null,
         'targets' => $result['target_results'] ?? [],
     ];
+}
+
+function combat_preview_reason_public(?string $reason): ?string {
+    if ($reason === null || $reason === '') return null;
+    foreach (array('target_resolve_failed:', 'AIM_RULE_FAILED:', 'rule_forbid:') as $prefix) {
+        if (strpos($reason, $prefix) === 0) return substr($reason, strlen($prefix));
+    }
+    return $reason;
+}
+
+function combat_preview_targets(array $actor_data, string $act_id, array $prefix_actions, array $candidate_ids): array {
+    $config = combat_skill_get_config($act_id);
+    if ($config === null) {
+        return array('origin_pls' => (int)($actor_data['pls'] ?? 0), 'range' => array(), 'targets' => array(), 'reason' => 'skill_not_found');
+    }
+    $resolver = (string)($config['aim']['resolver'] ?? 'none');
+    if (!in_array($resolver, array('pid', 'tile'), true)) {
+        return array('origin_pls' => (int)($actor_data['pls'] ?? 0), 'range' => array(), 'targets' => array(), 'reason' => 'unsupported_aim_resolver');
+    }
+
+    $planned_actor = $actor_data;
+    $planned_cache = combat_cache_create($planned_actor, false);
+    $prefix_failed = false;
+    if (!empty($prefix_actions)) {
+        $null_log = null;
+        $prefix = combat_chain_project($planned_actor, $prefix_actions, $planned_cache, $null_log, array(
+            'emit_failures' => false,
+            'check_ownership' => true,
+            'check_cd' => true,
+        ));
+        foreach (($prefix['actions'] ?? array()) as $result) {
+            if (empty($result['success'])) { $prefix_failed = true; break; }
+        }
+        $planned_cache = isset($prefix['battle_cache']) && is_array($prefix['battle_cache']) ? $prefix['battle_cache'] : $planned_cache;
+        $planned_from_cache = combat_planned_state_get_player($planned_cache, (int)($actor_data['pid'] ?? 0));
+        if (is_array($planned_from_cache)) $planned_actor = $planned_from_cache;
+        elseif (isset($prefix['actor_final_state']) && is_array($prefix['actor_final_state'])) $planned_actor = array_merge($planned_actor, $prefix['actor_final_state']);
+    }
+
+    $range_profile = function_exists('combat_range_resolve_base')
+        ? combat_range_resolve_base($planned_actor, $act_id)
+        : array('ok' => false, 'reason' => 'range_service_unavailable');
+    $range = array();
+    if (!empty($range_profile['ok'])) {
+        $range = array(
+            'mode' => (string)($range_profile['mode'] ?? 'fixed'),
+            'base' => (int)($range_profile['base_range'] ?? 0),
+            'available_ap' => (int)($range_profile['available_ap'] ?? ($planned_actor['ap'] ?? 0)),
+            'base_apcost' => (int)($range_profile['base_apcost'] ?? ($config['apcost'] ?? 0)),
+        );
+        if (($range_profile['effective_range'] ?? null) !== null) $range['effective'] = (int)$range_profile['effective_range'];
+    }
+
+    if (in_array((string)($config['aim']['observation'] ?? 'none'), array('revealed', 'controller_known'), true)
+        && (int)($planned_actor['type'] ?? 0) === 0) {
+        combat_observation_preload_revealed_tiles($planned_cache, (int)($planned_actor['pgroup'] ?? 0));
+    }
+
+    $targets = array();
+    foreach ($candidate_ids as $candidate_id) {
+        $candidate_id = (int)$candidate_id;
+        $key = (string)$candidate_id;
+        if ($prefix_failed) {
+            $targets[$key] = array('selectable' => false, 'distance' => null, 'reason' => 'prefix_invalid');
+            continue;
+        }
+        $action = array(
+            'act_id' => $act_id,
+            'target' => array('type' => $resolver, 'id' => $candidate_id),
+            'params' => array(),
+        );
+        $null_log = null;
+        $projection = combat_chain_project($planned_actor, array($action), $planned_cache, $null_log, array(
+            'emit_failures' => false,
+            'check_ownership' => true,
+            'check_cd' => true,
+        ));
+        $result = $projection['actions'][0] ?? array('success' => false, 'reason' => 'preview_failed');
+        $reason = combat_preview_reason_public(isset($result['reason']) ? (string)$result['reason'] : null);
+        $distance = null;
+        $resolved = isset($result['resolved_aim']) && is_array($result['resolved_aim']) ? $result['resolved_aim'] : null;
+        if (is_array($resolved) && !in_array($reason, array('tile_unrevealed', 'TARGET_NOT_VISIBLE'), true)) {
+            $distance_value = obl_get_distance(
+                (int)($planned_actor['pgroup'] ?? 0),
+                (int)($planned_actor['pls'] ?? 0),
+                (int)($resolved['pls'] ?? 0)
+            );
+            if ($distance_value >= 0) $distance = $distance_value;
+        }
+        $targets[$key] = array(
+            'selectable' => !empty($result['success']),
+            'distance' => $distance,
+            'reason' => !empty($result['success']) ? null : ($reason ?: 'preview_failed'),
+        );
+    }
+    return array(
+        'origin_pls' => (int)($planned_actor['pls'] ?? 0),
+        'range' => $range,
+        'targets' => $targets,
+        'reason' => $prefix_failed ? 'prefix_invalid' : null,
+    );
 }
 
 // ================================================================

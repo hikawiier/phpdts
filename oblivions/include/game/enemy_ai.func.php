@@ -218,15 +218,9 @@ function obl_actor_world_ai_block_reason(&$actor, &$ctx) {
 	$pid = (int)($actor['pid'] ?? 0);
 	if ($pid <= 0) return 'invalid_pid';
 	if ((int)($actor['state'] ?? 0) > 0) return 'dead_or_inactive';
-	$resume_tick = isset($actor['oblpara']['world_ai_resume_tick'])
-		? (int)$actor['oblpara']['world_ai_resume_tick']
-		: 0;
 	$current_tick = function_exists('obl_tick_get') ? obl_tick_get() : 0;
-	if ($resume_tick > 0) {
-		if ($current_tick <= $resume_tick) return 'post_combat_handoff';
-		unset($actor['oblpara']['world_ai_resume_tick']);
-		obl_save_player($actor);
-	}
+	$capability = actor_capability_decide($actor, 'world_ai', $ctx, (int)$current_tick);
+	if (empty($capability['allowed'])) return 'capability:' . (string)($capability['reason'] ?? 'blocked');
 	if (function_exists('obl_tick_ctx_actor_in_battle_scope') && obl_tick_ctx_actor_in_battle_scope($ctx, $pid)) return 'battle_scope';
 	if (($actor['action'] ?? '') === 'battle') return 'action_battle';
 	if (!empty($actor['bid'])) return 'bid_present';

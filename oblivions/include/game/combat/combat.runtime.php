@@ -22,6 +22,15 @@ function combat_ensure_battle_log(): void {
     }
 }
 
+function combat_current_evaluation_tick(): int {
+    return function_exists('obl_tick_get') ? (int)obl_tick_get() : 0;
+}
+
+function combat_next_action_evaluation_tick(): int {
+    if (function_exists('skill_effect_next_action_tick')) return skill_effect_next_action_tick();
+    return combat_current_evaluation_tick() + 1;
+}
+
 function combat_cache_create(&$initiator_data, $is_ambush = false, $combatants = null): array {
     $initiator_pid = (int)$initiator_data['pid'];
 

@@ -28,9 +28,14 @@ require_once GAME_ROOT . './oblivions/include/game/generate.func.php';
 require_once GAME_ROOT . './oblivions/include/game/battle/battle.calc.php';
 // 道具 Tag 读取层较轻量，技能模块可能依赖它进行装备性质判断。
 require_once GAME_ROOT . './oblivions/include/game/item/item.tag.func.php';
+require_once GAME_ROOT . './oblivions/include/game/actor/actor.capability.php';
 require_once GAME_ROOT . './oblivions/include/game/skill/skill.main.php';
 require_once GAME_ROOT . './oblivions/include/game/skill/skill.modules.php';
 skill_load_modules();
+require_once GAME_ROOT . './oblivions/include/game/skill_effect/skill_effect.main.php';
+require_once GAME_ROOT . './oblivions/include/game/skill_effect/skill_effect.lifecycle.php';
+require_once GAME_ROOT . './oblivions/include/game/skill_effect/skill_effect.projector.php';
+skill_effect_register_capability_provider();
 
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
@@ -49,6 +54,7 @@ require_once GAME_ROOT . './oblivions/include/game/battle/battle.queue.main.php'
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.runtime.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.context.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.planned_state.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.observation.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.aim.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.target_capture.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.participation.php';
@@ -59,6 +65,7 @@ require_once GAME_ROOT . './oblivions/include/game/combat/combat.effect.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.target.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.skill.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.ap.php';
+require_once GAME_ROOT . './oblivions/include/game/combat/combat.range.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.tag.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.queue.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.state.php';
@@ -79,6 +86,7 @@ require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
 
 // 第 6 层：依赖最广，末尾注册 tick 监听器
 require_once GAME_ROOT . './oblivions/include/game/tick.func.php';
+skill_effect_register_tick_listener();
 
 // 第 6.5 层：Tick Orchestrator（集中调度 command/heartbeat/state 的 tick 策略）
 require_once GAME_ROOT . './oblivions/include/core/obl_tick_orchestrator.php';

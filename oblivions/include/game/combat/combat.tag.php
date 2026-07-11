@@ -43,47 +43,6 @@ function combat_tag_register(string $name, callable $deriver): void {
 }
 
 // ================================================================
-// 内部辅助：射程计算（基于 $ctx->config['range']）
-// ================================================================
-
-/**
- * 计算技能的有效射程（BFS 跳数）
- *
- * 复用旧 obl_get_range / obl_get_range_fix 的基础射程概念，但读取新配置结构
- * $ctx->config['range'] = ['mode' => ..., 'max' => int, 'bonus' => int]。
- *
- * 支持的 mode：
- *   - fixed           ：固定 range_max
- *   - inherit         ：继承 actor 基础射程（obl_get_range）
- *   - additive        ：actor 基础射程 + range_bonus
- *   - capped_additive ：min(actor 基础射程 + range_bonus, range_max)
- *   - move_power      ：obl_get_move_power(actor)
- *
- * @param CombatContext $ctx
- * @return int
- */
-function combat_tag_compute_range(CombatContext $ctx): int {
-    $range_cfg = $ctx->config['range'] ?? ['mode' => 'fixed', 'max' => 1, 'bonus' => 0];
-    $mode  = $range_cfg['mode'] ?? 'fixed';
-    $max   = (int)($range_cfg['max'] ?? 1);
-    $bonus = (int)($range_cfg['bonus'] ?? 0);
-
-    switch ($mode) {
-        case 'inherit':
-            return obl_get_range($ctx->actor_data);
-        case 'additive':
-            return obl_get_range($ctx->actor_data) + $bonus;
-        case 'capped_additive':
-            return min(obl_get_range($ctx->actor_data) + $bonus, $max);
-        case 'move_power':
-            return obl_get_move_power($ctx->actor_data);
-        case 'fixed':
-        default:
-            return $max;
-    }
-}
-
-// ================================================================
 // Cat A 派生函数（每次重算，纯读）
 // ================================================================
 
@@ -120,15 +79,8 @@ function combat_tag_derive_out_of_range(CombatContext $ctx): bool {
     $target_data = $target['target_data'] ?? null;
     if (!is_array($target_data)) return false;
 
-    $distance = obl_get_distance(
-        (int)($ctx->actor_data['pgroup'] ?? 0),
-        (int)($ctx->actor_data['pls'] ?? 0),
-        (int)($target_data['pls'] ?? 0)
-    );
-    if ($distance < 0) return true;
-
-    $range = combat_tag_compute_range($ctx);
-    return $distance > $range;
+    $decision = combat_spatial_decide($ctx, $target_data);
+    return empty($decision['reachable']) || empty($decision['within_range']);
 }
 
 /**
@@ -197,8 +149,8 @@ function combat_tag_derive_tile_unreachable(CombatContext $ctx): bool {
 /**
  * tile_out_of_range：目标图格距离 > 技能射程（tile 目标专用）
  *
- * move 技能的 range.mode=move_power，因此仍按移动力拦截；grenade 等
- * tile 技能可使用 fixed/additive 等射程配置。不可达也视为超距。
+ * move 技能的 range.mode=move_power，其有效射程由可用 AP 预算投影；
+ * grenade 等 tile 技能可使用 fixed/additive 等射程配置。不可达也视为超距。
  *
  * @param CombatContext $ctx
  * @return bool
@@ -209,23 +161,8 @@ function combat_tag_derive_tile_out_of_range(CombatContext $ctx): bool {
     $target_data = $target['target_data'] ?? null;
     if (!is_array($target_data)) return false;
 
-    $distance = obl_get_distance(
-        (int)($ctx->actor_data['pgroup'] ?? 0),
-        (int)($ctx->actor_data['pls'] ?? 0),
-        (int)($target_data['pls'] ?? 0)
-    );
-    if ($distance < 0) return true;
-
-    if (($ctx->config['ap_calc'] ?? '') === 'move_distance') {
-        $move_power = max(1, obl_get_move_power($ctx->actor_data));
-        $apcost = max(1, (int)($ctx->config['apcost'] ?? 1));
-        $actor_ap = max(0, (int)($ctx->actor_data['ap'] ?? 0));
-        $range = $move_power * (int)floor($actor_ap / $apcost);
-        return $distance > $range;
-    }
-
-    $range = combat_tag_compute_range($ctx);
-    return $distance > $range;
+    $decision = combat_spatial_decide($ctx, $target_data);
+    return empty($decision['reachable']) || empty($decision['within_range']);
 }
 
 // ================================================================

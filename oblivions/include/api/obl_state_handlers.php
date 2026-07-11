@@ -3,6 +3,21 @@ if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
+function obl_state_effect_evaluation_tick(): int {
+    return function_exists('skill_effect_next_action_tick')
+        ? skill_effect_next_action_tick()
+        : ((function_exists('obl_tick_get') ? (int)obl_tick_get() : 0) + 1);
+}
+
+function obl_state_actor_effect_projection(array &$actor): array {
+    $tick = obl_state_effect_evaluation_tick();
+    $capabilities = function_exists('actor_capability_all') ? actor_capability_all() : array();
+    return array(
+        'statuses' => skill_effect_project_statuses($actor, $tick, true),
+        'capabilities' => skill_effect_project_capabilities($actor, $capabilities, $tick, true),
+    );
+}
+
 function obl_state_dispatch($scope, $ctx) {
     $scope = trim((string)$scope);
     switch ($scope) {
@@ -241,6 +256,7 @@ function obl_state_handle_player_info($ctx) {
     $pdata = obl_state_require_player();
     $battle_queue = obl_state_build_battle_queue($pdata);
     $combat_context = obl_state_build_combat_context($pdata);
+    $effect_projection = obl_state_actor_effect_projection($pdata);
 
     return obl_state_response_success(array(
         // 基本信息 / Basic info
@@ -307,6 +323,8 @@ function obl_state_handle_player_info($ctx) {
         'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
             ? obl_battle_state_get((int)$pdata['bid'])
             : 'IDLE',
+        'statuses' => $effect_projection['statuses'],
+        'capabilities' => $effect_projection['capabilities'],
 
         // 装备信息（7 槽 × ID + 6 运行时字段）
         'equipment' => array(
@@ -338,7 +356,7 @@ function obl_state_handle_game_map($ctx) {
         'regions' => $map['regions'],
         'tiles'   => $map['tiles'],
         'grids'   => $map['grids'],
-        'move_range' => obl_get_move_range(),
+        'move_range' => obl_get_move_power($pdata),
     );
 
     // 迷雾数据：查询当前区域已点亮（fog=1）的格子，稀疏表示 {pls: 1}。
@@ -566,6 +584,16 @@ function obl_state_handle_combat_targets($ctx) {
             $participation = 'blocked';
             $reason = 'TARGET_OTHER_REGION';
         }
+        $participation_capability = actor_capability_decide(
+            $enemy,
+            'participate_combat',
+            array('qid' => $qid, 'source_actor_pid' => $player_pid),
+            obl_state_effect_evaluation_tick()
+        );
+        if ($participation === 'joinable' && empty($participation_capability['allowed'])) {
+            $participation = 'blocked';
+            $reason = 'TARGET_CAPABILITY_BLOCKED';
+        }
         $selectable = in_array($participation, array('member', 'joinable'), true) && $reason === null;
         $candidates[] = array(
             'pid' => $pid,
@@ -607,6 +635,7 @@ function obl_state_fetch_discovered_enemies($pgroup) {
 }
 
 function obl_state_simplify_enemy_data(&$enemy) {
+    $effect_projection = obl_state_actor_effect_projection($enemy);
     return array(
         'pid'          => $enemy['pid'],
         'type'         => $enemy['type'],
@@ -641,9 +670,11 @@ function obl_state_simplify_enemy_data(&$enemy) {
         // itempara 是 JSON 数组，下标 0 = itm0 手持缓存槽，1~itemmaxslots = 普通槽
         // array_filter 过滤空槽位（itmid 为空字符串/null），itemIds 含所有有道具的槽位（含 itm0）
         'itemIds'      => isset($enemy['itempara']) && is_array($enemy['itempara'])
-                        ? array_values(array_filter(array_column($enemy['itempara'], 'itmid')))
-                        : array(),
+                         ? array_values(array_filter(array_column($enemy['itempara'], 'itmid')))
+                         : array(),
         'discovered'   => $enemy['discovered'],
+        'statuses'     => $effect_projection['statuses'],
+        'capabilities' => $effect_projection['capabilities'],
     );
 }
 

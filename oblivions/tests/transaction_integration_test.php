@@ -62,6 +62,7 @@ return static function (TestRoom $room): array {
         'third_target_sql_failure_rolls_back_prior_targets' => static function () use ($room): void {
             global $db;
             $room->resetData(); $actor = $room->player('third-fault-actor', 0, ['pls' => 1, 'att' => 8]);
+            $room->reveal(1);
             $a = $room->player('third-fault-a', 1, ['pls' => 1]); $b = $room->player('third-fault-b', 1, ['pls' => 1]); $c = $room->player('third-fault-c', 1, ['pls' => 1]);
             $room->queue($actor, 43, 1); $room->queue($a, 43, 2); $room->queue($b, 43, 3); $room->queue($c, 43, 4);
             $beforeFiles = $room->fileSnapshot();

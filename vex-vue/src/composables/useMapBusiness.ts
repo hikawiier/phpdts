@@ -30,6 +30,8 @@ import { perf } from '@/utils/perf';
 import type { Character } from '@/types/character';
 import { isBattleMapInputLocked, isSilentMapCommandLock } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import { getStatusLocale } from '@/data/status-locale';
+import { renderCommandFeedback } from '@/data/command-feedback';
 
 /**
  * 点击移动 / 点击当前格探索
@@ -138,6 +140,24 @@ export async function handleEnemyClick(enemy: Character): Promise<void> {
     move_power: number;
     distance: number;
     reason: string | null;
+    capability?: {
+      allowed?: boolean;
+      reason?: string;
+      source_status_ids?: string[];
+      sources?: Array<{ skill_id?: string; hidden?: boolean }>;
+    };
+    actor_capability?: {
+      allowed?: boolean;
+      reason?: string;
+      source_status_ids?: string[];
+      sources?: Array<{ skill_id?: string; hidden?: boolean }>;
+    };
+    capability_failure?: {
+      allowed?: boolean;
+      reason?: string;
+      source_status_ids?: string[];
+      sources?: Array<{ skill_id?: string; hidden?: boolean }>;
+    };
   } | undefined);
 
   if (!engageData) {
@@ -147,10 +167,23 @@ export async function handleEnemyClick(enemy: Character): Promise<void> {
 
   if (!engageData.reachable) {
     let msg: string;
+    const capability = engageData.actor_capability
+      ?? engageData.capability_failure
+      ?? engageData.capability;
     if (engageData.reason === 'cross_zone') {
       msg = '目标在其他区域，无法发起战斗';
     } else if (engageData.reason === 'unreachable') {
       msg = '目标不可达，无法发起战斗';
+    } else if (capability && capability.allowed === false) {
+      const sourceIds = capability.source_status_ids
+        ?? capability.sources?.filter(source => !source.hidden && source.skill_id).map(source => source.skill_id!)
+        ?? [];
+      const names = sourceIds.map(id => getStatusLocale(id).name);
+      msg = engageData.reason === 'target_capability_blocked'
+        ? `${names.join('、') || '当前状态'}使目标无法参与战斗。`
+        : `${names.join('、') || '当前状态'}使你无法发起战斗。`;
+    } else if (result.gamedata?.feedback) {
+      msg = renderCommandFeedback(null, result.gamedata).message;
     } else {
       msg = `目标距离 ${engageData.distance} 格，你最远可达 ${engageData.max_attack_range + engageData.move_power} 格`;
     }

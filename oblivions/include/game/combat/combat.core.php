@@ -202,6 +202,15 @@ function combat_start_battle(&$actor, $actions): array {
     combat_ensure_battle_log();
 
     $actor_pid = (int)($actor['pid'] ?? 0);
+    $capability = actor_capability_decide(
+        $actor,
+        'enter_combat',
+        array('source' => 'combat_start'),
+        combat_next_action_evaluation_tick()
+    );
+    if (empty($capability['allowed'])) {
+        return ['ok' => false, 'code' => 'CAPABILITY_BLOCKED', 'details' => $capability];
+    }
     $actor_queue_row = $actor_pid > 0 ? obl_fetch_queue_by_pid_for_update($actor_pid) : false;
     if ((int)($actor['bid'] ?? 0) > 0 || (string)($actor['action'] ?? '') === 'battle' || $actor_queue_row) {
         return ['ok' => false, 'code' => 'ACTOR_MEMBERSHIP_INCONSISTENT', 'rollback' => true];

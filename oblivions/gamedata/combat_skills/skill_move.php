@@ -27,11 +27,22 @@ function skill_move_execute(CombatContext $ctx): void {
     $to_pls = (int)($target_data['pls'] ?? 0);
     $from_pls = (int)($ctx->actor_data['pls'] ?? 0);
 
-    $distance = obl_get_distance((int)($ctx->actor_data['pgroup'] ?? 0), $from_pls, $to_pls);
+    $decision = combat_spatial_decide($ctx, $target_data);
+    if (empty($decision['allowed'])) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'move_spatial_rejected:' . (string)($decision['reason'] ?? 'unknown');
+        return;
+    }
+    if ($ctx->ap_cost > 0 && (int)$decision['target_ap_cost'] !== (int)$ctx->ap_cost) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'move_ap_quote_changed';
+        return;
+    }
 
     $ctx->declareEffect('move', [
         'from_pls' => $from_pls,
         'to_pls'   => $to_pls,
-        'distance' => $distance,
+        'distance' => (int)$decision['distance'],
+        'spatial_decision' => $decision,
     ]);
 }

@@ -17,6 +17,7 @@
 import { useMapStore } from '@/stores/map';
 import { isFalsy } from '@/utils/format';
 import type { TileInfo } from '@/types/api';
+import { isTileRevealed, type FogProjection } from '@/utils/map-visibility';
 
 /** 缓存：从当前格出发，所有可达格的 pls（字符串）→ distance 映射 */
 let reachableMap = new Map<string, number>();
@@ -36,8 +37,7 @@ export function computeReachableMap(): void {
   if (!curTile || !curTile.neighbors) return;
 
   const moveRange = (mapStore.links as { move_range?: number }).move_range || 1;
-  const fogData = mapStore.links.fog as Record<string, Record<string, number>> | undefined;
-  const regionFog = fogData && fogData[String(mapStore.curRegion)] ? fogData[String(mapStore.curRegion)] : {};
+  const fogData = mapStore.links.fog as FogProjection;
 
   // BFS
   const queue: Array<[string, number]> = [[String(mapStore.curLoc), 0]];
@@ -67,7 +67,7 @@ export function computeReachableMap(): void {
 
   // 过滤掉迷雾格作为目标（目标格必须非迷雾）
   for (const pls of reachableMap.keys()) {
-    if (!regionFog[pls]) {
+    if (!isTileRevealed(fogData, mapStore.curRegion, pls)) {
       reachableMap.delete(pls);
     }
   }

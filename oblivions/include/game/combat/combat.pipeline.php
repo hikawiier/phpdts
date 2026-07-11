@@ -7,6 +7,17 @@ if (!defined('IN_GAME')) {
  * Execute one action through Aim -> Capture -> ordered TargetResolutionUnit.
  */
 function combat_pipeline_run(CombatContext $ctx): void {
+    $actor_capability = actor_capability_decide(
+        $ctx->actor_data,
+        'combat_action',
+        array('qid' => (int)($ctx->actor_data['bid'] ?? 0), 'dry_run' => $ctx->dry_run),
+        combat_current_evaluation_tick()
+    );
+    if (empty($actor_capability['allowed'])) {
+        $ctx->success = false;
+        $ctx->failure_reason = 'CAPABILITY_BLOCKED:combat_action';
+        return;
+    }
     combat_aim_resolve($ctx);
     if (!$ctx->success) return;
 

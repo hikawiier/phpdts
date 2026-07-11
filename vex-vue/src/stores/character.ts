@@ -49,8 +49,8 @@ function str(value: unknown): string {
 }
 
 /** 把 Enemy（enemies scope，字符串数值）归一化为 Character patch */
-function normalizeEnemy(enemy: Enemy): Partial<Character> {
-  return {
+function normalizeEnemy(enemy: Enemy, replaceStatusProjection = false): Partial<Character> {
+  const patch: Partial<Character> = {
     pid: num(enemy.pid),
     type: num(enemy.type),
     name: str(enemy.name),
@@ -82,6 +82,9 @@ function normalizeEnemy(enemy: Enemy): Partial<Character> {
     itemIds: Array.isArray(enemy.itemIds) ? enemy.itemIds.map(str) : [],
     discovered: num(enemy.discovered) === 1,
   };
+  if (replaceStatusProjection || Array.isArray(enemy.statuses)) patch.statuses = enemy.statuses ?? [];
+  if (replaceStatusProjection || enemy.capabilities !== undefined) patch.capabilities = enemy.capabilities ?? {};
+  return patch;
 }
 
 /** 把 PlayerInfo（player_info scope）归一化为 Character patch */
@@ -111,6 +114,8 @@ function normalizePlayer(playerInfo: PlayerInfo): Partial<Character> {
     itemIds: Array.isArray(playerInfo.itemIds) ? playerInfo.itemIds.map(str) : [],
     // player_info 不返回 discovered，玩家自身始终可见
     discovered: true,
+    statuses: Array.isArray(playerInfo.statuses) ? playerInfo.statuses : [],
+    capabilities: playerInfo.capabilities ?? {},
   };
 
   // 装备索引：从 equipment.{slot}.item_id 提取 7 槽模板 ID
@@ -141,13 +146,19 @@ export const useCharacterStore = defineStore('character', () => {
       const pid = num(enemy.pid);
       const existing = characters.get(pid);
       const patch = normalizeEnemy(enemy);
-      characters.set(pid, { ...(existing as Character), ...(patch as Character) } as Character);
+      const base = existing ?? ({ statuses: [], capabilities: {} } as Partial<Character>);
+      characters.set(pid, { ...base, ...(patch as Character) } as Character);
     }
   }
 
   /** enemies scope 是完整 roster：合并资料后原子替换地图 NPC 成员集合。 */
   function replaceMapEnemies(enemies: Enemy[]): void {
-    mergeEnemyPatches(enemies);
+    for (const enemy of enemies) {
+      const pid = num(enemy.pid);
+      const existing = characters.get(pid);
+      const patch = normalizeEnemy(enemy, true);
+      characters.set(pid, { ...(existing as Character), ...(patch as Character) } as Character);
+    }
     mapEnemyPids.value = new Set(enemies.map(enemy => num(enemy.pid)).filter(pid => pid > 0));
 
     const currentRegion = num(useMapStore().curRegion);

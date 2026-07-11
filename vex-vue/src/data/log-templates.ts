@@ -31,6 +31,9 @@ export interface LogTemplate {
 
 /** 模板表（与现有 vex/data/log-templates.js 一致） */
 export const LOG_TEMPLATES: Record<string, LogTemplate> = {
+  'wait.success': {
+    text: '你停下来调整了一下状态。',
+  },
   // ─── move ────────────────────────────────────────
   'move.same_pos': {
     text: '已经在当前位置，不需要移动。',

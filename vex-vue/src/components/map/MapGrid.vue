@@ -44,6 +44,7 @@ import { useUiStore } from '@/stores/ui';
 import type { MapEntity } from '@/types/map-entity';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import { selectAimTileFromMapObject, useAimTargetingStore, type AimTileVisualState } from '@/stores/aim-targeting';
 
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
@@ -51,6 +52,7 @@ const battleStore = useBattleStore();
 const playerAvatarStore = usePlayerAvatarStore();
 const uiStore = useUiStore();
 const presentationScene = usePresentationSceneStore();
+const aimTargetingStore = useAimTargetingStore();
 
 function isMapCommandInputLocked(): boolean {
   return isBattleMapInputLocked({
@@ -109,9 +111,32 @@ function entityClass(entity: MapEntity): Record<string, boolean> {
   };
 }
 
+function aimStateClass(state: AimTileVisualState): string | null {
+  if (state === 'targetable') return 'aim-targetable';
+  if (state === 'out-of-range') return 'aim-out-of-range';
+  if (state === 'blocked') return 'aim-blocked';
+  return null;
+}
+
+function cellClass(cell: CellData): Array<string[] | string> {
+  const state = aimTargetingStore.getTileVisualState(Number(cell.pls), cell.isFogged);
+  const aimClass = aimStateClass(state);
+  return aimClass ? [cell.classList, aimClass] : [cell.classList];
+}
+
+function cellTitle(cell: CellData): string {
+  if (!aimTargetingStore.isTileAim || cell.isFogged) return cell.title;
+  const option = aimTargetingStore.getTileOption(Number(cell.pls));
+  if (!option || option.selectable) return option?.selectable ? '选择目标位置' : '';
+  return option.reason || '当前无法选择该位置';
+}
+
 // ─── 单元格事件处理 ───
 function onCellClick(cell: CellData): void {
-  if (uiStore.mapInputMode === 'aim') return;
+  if (uiStore.mapInputMode === 'aim') {
+    if (aimTargetingStore.isTileAim) selectAimTileFromMapObject(aimTargetingStore, cell);
+    return;
+  }
   if (isMapCommandInputLocked()) return;
   if (cell.isEmpty) return;
   if (cell.hasEnemy && cell.enemy) {
@@ -146,11 +171,14 @@ function onCellLeave(cell: CellData): void {
 }
 
 function onEntityClick(entity: MapEntity, event: MouseEvent): void {
-  if (!entity.characterPid) return;
   if (uiStore.mapInputMode === 'aim') {
-    // AimMode 在 mapGrid 上统一处理点击，并负责同格消歧与最新候选校验。
+    if (aimTargetingStore.isTileAim) {
+      event.stopPropagation();
+      selectAimTileFromMapObject(aimTargetingStore, entity);
+    }
     return;
   }
+  if (!entity.characterPid) return;
   if (isMapCommandInputLocked()) return;
   event.stopPropagation();
   const character = characterStore.getCharacter(entity.characterPid);
@@ -252,10 +280,10 @@ onUnmounted(() => {
       <div
         v-for="cell in cells"
         :key="cell.key"
-        :class="cell.classList"
+        :class="cellClass(cell)"
         :data-pls="cell.pls || undefined"
         :style="cell.styleObj"
-        :title="cell.title"
+        :title="cellTitle(cell)"
         @click="onCellClick(cell)"
         @mouseenter="onCellEnter(cell)"
         @mouseleave="onCellLeave(cell)"
@@ -306,6 +334,7 @@ onUnmounted(() => {
         :class="entityClass(entity)"
         :data-entity-id="entity.id"
         :data-character-pid="entity.characterPid || undefined"
+        :data-pls="entity.pls || undefined"
         @click="onEntityClick(entity, $event)"
       >
         <div class="actor-action">

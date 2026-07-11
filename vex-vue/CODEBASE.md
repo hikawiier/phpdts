@@ -211,7 +211,7 @@ vex-vue/
 
 | 层 | 实现位置 | 检查内容 | 覆盖范围 |
 |----|---------|---------|---------|
-| **1. HTTP/冷却** | `commandQueue._locked` / `_cooldown` | HTTP 请求互斥 + 后端 timer 冷却 | 防止快速连点重复 POST；`isLocked` 只反映 `_locked` |
+| **1. HTTP/冷却** | `commandQueue._locked` / `_cooldownUntil` | HTTP 请求互斥 + 后端 timer 驱动的响应式冷却截止时间 | 防止快速连点重复 POST；`isLocked` 只反映 `_locked` |
 | **2. itm0** | `inventoryStore.itm0 !== null` | itm0 缓存槽非空时仅放行 `spec.itm0Allowed=true` 命令 | 强制玩家处理遗留道具 |
 | **3. 模式** | `battleStore.currentMode` | 探索模式拒绝 battle 命令；战斗模式拒绝 explore 命令 | UI 场景与命令类型匹配 |
 | **4. 演出水位** | `presentationScene.phase` | battle 命令仅在 `idle` 时可提交 | 当前回合演出/rebase 未追平时防止重复战斗提交，不冻结无关 UI |
@@ -567,10 +567,14 @@ Oblivions 模式独立数据层 `bra_oblplayers`，字段详见 [oblivions/CODEB
 - **`action`**：`''`=正常 / `'battle'`=战斗中
 - **`battle_queue`**：先攻队列（`{qid, queue: [{pid, type, myorder, done}]}`），用于判断玩家是否当前顺位
 - **`ap`/`max_ap`**：AP 值（Oblivions 专属）
-- **`oblpara`**：杂项数据（含 `killnum`/`battle`/`escape_skip_tick` 等）
+- **`oblpara`**：杂项数据（含 `killnum`/`battle` 等）
 - **`obl_tick`/`obl_pretick`**：当前/上次 tick（数字类型，非字符串）
 - **`presentation_head_seq`**：当前服务端演出水位；F5/冷启动时 runtime cursor 直接初始化到该值
 - **`equipment`**：7 槽装备（wep/wep2/arb/arh/ara/arf/art）
+- **`statuses`**：公开持续状态全量投影；pending/active 均由权威响应替换，前端不自行倒计时删除
+- **`capabilities`**：首版 capability 全量决策；`commandQueue` 的 UI 门控与实际 execute 共用同一判定
+
+`world.wait` 是零资源保底时间动作，在 itm0 与 active 限制状态下仍有可达入口。后端 `CAPABILITY_BLOCKED` 的 `changed_scopes` 会触发 `player_info` 权威刷新。
 
 > 传统模式字段（race/club/nick/money/rage 等）在 Oblivions 模式下不再返回。`killnum` 改为从 `oblpara.killnum` 读取。
 
@@ -635,7 +639,7 @@ unlisten(event: AppEvent, callback: EventCallback): void // 取消订阅
 | `battleStore` | 战斗 session、候选、权威刷新与演出 | `currentMode`/`currentQid`/`combatContext`/`combatTargets`/`isPlayingBattleLog`/`battleModalOpen` | `startBattle(clickedPid)`/`loadCombatTargets()`/`refreshBattle()`/`consumePresentationBatches()` |
 | `toastStore` | Toast 通知 | `toasts` | `showToast(msg, type, duration, isHtml, mergeId)` |
 | `uiStore` | UI 全局状态 | `playerDrawerOpen`/`inventoryDrawerOpen`/`modalOpen`/`battleBtnState` | `openPlayerDrawer()`/`openInventoryDrawer()`/`openModal(title, bodyHtml)` |
-| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldown` + `COMMAND_REGISTRY` | `execute(envelope)` / `canExecute(command)` |
+| `commandQueue` | 命令队列（非 Pinia，单例类） | `_locked`/`_cooldownUntil`/`_cooldownTimer` + `COMMAND_REGISTRY` | `execute(envelope)` / `canExecute(command)` |
 
 ### 7.2 Store 事件监听注册模式
 
@@ -658,8 +662,9 @@ battleStore.registerListeners();
 
 ```typescript
 class CommandQueue {
-  private _locked = false;
-  private _cooldown = 0;
+  private _locked = ref(false);
+  private _cooldownUntil = ref(0);
+  private _cooldownTimer = null;
 
   // UI 查询与 execute() 共用 _checkLocks
   private _checkLocks(command: string): boolean
@@ -678,6 +683,8 @@ class CommandQueue {
 **关键设计**：
 
 - `_checkLocks(command)` 依次检查 5 层锁（详见 [§3.1 五层并发锁](#31-五层并发锁)），`canExecute` 与 `execute` 共用同一逻辑，保证 UI 反馈与实际执行一致
+- HTTP lock 与 cooldown deadline 是 Vue 响应式真值；请求 `finally` 解锁会立即唤醒按钮 computed，cooldown 使用单 timer 到期主动清零，不依赖其他 store 更新
+- `CommandQueue` 支持注入 transport/clock/scheduler，fixture 可稳定验证 deferred request、重复提交拦截与 cooldown 到期
 - `isLocked` getter 仅包含第 1+2 层（HTTP 锁 + 战斗演出锁），用于全局 UI 反馈；按钮 `:disabled` 应改用 `canExecute(command)` 精细化控制
 - `pendingNpc` getter 从 `oblBattleState === 'PROCESSING'` 派生，仅用于 StatusBar NPC 指示器和 log.ts 延迟刷新，不参与 `isLocked`
 - 锁定时返回 `{ success: false, error: 'LOCKED', message: '当前状态不可执行此操作' }`
@@ -1132,6 +1139,26 @@ Runtime 独立记录 `terminal` 与 `down`：death 是不可被普通 world 演�
 相关实现：`useActorRuntime.ts`、`useMapEntities.ts`、`actorRegistry.ts`、`mapSceneGeometry.ts`、`sceneRegistry.ts`、`battle-presentation-session.ts`、`battle-actor-executor.ts`、`actorAnimations.ts`、`MapGrid.vue`。
 
 > 设计案见 [docs/MAP_LAYER_SYSTEM.md](docs/MAP_LAYER_SYSTEM.md)（v2：多实体分层架构，含 Y 排序/多格实体/地面装饰层预留）。原设计案 [docs/ACTORS_LAYER_REFACTOR.md](docs/ACTORS_LAYER_REFACTOR.md) 已被取代（记录的 `.actor-shadow` 独立阴影元素已删除，角色投影改由立绘 img 的 `drop-shadow` 滤镜提供）。
+
+### 10.4 战斗瞄准目标投影
+
+tile aim 使用 `stores/aim-targeting.ts` 管理 session、request generation、planned prefix、range 摘要和候选表：
+
+```text
+PreloadArea prefix actions
+  -> combat.preview_targets
+  -> AimTargetingStore targets[pls]
+  -> MapGrid class/title/click
+```
+
+关键约束：
+
+- `selectable/reason/distance` 只消费后端批量 preview；前端 fog 仅作为隐藏保护，不能授权目标。
+- request generation 丢弃旧 session 的迟到响应；一次 session 只允许提交一次 tile selection。
+- `MapGrid` 直接使用 cell/entity 的业务 `pls` 选择 tile；`AimMode` 的 grid 委托作为真实 DOM 兜底，只读取命中 cell/entity 自身或祖先的 `data-pls`，不再猜测视觉下方 sibling cell。store 的单次提交锁避免双入队。
+- `AimMode.vue` 在 tile 模式只负责瞄准线与生命周期；tile class 由 `MapGrid` 数据驱动。enemy aim 继续使用 character candidate 与 entity DOM 标记。
+- `utils/map-visibility.ts` 统一 fog 归一化：仅 `1/'1'/true` 为 revealed，当前格强制 revealed。
+- 移动 AP 摘要使用 `Skill.range.base` 作为 move power；`range.effective` 只展示后端预算摘要，不参与二次费用公式。
 
 
 ---

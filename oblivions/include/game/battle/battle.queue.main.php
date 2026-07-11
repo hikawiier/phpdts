@@ -89,25 +89,35 @@ function battle_queue_rebuild($qid, &$actor_data, &$obl_battle_log): array
  * @param array  &$actor_data   当前 actor（引用，直接修改）
  * @param array  &$obl_battle_log
  */
-function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): void {
+function battle_disband_cleanup_actor($qid, array &$data, $obl_battle_log = null): array {
+    $data['bid'] = 0;
+    $data['action'] = '';
+    $data['ap'] = $data['max_ap'];
+    $activated = skill_effect_activate_boundary(
+        $data,
+        'battle_disband',
+        (int)$qid,
+        function_exists('obl_tick_get') ? (int)obl_tick_get() : 0
+    );
+    if (!empty($activated) && function_exists('obl_authority_mark_actor_changed')) {
+        obl_authority_mark_actor_changed($data, true);
+    }
+    obl_save_player($data);
+    return $activated;
+}
+
+function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): array {
+    $activated = array();
     $queue_rows = obl_fetch_queue_all_by_qid($qid);
     foreach ($queue_rows as $r) {
         $pid = (int)$r['pid'];
         if ($pid === (int)$actor_data['pid']) {
-            $actor_data['bid'] = 0;
-            $actor_data['action'] = '';
-            $actor_data['ap'] = $actor_data['max_ap'];
-            combat_state_activate_post_battle_handoff($actor_data);
-            obl_save_player($actor_data);
+            $activated = array_merge($activated, battle_disband_cleanup_actor($qid, $actor_data, $obl_battle_log));
             continue;
         }
         $c_data = obl_fetch_playerdata_by_pid($pid);
         if (!$c_data) continue;
-        $c_data['bid'] = 0;
-        $c_data['action'] = '';
-        $c_data['ap'] = $c_data['max_ap'];
-        combat_state_activate_post_battle_handoff($c_data);
-        obl_save_player($c_data);
+        $activated = array_merge($activated, battle_disband_cleanup_actor($qid, $c_data, $obl_battle_log));
 
         if ($obl_battle_log) {
             $obl_battle_log->setPhase('disband_cleanup');
@@ -117,6 +127,7 @@ function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): void {
             ], true);  // debug
         }
     }
+    return $activated;
 }
 
 /**
@@ -147,19 +158,11 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
         $stale_pids = obl_fetch_pids_by_bid($qid);
         foreach ($stale_pids as $pid) {
             if ((int)$pid === (int)$actor_data['pid']) {
-                $actor_data['bid'] = 0;
-                $actor_data['action'] = '';
-                $actor_data['ap'] = $actor_data['max_ap'];
-                combat_state_activate_post_battle_handoff($actor_data);
-                obl_save_player($actor_data);
+                battle_disband_cleanup_actor($qid, $actor_data, $obl_battle_log);
             } else {
                 $c_data = obl_fetch_playerdata_by_pid($pid);
                 if (!$c_data) continue;
-                $c_data['bid'] = 0;
-                $c_data['action'] = '';
-                $c_data['ap'] = $c_data['max_ap'];
-                combat_state_activate_post_battle_handoff($c_data);
-                obl_save_player($c_data);
+                battle_disband_cleanup_actor($qid, $c_data, $obl_battle_log);
             }
         }
         if ($qid > 0) {

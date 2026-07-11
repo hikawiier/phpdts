@@ -34,8 +34,9 @@ function combat_log_v2_next_event_uid(string $event_type): string {
 function combat_log_v2_make_action_uid(array $actor_data, string $act_id, int $seq): string {
     $qid = (int)($actor_data['bid'] ?? 0);
     $pid = (int)($actor_data['pid'] ?? 0);
-    $request_uid = (string)($GLOBALS['obl_request_uid'] ?? 'request-unknown');
-    return $request_uid . '-q' . $qid . '-p' . $pid . '-a' . $seq . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
+    $operation_key = (string)($GLOBALS['obl_command_operation_key'] ?? ($GLOBALS['obl_request_uid'] ?? 'request-unknown'));
+    $operation_key = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $operation_key);
+    return $operation_key . '-q' . $qid . '-p' . $pid . '-a' . $seq . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
 }
 
 function combat_log_v2_combatant_snapshot($data): ?array {
@@ -218,6 +219,10 @@ function combat_log_v2_effect_applied(CombatContext $ctx, string $effect_type, a
     if (!$ctx->log || !combat_log_v2_enabled()) return;
     $effect_uid = $ctx->action_uid . '-e' . (count($ctx->v2_effect_uids) + 1);
     $ctx->v2_effect_uids[] = $effect_uid;
+    if (!isset($ctx->v2_effect_uids_by_type[$effect_type])) {
+        $ctx->v2_effect_uids_by_type[$effect_type] = [];
+    }
+    $ctx->v2_effect_uids_by_type[$effect_type][] = $effect_uid;
 
     $event_payload = array_merge([
         'qid' => (int)($ctx->actor_data['bid'] ?? 0),

@@ -117,6 +117,35 @@ function obl_tick_get_pretick() {
     return isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0;
 }
 
+function obl_authority_mark_changed_scopes(array $scopes): void {
+    if (!isset($GLOBALS['obl_authority_changed_scopes']) || !is_array($GLOBALS['obl_authority_changed_scopes'])) {
+        $GLOBALS['obl_authority_changed_scopes'] = array();
+    }
+    foreach ($scopes as $scope) {
+        $scope = trim((string)$scope);
+        if ($scope !== '') $GLOBALS['obl_authority_changed_scopes'][$scope] = true;
+    }
+}
+
+function obl_authority_mark_actor_changed(array $actor, bool $participation_changed = false): void {
+    $scopes = (int)($actor['type'] ?? 0) === 0 ? array('player_info') : array('enemies');
+    if ($participation_changed) $scopes[] = 'combat_targets';
+    obl_authority_mark_changed_scopes($scopes);
+}
+
+function obl_authority_take_changed_scopes(): array {
+    $scopes = isset($GLOBALS['obl_authority_changed_scopes']) && is_array($GLOBALS['obl_authority_changed_scopes'])
+        ? array_keys($GLOBALS['obl_authority_changed_scopes'])
+        : array();
+    $GLOBALS['obl_authority_changed_scopes'] = array();
+    return $scopes;
+}
+
+function obl_authority_merge_changed_scopes_into_tick(array &$ctx): void {
+    $scopes = obl_authority_take_changed_scopes();
+    if (!empty($scopes)) obl_tick_ctx_add_changed_scopes($ctx, $scopes);
+}
+
 #=============================================================================
 # 模块 2b：战场忙检测（替代 NPC 待结算检测）
 #=============================================================================
@@ -559,6 +588,7 @@ function obl_tick_dispatch($delta, &$ctx) {
             foreach ($listeners as $cb) {
                 $phase_result['ran'] = true;
                 call_user_func_array($cb, array(&$delta, &$ctx));
+                obl_authority_merge_changed_scopes_into_tick($ctx);
                 if (!empty($domain_spec['stop_on_advance']) && obl_tick_consume_advance()) {
                     $ctx['advanced'] = true;
                     $phase_result['advanced_requested'] = true;
@@ -689,3 +719,6 @@ $GLOBALS['obl_tick_listeners'] = array(
 // 注册内置监听器
 obl_tick_register_listener('battle_npc', 'obl_tick_phase_battle_npc');
 obl_tick_register_listener('idle_npc',   'obl_tick_phase_idle_npc');
+if (function_exists('skill_effect_register_tick_listener')) {
+    skill_effect_register_tick_listener();
+}

@@ -198,6 +198,7 @@ export interface CommandResult {
   message?: string | null;
   messageIsHtml?: boolean;
   status?: number;
+  details?: Record<string, unknown> | null;
   presentation_head_seq?: number;
   presentation?: PresentationBatchV1;
 }

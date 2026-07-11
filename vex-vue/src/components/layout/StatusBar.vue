@@ -21,6 +21,7 @@ import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { getPlaceName } from '@/utils/format';
 import type { BattleState } from '@/types/api';
+import { getStatusDisplayName, getStatusLocale } from '@/data/status-locale';
 
 const playerStore = usePlayerStore();
 const characterStore = useCharacterStore();
@@ -100,12 +101,23 @@ const battleStateText = computed(() => {
 // ── 后端处理中提示（由状态机派生，PROCESSING 状态时显示） ──
 // 非 debug 模式下显示"NPC 行动中…"轻量提示；debug 模式下由 tick 调试信息覆盖
 const npcPending = computed(() => commandQueue.pendingNpc);
+const visibleStatuses = computed(() => playerStore.statuses);
+const enterCombatBlock = computed(() => commandQueue.getCapabilityBlock('enter_combat'));
+const battleButtonDisabled = computed(() =>
+  uiStore.battleBtnState === 'normal' && enterCombatBlock.value !== null,
+);
+const battleButtonTitle = computed(() => enterCombatBlock.value?.message || '');
+
+function statusTitle(statusId: string): string {
+  return getStatusLocale(statusId).description;
+}
 
 // ── 战斗按钮点击处理（与现有 vex/js/app.js 一致） ──
 // normal 态：startBattle(0)（无指定敌人，进入战斗模式）
 // battle 态：后端已在战斗中时只取消本地装填；预战斗阶段可退出本地 battle UI
 // aim 态：广播 battle:aim-exit（退出瞄准模式，PreloadArea 监听后清理）
 function onBattleBtnClick(): void {
+  if (battleButtonDisabled.value) return;
   if (uiStore.battleBtnState === 'normal') {
     battleStore.startBattle(0);
   } else if (uiStore.battleBtnState === 'battle') {
@@ -166,8 +178,21 @@ function onAvatarError(): void {
       <!-- 第三行：按钮 -->
       <div class="status-bar-row">
         <button class="status-bar-btn" @click="uiStore.togglePlayerDrawer">[属性]</button>
-        <button class="status-bar-btn" @click="onBattleBtnClick">[{{ uiStore.battleBtnText() }}]</button>
+        <button
+          class="status-bar-btn"
+          :disabled="battleButtonDisabled"
+          :title="battleButtonTitle"
+          @click="onBattleBtnClick"
+        >[{{ uiStore.battleBtnText() }}]</button>
         <button class="status-bar-btn" @click="uiStore.toggleInventoryDrawer">[背包]</button>
+        <span v-if="visibleStatuses.length > 0" class="status-effects">
+          <span
+            v-for="status in visibleStatuses"
+            :key="status.instance_uid || status.status_id"
+            class="status-effect-chip"
+            :title="statusTitle(status.status_id)"
+          >{{ getStatusDisplayName(status) }}</span>
+        </span>
       </div>
     </div>
     <!-- 右侧：头像 -->

@@ -65,12 +65,9 @@ function obl_tick_orchestrator_status($ctx = null) {
 function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata, $dispatched) {
     global $gamevars;
 
-    $escape_skip_tick = !empty($pdata['oblpara']['escape_skip_tick']);
-    if ($escape_skip_tick) unset($pdata['oblpara']['escape_skip_tick']);
-
     obl_save_player($pdata);
 
-    $should_advance_tick = $dispatched && !$escape_skip_tick && !empty($contract['advances_tick']);
+    $should_advance_tick = $dispatched && !empty($contract['advances_tick']);
     $command_time = obl_tick_orchestrator_now();
 
     if ($dispatched) {
@@ -105,7 +102,6 @@ function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata,
 
     $status = obl_tick_orchestrator_status($ctx);
     $status['advanced'] = $should_advance_tick;
-    $status['escape_skip_tick'] = $escape_skip_tick;
     return $status;
 }
 

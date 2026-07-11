@@ -149,6 +149,10 @@ function combat_chain_project(array $actor_data, array $actions, array $battle_c
 
         $ctx = new CombatContext($sim_actor, $act_id, combat_action_config_with_target($config, $action), $log, $sim_battle_cache);
         $ctx->dry_run = true;
+        $ctx->action_uid = 'preview-q' . (int)($sim_actor['bid'] ?? 0)
+            . '-p' . (int)($sim_actor['pid'] ?? 0)
+            . '-a' . (int)$action_index
+            . '-' . preg_replace('/[^a-zA-Z0-9_:-]/', '_', $act_id);
 
         combat_skill_load_module($act_id);
         combat_aim_resolve($ctx);

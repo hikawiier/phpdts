@@ -94,10 +94,13 @@ function combat_queue_exit(array &$actor_data, $log, array &$battle_cache): void
 function combat_queue_disband(int $qid): void {
     if ($qid <= 0) return;
 
-    // 清理所有 bid 指向此 qid 的玩家（直接 UPDATE，不 fetch playerdata）
-    $stale_pids = obl_fetch_pids_by_bid($qid);
-    foreach ($stale_pids as $pid) {
-        obl_player_set_bid((int)$pid, 0);
+    $pids = array();
+    foreach (obl_fetch_queue_all_by_qid($qid) as $row) $pids[(int)$row['pid']] = true;
+    foreach (obl_fetch_pids_by_bid($qid) as $pid) $pids[(int)$pid] = true;
+    foreach (array_keys($pids) as $pid) {
+        $data = obl_fetch_playerdata_by_pid((int)$pid);
+        if (!$data) continue;
+        battle_disband_cleanup_actor($qid, $data, null);
     }
 
     // 删除队列所有行

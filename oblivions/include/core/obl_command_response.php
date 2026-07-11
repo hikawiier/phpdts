@@ -40,6 +40,7 @@ function obl_command_http_status_for_code($code) {
         case 'ITM0_PENDING':
         case 'BATTLE_BUSY':
         case 'STATE_CONFLICT':
+        case 'CAPABILITY_BLOCKED':
             return 409;
         case 'DOMAIN_REJECTED':
         case 'NO_SP':

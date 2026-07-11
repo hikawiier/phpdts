@@ -21,7 +21,7 @@ export interface OblCommandResponse<TData = Record<string, unknown>> {
   request_id?: string;
   message?: string;
   data?: TData;
-  details?: unknown;
+  details?: Record<string, unknown>;
   presentation_head_seq?: number;
   presentation?: PresentationBatchV1;
 }
@@ -80,6 +80,9 @@ export async function sendOblCommand<TPayload = unknown>(
         message: feedback.message,
         messageIsHtml: feedback.isHtml,
         status: res.status,
+        details: response.details
+          ?? (response.data?.details as Record<string, unknown> | undefined)
+          ?? null,
         presentation_head_seq: response.presentation_head_seq,
         presentation: response.presentation,
       };

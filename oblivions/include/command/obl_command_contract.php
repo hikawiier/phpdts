@@ -11,6 +11,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => true,
             'itm0_allowed' => false,
+            'required_capabilities' => array('voluntary_move'),
             'payload_schema' => array('to' => array('type' => 'int', 'required' => true, 'min' => 0)),
             'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
@@ -20,6 +21,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => true,
             'itm0_allowed' => false,
+            'required_capabilities' => array('time_pass'),
             'payload_schema' => array(),
             'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
@@ -29,6 +31,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => true,
             'itm0_allowed' => false,
+            'required_capabilities' => array('time_pass'),
             'payload_schema' => array('iaid' => array('type' => 'int', 'required' => true, 'min' => 1)),
             'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
@@ -36,9 +39,10 @@ function obl_command_contracts() {
             'legacy' => 'obl_pickup',
             'ui_mode' => 'explore',
             'allowed_actions' => array('', null),
-            'read_only' => true,
+            'read_only' => false,
             'advances_tick' => false,
             'itm0_allowed' => false,
+            'required_capabilities' => array('free_mutation'),
             'payload_schema' => array('iid' => array('type' => 'int', 'required' => true, 'min' => 1)),
             'refresh' => array('player_inventory', 'tile_actions', 'obl_log'),
         ),
@@ -48,6 +52,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => false,
             'itm0_allowed' => true,
+            'required_capabilities' => array('free_mutation'),
             'payload_schema' => array('slot' => array('type' => 'int', 'required' => true, 'min' => 0)),
             'refresh' => array('player_inventory', 'tile_actions', 'obl_log'),
         ),
@@ -57,6 +62,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => false,
             'itm0_allowed' => true,
+            'required_capabilities' => array('free_mutation'),
             'payload_schema' => array('slot' => array('type' => 'int', 'required' => true, 'min' => 0)),
             'refresh' => array('player_info', 'player_inventory', 'tile_actions', 'obl_log'),
         ),
@@ -66,6 +72,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => false,
             'itm0_allowed' => true,
+            'required_capabilities' => array('free_mutation'),
             'payload_schema' => array(),
             'refresh' => array('player_inventory', 'obl_log'),
         ),
@@ -75,6 +82,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => false,
             'itm0_allowed' => false,
+            'required_capabilities' => array('free_mutation'),
             'payload_schema' => array(
                 'slots' => array('type' => 'slot_counts', 'required' => false),
                 'workbench_materials' => array('type' => 'string_list', 'required' => false),
@@ -87,6 +95,7 @@ function obl_command_contracts() {
             'allowed_actions' => array('', null),
             'advances_tick' => true,
             'itm0_allowed' => false,
+            'required_capabilities' => array('enter_combat'),
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
             'refresh' => array('player_info', 'enemies', 'game_map'),
         ),
@@ -98,6 +107,7 @@ function obl_command_contracts() {
             'queue_actor_required' => 'self',
             'advances_tick' => true,
             'itm0_allowed' => false,
+            'required_capabilities' => array('combat_action'),
             'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
             'refresh' => array('player_info', 'enemies'),
         ),
@@ -107,10 +117,23 @@ function obl_command_contracts() {
             'legacy' => 'obl_combat_can_engage',
             'ui_mode' => 'explore',
             'allowed_actions' => array('', null),
+            'read_only' => true,
             'advances_tick' => false,
-            'itm0_allowed' => false,
+            'itm0_allowed' => true,
             'payload_schema' => array('target_pid' => array('type' => 'int', 'required' => true, 'min' => 1)),
             'refresh' => array(),
+        ),
+
+        'world.wait' => array(
+            'legacy' => 'obl_wait',
+            'ui_mode' => 'explore',
+            'allowed_actions' => array('', null),
+            'advances_tick' => true,
+            'itm0_allowed' => true,
+            'required_capabilities' => array('time_pass'),
+            'command_tags' => array('recovery_time_action'),
+            'payload_schema' => array(),
+            'refresh' => array('player_info', 'enemies', 'game_map', 'obl_log'),
         ),
 
         'combat.preview_single' => array(
@@ -126,6 +149,21 @@ function obl_command_contracts() {
                 'act_id' => array('type' => 'string', 'required' => true),
                 'aim_intent' => array('type' => 'array', 'required' => false),
                 'target_pid' => array('type' => 'int', 'required' => false, 'min' => 0),
+            ),
+            'refresh' => array(),
+        ),
+
+        'combat.preview_targets' => array(
+            'legacy' => 'obl_combat_preview_targets',
+            'ui_mode' => 'battle',
+            'allowed_actions' => array('', null, 'battle'),
+            'read_only' => true,
+            'advances_tick' => false,
+            'itm0_allowed' => false,
+            'payload_schema' => array(
+                'act_id' => array('type' => 'string', 'required' => true),
+                'prefix_actions' => array('type' => 'array', 'required' => false),
+                'candidate_ids' => array('type' => 'int_list', 'required' => true, 'min' => 1, 'max_items' => 256),
             ),
             'refresh' => array(),
         ),
@@ -150,6 +188,17 @@ function obl_command_contracts() {
 
 function obl_command_contract($command) {
     $contracts = obl_command_contracts();
+    static $validated = false;
+    if (!$validated) {
+        foreach ($contracts as $contract_id => $contract) {
+            foreach (($contract['required_capabilities'] ?? array()) as $capability) {
+                if (!actor_capability_is_known((string)$capability)) {
+                    throw new UnexpectedValueException('Unknown command capability: ' . $contract_id . ':' . $capability);
+                }
+            }
+        }
+        $validated = true;
+    }
     return isset($contracts[$command]) ? $contracts[$command] : null;
 }
 
@@ -222,6 +271,9 @@ function obl_command_normalize_value($value, $type, $field, $rule = array()) {
     }
     if ($type === 'string_list') {
         return obl_command_validate_string_list($value, $field);
+    }
+    if ($type === 'int_list') {
+        return obl_command_validate_int_list($value, $field, $rule);
     }
     if ($type === 'array') {
         if (!is_array($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_array', 'field' => $field));
@@ -323,4 +375,19 @@ function obl_command_validate_string_list($list, $field) {
         $normalized[] = $s;
     }
     return array('ok' => true, 'value' => $normalized);
+}
+
+function obl_command_validate_int_list($list, $field, $rule = array()) {
+    if (!is_array($list)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_array', 'field' => $field));
+    $max_items = isset($rule['max_items']) ? max(1, (int)$rule['max_items']) : 256;
+    if (count($list) > $max_items) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'too_many_items', 'field' => $field, 'max_items' => $max_items));
+    $min = isset($rule['min']) ? (int)$rule['min'] : PHP_INT_MIN;
+    $normalized = array();
+    foreach ($list as $idx => $value) {
+        if (!is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_int', 'field' => $field, 'index' => $idx));
+        $int = (int)$value;
+        if ($int < $min) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'below_min', 'field' => $field, 'index' => $idx, 'min' => $min));
+        $normalized[$int] = $int;
+    }
+    return array('ok' => true, 'value' => array_values($normalized));
 }

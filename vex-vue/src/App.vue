@@ -45,6 +45,7 @@ import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
+import WorldWaitButton from '@/components/actions/WorldWaitButton.vue';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
@@ -167,5 +168,6 @@ onUnmounted(() => {
     <PlayerDrawer />
     <InventoryDrawer />
     <ToastContainer />
+    <WorldWaitButton />
   </div>
 </template>

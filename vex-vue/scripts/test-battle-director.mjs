@@ -43,6 +43,11 @@ try {
   await actorRuntimeFixture.assertPlaybackTimeoutCancellationFixture();
   await actorRuntimeFixture.assertBattleEndParallelBarrierFixture();
   const uiPolicy = await server.ssrLoadModule('/src/stores/battle-ui-policy.ts');
+  const commandCapability = await server.ssrLoadModule('/src/stores/command-capability.fixture.ts');
+  commandCapability.assertCommandCapabilityFixture();
+  await commandCapability.assertCommandReactiveLockFixture();
+  const aimTargeting = await server.ssrLoadModule('/src/stores/aim-targeting.fixture.ts');
+  await aimTargeting.assertAimTargetingFixture();
   const scopes = new uiPolicy.PendingAuthorityScopes();
   scopes.record(['game_map', 'combat_targets']);
   scopes.record(['enemies', 'game_map']);

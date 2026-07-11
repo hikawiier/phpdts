@@ -14,6 +14,10 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
         case 'poi.search':
             obl_search_poi($payload['iaid'], $pdata);
             break;
+        case 'world.wait':
+            global $obl_log;
+            if (isset($obl_log) && $obl_log) $obl_log->emit('wait.success', 'world');
+            break;
         case 'item.pickup':
             obl_pickup_item($payload['iid'], $pdata);
             break;
@@ -54,7 +58,7 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             }
             $target_data = obl_fetch_playerdata_by_pid($target_pid);
             if (!$target_data) {
-                return array('ok' => false, 'code' => 'TARGET_NOT_FOUND');
+                return array('ok' => true, 'data' => combat_engagement_not_visible_result());
             }
             $result = combat_can_engage($pdata, $target_data);
             return array('ok' => true, 'data' => $result);
@@ -68,6 +72,21 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             }
             $result = combat_preview_single($pdata, $act_id, $aim_intent);
             return array('ok' => true, 'data' => $result);
+
+        case 'combat.preview_targets':
+            $act_id = trim((string)($payload['act_id'] ?? ''));
+            $prefix_actions = isset($payload['prefix_actions']) && is_array($payload['prefix_actions'])
+                ? $payload['prefix_actions']
+                : array();
+            if (!empty($prefix_actions)) {
+                $prefix_check = obl_command_validate_actions($prefix_actions);
+                if (empty($prefix_check['ok'])) return array('ok' => false, 'code' => 'INVALID_ACTIONS');
+                $prefix_actions = $prefix_check['value'];
+            }
+            $candidate_ids = isset($payload['candidate_ids']) && is_array($payload['candidate_ids'])
+                ? $payload['candidate_ids']
+                : array();
+            return array('ok' => true, 'data' => combat_preview_targets($pdata, $act_id, $prefix_actions, $candidate_ids));
 
         case 'combat.preview_chain':
             // L2 动作链模拟：整条动作链预校验
