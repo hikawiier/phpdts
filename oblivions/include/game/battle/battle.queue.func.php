@@ -45,7 +45,7 @@ function battle_get_alive_pids(array &$battle_cache): array {
  *
  * @param array $combatants  参战者 PID 数组
  * @param int   $ambush_pid  强制顺位 1 的 pid（0=无突袭）
- * @return array 排序后的先攻顺位数组 [['pid' => int, 'myorder' => int, 'roll' => int, 'initiative' => int, 'type' => int, 'is_ambush' => bool], ...]
+ * @return array 排序后的先攻顺位数组 [['pid' => int, 'myorder' => int, 'roll' => int, 'initiative' => int, 'type' => int, 'name' => string, 'is_ambush' => bool], ...]
  */
 function battle_calc_initiative($combatants, $ambush_pid = 0, $player_map = null): array {
     global $obl_error_log;
@@ -77,6 +77,7 @@ function battle_calc_initiative($combatants, $ambush_pid = 0, $player_map = null
                 'roll'       => 0,
                 'initiative' => 0,
                 'type'       => (int)$data['type'],
+                'name'       => (string)($data['name'] ?? ''),
                 'is_ambush'  => true,
             );
             continue;
@@ -88,6 +89,7 @@ function battle_calc_initiative($combatants, $ambush_pid = 0, $player_map = null
             'roll'       => mt_rand(1, $initiative),
             'initiative' => $initiative,
             'type'       => (int)$data['type'],
+            'name'       => (string)($data['name'] ?? ''),
             'is_ambush'  => false,
         );
     }

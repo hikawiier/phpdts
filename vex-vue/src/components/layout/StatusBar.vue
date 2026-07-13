@@ -103,29 +103,39 @@ const battleStateText = computed(() => {
 const npcPending = computed(() => commandQueue.pendingNpc);
 const visibleStatuses = computed(() => playerStore.statuses);
 const enterCombatBlock = computed(() => commandQueue.getCapabilityBlock('enter_combat'));
-const battleButtonDisabled = computed(() =>
-  uiStore.battleBtnState === 'normal' && enterCombatBlock.value !== null,
-);
-const battleButtonTitle = computed(() => enterCombatBlock.value?.message || '');
+const battleButtonText = computed(() => {
+  if (uiStore.battleBtnState === 'aim') return '取消瞄准';
+  if (uiStore.battleBtnState === 'battle') {
+    return playerStore.isInBattle ? '战斗中' : '取消';
+  }
+  return '战斗';  // normal
+});
+const battleButtonDisabled = computed(() => {
+  if (uiStore.battleBtnState === 'normal') return enterCombatBlock.value !== null;
+  if (uiStore.battleBtnState === 'battle') return playerStore.isInBattle;
+  return false;  // aim
+});
+const battleButtonTitle = computed(() => {
+  if (uiStore.battleBtnState === 'battle' && playerStore.isInBattle) {
+    return '战斗进行中，无法主动退出';
+  }
+  return enterCombatBlock.value?.message || '';
+});
 
 function statusTitle(statusId: string): string {
   return getStatusLocale(statusId).description;
 }
 
-// ── 战斗按钮点击处理（与现有 vex/js/app.js 一致） ──
+// ── 战斗按钮点击处理 ──
 // normal 态：startBattle(0)（无指定敌人，进入战斗模式）
-// battle 态：后端已在战斗中时只取消本地装填；预战斗阶段可退出本地 battle UI
+// battle 态：退出预战斗 UI（常态战斗态由 disabled 阻止）
 // aim 态：广播 battle:aim-exit（退出瞄准模式，PreloadArea 监听后清理）
 function onBattleBtnClick(): void {
   if (battleButtonDisabled.value) return;
   if (uiStore.battleBtnState === 'normal') {
     battleStore.startBattle(0);
   } else if (uiStore.battleBtnState === 'battle') {
-    if (playerStore.isInBattle) {
-      dataManager.broadcast('battle:preload-clear');
-    } else {
-      battleStore.exitBattleMode();
-    }
+    battleStore.exitBattleMode();
   } else if (uiStore.battleBtnState === 'aim') {
     dataManager.broadcast('battle:aim-exit');
   }
@@ -183,7 +193,7 @@ function onAvatarError(): void {
           :disabled="battleButtonDisabled"
           :title="battleButtonTitle"
           @click="onBattleBtnClick"
-        >[{{ uiStore.battleBtnText() }}]</button>
+        >[{{ battleButtonText }}]</button>
         <button class="status-bar-btn" @click="uiStore.toggleInventoryDrawer">[背包]</button>
         <span v-if="visibleStatuses.length > 0" class="status-effects">
           <span

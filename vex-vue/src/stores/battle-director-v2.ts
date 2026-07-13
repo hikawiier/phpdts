@@ -171,7 +171,6 @@ export interface ModalTextStep extends PlaybackStepBase {
   segment: BattleSegmentV2;
   options: {
     alwaysShowHeader?: boolean;
-    isBattleEnd?: boolean;
   };
 }
 
@@ -271,22 +270,20 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
 
   for (const event of renderEvents) {
     const payload = event.payload || {};
-    if (event.event_type === 'round_start') {
-      const roundNum = event.bl_round_num !== null ? event.bl_round_num + 1 : undefined;
-      const exists = segments.some(seg => seg.kind === 'round_intro' && seg.roundNum === roundNum);
-      if (!exists) {
-        segments.push({
-          kind: 'round_intro',
-          roundNum,
-          actions: [],
-          notices: [],
-        });
-      }
-      continue;
-    }
 
     if (event.event_type === 'turn_start') {
       const actor = toCombatantView(payload.actor);
+      const roundNum = event.bl_round_num !== null ? event.bl_round_num + 1 : undefined;
+      const turnNum = event.bl_turn_num ?? undefined;
+      // 先 push round_intro 段（每 turn 1 个，由 turn_start 事件触发），保证顺序为 [round_intro, turn]
+      segments.push({
+        kind: 'round_intro',
+        roundNum,
+        turnNum,
+        actor: actor ?? undefined,
+        actions: [],
+        notices: [],
+      });
       getTurnSegment(event, actor ?? undefined);
       continue;
     }

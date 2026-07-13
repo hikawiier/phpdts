@@ -122,13 +122,6 @@ export const useUiStore = defineStore('ui', () => {
     mapInputMode.value = 'normal';
   });
 
-  /** 战斗按钮文字（与现有 app.js updateBattleBtn 一致） */
-  function battleBtnText(): string {
-    if (battleBtnState.value === 'normal') return '战斗';
-    if (battleBtnState.value === 'battle') return '取消';
-    return '瞄准中 - ESC';
-  }
-
   return {
     // 状态
     playerDrawerOpen,
@@ -152,7 +145,5 @@ export const useUiStore = defineStore('ui', () => {
     closeModal,
     // 标签
     setActiveInvTab,
-    // 战斗按钮
-    battleBtnText,
   };
 });

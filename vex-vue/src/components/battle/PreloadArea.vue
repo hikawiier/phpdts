@@ -285,6 +285,35 @@ const hasFinisherInQueue = computed(() =>
 );
 
 // ══════════════════════════════════════════════════
+// 快速瞄准派生（§2.3 数据源 + 推算位置缓存）
+// ══════════════════════════════════════════════════
+
+/** 队列中最后一个 pid 类型目标（快速瞄准数据源） */
+const lastPidTarget = computed<{ pid: number; name: string; pls: number | string | null } | null>(() => {
+  for (let i = queue.value.length - 1; i >= 0; i--) {
+    const item = queue.value[i];
+    if (item.target.type === 'pid') {
+      const pid = parseInt(String(item.target.id));
+      const target = getCombatTarget(pid);
+      const name = target?.name || `目标${pid}`;
+      const pls = (target as { pls?: number | string | null } | null)?.pls ?? null;
+      return { pid, name, pls };
+    }
+  }
+  return null;
+});
+
+/** 快速瞄准推算的玩家位置（前缀 = 完整 queue，因为快速瞄准追加到末尾） */
+const quickAimPlannedLoc = computed(() => getPlannedActorPls());
+
+/** 快速瞄准显示标签：名字(位置)——位置消除同名敌人歧义；位置缺失时退化为纯名字 */
+const quickAimLabel = computed(() => {
+  if (!lastPidTarget.value) return '';
+  const { name, pls } = lastPidTarget.value;
+  return pls !== null && pls !== undefined && pls !== '' ? `${name}(${pls})` : name;
+});
+
+// ══════════════════════════════════════════════════
 // 轨道渲染项（合并 queue 项与 pending 虚拟项）
 // ══════════════════════════════════════════════════
 
@@ -448,6 +477,24 @@ function isEnemyInSkillRange(skill: Skill, targetPid: number, originPls: number 
   return false;
 }
 
+/**
+ * 判断技能是否可快速瞄准（显示快捷标签的条件，§2.4 提前过滤原则）
+ *
+ * 所有在 onQuickAimClick 中会导致 toast 失败的校验，都应在此提前过滤——
+ * 快捷标签的职责是"快速添加"，不能添加就不应出现。
+ */
+function canQuickAim(skill: Skill): boolean {
+  if (skill.aimType !== 'pid') return false;
+  if (!skill.available) return false;  // 不可用技能（含 on_cd）不显示快捷标签
+  if (!lastPidTarget.value) return false;
+  // CD 重复：有 CD 的技能已在队列中时不显示快捷标签
+  if (Number(skill.cd) > 0 && queue.value.some(item => item.act_id === skill.act_id)) return false;
+  // 终结技耗尽态：不显示快捷标签（快速添加必然失败）
+  if (isFinisherSkill(skill) && hasFinisherInQueue.value) return false;
+  // 射程校验（用推算位置）
+  return isEnemyInSkillRange(skill, lastPidTarget.value.pid, quickAimPlannedLoc.value);
+}
+
 function skillRangeText(skill: Skill): string {
   if (skill.aimType !== 'pid') return '';
   return ` R:${getSkillBaseRange(skill)}`;
@@ -537,6 +584,62 @@ function onSkillClick(actId: string): void {
     };
     enterAimMode(actId, 'enemy');
   }
+}
+
+// ══════════════════════════════════════════════════
+// 快速瞄准执行（§2.4 点击快捷标签，跳过瞄准模式直接入队）
+// ══════════════════════════════════════════════════
+
+/**
+ * 快速瞄准点击处理
+ *
+ * 校验顺序：CD → 终结技 → 目标有效性 → 射程。先校验"技能自身约束"（与目标无关），
+ * 再校验"目标约束"。CD 冲突或终结技冲突时，即使用户手动瞄准也无法添加，
+ * 先报这些错误更符合用户心智模型。
+ *
+ * 与 onSkillClick 的 CD 和终结技校验完全一致，确保两条入队路径的约束对称。
+ * canQuickAim 已提前过滤，正常流程中 CD/终结技/射程校验不应触发——
+ * 保留作为 canQuickAim 到点击期间的竞态二次防御。
+ */
+function onQuickAimClick(actId: string): void {
+  const skill = skills.value.find(s => s.act_id === actId);
+  if (!skill || !skill.available) return;
+  if (!lastPidTarget.value) return;
+
+  const pid = lastPidTarget.value.pid;
+
+  // CD 校验
+  if (Number(skill.cd) > 0 && queue.value.some(item => item.act_id === actId)) {
+    useToastStore().showToast('该技能有冷却，无法重复装填', 'warning', 3000);
+    return;
+  }
+
+  // 终结技唯一性校验
+  if (isFinisherAct(actId) && hasFinisherInQueue.value) {
+    useToastStore().showToast('一场战斗只能有一个终结技', 'warning', 3000);
+    return;
+  }
+
+  // 目标有效性校验（目标可能已死亡/状态变化）
+  const candidate = findSelectableCombatTarget(
+    battleStore.combatTargets,
+    battleStore.currentQid,
+    pid,
+    targetPid => characterStore.getCharacter(targetPid),
+  );
+  if (!candidate) {
+    useToastStore().showToast('目标状态已变化，请手动瞄准', 'warning', 3000);
+    return;
+  }
+
+  // 射程校验（二次校验，防止 canQuickAim 到点击期间状态变化）
+  if (!isEnemyInSkillRange(skill, pid, quickAimPlannedLoc.value)) {
+    useToastStore().showToast('目标距离过远，请手动瞄准', 'warning', 3000);
+    return;
+  }
+
+  // 直接入队，跳过瞄准模式
+  addToQueue(actId, { type: 'pid', id: pid });
 }
 
 // ══════════════════════════════════════════════════
@@ -989,25 +1092,11 @@ function onBattleEnded(): void {
   combatContext.value = null;
 }
 
-function onPreloadClear(): void {
-  queue.value = [];
-  pendingItem.value = null;
-  confirmClear.value = false;
-  if (confirmClearTimer) {
-    clearTimeout(confirmClearTimer);
-    confirmClearTimer = null;
-  }
-  if (aimMode.value) {
-    exitAimMode();
-  }
-}
-
 onMounted(() => {
   dataManager.listen('battle:preload-init', onPreloadInit);
   dataManager.listen('battle:preload-context-refresh', onPreloadContextRefresh);
   dataManager.listen('battle:aim-target-selected', onTargetSelect);
   dataManager.listen('battle:aim-exit', onAimExit);
-  dataManager.listen('battle:preload-clear', onPreloadClear);
   dataManager.listen('battle:ended', onBattleEnded);
 });
 
@@ -1016,7 +1105,6 @@ onUnmounted(() => {
   dataManager.unlisten('battle:preload-context-refresh', onPreloadContextRefresh);
   dataManager.unlisten('battle:aim-target-selected', onTargetSelect);
   dataManager.unlisten('battle:aim-exit', onAimExit);
-  dataManager.unlisten('battle:preload-clear', onPreloadClear);
   dataManager.unlisten('battle:ended', onBattleEnded);
   if (confirmClearTimer) {
     clearTimeout(confirmClearTimer);
@@ -1214,6 +1302,15 @@ defineExpose({
           <span class="meta">
             {{ Number(skill.apcost) > 0 ? `AP:${skill.apcost}` : '' }}{{ skillRangeText(skill) }}{{ skillCdText(skill) }}
           </span>
+          <span
+            v-if="skill.aimType === 'pid' && canQuickAim(skill)"
+            class="quick-aim-tag"
+            role="button"
+            tabindex="0"
+            :title="`用上次目标「${quickAimLabel}」快速装填`"
+            @click.stop="onQuickAimClick(skill.act_id)"
+            @keydown.enter.prevent="onQuickAimClick(skill.act_id)"
+          >→{{ quickAimLabel }}</span>
           <span v-if="isFinisherSkill(skill)" class="finisher-tag">[F]</span>
           <span v-else class="category-tag">{{ SKILL_CATEGORY_LABELS[getSkillCategory(skill)] }}</span>
         </button>
@@ -1753,6 +1850,28 @@ defineExpose({
   font-weight: 700;
   letter-spacing: 0.1em;
   white-space: nowrap;
+}
+
+/* ══════════════════════════════════════════════════ */
+/* 快速瞄准标签（§2.5，与轨道项 target chip 共享 → 视觉语言） */
+/* ══════════════════════════════════════════════════ */
+.skill-row .quick-aim-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--color-fg-dim);
+  color: var(--color-fg-mid);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.skill-row .quick-aim-tag:hover {
+  color: var(--color-hi);
+  border-color: var(--color-hi);
+}
+/* 耗尽态下技能行不显示快捷标签（canQuickAim 已返回 false，CSS 兜底） */
+.skill-row.is-finisher-exhausted .quick-aim-tag {
+  display: none;
 }
 
 /* ══════════════════════════════════════════════════ */

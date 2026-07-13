@@ -469,6 +469,7 @@ export interface RollData {
   roll: number;
   initiative: number;
   type: number;
+  name: string;
   is_ambush: boolean;
 }
 
@@ -543,6 +544,8 @@ export interface BattleLogV2Payload {
   by_effect_uid?: string | null;
   winner_pid?: number | null;
   survivors?: CombatantSnapshot[];
+  rolls?: RollData[];
+  ambush_pid?: number | null;
   [key: string]: unknown;
 }
 

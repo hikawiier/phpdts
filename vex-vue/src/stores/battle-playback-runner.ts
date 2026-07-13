@@ -19,7 +19,6 @@ import type {
 
 export interface SegmentPlayOptions {
   alwaysShowHeader?: boolean;
-  isBattleEnd?: boolean;
 }
 
 // 播放运行时上下文：包含当前 PID、NPC PID、场景几何、演出会话
@@ -29,10 +28,10 @@ export interface BattlePlaybackRuntime {
   scene: SceneGeometry;
   presentation: BattlePresentationSession;
   updateSegmentContext(segment: BattleSegmentV2, npcPid: number): Promise<void>;
-  playSegmentInModal(segment: BattleSegmentV2, options: SegmentPlayOptions): Promise<void>;
-  enterBattleEndOverlay(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  playSegmentText(segment: BattleSegmentV2, options: SegmentPlayOptions): Promise<void>;
+  enterBattleEndMask(segment: BattleSegmentV2, sessionId: string): Promise<void>;
   handoffPresentationScene(segment: BattleSegmentV2, sessionId: string): Promise<void>;
-  playBattleEndModalContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  playBattleEndContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
 }
 
 // 播放入口：遍历所有 PlaybackStep 并串行执行
@@ -130,13 +129,13 @@ function createStepTask(step: PlaybackStep, runtime: BattlePlaybackRuntime): Pla
     case 'combatant_cleared':
       return playCombatantCleared(step.notice, actorContext);
     case 'battle_end_overlay_enter':
-      return promiseTask(runtime.enterBattleEndOverlay(step.segment, runtime.presentation.id));
+      return promiseTask(runtime.enterBattleEndMask(step.segment, runtime.presentation.id));
     case 'presentation_scene_handoff':
       return promiseTask(runtime.handoffPresentationScene(step.segment, runtime.presentation.id));
     case 'battle_end_modal_content':
-      return promiseTask(runtime.playBattleEndModalContent(step.segment, runtime.presentation.id));
+      return promiseTask(runtime.playBattleEndContent(step.segment, runtime.presentation.id));
     case 'modal_text':
-      return promiseTask(runtime.playSegmentInModal(step.segment, step.options));
+      return promiseTask(runtime.playSegmentText(step.segment, step.options));
     case 'damage_linger':
       dataManager.broadcast('battle:play-damage-numbers', {
         effects: step.effects,

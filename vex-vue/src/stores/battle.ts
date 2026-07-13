@@ -18,12 +18,13 @@
 // - battle:preload-init → PreloadArea 组件初始化装填区
 // - battle:play-damage-numbers → DamageNumber 组件播放残留数字
 //
-// 模态框播放完成机制：
-// - store 设置 currentSegment + battleModalOpen=true，返回 Promise
-// - BattleModal 播放完成后调用 store.notifyModalClosed()
-// - store 触发 resolve，继续后续流程
+// 段文本播放机制（命令式驱动）：
+// - BattleMode.vue 挂载时通过 ref 注册 BattleBanner / BattleModal 的 player 实例
+// - store.playSegmentText / enterBattleEndMask / playBattleEndContent 通过 player 引用直接调用组件函数并 await
+// - 组件函数返回即播放完成，无需共享状态或通知机制
+// - 组件 onUnmounted 时 reject 内部 Promise，自然中断 await
 //
-// 关联文档：oblivions/docs/设计案3-重构前端播放系统.md
+// 关联文档：oblivions/docs/战斗横幅组件设计案-2026-07-14.md
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
@@ -75,14 +76,36 @@ if (actorTraceEnabled) initializeBattleDebugGlobals();
 /** 守护进程慢心跳间隔（毫秒）— 非 PROCESSING 时降低空转请求 */
 const DAEMON_BEAT_IDLE_INTERVAL = 1000;
 
-/** "你的回合" Toast 显示时长（毫秒） */
-const YOUR_TURN_TOAST_DURATION = 2000;
-
-/** 模态框播放超时兜底（毫秒）— 防止组件异常卸载未通知导致 Promise 永久挂起 */
-const MODAL_TIMEOUT = 30000;
-
 /** 单次刷新最多连续推进的战斗 tick，防止异常状态导致无限排空。 */
 const MAX_BATTLE_DRAIN_CYCLES = 32;
+
+// ══════════════════════════════════════════════════
+// 段文本播放器接口
+//
+// store 通过这些接口命令式调用 BattleBanner / BattleModal 的播放函数。
+// 组件通过 defineExpose 实现接口，BattleMode.vue 通过 ref 注册到 store。
+// sessionId 参数仅用于日志/调试，组件不需要做 staleness 检查
+// —— runner 串行执行保证不会重入，onUnmounted 兜底保证 unmount 时 Promise reject。
+// ══════════════════════════════════════════════════
+
+/** 普通段播放器（round_intro / turn / system） */
+export interface SegmentPlayer {
+  /** 播放一个段：横幅/overlay 淡入 → 段分隔符 → 逐条正文 → 停留 → 淡出 */
+  playSegment(segment: BattleSegmentV2, sessionId: string, options: SegmentPlayOptions): Promise<void>;
+}
+
+/** 终局战报播放器（battle_end 段，分两阶段） */
+export interface BattleEndPlayer {
+  /** 显示终幕遮罩（仅遮罩层淡入），保持遮罩状态，等待 showContent 调用 */
+  showMask(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  /** 在已显示的遮罩上显示终局战报正文：正文淡入 → 播放 → 淡出 → 遮罩淡出 */
+  showContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  /** 关闭持续显示的遮罩（仅纯遮罩阶段生效；正文播放中为 no-op） */
+  cancelMask(): void;
+}
+
+/** BattleBanner 同时实现 SegmentPlayer（round_intro）和 BattleEndPlayer（battle_end） */
+export type BannerPlayer = SegmentPlayer & BattleEndPlayer;
 
 export function closePresentationSessionOwnership(
   session: BattlePresentationSession,
@@ -131,15 +154,6 @@ export const useBattleStore = defineStore('battle', () => {
   // ── 演出状态（供组件响应式读取） ──
   /** 当前是否玩家回合（供 BattleActionBar 决定显示装填区还是等待提示） */
   const isPlayerTurn = ref<boolean>(false);
-  /** 敌人名称（供 BattleHeader 显示） */
-  const enemyName = ref<string>('');
-  /** 战斗模态框是否打开 */
-  const battleModalOpen = ref<boolean>(false);
-  /** 当前正在播放的 v2 段（供 BattleModal 读取 text cues/actions/notices） */
-  const currentSegment = ref<BattleSegmentV2 | null>(null);
-  const battleModalSessionId = ref<string | null>(null);
-  const battleModalIsBattleEnd = ref(false);
-  const battleModalContentReady = ref(false);
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
   let npcTurnRefreshRunning = false;
@@ -163,10 +177,13 @@ export const useBattleStore = defineStore('battle', () => {
     finished: Promise<void>;
   } | null = null;
 
-  // ── 模态框播放完成回调（内部使用） ──
-  let nextModalSessionId = 1;
-  let coveredWait: { sessionId: string; resolve: () => void } | null = null;
-  let closedWait: { sessionId: string; resolve: () => void } | null = null;
+  // ── 段文本播放器注册（命令式调用） ──
+  // BattleBanner 实现 BannerPlayer（SegmentPlayer & BattleEndPlayer）
+  // BattleModal 实现 SegmentPlayer
+  // 由 BattleMode.vue 在 onMounted 时通过 ref 绑定注册，onUnmounted 时注销
+  let bannerPlayer: BannerPlayer | null = null;
+  let modalPlayer: SegmentPlayer | null = null;
+  let nextSessionId = 1;
 
   // ══════════════════════════════════════════════════
   // 辅助函数
@@ -476,9 +493,6 @@ export const useBattleStore = defineStore('battle', () => {
     currentEnemyPid.value = enemyPid;
     currentQid.value = nextQid;
 
-    // 敌人名称暂空，等 playback segment_context step 从 battlelog 提取后更新
-    enemyName.value = '';
-
     updateActionPanel(playerTurn, context, true);
 
     // 玩家小人：被动遭遇战也触发战斗开始意图
@@ -499,10 +513,8 @@ export const useBattleStore = defineStore('battle', () => {
     currentQid.value = null;
     combatContext.value = null;
     combatTargets.value = { qid: null, suggestedTargetPid: null, candidates: [] };
-    enemyName.value = '';
     isPlayerTurn.value = false;
-    battleModalOpen.value = false;
-    currentSegment.value = null;
+    // 组件中断由 currentMode='normal' → BattleMode 卸载 → onUnmounted 兜底 reject Promise
     cancelPendingBattleEndHandoff('battle_exited');
     if (presentationSession?.active) presentationSession.abort('battle_exited');
     presentationSession = null;
@@ -558,8 +570,6 @@ export const useBattleStore = defineStore('battle', () => {
     currentQid.value = null;
     combatContext.value = null;
     isPlayerTurn.value = true;
-
-    enemyName.value = enemyPid > 0 ? '' : '瞄准模式';
 
     nextTick(() => {
       dataManager.broadcast('battle:preload-init', {
@@ -675,10 +685,6 @@ export const useBattleStore = defineStore('battle', () => {
     if (afterAction === 'battle') {
       // 继续战斗
       currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
-      if (afterBattleState === 'PLAYER_TURN') {
-        const toastStore = useToastStore();
-        toastStore.showToast('你的回合', 'info', YOUR_TURN_TOAST_DURATION);
-      }
     } else {
       // 后端校验说"不在战斗了"，退出
       exitBattleMode();
@@ -803,10 +809,10 @@ export const useBattleStore = defineStore('battle', () => {
       scene,
       presentation: presentationSession,
       updateSegmentContext,
-      playSegmentInModal,
-      enterBattleEndOverlay,
+      playSegmentText,
+      enterBattleEndMask,
       handoffPresentationScene,
-      playBattleEndModalContent,
+      playBattleEndContent,
     });
   }
 
@@ -820,50 +826,54 @@ export const useBattleStore = defineStore('battle', () => {
     return getSceneGeometry();
   }
 
-  async function updateSegmentContext(segment: BattleSegmentV2, _npcPid: number): Promise<void> {
-    updateEnemyNameFromSegment(segment);
-    // 敌人位置不再需要主动刷新——CharacterHub 已通过权威资料 patch 持有最新 pls，
-    // BattleHeader 响应式派生。参数 _npcPid 保留以兼容 runBattlePlaybackPlan 调用签名。
+  async function updateSegmentContext(_segment: BattleSegmentV2, _npcPid: number): Promise<void> {
+    // 参数 _segment / _npcPid 保留以兼容 runBattlePlaybackPlan 调用签名。
   }
 
   /**
-   * 在模态框中播放一个 segment
+   * 播放段文本（round_intro / turn / system）
    *
-   * 设置 currentSegment，打开模态框，等待关闭。
-   * 模态框根据 BattleSegmentV2 的 notices/actions/effects 逐条渲染。
+   * 命令式调用：根据 segment.kind 路由到对应的 player（banner 或 modal），
+   * await player.playSegment 返回即播放完成。
    */
-  async function playSegmentInModal(
+  async function playSegmentText(
     segment: BattleSegmentV2,
     options: SegmentPlayOptions,
   ): Promise<void> {
     // 无正文时的处理：
-    // - isBattleEnd：仍打开模态框（显示战斗结束文字）
-    // - alwaysShowHeader：仍打开模态框（显示段分隔符）
+    // - alwaysShowHeader：仍播放（显示段分隔符）
     // - 其他：跳过
-    if (!segmentHasRenderableText(segment) && !options.isBattleEnd && !options.alwaysShowHeader) return;
+    if (!segmentHasRenderableText(segment) && !options.alwaysShowHeader) return;
 
-    const sessionId = `modal-${nextModalSessionId++}`;
-    openBattleModal(segment, sessionId, false, true);
-    await waitForModalClose(sessionId);
+    const sessionId = `playback-${nextSessionId++}`;
+    const player = selectPlayer(segment);
+    if (!player) throw new Error(`no player registered for segment kind: ${segment.kind}`);
+    await player.playSegment(segment, sessionId, options);
   }
 
-  function openBattleModal(
-    segment: BattleSegmentV2,
-    sessionId: string,
-    isBattleEnd: boolean,
-    contentReady: boolean,
-  ): void {
-    currentSegment.value = segment;
-    battleModalSessionId.value = sessionId;
-    battleModalIsBattleEnd.value = isBattleEnd;
-    battleModalContentReady.value = contentReady;
-    battleModalOpen.value = true;
+  /** 根据段类型路由到对应的播放器 */
+  function selectPlayer(segment: BattleSegmentV2): SegmentPlayer | null {
+    switch (segment.kind) {
+      case 'round_intro':
+        return bannerPlayer;
+      case 'turn':
+      case 'system':
+        return modalPlayer;
+      default:
+        return null;
+    }
   }
 
-  async function enterBattleEndOverlay(segment: BattleSegmentV2, sessionId: string): Promise<void> {
+  /**
+   * 进入终幕遮罩（battle_end 第一阶段）
+   *
+   * 命令式调用 bannerPlayer.showMask 显示遮罩并 await 过渡完成。
+   * 返回后遮罩持续显示，等待 playBattleEndContent 调用。
+   */
+  async function enterBattleEndMask(segment: BattleSegmentV2, sessionId: string): Promise<void> {
     if (presentationSession?.id !== sessionId) throw new Error('stale battle-end presentation session');
-    openBattleModal(segment, sessionId, true, false);
-    await waitForBattleEndOverlayCovered(sessionId);
+    if (!bannerPlayer) throw new Error('banner player not registered');
+    await bannerPlayer.showMask(segment, sessionId);
   }
 
   async function handoffPresentationScene(_segment: BattleSegmentV2, sessionId: string): Promise<void> {
@@ -881,8 +891,7 @@ export const useBattleStore = defineStore('battle', () => {
     let authorityPublished = false;
     try {
       if (presentationSession !== session
-        || presentationSceneGeneration !== sceneGeneration
-        || battleModalSessionId.value !== sessionId) {
+        || presentationSceneGeneration !== sceneGeneration) {
         throw new Error('presentation handoff replaced while loading authority');
       }
       const exits = session.sealForHandoff();
@@ -895,8 +904,7 @@ export const useBattleStore = defineStore('battle', () => {
       await nextTick();
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       if (presentationSession !== session
-        || presentationSceneGeneration !== sceneGeneration
-        || battleModalSessionId.value !== sessionId) {
+        || presentationSceneGeneration !== sceneGeneration) {
         throw new Error('presentation handoff replaced before animation start');
       }
 
@@ -929,7 +937,8 @@ export const useBattleStore = defineStore('battle', () => {
         }
         throw error;
       });
-      if (battleModalSessionId.value === sessionId) battleModalContentReady.value = true;
+      // 命令式调用链下，runner 串行执行 handoff step 后才调 playBattleEndContent，
+      // 组件不需要被通知 handoff 完成——直接进入 showContent 阶段。
     } catch (error) {
       if (pendingBattleEndHandoff?.sessionId !== sessionId
         && presentationSession === session
@@ -946,17 +955,31 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  async function playBattleEndModalContent(_segment: BattleSegmentV2, sessionId: string): Promise<void> {
-    if (battleModalSessionId.value !== sessionId) throw new Error('stale battle-end modal session');
-    const pending = pendingBattleEndHandoff;
-    if (!pending || pending.sessionId !== sessionId) throw new Error('battle-end handoff run is missing');
-    const [modalResult, handoffResult] = await Promise.allSettled([
-      waitForModalClose(sessionId),
-      pending.finished,
-    ]);
-    if (pendingBattleEndHandoff === pending) pendingBattleEndHandoff = null;
-    if (modalResult.status === 'rejected') throw modalResult.reason;
-    if (handoffResult.status === 'rejected') throw handoffResult.reason;
+  /**
+   * 播放终局战报正文（battle_end 第二阶段）
+   *
+   * 命令式调用 bannerPlayer.showContent 显示正文，并行等待 handoff 动画完成。
+   * try/finally 确保异常分支下 cancelMask 兜底关闭持续显示的遮罩：
+   * - 正常流程：showContent 已关闭遮罩，cancelMask 为 no-op
+   * - 异常分支（pending 缺失 / bannerPlayer 缺失 / handoff 失败导致 showContent 未被调用）：
+   *   cancelMask 关闭纯遮罩阶段持续显示的遮罩
+   */
+  async function playBattleEndContent(segment: BattleSegmentV2, sessionId: string): Promise<void> {
+    try {
+      const pending = pendingBattleEndHandoff;
+      if (!pending || pending.sessionId !== sessionId) throw new Error('battle-end handoff run is missing');
+      if (!bannerPlayer) throw new Error('banner player not registered');
+      const [contentResult, handoffResult] = await Promise.allSettled([
+        bannerPlayer.showContent(segment, sessionId),
+        pending.finished,
+      ]);
+      if (pendingBattleEndHandoff === pending) pendingBattleEndHandoff = null;
+      if (contentResult.status === 'rejected') throw contentResult.reason;
+      if (handoffResult.status === 'rejected') throw handoffResult.reason;
+    } finally {
+      // finally 中 bannerPlayer 可能为 null（如组件未注册），需 null 检查
+      if (bannerPlayer) bannerPlayer.cancelMask();
+    }
   }
 
   function segmentHasRenderableText(segment: BattleSegmentV2): boolean {
@@ -967,80 +990,14 @@ export const useBattleStore = defineStore('battle', () => {
     );
   }
 
-  /** 等待模态框关闭 */
-  async function waitForBattleEndOverlayCovered(sessionId: string): Promise<void> {
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        if (coveredWait?.sessionId === sessionId) coveredWait = null;
-        resolve();
-      }, 5000);
-      coveredWait = { sessionId, resolve: () => {
-        clearTimeout(timeout);
-        resolve();
-      } };
-    });
-  }
+  // ══════════════════════════════════════════════════
+  // 段文本播放器注册（供 BattleMode.vue 在 onMounted/onUnmounted 调用）
+  // ══════════════════════════════════════════════════
 
-  async function waitForModalClose(sessionId: string): Promise<void> {
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        if (closedWait?.sessionId === sessionId) closedWait = null;
-        resolve();
-      }, MODAL_TIMEOUT);
-      closedWait = { sessionId, resolve: () => {
-        clearTimeout(timeout);
-        resolve();
-      } };
-    });
-  }
-
-  function notifyBattleEndOverlayCovered(sessionId: string): void {
-    if (battleModalSessionId.value !== sessionId || coveredWait?.sessionId !== sessionId) return;
-    const wait = coveredWait;
-    coveredWait = null;
-    wait.resolve();
-  }
-
-  /**
-   * 模态框播放完成通知（供 BattleModal 组件调用）
-   *
-   * BattleModal 播放完后调用本函数，触发 waitForModalClose 中的 Promise resolve。
-   */
-  function notifyModalClosed(sessionId: string = battleModalSessionId.value ?? ''): void {
-    if (!sessionId || battleModalSessionId.value !== sessionId) return;
-    battleModalOpen.value = false;
-    currentSegment.value = null;
-    battleModalSessionId.value = null;
-    battleModalIsBattleEnd.value = false;
-    battleModalContentReady.value = false;
-    if (closedWait?.sessionId === sessionId) {
-      const wait = closedWait;
-      closedWait = null;
-      wait.resolve();
-    }
-  }
-
-  /** 从 v2 segment 读取敌人名称 */
-  function updateEnemyNameFromSegment(segment: BattleSegmentV2): void {
-    const targetEnemy = segment.actions
-      .flatMap(action => action.targets)
-      .find(target => target.snapshot && target.snapshot.type > 0);
-    if (targetEnemy?.snapshot?.name) {
-      enemyName.value = targetEnemy.snapshot.name;
-      return;
-    }
-
-    const actorEnemy = segment.actions.find(action => action.actor.type > 0)?.actor;
-    if (actorEnemy?.name) {
-      enemyName.value = actorEnemy.name;
-      return;
-    }
-
-    const noticeEnemy = segment.notices.find(notice => notice.combatant?.type && notice.combatant.type > 0)?.combatant;
-    if (noticeEnemy?.name) {
-      enemyName.value = noticeEnemy.name;
-    }
-  }
+  function registerBannerPlayer(player: BannerPlayer): void { bannerPlayer = player; }
+  function registerModalPlayer(player: SegmentPlayer): void { modalPlayer = player; }
+  function unregisterBannerPlayer(): void { bannerPlayer = null; }
+  function unregisterModalPlayer(): void { modalPlayer = null; }
 
   // ══════════════════════════════════════════════════
   // 装填区执行完成后的刷新处理
@@ -1107,12 +1064,7 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayingBattleLog.value = false;
     isProcessingBattle.value = false;
     isPlayerTurn.value = false;
-    enemyName.value = '';
-    battleModalOpen.value = false;
-    currentSegment.value = null;
-    battleModalSessionId.value = null;
-    battleModalIsBattleEnd.value = false;
-    battleModalContentReady.value = false;
+    // 组件中断由 currentMode='normal' → BattleMode 卸载 → onUnmounted 兜底 reject Promise
     cancelPendingBattleEndHandoff('battle_reset');
     presentationSession?.abort('battle_reset');
     presentationSession = null;
@@ -1123,10 +1075,6 @@ export const useBattleStore = defineStore('battle', () => {
     usePlayerAvatarStore().resetAppearance();
     usePresentationSceneStore().reset();
     stopNpcTurnRefresh();
-    coveredWait?.resolve();
-    coveredWait = null;
-    closedWait?.resolve();
-    closedWait = null;
   }
 
   return {
@@ -1141,12 +1089,6 @@ export const useBattleStore = defineStore('battle', () => {
     isPlayingBattleLog,
     isProcessingBattle,
     isPlayerTurn,
-    enemyName,
-    battleModalOpen,
-    currentSegment,
-    battleModalSessionId,
-    battleModalIsBattleEnd,
-    battleModalContentReady,
     // 定时器管理
     startNpcTurnRefresh,
     stopNpcTurnRefresh,
@@ -1165,8 +1107,11 @@ export const useBattleStore = defineStore('battle', () => {
     loadCombatTargets,
     // presentation 播放
     consumePresentationBatches,
-    notifyModalClosed,
-    notifyBattleEndOverlayCovered,
+    // 段文本播放器注册（供 BattleMode.vue 调用）
+    registerBannerPlayer,
+    registerModalPlayer,
+    unregisterBannerPlayer,
+    unregisterModalPlayer,
     // 装填区执行完成
     onPreloadExecuted,
     // 初始化

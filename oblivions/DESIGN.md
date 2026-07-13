@@ -156,6 +156,23 @@ CharacterHub 与表现场景 store 分离，构成"权威投影 vs 演出投影"
 
 单元内的资源提交（AP 扣减）、效果交付（钩子执行）、状态持久化都通过 `dry_run` 标志区分预览与实际执行——dry-run 跳过 DB 写入和钩子调用，只读取计划状态。单目标失败只产生跳过标记，其他目标继续。
 
+### 1.16 瞬态战斗 (Transient Battle) vs 常态战斗 (Persistent Battle)
+
+按战斗在后端存续的时长划分的两类战斗路径，决定了前端是否需要建立多回合基础设施。
+
+| | 瞬态战斗 | 常态战斗 |
+|---|---|---|
+| **定义** | `battle.start` 在同一请求内执行完玩家回合并触发 `battle_end` | 战斗跨多个回合，玩家与 NPC 交替行动 |
+| **后端状态机** | IDLE → PROCESSING → IDLE（一进一出） | IDLE → PROCESSING → PLAYER_TURN → PROCESSING → … → IDLE |
+| **前端 `enterBattleMode`** | 跳过——`refreshBattle` 读到 `action !== 'battle'`，不建立多回合基础设施 | 被调用——`action === 'battle'` 触发，设置 `currentQid` |
+| **battlelog 播放** | 单个 presentation batch 内完整播放（turn segment + battle_end segment） | 跨多个 batch，每个回合一批，通过 `drainBattleTicksToStable` 持续消费 |
+| **多回合基础设施** | 不需要（跨批次 session 复用、NPC 轮询、动作面板均不需要） | 需要 |
+| **退出** | `applyVerifiedBattleState` → `exitBattleMode` | 同左 |
+
+**设计基准**：前端"战斗被感知"的判据是 battlelog 事件流，不是 `enterBattleMode`。瞬态战斗跳过 `enterBattleMode` 是正确行为——它不需要多回合基础设施，battlelog + 播放架构已完整传递战斗内容（动作动画、文本日志、HP 变化、结束模态框、handoff）。`startBattle` 设的 `currentMode='battle'`（UI 锁定）+ battlelog 播放（内容传递）+ `exitBattleMode`（清理）已完整覆盖瞬态战斗的生命周期，无需为它建立独立概念。
+
+**概念用途**：沟通时说"瞬态战斗"即指"1 回合内结束、`enterBattleMode` 被跳过、单 batch 完整播放"这一完整语义；说"常态战斗"即指"多回合、`enterBattleMode` 正常调用、跨 batch drain 消费"这一完整语义。
+
 
 
 ## 二、项目风格、核心原则总体约束
@@ -345,5 +362,11 @@ Oblivions 子系统通过 obl_bootstrap 集中加载所有函数库。
 **现象**：异步播放组件（如战斗模态框）在卸载时如果不立即清理定时器、回调、引用，会产生内存泄漏和回调问题（如组件已销毁但回调仍尝试访问组件状态）。
 
 **教训**：异步播放组件必须在卸载时立即清理所有异步资源；使用取消标志 + 卸载清理双保险；回调执行前检查组件是否仍挂载。
+
+### 4.8 设计案中"删除/修改"操作未验证完整调用链
+
+**现象**：设计案在编写"删除函数 / 修改事件 / 替换状态字段"类操作时，未 grep 验证完整调用链，导致函数名拼写错误、computed 替换后留下死代码、删除事件但监听端未清理等问题。
+
+**教训**：设计案中所有"删除/修改函数、事件、状态字段、类型成员"的操作，必须 grep 验证完整调用链——函数名拼写、所有调用者、监听端、类型定义、return 导出。删除一个广播事件需同步清理监听端（监听函数 + listen/unlisten 注册 + 联合类型成员）；用 computed 替换函数时检查原函数所有调用者，无调用者则删除函数本身而非保留。
 
 **文档结束。**

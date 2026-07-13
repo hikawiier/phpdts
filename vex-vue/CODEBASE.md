@@ -728,7 +728,9 @@ BattleLogCollector     battle-director-v2.ts     battle-director-v2.ts        ba
 
 **DirectedEffectV2**：包含 `effectUid/type/source/target/value/delta/visual/text`，伤害数字和 HP 更新均从 effect 读取。
 
-**PlaybackStep.kind**（计划层产物）：`prepare_map` | `segment_context` | `action_delivery` | `combatant_joined` | `action_animation` | `combatant_cleared` | `modal_text` | `damage_linger`。每个 step 携带 `awaitPolicy` 和 `timeout`。
+**PlaybackStep.kind**（计划层产物，共 9 种）：`prepare_map` | `segment_context` | `action_choreography` | `combatant_cleared` | `battle_end_overlay_enter` | `presentation_scene_handoff` | `battle_end_modal_content` | `modal_text` | `damage_linger`。每个 step 携带 `awaitPolicy`（`'none'` / `'completion'`）和 `timeout`（毫秒，可省略表示无超时）。
+
+> 注：早期版本曾把 `action_delivery` / `combatant_joined` / `action_animation` 拆为独立 PlaybackStep，现已合并为单一 `action_choreography`，由 `playActionChoreography` 在演员层统一编排 delivery + joined + animation + effect 命中反馈。`battle_end_overlay_enter` / `presentation_scene_handoff` / `battle_end_modal_content` 是 `battle_end` 段专用三步，覆盖旧版单一 `modal_text` 收尾逻辑。
 
 ### 8.3 整体流程（新版）
 
@@ -759,17 +761,15 @@ battleStore.onPreloadExecuted()
             │    ├─ planPlaybackV2(script) → BattlePlaybackPlan（计划层）
             │    └─ runBattlePlaybackPlan(plan, runtime)（执行器）
             │         按 PlaybackStep 顺序执行：
-            │           segment_context → 更新敌人名称/位置
-            │           prepare_map       → 等待 mapGrid + player actor 就绪
-            │           action_delivery   → 按 ResolvedAim 播放投射/图格爆炸
-            │           combatant_joined  → 准备并高亮新加入角色
-            │           action_animation → playActionAnimation（actor-executor）
-            │           combatant_cleared → playCombatantCleared（actor-executor）
+            │           segment_context       → 更新敌人名称/位置（runtime.updateSegmentContext）
+            │           prepare_map           → 等待 mapGrid + player actor 就绪（prepareBattlefield）
+            │           action_choreography   → 单 action 完整演出：delivery + joined + animation + effect 命中（playActionChoreography）
+            │           combatant_cleared     → death/escaped 退场动画（playCombatantCleared）
             │           battle_end_overlay_enter → 等待真实 transitionend/covered
             │           presentation_scene_handoff → 原子发布权威 rebase + 启动 exit handoff / 普通 RebaseMoveRun
-            │           battle_end_modal_content → 结果正文与两类 world animation 并行；等待 closed + 聚合 run finished
-            │           modal_text       → 普通段 BattleModal.vue
-            │           damage_linger    → broadcast('battle:play-damage-numbers')
+            │           battle_end_modal_content → 结果正文与 world animation 并行；等待 closed + handoff finished
+            │           modal_text            → 普通段 BattleModal.vue 播放 text cue + HP 同步
+            │           damage_linger         → broadcast('battle:play-damage-numbers')（fire-and-forget）
             └─ batch 完成后 cursor 前移；gap 时快进到 head 并 rebase
        ↓
        播放完成后根据 action 决定后续
@@ -829,7 +829,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 **planPlaybackV2 按 segment.kind 生成 PlaybackStep 序列**：
 - `round_intro` 段：单个 `modal_text` step（`alwaysShowHeader: true`）
 - `battle_end` 段：`battle_end_overlay_enter` → `presentation_scene_handoff` → `battle_end_modal_content`；handoff 启动 world animation 后立即放行正文，content step 等待 modal closed 与 handoff finished
-- `turn` 段：`segment_context` → `prepare_map` → 每个 action 的 ordered delivery steps → joined steps → action animation → cleared steps → `modal_text` → `damage_linger`
+- `turn` 段：`segment_context` → `prepare_map` → 每个 action 一个 `action_choreography` → 每个 `combatant_cleared` notice 一个 `combatant_cleared` → `modal_text` → `damage_linger`。`action_choreography` 内部由 `playActionChoreography` 统一编排 delivery + joined + animation + effect 命中反馈，不再拆为独立 step
 
 **runBattlePlaybackPlan 执行策略**：
 - `awaitPolicy: 'none'`：fire-and-forget（如 `damage_linger`）
@@ -865,13 +865,11 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 
 | 函数 | 说明 |
 |------|------|
-| `prepareBattlefield()` | 等待 `mapGrid` 和 player actor 就绪（最多 10 次重试） |
-| `playActionDelivery(action, delivery)` | 按 ResolvedAim 锚点播放 projectile/explosion cue；空目标 grenade 仍可播放 |
-| `playCombatantJoined(joined)` | 对后端确认加入的稳定 PID actor 播放准备/高亮，不重建实体 |
-| `playActionAnimation(action, currentPid)` | 按 `action.animation.kind` 分发：melee_hit/projectile/area_burst/move/escape/none |
-| `playCombatantCleared(notice, context)` | death 使用 terminal lease 并标记实体退场已播放；escaped 只标记战斗 roster 退出，稳定边界按最新投影决定卸载或恢复可见 |
+| `prepareBattlefield(context)` | 等待 `mapGrid` 和 player actor 就绪（最多 10 次重试，每次 nextTick + requestAnimationFrame） |
+| `playActionChoreography(action, context)` | 单 action 完整演出：通过 `resolveBattleAnimationChain(action)` 把 `animation.kind` 解析为 8-stage cue 序列（attackBefore/attackMain/attackConcurrent/attackAfter + hitBefore/hitMain/hitConcurrent/hitAfter），按 stage 串行播放；cue 类型 `actor-melee` / `actor-ranged` → `lease.play({kind:'attack'})`，`target-hit` → 对每个 damaged target `lease.play({kind:'hit'})`，`projectile-delivery` → `createProjectileOverlay`，`explosion-delivery` → `createExplosionOverlay`，`unarmed-hit-popup` → `createUnarmedHitPopup`；`hitTrigger='attack-impact'` 时等 attackMain impact cue 后并行 hit + attackHandles；`animation.kind='move'` 单独走 `playMoveAction`（按距离分 duck/jump/long 三档） |
+| `playCombatantCleared(notice, context)` | reason='death' → `presentation.markTerminal(actorId)` + `lease.play({kind:'fall'})`（terminal 优先级 lease，不可被抢占）；reason='escaped' → `presentation.markBattleExit(actorId, 'escaped', retreatTarget)` + `lease.play({kind:'fade'})`（retreat 模式 visual_policy='retreat' 时直接 completedTask，由稳定边界 reconcile） |
 
-`battle-director-v2.fixture.ts` 提供回归样例，覆盖 `round_start/turn_start/action_start/action_delivery/combatant_joined/effect_applied/action_end/action_failed/combatant_cleared/battle_end`，并校验 delivery/joined PlaybackStep。
+`battle-director-v2.fixture.ts` 提供回归样例，覆盖全部 11 种 event_type（`round_start/turn_start/action_start/action_delivery/combatant_joined/effect_applied/action_end/action_failed/combatant_cleared/battle_end` + `notice`），并校验 `action_choreography` PlaybackStep 的内部 delivery/joined/animation/effect 编排。
 
 ### 8.7 BattleLogV2Event 字段类型
 
@@ -880,7 +878,7 @@ async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `schema` | `'battlelog.v2'` | v2 schema 标记 |
-| `event_type` | string | `round_start` / `turn_start` / `action_start` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice` |
+| `event_type` | string | 11 种取值：`round_start` / `turn_start` / `action_start` / `action_delivery` / `combatant_joined` / `effect_applied` / `action_end` / `action_failed` / `combatant_cleared` / `battle_end` / `notice` |
 | `channel` | string | `render` / `debug` / `diagnostic`，默认演出只消费 `render` |
 | `event_uid` | string | 单条事件唯一 ID |
 | `action_uid` / `effect_uid` | string\|null | action/effect 归属 ID |

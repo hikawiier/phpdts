@@ -5,6 +5,7 @@
 - 包括"跨模块特殊案例"额外模块。
 > ▎**写入约束**
 - 写入条目时使用自然语言描述设计意图与框架语义，不出现函数签名、参数释义等实现细节；保留文件名、表名、字段名、标签名、枚举值等索引锚点（便于从代码反查文档）
+- 文档只描述代码当前实现的框架基准与准确状态，不记载变更历史——不使用版本标记（如"vN 新增"/"vN 补录"），不描述"删除了 X/更新了 X/修正了 X"等变更动作。变更记录属于设计案的修订摘要，不进入本目录
 - 内容包含后端代码、具体函数、参数释义，写入[CODEBASE.md](./CODEBASE.md)
 - 内容包含前端代码、具体函数、参数释义，写入[vex-vue/CODEBASE.md](../../vex-vue/CODEBASE.md)
 - 内容包含概念词典、风格定义、核心原则约束、设计哲学、经验备忘（踩过的坑）写入[DESIGN.md](./DESIGN.md)
@@ -774,11 +775,64 @@
 
 **设计意图：** 一个总编排器，管理整个战斗生命周期 —— 普通/战斗模式切换、守护进程心跳轮询、NPC 自动刷新、演示批处理消费、场景重基准协调。它被设计为非阻塞协调器，将动画委托给执行器，将演示委托给会话，将场景过渡委托给场景存储。
 
+其内部承载一套**四层职责分离**的战斗演出架构，把"原料 → 编排 → 步骤 → 执行"切成四个互不越界的层：
+
+- **导演层**（`battle-director-v2.ts::directV2`）：同步纯函数，把后端 `battlelog.v2` 事件数组按 `action_uid` 聚合为 `BattlePlayScriptV2`，输出四类 segment（`round_intro` / `turn` / `battle_end` / `system`），不做任何 DOM 或异步操作。`round_intro` 段由 `turn_start` 事件触发生成（每 turn_start 1 个），在 `getTurnSegment` 之前 push 以保证 `[round_intro, turn]` 顺序。
+- **计划层**（`battle-director-v2.ts::planPlaybackV2`）：同步纯函数，把 script 拆解为 `BattlePlaybackPlan`（含 `PlaybackStep[]`），每个 step 附 `awaitPolicy` 与 `timeout`。这一层把"该播什么"转译为"按什么顺序播、每步等多久"。
+- **执行器**（`battle-playback-runner.ts::runBattlePlaybackPlan`）：按 step 顺序串行执行，提供取消式 timeout 与 Scene active guard 两个兜底机制。
+- **演员层**（`battle-actor-executor.ts` + 演出组件）：只通过 `ActorRuntime` lease 与 `BattlePresentationSession` 执行动作，不查询 DOM，不涉及文案或 HP 更新；演出组件 `BattleBanner.vue` / `BattleModal.vue` 单独消费 v2 text cue 并按 effect delta 更新 HP 条（仅 BattleModal）。
+
+**命令式驱动 + 组件注册模式：** store 与演出组件之间不通过共享响应式状态 + watch 触发通信，而是采用命令式直接调用：组件在 `onMounted` 中通过 `registerBannerPlayer` / `registerModalPlayer` 把实现接口（`SegmentPlayer` / `BannerPlayer`）的引用注册到 store，`onUnmounted` 中注销；store 在 `playSegmentText` / `enterBattleEndMask` / `playBattleEndContent` 中通过 `selectPlayer(segment.kind)` 路由到对应 player 并 `await player.playSegment(...)`。组件返回即播放完成，runner 推进下一步。这一模式消除了"共享状态竞态 + watch 副作用 + 显式 ready 信号"三重耦合，把"播放完成"语义从"watch 触发→组件执行→显式 notify"简化为"调用→await 返回"。组件未注册时 store 抛错；组件播放中 unmounted 时 reject sleep Promise 让错误传播到 store 的 await。
+
+**演出组件视觉语言分级：** BattleBanner（横幅）与 BattleModal（模态框）承担不同语义职责，视觉语言必须分化——横幅是瞬态阶段标记（"轻、快、一眼可读"），模态框是战报详情载体（"重、正式、需细读"）。横幅采用统一的 无框章节卡样式：透明背景、无边框、无阴影，装饰线 + 标题（18px）+ 可选附加信息 + 装饰线，text-shadow 保证可读性，一次性显示完整内容不逐条播放。round_intro 显示"第 N 轮" + 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）；battle_end 显示"战斗结束" + notice.reason 作为附加信息（12px 更淡色调）。视觉分化避免了横幅沦为"缩小版模态框"的同质化问题，让玩家从视觉上即可区分"瞬态宣告"与"战报详情"。
+
+**回合宣告归属 turn 段（框架基准）：** round_intro 横幅承担回合提示职责，替代原 toast "你的回合"。核心设计：每个 `turn_start` 事件生成一个 `round_intro` 段（actor 来自 `turn_start` 事件的 `payload.actor`，不是 `round_start` 事件的 `rolls[0]`），在 `getTurnSegment` 之前 push 以保证 `[round_intro, turn]` 顺序。这样每个角色的回合都有"第 N 轮 - xx 的回合"横幅宣告，而非每轮只有第一个行动者被宣告。第一个 turn 的 round_intro 自然承担战斗开始的视觉宣告——玩家进入战斗后看到的第一个横幅就是它，不需要独立的"战斗开始"阶段。用 `turn_start` 事件触发而非 directV2 末尾遍历所有 turn 段，是为了避免跨 batch 重复：`directV2` 是无状态纯函数，每个 presentation batch 独立调用，同一敌人回合的事件可能被分到两个 batch（第一个含 `turn_start` + 部分 action，第二个只有 `action_start`），末尾遍历会导致两个 batch 都生成 round_intro；改用 `turn_start` 事件触发后，只有含 `turn_start` 的 batch 才生成 round_intro。BattleModal 内 turn 段的分隔符显示"── xx 的回合 ──"（行动者标识），与横幅形成层次分工：横幅是瞬态宣告（轮次 + 行动者），模态框分隔符是战报内的回合定位（行动者）。toast "你的回合"已移除。
+
+**阶段切片模型：** 计划层把每个 segment 切成有限种类的播放阶段，是"该播什么"到"按什么顺序播"的核心抽象。按演出语义命名如下（括号内为 `PlaybackStep.kind` 索引锚点 + 承接组件）：
+
+**轮次开场**（round_intro 段，每 `turn_start` 事件 1 个，1 阶段）：
+- **轮次宣告**（`modal_text`，BattleBanner）—— 遮罩 + 章节卡横幅同时淡入，"第 N 轮" + 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）+ 上下装饰线，一次性显示，停留后同时淡出
+
+**回合演出**（turn 段，6 阶段严格顺序）：
+- **回合接场**（`segment_context`）—— 更新敌人名称/位置
+- **战场就绪**（`prepare_map`）—— 等待地图与角色 actor 就绪
+- **动作演出**（`action_choreography`）—— 单 action 完整动画编排，每个 action 一个
+- **退场演出**（`combatant_cleared`）—— 参战者死亡/逃跑退场，每个 cleared notice 一个
+- **战报回放**（`modal_text`，BattleModal）—— 模态框文本日志逐条播放 + HP 同步
+- **伤害浮现**（`damage_linger`）—— 伤害数字浮现，fire-and-forget
+
+**系统段**（system 段）：
+- **系统文本**（`modal_text`，BattleModal）—— 系统级 notice 文本播放
+
+**战斗收场**（battle_end 段，3 阶段）：
+- **终幕遮罩**（`battle_end_overlay_enter`，BattleBanner.showMask）—— 战斗结束遮罩淡入并持续显示
+- **场景交接**（`presentation_scene_handoff`）—— 释放战斗 lease + 发布权威 rebase + 启动世界位移动画
+- **终局战报**（`battle_end_modal_content`，BattleBanner.showContent）—— 无框章节卡横幅淡入（"战斗结束" + reason 附加信息），与场景交接并行，等两者都完成，最后横幅淡出 → 遮罩淡出
+
+`动作演出`是早期 `action_delivery` + `combatant_joined` + `action_animation` 三步合并的产物——计划层不再拆分，由演员层 `playActionChoreography` 统一编排 delivery + joined + animation + effect 命中反馈，避免计划层过度暴露内部 cue 顺序。
+
+`PlaybackStep.kind` 中的 `modal_text` / `battle_end_modal_content` 是历史命名——实际承接组件已根据段类型分流（round_intro / battle_end → BattleBanner，turn / system → BattleModal），但 step kind 不再更名以保持 plan 序列化稳定性。
+
+**取消式 timeout 与 Scene 失效守卫：** 执行器对 `awaitPolicy: 'completion'` 的 step 设 timeout，超时不是简单跳过，而是先 `task.cancel()` 清理 GSAP tween / overlay DOM / lease handle，再等 `task.finished` settled 后才继续下一步——避免动画资源泄漏。每步由 scene guard 每 16ms 检查 `scene.active`，MapGrid 重挂载会导致 `scene.active=false`，立即取消当前 task 并让 battle store abort 旧 presentation session。runner 的 `withTimeout` 对 `task.finished.catch` 不抛错，确保 battle_end 流程中即使 handoff 异常也能让 `playBattleEndContent` 的 `Promise.allSettled` 正常 settled。
+
 **边界案例：**
 
 - 演示播放循环达到 32 轮上限时仅输出控制台警告，不强制终止会话 —— 会话状态保留，已消费的批次继续处理，防止死循环的同时不丢失未完成的状态。
 - 播放间隙检测到战斗 ID 变化时终止旧会话。
-- 战斗结束段与普通段区分处理（使用特殊覆盖流程）。
+- 战斗结束段与普通段区分处理（使用特殊覆盖流程）：`battle_end` 段不走战报回放，改走**终幕遮罩 → 场景交接 → 终局战报**三步。终幕遮罩由 `enterBattleEndMask` 命令式调用 `bannerPlayer.showMask`，返回后遮罩持续显示；场景交接启动 world animation 后立即放行；终局战报由 `playBattleEndContent` 用 `Promise.allSettled` 并行等待 `bannerPlayer.showContent` 与 `pending.finished`（handoff 动画）两者都完成，`try/finally` 确保异常分支下 `cancelMask` 兜底关闭持续显示的遮罩。
+- `cancelMask` 仅在纯遮罩阶段（`bannerOpen === false`）生效——正文播放中为 no-op，正文流程会自行关闭遮罩，避免双重关闭导致状态错乱。
+- 组件未注册时 store 抛错（`no player registered for segment kind` / `banner player not registered`）；`playBattleEndContent` 的 `finally` 中 `bannerPlayer` 可能为 null，需 null 检查后调 `cancelMask`。
+- 组件播放中 unmounted（如 `exitBattleMode` 触发 BattleMode 卸载）时，`onUnmounted` reject sleep Promise 让错误传播到 store 的 `await player.playSegment(...)`，store 抛错由 runner 的 `withTimeout` 兜底（`task.finished.catch` 不抛错），整个播放链路安全终止。
+- 演出组件重入保护：`playing` ref 守卫，重入时直接返回（命令式模式下"返回"即"推进"），避免上一次播放未结束就被下一次调用打断造成状态错乱。
+- 横幅正文 XSS 防护：`battle_end` 段的 `notice.reason` 是后端返回的原始字符串（未经 HTML 转义），BattleBanner 用 Vue 文本插值 `{{ notice.reason }}` 而非 `v-html` 渲染——避免后端数据污染前端 DOM。`notice.text.html`（已转义）仅供需要富文本的场景使用，横幅的简洁呈现不需要。
+- `combatant_cleared` 事件的 `reason='dead'` 在后端 emit 时即被映射为 `'death'`，前端演员层只识别 `'death'` / `'escaped'` 两种 reason，避免后端历史命名污染前端语义。
+- `reason='escaped'` 在 retreat 模式（`visual_policy='retreat'`）下不播 fade 动画，直接 completedTask —— 退场动画交给稳定边界按最新投影 reconcile，避免与 world rebase 动画打架。
+- `reason='death'` 使用 terminal 优先级 lease（不可被抢占）+ `lease.play({kind:'fall'})`，确保死亡动画一定播完不被后续 action 中断。
+- 动作演出的 awaitPolicy 特殊规则：当 `animation.kind === 'none'` 且所有 `deliveries` 的 `type === 'none'` 时为 `'none'`（fire-and-forget），否则为 `'completion'`——纯文本 action 不阻塞后续阶段。
+- `animation.kind='move'` 的 timeout 特殊化为 2200ms（其他为 2800ms），且演员层按移动距离分 `duck` / `jump` / `long` 三档动画，距离阈值由 `playMoveAction` 内部决定。
+- `hitTrigger='attack-impact'` 时等 attackMain 的 impact cue 后并行 hit + attackHandles，避免命中反馈早于攻击动画到达（视觉因果倒置）。
+- 伤害浮现是唯一 `awaitPolicy='none'` 的阶段，通过 `dataManager.broadcast('battle:play-damage-numbers')` 派发，DamageNumber 组件按 `[data-character-pid]` 定位 actor 自行播放——主时序不等待伤害数字浮现。
+- Scene generation 失效时（MapGrid 重挂载）整个 `playScriptV2` 抛错，由 `consumePresentationBatches` catch 处理，旧 presentation session 被 abort，新 batch 重新创建 session。
 
 #### 框架 K-2：合成模态状态机 + 防抖预览
 
@@ -893,6 +947,8 @@
 - 半成品态是模态的：激活时技能库和轨道操作禁用，必须先完成或取消当前瞄准。
 - 技能库标签页筛选（全部/机动/攻击/辅助/终结），默认全部保持全局视野。终结分类由后端字段派生，非硬编码。
 - 终结技唯一性前置校验：前端在入队入口阻止添加第二个终结技（任意终结技，不限同一技能 ID），不依赖后端兜底丢弃策略。
+- AP 槽锁定序号表达归属而非位置：AP 槽的 `lockedByOrder` 标记的是"占据该槽的队列项序号"而非"第几个槽"——槽位位置已表达"第几槽"，序号应表达"归属哪个动作"。动作1 消耗 2AP 时，前两个槽都显示"1"表示同属动作1，而非"1"和"2"。这是"信息冗余"与"信息增量"的区分原则——槽位序号是冗余信息（位置已表达），归属序号是增量信息（位置未表达）。
+- 事件监听链完整清理原则：废弃的广播事件必须同步清理监听端（监听函数 + listen/unlisten 注册 + 联合类型成员），半截清理会制造新的死代码。`battle:preload-clear` 广播被 PreloadArea 内部 `[清空]` 按钮取代后，需同步清理 PreloadArea 的监听函数与 listen/unlisten 注册，以及 `types/events.ts` 的联合类型成员。
 
 **模块级：**
 
@@ -901,6 +957,8 @@
 - 重新瞄准流程：项从队列临时移除→进入半成品态→选定新目标后回插原位（不走正常入队路径以避免触发终结技插入逻辑与唯一性校验）。
 - hover 联动：鼠标悬停轨道项时，对应 AP 槽高亮，通过事件委托驱动。
 - 终结技耗尽视觉反馈：队列中已有终结技时，技能库中所有终结技按钮黯淡显示。按钮不禁用——保留可点击性，点击触发提示解释为何不可用，让用户理解原因而非单纯禁用。
+- 快速瞄准：连续对同一敌人放多个技能时，技能库中需要瞄准敌人的技能（`aimType === 'pid'`）右侧显示"→目标名(位置)"快捷标签，点击跳过瞄准模式直接入队。`canQuickAim` 提前过滤所有会导致失败的校验（CD/终结技/射程/可用性）——快捷标签的职责是"快速添加"，不能添加就不应出现；`onQuickAimClick` 保留二次校验作为竞态防御。取队列中最后一个 pid 目标（最近决策最能代表当前意图）。标签始终带位置（`名字(pls)`）以消除同名敌人歧义——位置是 PID 之外最强的人类可读识别码，与装填轨道项 target chip 的位置信息视觉语言对齐；位置始终显示而非智能切换，避免依赖 `battleStore.combatTargets.candidates`（pre-battle 模式下可能未加载）作为同名数量统计的数据源。复用现有 `addToQueue` / `findSelectableCombatTarget` / `isEnemyInSkillRange` / `getPlannedActorPls` 基础设施，只新增"跳过瞄准模式"的并行路径。
+- 战斗按钮五态：StatusBar 战斗按钮的三态文案和禁用逻辑扩展为五态——normal 可用/禁用、battle 退出预战斗/常态战斗禁用、aim 退出瞄准。常态战斗态（后端 `action === 'battle'`）显示"战斗中"并禁用，title 提示"战斗进行中，无法主动退出"——避免按钮显示"取消"误导用户以为可退出战斗。aim 态文案为"取消瞄准"（设计案不引入键盘快捷键）。
 
 **边界案例：**
 
@@ -913,6 +971,8 @@
 - 终结技唯一性与重新瞄准的交互：重新瞄准时终结技被临时移出队列进入半成品态，此时队列暂无终结技，不会误触发唯一性校验，技能库中其他终结技按钮也不会显示耗尽态。这是正确的——用户在修改目标而非新增。
 - 技能表未加载时的终结性判定：技能表加载完成前终结性集合为空，所有项暂时被视为非终结技。由初始化流程保证技能表加载完成前用户无法点击技能，可接受。
 - 终结技耗尽态点击行为：耗尽态下终结技按钮不禁用，点击触发提示解释。不禁用的理由：禁用按钮无法触发点击事件，用户无法得知"为何不可用"；保留可点击性让提示解释原因，是更友好的体验。
+- 快速瞄准的 11 项边界：详见独立设计案 `快速瞄准与战斗标题清理-设计案-2026-07-14.md` §2.6。包括射程依赖队列前缀、目标死亡/状态变化、多 pid 目标取最后一个、tile vs pid 不适用、终结技耗尽态不显示标签、pendingItem 激活时随行禁用、pre-battle 首次添加无标签、队列只有 tile 目标时无标签、canQuickAim 到点击期间的状态变化、重新瞄准时 lastPidTarget 的回退、同名敌人歧义（位置消除）。
+- 战斗标题待重新设计：原战斗标题组件只支持单敌人显示，多敌人时只显示1个，预战斗瞄准态被用 `enemyName` 字段硬塞字面量 `'瞄准模式'` 作为 UI 状态 hack。该组件已废弃，战斗上下文（参战方信息）的展示位置和形式待后续重新设计，需支持多敌人场景。当前 PreloadArea 的瞄准状态由 Breadcrumb 区专职反馈，战斗上下文不在 PreloadArea 范畴。
 
 #### 框架 L-4：异步播放编排器
 

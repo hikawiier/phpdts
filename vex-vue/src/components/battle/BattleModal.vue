@@ -2,23 +2,22 @@
 // ══════════════════════════════════════════════════
 // 战斗演出模态框 / Battle Presentation Modal
 //
+// 处理 turn（战报回放）和 system（系统段）的视觉呈现。
+// 实现 SegmentPlayer 接口，由 store 命令式调用 playSegment。
+//
 // 纯展示模态框，按 BattleSegmentV2 分段播放 battlelog 条目：
 // - 逐条显示，每条带淡入动画
-// - 段首插入段分隔符（── 第 N 轮 ── / ── 战斗结束 ──）
-// - HP 条从 effect delta 更新
+// - 段首插入段分隔符（turn 段显示"── xx 的回合 ──"）
+// - HP 条从 effect delta 更新（仅 turn 段显示）
 // - 播放完自动关闭
 // - 遮罩拦截点击，播放期间禁止操作
 //
-// 触发方式：
-// - battleStore.battleModalOpen 变为 true 时开始播放
-// - 播放完成后调用 battleStore.notifyModalClosed() 通知 store
-//
 // Teleport to body：避免 position: fixed 与父级 transform 冲突
 //
-// 关联文档：oblivions/docs/设计案3-重构前端播放系统.md §五
+// 关联文档：oblivions/docs/战斗横幅组件设计案-2026-07-14.md §7.2
 // ══════════════════════════════════════════════════
 
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
 import type {
   BattleSegmentV2,
@@ -27,6 +26,7 @@ import type {
   DirectedEffectV2,
   TextCue,
 } from '@/stores/battle-director-v2';
+import type { SegmentPlayOptions } from '@/stores/battle-playback-runner';
 
 // ── 播放参数 ──
 const ENTRY_INTERVAL = 500;       // 条目间隔 ms
@@ -39,6 +39,9 @@ const overlayOpen = ref<boolean>(false);
 const overlayClosing = ref<boolean>(false);
 /** 是否正在播放（并发守卫） */
 const playing = ref<boolean>(false);
+
+// ── 当前段（由 playSegment 设置，供 computed 使用） ──
+const currentSeg = ref<BattleSegmentV2 | null>(null);
 
 // ── 显示的条目 ──
 interface DisplayedEntry {
@@ -75,9 +78,9 @@ const playerHpClass = computed<string>(() => hpBarClass(playerHp.value, playerMa
 const enemyHpPercent = computed<string>(() => hpPercent(enemyHp.value, enemyMaxHp.value));
 const playerHpPercent = computed<string>(() => hpPercent(playerHp.value, playerMaxHp.value));
 
-/** HP 条是否显示（仅 turn/phase0 段显示） */
+/** HP 条是否显示（仅 turn 段且有 HP effect 时显示） */
 const showHpBar = computed<boolean>(() => {
-  const seg = battleStore.currentSegment;
+  const seg = currentSeg.value;
   if (!seg) return false;
   return seg.kind === 'turn' && hasHpEffect(seg);
 });
@@ -106,7 +109,7 @@ function scrollToBottom(): void {
 }
 
 // ══════════════════════════════════════════════════
-// 播放逻辑
+// 播放工具
 // ══════════════════════════════════════════════════
 
 function sleep(ms: number): Promise<void> {
@@ -140,110 +143,9 @@ function waitForOverlayTransition(): Promise<void> {
   });
 }
 
-function waitForBattleEndContent(sessionId: string): Promise<void> {
-  if (battleStore.battleModalSessionId !== sessionId || battleStore.battleModalContentReady) {
-    return Promise.resolve();
-  }
-  return new Promise(resolve => {
-    const timeout = setTimeout(finish, 10000);
-    const stop = watch(
-      () => [battleStore.battleModalSessionId, battleStore.battleModalContentReady] as const,
-      ([activeSessionId, ready]) => {
-        if (activeSessionId !== sessionId || ready) finish();
-      },
-    );
-    function finish() {
-      clearTimeout(timeout);
-      stop();
-      resolve();
-    }
-  });
-}
-
-async function playBattleLog(): Promise<void> {
-  if (playing.value) {
-    battleStore.notifyModalClosed(battleStore.battleModalSessionId ?? '');
-    return;
-  }
-  playing.value = true;
-  try {
-    const segment = battleStore.currentSegment as BattleSegmentV2 | null;
-    const sessionId = battleStore.battleModalSessionId;
-    if (!segment || !sessionId) {
-      battleStore.notifyModalClosed(sessionId ?? '');
-      return;
-    }
-    const playbackItems = collectPlaybackItems(segment);
-    // battle_end/round_intro 段可能正文为空但仍需显示分隔符
-    if (playbackItems.length === 0 && segment.kind !== 'battle_end' && segment.kind !== 'round_intro') {
-      battleStore.notifyModalClosed(sessionId);
-      return;
-    }
-
-    // 初始化 HP（从段首 HP effect 的 before 值读）
-    initHpFromSegment(segment);
-
-    // 清空正文
-    displayedEntries.value = [];
-
-    // 显示模态框
-    const entered = waitForOverlayTransition();
-    overlayOpen.value = true;
-    overlayClosing.value = false;
-    await entered;
-    if (cancelRequested) return;
-
-    if (battleStore.battleModalIsBattleEnd) {
-      battleStore.notifyBattleEndOverlayCovered(sessionId);
-      await waitForBattleEndContent(sessionId);
-      if (cancelRequested || battleStore.battleModalSessionId !== sessionId) return;
-    }
-
-    // 段分隔符
-    const divider = getSegmentDivider();
-    if (divider) {
-      displayedEntries.value.push({ html: divider.html, shown: false, isDivider: true });
-      await nextTick();
-      displayedEntries.value[displayedEntries.value.length - 1].shown = true;
-      scrollToBottom();
-      await sleep(ENTRY_INTERVAL / 2);
-      if (cancelRequested) return;
-    }
-
-    // 逐条播放
-    const sorted = playbackItems.sort((a, b) => Number(a.rawLogId || 0) - Number(b.rawLogId || 0));
-    for (const item of sorted) {
-      if (cancelRequested) return;
-      const html = item.cue.html;
-      if (html) {
-        displayedEntries.value.push({ html, shown: false, isDivider: false });
-        await nextTick();
-        await sleep(ENTRY_FADE_DELAY);
-        displayedEntries.value[displayedEntries.value.length - 1].shown = true;
-        scrollToBottom();
-      }
-      if (item.effect && item.action) updateHpFromEffect(item.action, item.effect);
-      await sleep(ENTRY_INTERVAL);
-    }
-
-    if (cancelRequested) return;
-    await sleep(COMPLETE_HOLD);
-    if (cancelRequested) return;
-
-    overlayClosing.value = true;
-    const exited = waitForOverlayTransition();
-    overlayOpen.value = false;
-    await exited;
-    overlayClosing.value = false;
-    displayedEntries.value = [];
-
-    battleStore.notifyModalClosed(sessionId);
-  } catch {
-    battleStore.notifyModalClosed(battleStore.battleModalSessionId ?? '');
-  } finally {
-    playing.value = false;
-  }
-}
+// ══════════════════════════════════════════════════
+// 段内容收集
+// ══════════════════════════════════════════════════
 
 function collectPlaybackItems(segment: BattleSegmentV2): PlaybackItem[] {
   const items: PlaybackItem[] = [];
@@ -328,35 +230,100 @@ function setEnemyHpFromCombatant(combatant: CombatantView | null | undefined): v
   enemyMaxHp.value = combatant.mhp || 1;
 }
 
-/** 获取当前段的分隔符（无则返回 null） */
-function getSegmentDivider(): { html: string } | null {
-  const seg = battleStore.currentSegment as BattleSegmentV2 | null;
-  if (!seg) return null;
+/** 获取段的分隔符（接收 segment 参数，不读 store） */
+function getSegmentDivider(seg: BattleSegmentV2): { html: string } | null {
   switch (seg.kind) {
     case 'round_intro': return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
-    case 'turn':        return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
+    case 'turn':
+      if (!seg.actor) return null;
+      return { html: `── ${seg.actor.type === 0 ? '你' : seg.actor.name} 的回合 ──` };
     case 'battle_end':  return { html: '── 战斗结束 ──' };
     default:            return null;
   }
 }
 
 // ══════════════════════════════════════════════════
-// 监听 store 触发播放
+// SegmentPlayer 接口实现
 // ══════════════════════════════════════════════════
 
-watch(
-  () => battleStore.battleModalOpen,
-  (open) => {
-    if (open) {
-      cancelRequested = false;
-      playBattleLog();
+/** 播放 turn / system 段：overlay 淡入 → HP 条 → 段分隔符 → 逐条正文 → HP 同步 → 停留 → overlay 淡出 */
+async function playSegment(
+  segment: BattleSegmentV2,
+  _sessionId: string,
+  options: SegmentPlayOptions,
+): Promise<void> {
+  // 重入保护：直接返回（命令式模式下"返回"即"推进"）
+  if (playing.value) return;
+  playing.value = true;
+  try {
+    currentSeg.value = segment;
+    const playbackItems = collectPlaybackItems(segment);
+    if (playbackItems.length === 0 && !options.alwaysShowHeader) return;
+
+    // 初始化 HP（从段首 HP effect 的 before 值读）
+    initHpFromSegment(segment);
+
+    // 清空正文
+    displayedEntries.value = [];
+
+    // 显示模态框
+    const entered = waitForOverlayTransition();
+    overlayOpen.value = true;
+    overlayClosing.value = false;
+    await entered;
+    if (cancelRequested) return;
+
+    // 段分隔符
+    const divider = getSegmentDivider(segment);
+    if (divider) {
+      displayedEntries.value.push({ html: divider.html, shown: false, isDivider: true });
+      await nextTick();
+      displayedEntries.value[displayedEntries.value.length - 1].shown = true;
+      scrollToBottom();
+      await sleep(ENTRY_INTERVAL / 2);
+      if (cancelRequested) return;
     }
-  },
-);
+
+    // 逐条播放（含 HP 同步）
+    const sorted = playbackItems.sort((a, b) => Number(a.rawLogId || 0) - Number(b.rawLogId || 0));
+    for (const item of sorted) {
+      if (cancelRequested) return;
+      const html = item.cue.html;
+      if (html) {
+        displayedEntries.value.push({ html, shown: false, isDivider: false });
+        await nextTick();
+        await sleep(ENTRY_FADE_DELAY);
+        displayedEntries.value[displayedEntries.value.length - 1].shown = true;
+        scrollToBottom();
+      }
+      if (item.effect && item.action) updateHpFromEffect(item.action, item.effect);
+      await sleep(ENTRY_INTERVAL);
+    }
+
+    if (cancelRequested) return;
+    await sleep(COMPLETE_HOLD);
+    if (cancelRequested) return;
+
+    overlayClosing.value = true;
+    const exited = waitForOverlayTransition();
+    overlayOpen.value = false;
+    await exited;
+    overlayClosing.value = false;
+    displayedEntries.value = [];
+  } finally {
+    playing.value = false;
+  }
+}
+
+defineExpose({ playSegment });
 
 // ══════════════════════════════════════════════════
-// 生命周期清理
+// 生命周期
 // ══════════════════════════════════════════════════
+
+onMounted(() => {
+  battleStore.registerModalPlayer({ playSegment });
+});
 
 onUnmounted(() => {
   cancelRequested = true;
@@ -369,11 +336,9 @@ onUnmounted(() => {
     rejectSleep = null;
     r(new Error('BattleModal unmounted'));
   }
-  const sessionId = battleStore.battleModalSessionId;
-  if (sessionId) {
-    battleStore.notifyBattleEndOverlayCovered(sessionId);
-    battleStore.notifyModalClosed(sessionId);
-  }
+  battleStore.unregisterModalPlayer();
+  // 不再需要调 notifyModalClosed / notifyBattleEndOverlayCovered
+  // —— 共享状态已消除，函数返回即完成
 });
 </script>
 
@@ -385,7 +350,7 @@ onUnmounted(() => {
       :class="{ open: overlayOpen, closing: overlayClosing }"
     >
       <div class="battle-modal">
-        <!-- 头部：双方名称 + HP 条（仅 turn/phase0 段显示） -->
+        <!-- 头部：双方名称 + HP 条（仅 turn 段显示） -->
         <div v-if="showHpBar" class="battle-modal-header">
           <div class="battle-modal-combatant enemy">
             <span class="battle-modal-combatant-name">{{ enemyName }}</span>

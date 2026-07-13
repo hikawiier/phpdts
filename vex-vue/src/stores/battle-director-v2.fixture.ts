@@ -28,15 +28,6 @@ const ENEMY = {
 };
 
 export const BATTLE_DIRECTOR_V2_FIXTURE_EVENTS: BattleLogV2Event[] = [
-  makeEvent(1, 'round_start', {
-    bl_round_num: 0,
-    payload: {
-      rolls: [
-        { pid: PLAYER.pid, type: PLAYER.type, name: PLAYER.name, roll: 5, initiative: 5, myorder: 1 },
-        { pid: ENEMY.pid, type: ENEMY.type, name: ENEMY.name, roll: 3, initiative: 3, myorder: 2 },
-      ],
-    },
-  }),
   makeEvent(2, 'turn_start', {
     actor_pid: PLAYER.pid,
     bl_round_num: 0,

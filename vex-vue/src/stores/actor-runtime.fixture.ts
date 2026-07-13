@@ -107,10 +107,10 @@ export async function assertPlaybackSceneGuardFixture(): Promise<void> {
     scene,
     presentation,
     updateSegmentContext: () => new Promise<void>(() => {}),
-    playSegmentInModal: async () => {},
-    enterBattleEndOverlay: async () => {},
+    playSegmentText: async () => {},
+    enterBattleEndMask: async () => {},
     handoffPresentationScene: async () => {},
-    playBattleEndModalContent: async () => {},
+    playBattleEndContent: async () => {},
   });
   setTimeout(() => { active = false; }, 5);
   let rejected = false;
@@ -178,10 +178,10 @@ export async function assertPlaybackTimeoutCancellationFixture(): Promise<void> 
     scene,
     presentation,
     updateSegmentContext: async () => {},
-    playSegmentInModal: async () => {},
-    enterBattleEndOverlay: async () => {},
+    playSegmentText: async () => {},
+    enterBattleEndMask: async () => {},
     handoffPresentationScene: async () => {},
-    playBattleEndModalContent: async () => {},
+    playBattleEndContent: async () => {},
   });
   assert(cancelled, 'playback timeout released the step without cancelling its animation handle');
 }
@@ -226,10 +226,10 @@ export async function assertBattleEndParallelBarrierFixture(): Promise<void> {
     },
     presentation,
     updateSegmentContext: async () => {},
-    playSegmentInModal: async () => {},
-    enterBattleEndOverlay: async () => {},
+    playSegmentText: async () => {},
+    enterBattleEndMask: async () => {},
     handoffPresentationScene: async () => {},
-    playBattleEndModalContent: async () => {
+    playBattleEndContent: async () => {
       contentStarted = true;
       assert(!handoffSettled, 'battle-end content waited for handoff animation before starting');
       await Promise.all([modalClosed, handoffFinished]);

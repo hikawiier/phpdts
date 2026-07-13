@@ -18,7 +18,6 @@ export type AppEvent =
   | 'battle:started'
   | 'battle:aim-mode'
   | 'battle:aim-exit'
-  | 'battle:preload-clear'
   | 'preload:executed'
   | 'log:force-scroll'
   | 'log:add-unread'
