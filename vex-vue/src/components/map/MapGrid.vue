@@ -19,8 +19,10 @@
 //
 // 注意：#mapGrid 和 #mapContainer 的 id 保留（与现有 CSS + useMapInteraction 一致）。
 //       cell DOM 由 Vue v-for 管理，不能再通过 innerHTML 修改。
-//       shakeCurrentCell/highlightCell/showPathPreview 仍通过 class 切换操作 DOM
-//       （只添加/移除临时 class，不修改内容，与 Vue 虚拟 DOM 兼容）。
+//       所有叠加层视觉（cell-path/cell-shake/move-highlight class、cell-path-arrow 子节点）
+//       均改为响应式状态驱动：useMapRender.cells computed 读取 pathPreviewCells/shakePls/highlightPls
+//       状态注入 class 与 pathArrow 字段，Vue 以 :class / v-if 管理 DOM，
+//       避免命令式 classList.add/appendChild 与 v-for diff 冲突导致残留。
 // ══════════════════════════════════════════════════
 
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
@@ -38,7 +40,7 @@ import {
   triggerCellLeave,
   type CellData,
 } from '@/composables/useMapRender';
-import { initMapInteraction, centerOnPlayer } from '@/composables/useMapInteraction';
+import { initMapInteraction, centerOnPlayer, clearPathPreview } from '@/composables/useMapInteraction';
 import { setupMapCallbacks } from '@/composables/useMapBusiness';
 import { dataManager } from '@/stores/data-manager';
 import { useMapEntities } from '@/composables/useMapEntities';
@@ -110,11 +112,24 @@ const hasActiveCombat = computed(() =>
 function entityClass(entity: MapEntity): Record<string, boolean> {
   const inBattle = battleStore.currentMode === 'battle';
   const dimmed = inBattle && hasActiveCombat.value && entity.inCombat === false;
+  const pid = entity.characterPid;
+  const aimState = pid != null ? aimTargetingStore.getEnemyAimState(pid) : null;
   return {
     [`entity-${entity.kind}`]: true,
     'entity-player': entity.id === 'player',
     'entity-dimmed': dimmed,
+    'aim-targetable': aimState?.status === 'selectable',
+    'aim-out-of-range': aimState?.status === 'out-of-range',
+    'aim-blocked': aimState?.status === 'blocked',
+    'aim-focused': pid != null && aimTargetingStore.aimFocusedPid === pid,
+    'aim-hover': pid != null && aimTargetingStore.aimHoverPid === pid,
   };
+}
+
+function entityTitle(entity: MapEntity): string {
+  const pid = entity.characterPid;
+  if (pid == null) return '';
+  return aimTargetingStore.getEnemyAimState(pid)?.title ?? '';
 }
 
 function aimStateClass(state: AimTileVisualState): string | null {
@@ -127,7 +142,9 @@ function aimStateClass(state: AimTileVisualState): string | null {
 function cellClass(cell: CellData): Array<string[] | string> {
   const state = aimTargetingStore.getTileVisualState(Number(cell.pls), cell.isFogged);
   const aimClass = aimStateClass(state);
-  return aimClass ? [cell.classList, aimClass] : [cell.classList];
+  const hoverClass = aimTargetingStore.aimHoverPls === Number(cell.pls) ? 'aim-hover' : null;
+  const extras = [aimClass, hoverClass].filter(Boolean) as string[];
+  return extras.length ? [cell.classList, ...extras] : [cell.classList];
 }
 
 function cellTitle(cell: CellData): string {
@@ -170,10 +187,11 @@ function onCellEnter(cell: CellData): void {
 function onCellLeave(cell: CellData): void {
   if (uiStore.mapInputMode === 'aim') return;
   if (isMapCommandInputLocked()) return;
-  if (cell.isEmpty || cell.isCurrent || cell.hasEnemy) return;
-  if (cell.isReachable) {
-    triggerCellLeave();
-  }
+  if (cell.isEmpty) return;
+  // 总是清理路径预览：预览可能跨多个格，鼠标离开任意格都应清除。
+  // 不再依赖新 cell 的 isReachable/isCurrent/hasEnemy 状态——
+  // 数据变化（如玩家移动后 curLoc 改变）会让旧 cell 状态翻转，旧逻辑会漏清理。
+  triggerCellLeave();
 }
 
 function onEntityClick(entity: MapEntity, event: MouseEvent): void {
@@ -229,6 +247,31 @@ watch(
   { deep: false }, // 顶层引用变化即可（loadMap 会替换整个 links/enemies）
 );
 
+// ─── 仅在玩家位置/区域变化时清理路径预览 ───
+// 不在 links/mapEnemyList 变化时清理——后台心跳刷新（敌人移动等）会让 links 引用变化，
+// 但只要 curLoc 没变，预览路径仍然有效（敌人不阻塞玩家瓦片通行性）。
+// curLoc 变化 = 玩家移动 = 旧路径基于旧起点已失效，必须清理。
+watch(
+  () => [mapStore.curLoc, mapStore.curRegion],
+  () => {
+    if (!initialized) return;
+    clearPathPreview();
+  },
+);
+
+// ─── 离开探索态时清理路径预览 ───
+// 进入 aim/battle 模式是非鼠标事件触发的状态转换，onCellLeave 的 guard 会提前 return 不清理。
+// 路径预览只在 normal 探索态有意义，一旦离开 normal 必须清理。
+watch(
+  () => uiStore.battleBtnState,
+  (newState) => {
+    if (!initialized) return;
+    if (newState !== 'normal') {
+      clearPathPreview();
+    }
+  },
+);
+
 onMounted(() => {
   if (!gridRef.value || !containerRef.value) return;
 
@@ -265,6 +308,7 @@ onUnmounted(() => {
   }
   disposeEntities();
   resetRenderState();
+  clearPathPreview(); // 清理模块级路径预览状态，避免重新挂载时残留
   initialized = false;
 });
 </script>
@@ -327,6 +371,9 @@ onUnmounted(() => {
         <template v-else>
           <span class="cell-coord">{{ cell.coordLabel }}</span>
         </template>
+
+        <!-- 路径预览方向箭头（由 useMapInteraction.pathPreviewCells 响应式状态驱动） -->
+        <span v-if="cell.pathArrow" class="cell-path-arrow">{{ cell.pathArrow }}</span>
       </div>
 
       <!-- 实体层：所有地图实体（actor/poi/grass/crevice/worm，与 cells 同级，absolute 定位） -->
@@ -343,6 +390,7 @@ onUnmounted(() => {
         :data-entity-id="entity.id"
         :data-character-pid="entity.characterPid || undefined"
         :data-pls="entity.pls || undefined"
+        :title="entityTitle(entity)"
         @click="onEntityClick(entity, $event)"
       >
         <span

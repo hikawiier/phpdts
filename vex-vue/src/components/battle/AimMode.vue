@@ -9,12 +9,13 @@
 // 替代现有 vex/js/battle-aim.js 的 DOM 操作逻辑。
 // 职责：
 // - 监听 battle:aim-mode / battle:aim-exit 事件
-// - 瞄准模式下标记敌人格为可选目标（.aim-targetable class）
+// - 瞄准模式下计算敌人瞄准状态，写入 aimTargetingStore（响应式状态驱动）
 // - mousemove 实时绘制 SVG 贝塞尔曲线（玩家立绘 → 光标/敌人）
 // - 点击敌人格确认目标 → broadcast 'battle:aim-target-selected'
 //
 // 实现说明：
-// - 敌人格的 .aim-targetable class 通过 DOM 操作添加/移除（CSS 高亮效果）
+// - 敌人瞄准视觉状态（aim-targetable/aim-out-of-range/aim-blocked/aim-focused/aim-hover）
+//   通过 aimTargetingStore 响应式状态驱动，由 MapGrid.vue entityClass 消费 :class 绑定
 // - SVG 路径线用 Vue 响应式 aimLine ref + computed pathData 驱动
 // - click/mousemove 用事件委托（绑定在 mapGrid 上，检查 event.target.closest）
 // ══════════════════════════════════════════════════
@@ -27,7 +28,7 @@ import { findPath } from '@/composables/useMapReachability';
 import { useBattleStore } from '@/stores/battle';
 import type { CombatTargetCandidate } from '@/types/api';
 import { findSelectableCombatTarget } from '@/utils/combat-targeting';
-import { useAimTargetingStore } from '@/stores/aim-targeting';
+import { useAimTargetingStore, type AimEnemyVisualState } from '@/stores/aim-targeting';
 import type { AimModeEventData } from '@/types/events';
 import { useToastStore } from '@/stores/toast';
 import { buildAimLineGeometry } from '@/utils/aim-line-geometry';
@@ -160,24 +161,22 @@ function applyAimTargetable(): void {
   clearAimTargetable();
 
   if (aimTargetMode.value !== 'tile') {
-  const enemyEntities = grid.querySelectorAll<HTMLElement>('[data-character-pid]');
-  enemyEntities.forEach((entity) => {
-    const pid = parseInt(entity.getAttribute('data-character-pid') || '0');
-    entity.classList.remove('aim-targetable', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
-    const candidate = battleStore.combatTargets.candidates.find(item => Number(item.pid) === pid);
-    if (!candidate) return;
-    if (pid > 0 && isEnemySelectable(pid) && isEnemyInActionRange(pid)) {
-      entity.classList.add('aim-targetable');
-      entity.dataset.aimStatus = 'selectable';
-      entity.title = '可选择目标';
-      if (pid === focusedTargetPid.value) entity.classList.add('aim-focused');
-    } else {
-      const outOfRange = isEnemySelectable(pid);
-      entity.classList.add(outOfRange ? 'aim-out-of-range' : 'aim-blocked');
-      entity.dataset.aimStatus = outOfRange ? 'out-of-range' : 'blocked';
-      entity.title = outOfRange ? '目标距离过远' : candidateStatus(candidate);
+    // 计算敌人瞄准视觉状态，写入响应式 store（由 MapGrid.vue entityClass 消费）
+    const states = new Map<number, AimEnemyVisualState>();
+    for (const candidate of battleStore.combatTargets.candidates) {
+      const pid = Number(candidate.pid);
+      if (pid <= 0) continue;
+      if (isEnemySelectable(pid) && isEnemyInActionRange(pid)) {
+        states.set(pid, { status: 'selectable', title: '可选择目标' });
+      } else {
+        const outOfRange = isEnemySelectable(pid);
+        states.set(pid, {
+          status: outOfRange ? 'out-of-range' : 'blocked',
+          title: outOfRange ? '目标距离过远' : candidateStatus(candidate),
+        });
+      }
     }
-  });
+    aimTargetingStore.setEnemyAimStates(states, focusedTargetPid.value);
   }
 
   // 事件委托：在 mapGrid 上绑定 mousemove + click
@@ -191,24 +190,10 @@ function applyAimTargetable(): void {
 
 /** 清除所有敌人格的瞄准标记和事件 */
 function clearAimTargetable(): void {
+  aimTargetingStore.clearEnemyAimStates();
+
   const grid = getMapGrid();
   if (!grid) return;
-
-  grid.querySelectorAll<HTMLElement>('.aim-hover').forEach(element => {
-    element.classList.remove('aim-hover');
-  });
-  const markedEntities = grid.querySelectorAll<HTMLElement>(
-    '[data-character-pid].aim-targetable, [data-character-pid].aim-out-of-range, '
-    + '[data-character-pid].aim-blocked, [data-character-pid].aim-focused',
-  );
-  markedEntities.forEach((entity) => {
-    entity.classList.remove('aim-targetable', 'aim-out-of-range', 'aim-blocked', 'aim-focused');
-    if (entity.dataset.aimStatus) {
-      delete entity.dataset.aimStatus;
-      entity.removeAttribute('title');
-    }
-  });
-
   if (_onMouseMove) grid.removeEventListener('mousemove', _onMouseMove);
   if (_onMouseLeave) grid.removeEventListener('mouseleave', _onMouseLeave);
   if (_onClick) grid.removeEventListener('click', _onClick);
@@ -228,27 +213,28 @@ function onAimMouseMove(e: MouseEvent): void {
     : '[data-character-pid].aim-targetable';
   const aimCell = target?.closest?.(selector) as HTMLElement | null;
 
-  // 清除所有敌人格的 aim-hover，仅高亮当前
-  const grid = getMapGrid();
-  if (grid) {
-    grid.querySelectorAll<HTMLElement>('.aim-hover').forEach((c) => c.classList.remove('aim-hover'));
-  }
-
   if (aimCell) {
-    aimCell.classList.add('aim-hover');
+    // 更新响应式 hover 状态（由 MapGrid.vue :class 消费）
+    if (aimTargetMode.value === 'tile') {
+      const pls = parseInt(aimCell.getAttribute('data-pls') || '0');
+      aimTargetingStore.setAimHoverPls(pls || null);
+    } else {
+      const pid = parseInt(aimCell.getAttribute('data-character-pid') || '0');
+      aimTargetingStore.setAimHoverPid(pid || null);
+    }
     const rect = aimCell.getBoundingClientRect();
     drawAimLine(rect.left + rect.width / 2, rect.top + rect.height / 2);
   } else {
+    aimTargetingStore.setAimHoverPid(null);
+    aimTargetingStore.setAimHoverPls(null);
     drawAimLine(e.clientX, e.clientY);
   }
 }
 
 /** 光标离开地图区域：清除瞄准线 */
 function onAimMouseLeave(): void {
-  const grid = getMapGrid();
-  if (grid) {
-    grid.querySelectorAll<HTMLElement>('.aim-hover').forEach((c) => c.classList.remove('aim-hover'));
-  }
+  aimTargetingStore.setAimHoverPid(null);
+  aimTargetingStore.setAimHoverPls(null);
   clearAimLine();
 }
 

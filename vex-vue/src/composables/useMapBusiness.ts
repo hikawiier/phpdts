@@ -29,8 +29,8 @@ import { useBattleStore } from '@/stores/battle';
 import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
-import { setRenderCallbacks, getZoomLevel } from '@/composables/useMapRender';
-import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer } from '@/composables/useMapInteraction';
+import { setRenderCallbacks, setPathPreviewGetter, getZoomLevel, triggerHighlight } from '@/composables/useMapRender';
+import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer, getPathPreviewCells } from '@/composables/useMapInteraction';
 import { perf } from '@/utils/perf';
 import type { Character } from '@/types/character';
 import { isBattleMapInputLocked, isSilentMapCommandLock } from '@/stores/battle-ui-policy';
@@ -95,6 +95,10 @@ export async function clickMove(areaId: string | number): Promise<void> {
       perf.mark('→ broadcast game:action-completed', 'broadcast');
       dataManager.broadcast('game:action-completed');
       perf.mark('← broadcast game:action-completed 完成', 'broadcast');
+
+      // 移动成功后清理路径预览：玩家位置已变化，旧预览路径失效。
+      // 即便鼠标 @mouseleave 未触发（点击移动后鼠标静止），也能保证预览不残留。
+      clearPathPreview();
 
       // 移动路径高亮：目标格闪烁
       highlightCell(areaId);
@@ -202,19 +206,12 @@ export async function handleEnemyClick(enemy: Character): Promise<void> {
 
 /**
  * 移动路径高亮
- * 与现有 vex/js/map.js highlightCell 一致
+ *
+ * 委托 useMapRender.triggerHighlight 写入响应式状态，由 cells computed 驱动 :class 渲染。
+ * 取代旧命令式 querySelector + classList.add + setTimeout 自清理。
  */
 export function highlightCell(areaId: string | number): void {
-  const grid = document.getElementById('mapGrid');
-  if (!grid) return;
-  const cells = grid.querySelectorAll('.map-cell');
-  for (const cell of cells) {
-    if (cell instanceof HTMLElement && cell.dataset.pls === String(areaId)) {
-      cell.classList.add('move-highlight');
-      setTimeout(() => cell.classList.remove('move-highlight'), 600);
-      break;
-    }
-  }
+  triggerHighlight(areaId);
 }
 
 // ─── battle:ended 监听标志（避免重复注册） ───
@@ -258,6 +255,11 @@ export function setupMapCallbacks(): void {
       centerOnPlayer(smooth);
     },
   });
+
+  // ─── 注入路径预览状态读取接口 ───
+  // useMapInteraction 持有响应式 pathPreviewCells 状态，useMapRender 的 cells computed 通过此 getter 读取。
+  // 用注入而非直接 import 是为避免 useMapRender ↔ useMapInteraction 循环依赖。
+  setPathPreviewGetter(getPathPreviewCells);
 
   // ─── 注入交互回调 ───
   setInteractionCallbacks({

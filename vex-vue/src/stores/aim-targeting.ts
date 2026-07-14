@@ -184,11 +184,62 @@ export function createAimTargetingController(
   };
 }
 
+export type AimEnemyVisualStatus = 'selectable' | 'out-of-range' | 'blocked';
+
+export interface AimEnemyVisualState {
+  status: AimEnemyVisualStatus;
+  title: string;
+}
+
 export const useAimTargetingStore = defineStore('aim-targeting', () => {
   const controller = createAimTargetingController(
     previewCombatTargets,
     pls => dataManager.broadcast('battle:aim-target-selected', { pls }),
   );
   const isTileAim = computed(() => controller.active.value && controller.targetMode.value === 'tile');
-  return { ...controller, isTileAim };
+
+  // ── enemy 模式瞄准视觉状态（由 AimMode.vue 写入，MapGrid.vue entityClass/cellClass 消费） ──
+  // 与 tile 模式的 getTileVisualState 对称：取代旧命令式 classList.add/remove
+  const enemyAimStates = ref<Map<number, AimEnemyVisualState>>(new Map());
+  const aimFocusedPid = ref<number | null>(null);
+  const aimHoverPid = ref<number | null>(null); // enemy 模式 hover
+  const aimHoverPls = ref<number | null>(null); // tile 模式 hover
+
+  function setEnemyAimStates(states: Map<number, AimEnemyVisualState>, focusedPid: number | null): void {
+    enemyAimStates.value = states;
+    aimFocusedPid.value = focusedPid;
+  }
+
+  function clearEnemyAimStates(): void {
+    enemyAimStates.value = new Map();
+    aimFocusedPid.value = null;
+    aimHoverPid.value = null;
+    aimHoverPls.value = null;
+  }
+
+  function setAimHoverPid(pid: number | null): void {
+    aimHoverPid.value = pid;
+  }
+
+  function setAimHoverPls(pls: number | null): void {
+    aimHoverPls.value = pls;
+  }
+
+  function getEnemyAimState(pid: number): AimEnemyVisualState | null {
+    return enemyAimStates.value.get(pid) ?? null;
+  }
+
+  return {
+    ...controller,
+    isTileAim,
+    enemyAimStates,
+    aimFocusedPid,
+    aimHoverPid,
+    aimHoverPls,
+    setEnemyAimStates,
+    clearEnemyAimStates,
+    setAimHoverPid,
+    setAimHoverPls,
+    getEnemyAimState,
+  };
 });

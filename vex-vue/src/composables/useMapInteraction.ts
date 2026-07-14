@@ -17,10 +17,11 @@
 //   onUnmounted(() => cleanup());
 // ══════════════════════════════════════════════════
 
+import { ref, type Ref } from 'vue';
 import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
 import { useBattleStore } from '@/stores/battle';
-import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP } from '@/composables/useMapRender';
+import { applyZoom, getZoomLevel, renderMapGrid, ZOOM_STEP, triggerShakeCurrent } from '@/composables/useMapRender';
 import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapReachability';
 import type { TileInfo } from '@/types/api';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
@@ -28,6 +29,12 @@ import { usePresentationSceneStore } from '@/stores/presentation-scene';
 
 // ─── 回调注入（由 useMapBusiness 调用） ───
 let _onKeyMove: ((pls: string | number) => Promise<void> | void) | null = null;
+
+// ─── 路径预览响应式状态 ───
+// pls → 方向箭头字符。空 Map 表示无预览。
+// 由 showPathPreview/clearPathPreview 维护，由 useMapRender.cells computed 消费，
+// 让 Vue 通过 :class / v-if 管理 DOM，避免命令式 appendChild 与 v-for diff 冲突。
+const pathPreviewCells: Ref<Map<string, string>> = ref(new Map());
 
 /**
  * 注入交互回调
@@ -84,14 +91,12 @@ async function handleKeyMove(dx: number, dy: number): Promise<void> {
 
 /**
  * 当前格抖动反馈（无效移动时）
+ *
+ * 委托 useMapRender.triggerShakeCurrent 写入响应式状态，由 cells computed 驱动 :class 渲染。
+ * 取代旧命令式 classList.add + setTimeout 自清理（Vue v-for diff 不清理命令式 class）。
  */
 export function shakeCurrentCell(): void {
-  const grid = document.getElementById('mapGrid');
-  if (!grid) return;
-  const cell = grid.querySelector('.map-cell.current');
-  if (!cell) return;
-  cell.classList.add('cell-shake');
-  setTimeout(() => cell.classList.remove('cell-shake'), 300);
+  triggerShakeCurrent();
 }
 
 /**
@@ -131,61 +136,75 @@ export function centerOnPlayer(smooth = true): void {
 }
 
 /**
+ * 路径预览响应式状态（供 useMapRender.cells computed 消费）
+ *
+ * 每个条目：pls → 方向箭头字符。空 Map 表示无预览。
+ * 由 showPathPreview/clearPathPreview 维护；Vue 通过 :class / v-if 渲染。
+ */
+export function getPathPreviewCells(): ReadonlyMap<string, string> {
+  return pathPreviewCells.value;
+}
+
+/**
  * 清除所有路径预览高亮
+ *
+ * 通过清空响应式状态触发 cells computed 重算，
+ * Vue 在 patch 时自动移除 .cell-path class 与 .cell-path-arrow 子节点。
  */
 export function clearPathPreview(): void {
-  const grid = document.getElementById('mapGrid');
-  if (!grid) return;
-  grid.querySelectorAll('.cell-path').forEach(el => {
-    el.classList.remove('cell-path');
-    const arrow = el.querySelector('.cell-path-arrow');
-    if (arrow) arrow.remove();
-  });
+  if (pathPreviewCells.value.size === 0) return;
+  pathPreviewCells.value = new Map();
 }
 
 /**
  * 显示从当前格到目标格的路径预览
+ *
+ * 计算路径后写入响应式状态（pls → arrow），不再操作 DOM。
+ * 迷雾中间格不写入（保持神秘感）。
  */
 export function showPathPreview(targetPls: string | number): void {
-  clearPathPreview();
   const mapStore = useMapStore();
-  if (mapStore.curLoc === null || mapStore.curRegion === null || !mapStore.links) return;
+  if (mapStore.curLoc === null || mapStore.curRegion === null || !mapStore.links) {
+    clearPathPreview();
+    return;
+  }
 
   const path = findPath(mapStore.curLoc, targetPls);
-  if (!path || path.length < 2) return;
+  if (!path || path.length < 2) {
+    clearPathPreview();
+    return;
+  }
 
   const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as Record<string, TileInfo & { x?: number; y?: number }> | undefined;
-  const grid = document.getElementById('mapGrid');
-  if (!grid || !tiles) return;
+  if (!tiles) {
+    clearPathPreview();
+    return;
+  }
 
   const fogData = mapStore.links.fog as Record<string, Record<string, number>> | undefined;
   const regionFog = fogData && fogData[String(mapStore.curRegion)] ? fogData[String(mapStore.curRegion)] : {};
 
   // 路径中间格（不含起点和终点）高亮 + 方向箭头
   // 迷雾中间格不高亮（保持神秘感）
+  const next = new Map<string, string>();
   for (let i = 1; i < path.length - 1; i++) {
     const pls = path[i];
     if (!regionFog[String(pls)]) continue; // 迷雾格跳过
 
-    const cell = grid.querySelector('[data-pls="' + pls + '"]');
-    if (cell) {
-      cell.classList.add('cell-path');
-      const fromTile = tiles[String(path[i - 1])];
-      const toTile = tiles[String(pls)];
-      if (fromTile && toTile && fromTile.x !== undefined && fromTile.y !== undefined && toTile.x !== undefined && toTile.y !== undefined) {
-        const arrow = getDirectionArrow(
-          { x: fromTile.x, y: fromTile.y },
-          { x: toTile.x, y: toTile.y },
-        );
-        if (arrow) {
-          const arrowEl = document.createElement('span');
-          arrowEl.className = 'cell-path-arrow';
-          arrowEl.textContent = arrow;
-          cell.appendChild(arrowEl);
-        }
+    const fromTile = tiles[String(path[i - 1])];
+    const toTile = tiles[String(pls)];
+    if (fromTile && toTile && fromTile.x !== undefined && fromTile.y !== undefined && toTile.x !== undefined && toTile.y !== undefined) {
+      const arrow = getDirectionArrow(
+        { x: fromTile.x, y: fromTile.y },
+        { x: toTile.x, y: toTile.y },
+      );
+      if (arrow) {
+        next.set(String(pls), arrow);
       }
     }
   }
+
+  pathPreviewCells.value = next;
 }
 
 /**

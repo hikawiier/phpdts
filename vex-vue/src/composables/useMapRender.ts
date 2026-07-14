@@ -102,6 +102,8 @@ export interface CellData {
   styleObj: Record<string, string>;
   /** tooltip */
   title: string;
+  /** 路径预览方向箭头（空串表示该格不在预览路径上） */
+  pathArrow: string;
 }
 
 // ─── 模块级状态（单例，与现有 map-render.js 一致） ───
@@ -115,6 +117,18 @@ let _callbacks: RenderCallbacks = {
   onCellLeave: () => {},
   centerOnPlayer: () => {},
 };
+
+// ─── 路径预览状态注入（由 useMapInteraction 提供，避免循环依赖） ───
+// useMapInteraction 持有响应式 pathPreviewCells 状态并调用 setPathPreviewGetter 注入读取接口；
+// cells computed 通过此 getter 读取当前预览，让 Vue 以 :class / v-if 管理 DOM。
+const EMPTY_PATH_PREVIEW: ReadonlyMap<string, string> = new Map();
+let _pathPreviewGetter: () => ReadonlyMap<string, string> = () => EMPTY_PATH_PREVIEW;
+
+// ─── 临时动画状态（cell-shake / move-highlight） ───
+// 由 triggerShakeCurrent / triggerHighlight 写入，cells computed 读取注入 class。
+// 取代旧命令式 classList.add + setTimeout 自清理（Vue v-for diff 不清理命令式 class）。
+const _shakePls = ref<string | null>(null);
+const _highlightPls = ref<string | null>(null);
 
 // ─── 响应式布局状态（供 gridStyle computed 使用） ───
 const baseSize = ref<number>(48);
@@ -176,6 +190,9 @@ const cells: ComputedRef<CellData[]> = computed(() => {
   const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as Record<string, TileInfo & { x?: number; y?: number; neighbors?: (string | number)[]; passable?: unknown; tide?: string; floor?: string; preset_safe?: unknown }> | undefined;
   const coordIndex = tiles ? buildCoordIndex(tiles) : {};
 
+  // 读取路径预览状态（响应式，由 useMapInteraction 维护）
+  const pathPreview = _pathPreviewGetter();
+
   const result: CellData[] = [];
 
   for (let r = 0; r < rows; r++) {
@@ -209,6 +226,7 @@ const cells: ComputedRef<CellData[]> = computed(() => {
           classList: ['map-cell', 'empty'],
           styleObj: {},
           title: '',
+          pathArrow: '',
         });
         continue;
       }
@@ -283,6 +301,21 @@ const cells: ComputedRef<CellData[]> = computed(() => {
         }
       }
 
+      // 路径预览：若该格在当前预览路径上，叠加 cell-path class（箭头由 pathArrow 字段驱动 v-if 渲染）
+      const pathArrow = pathPreview.get(pls) || '';
+      if (pathArrow) {
+        classList.push('cell-path');
+      }
+
+      // 临时动画：抖动（无效移动反馈）/ 高亮（移动成功反馈）
+      // 由 triggerShakeCurrent / triggerHighlight 写入响应式状态，Vue :class 自动管理
+      if (_shakePls.value === pls) {
+        classList.push('cell-shake');
+      }
+      if (_highlightPls.value === pls) {
+        classList.push('move-highlight');
+      }
+
       result.push({
         key: pls,
         pls,
@@ -308,6 +341,7 @@ const cells: ComputedRef<CellData[]> = computed(() => {
         classList,
         styleObj,
         title,
+        pathArrow,
       });
     }
   }
@@ -339,6 +373,56 @@ export function triggerCellLeave(): void {
  */
 export function setRenderCallbacks(callbacks: Partial<RenderCallbacks>): void {
   _callbacks = { ..._callbacks, ...callbacks };
+}
+
+/**
+ * 注入路径预览状态读取接口（由 useMapInteraction 调用）
+ *
+ * useMapInteraction 持有响应式 pathPreviewCells 状态（pls → arrow），
+ * 通过此函数把读取接口注入渲染层。cells computed 调用 getter 读取当前预览，
+ * 让 Vue 以 :class / v-if 管理 .cell-path 与 .cell-path-arrow DOM，
+ * 取代旧的命令式 appendChild（避免与 v-for diff 冲突导致残留）。
+ */
+export function setPathPreviewGetter(getter: () => ReadonlyMap<string, string>): void {
+  _pathPreviewGetter = getter;
+}
+
+// ─── 临时动画响应式状态（cell-shake / move-highlight） ───
+// 与路径预览同理：命令式 classList.add 会被 Vue v-for diff 忽略，导致残留。
+// 改为响应式状态驱动，cells computed 读取状态注入 class，Vue patch 自动管理。
+let _shakeTimer: ReturnType<typeof setTimeout> | null = null;
+let _highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 触发当前格抖动动画（无效移动反馈）
+ *
+ * 读取 mapStore.curLoc 作为抖动目标，300ms 后自动清空状态。
+ * 连续触发时清除前一个定时器，避免提前清空新动画。
+ */
+export function triggerShakeCurrent(): void {
+  const mapStore = useMapStore();
+  if (mapStore.curLoc === null) return;
+  if (_shakeTimer) clearTimeout(_shakeTimer);
+  _shakePls.value = String(mapStore.curLoc);
+  _shakeTimer = setTimeout(() => {
+    _shakePls.value = null;
+    _shakeTimer = null;
+  }, 300);
+}
+
+/**
+ * 触发目标格高亮动画（移动成功反馈）
+ *
+ * @param pls 目标格 pls
+ * 600ms 后自动清空状态。连续触发时清除前一个定时器。
+ */
+export function triggerHighlight(pls: string | number): void {
+  if (_highlightTimer) clearTimeout(_highlightTimer);
+  _highlightPls.value = String(pls);
+  _highlightTimer = setTimeout(() => {
+    _highlightPls.value = null;
+    _highlightTimer = null;
+  }, 600);
 }
 
 /**
@@ -467,6 +551,17 @@ export function resetRenderState(): void {
     clearTimeout(applyZoomTimer);
     applyZoomTimer = null;
   }
+  // 清理动画状态与定时器，避免卸载后 setTimeout 触发修改已销毁状态
+  if (_shakeTimer) {
+    clearTimeout(_shakeTimer);
+    _shakeTimer = null;
+  }
+  if (_highlightTimer) {
+    clearTimeout(_highlightTimer);
+    _highlightTimer = null;
+  }
+  _shakePls.value = null;
+  _highlightPls.value = null;
 }
 
 // ─── 导出响应式数据 + 常量（供 MapGrid.vue 使用） ───

@@ -130,6 +130,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  dataManager.unlisten('battle:play-damage-numbers', onPlayDamageNumbers);
   clearAllTimers();
   damageList.value = [];
 });
