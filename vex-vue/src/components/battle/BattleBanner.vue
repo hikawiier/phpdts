@@ -9,7 +9,7 @@
 // 两层结构：
 // - 遮罩层（mask）：round_intro 和 battle_end 段均使用
 // - 内容层（banner）：无框章节卡样式，装饰线 + 标题 + (可选附加信息) + 装饰线
-//   round_intro 显示"第 N 轮"；battle_end 显示"战斗结束" + reason 附加信息
+//   round_intro 显示"战斗开始"（第一个 turn，isBattleStart）或"第 N 轮"（后续 turn）；battle_end 显示"战斗结束" + reason 附加信息
 //
 // 两套独立状态机：
 // - maskOpen / maskClosing：遮罩层
@@ -244,7 +244,7 @@ onUnmounted(() => {
       <!-- round_intro: 装饰线 + 标题 + 回合提示 + 装饰线 -->
       <template v-if="currentSeg?.kind === 'round_intro'">
         <div class="banner-line"></div>
-        <div class="banner-title">第 {{ currentSeg.roundNum ?? 0 }} 轮</div>
+        <div class="banner-title">{{ currentSeg.isBattleStart ? '战斗开始' : `第 ${currentSeg.roundNum ?? 0} 轮` }}</div>
         <div class="banner-subtitle" v-if="currentSeg.actor">
           {{ currentSeg.actor.type === 0 ? '你的回合' : `${currentSeg.actor.name}的回合` }}
         </div>

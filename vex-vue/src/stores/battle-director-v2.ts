@@ -114,6 +114,7 @@ export interface BattleSegmentV2 {
   roundNum?: number;
   turnNum?: number;
   actor?: CombatantView;
+  isBattleStart?: boolean;
   actions: DirectedActionV2[];
   notices: DirectedNoticeV2[];
 }
@@ -275,12 +276,15 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
       const actor = toCombatantView(payload.actor);
       const roundNum = event.bl_round_num !== null ? event.bl_round_num + 1 : undefined;
       const turnNum = event.bl_turn_num ?? undefined;
+      // 第一个 turn（roundNum=1 && turnNum=1）承担战斗开始的视觉宣告，标题显示"战斗开始"
+      const isBattleStart = roundNum === 1 && turnNum === 1;
       // 先 push round_intro 段（每 turn 1 个，由 turn_start 事件触发），保证顺序为 [round_intro, turn]
       segments.push({
         kind: 'round_intro',
         roundNum,
         turnNum,
         actor: actor ?? undefined,
+        isBattleStart: isBattleStart || undefined,
         actions: [],
         notices: [],
       });

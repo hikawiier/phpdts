@@ -63,7 +63,8 @@ function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache, $rea
 
 function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
 {
-    #AP恢复函数：每轮开始时，先攻者恢复AP，恢复量为当前AP+AP上限，不会超过AP上限
+    #AP恢复函数：每个 turn 开始时（combat_dispatch 入口），当前 actor 恢复 AP，恢复量为当前AP+AP上限，不会超过AP上限
+    #设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
     $old_ap = (int)$actor_data['ap'];
     $max_ap = (int)$actor_data['max_ap'];
     $actor_data['ap'] = min($old_ap + $max_ap, $max_ap);
@@ -124,22 +125,25 @@ function battle_actor_can_act(&$actor_data, &$obl_battle_log, &$battle_cache = n
 //
 // Turn 的身份由先攻队列的 done 标志位标识：
 //   - done=0 的 combatant 即为当前回合持有者
-//   - manage_queue 在 step 6 取下一顺位时读的就是 done=0 的首行
+//   - manage_queue 在 step 5 取下一顺位时读的就是 done=0 的首行
 //   - 因此在 Turn start hook 中可通过 queue 行定位 current turn holder
 //
 // Turn start hook 内递增 BattleLogCollector::$turnNum，使后续 emit 的
 // bl_turn_num 标识"当前回合"。
+//
+// 调用时机：combat_dispatch 入口（step 3.5），"当前 combatant 的回合开始"。
+// 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
 // ================================================================
 
 /**
  * Turn start hook
  *
- * 在 battle_manage_queue 末尾（step 6）调用，"下一 combatant 的回合已就绪"。
- * 此时下一 combatant 已确定顺位、已恢复 AP，尚未执行动作。
+ * 在 combat_dispatch 入口（step 3.5）调用，"当前 combatant 的回合开始"。
+ * 此时当前 combatant 即将执行动作，AP 恢复由配套的 battle_ap_recover 完成。
  *
- * 递增 BattleLogCollector 的 turnNum，使后续 emit 的 bl_turn_num 标识新回合。
+ * 递增 BattleLogCollector 的 turnNum，使后续 emit 的 bl_turn_num 标识当前回合。
  *
- * @param array  &$actor_data   下一 combatant 的数据
+ * @param array  &$actor_data   当前 combatant 的数据
  * @param array  &$obl_battle_log
  * @param array  &$battle_cache
  */

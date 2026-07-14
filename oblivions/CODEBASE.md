@@ -1622,7 +1622,8 @@ Command API 的核心处理器：contract 校验 + 认证 + flock + gate + dispa
 | `obl_command_allowed_by_contract` | `($contract, &$pdata): bool` | contract allowed_actions 校验（替代旧 `obl_command_allowed_by_state`） |
 | `obl_command_check_expected` | `($expected, &$pdata): array\|null` | expected 状态冲突检测 |
 | `obl_command_itm0_pending` | `(&$pdata): bool` | itm0 门控（itempara[0] 非空时仅放行 `inventory.organize` / `item.discard`） |
-| `obl_command_acquire_lock` | `($groomid, $pid): bool` | 获取文件锁（flock `LOCK_EX\|LOCK_NB`） |
+| `obl_command_acquire_lock` | `($groomid, $pid): array` | 获取文件锁（flock `LOCK_EX\|LOCK_NB`），返回 `['ok'=>bool, 'fp'=>resource]`；flock 失败时关闭已打开句柄 |
+| `obl_command_release_lock` | `($fp): void` | 释放文件锁（`flock UN` + `fclose`），由命令总线 finally 与运行时关闭清理函数调用 |
 | `obl_command_after_dispatch` | `($command, $contract, &$pdata): void` | 分发后处理（PLAYER_TURN → PROCESSING 状态转换） |
 | `obl_command_save_and_tick` | `($command, $contract, &$pdata, $dispatched, $ctx = null): void` | 保存玩家 + tick 推进（仅 `advancesTick=true` 命令） |
 | `obl_command_build_response_data` | `($command, $contract, &$pdata): array` | 组装响应 data（feedback + refresh + server_state） |

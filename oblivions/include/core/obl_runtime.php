@@ -283,6 +283,10 @@ function obl_runtime_shutdown_cleanup() {
         obl_runtime_release_room_lock($GLOBALS['obl_runtime_lock_name']);
         $GLOBALS['obl_runtime_lock_name'] = null;
     }
+    if (!empty($GLOBALS['obl_command_lock_fp']) && function_exists('obl_command_release_lock')) {
+        obl_command_release_lock($GLOBALS['obl_command_lock_fp']);
+        $GLOBALS['obl_command_lock_fp'] = null;
+    }
     if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
         return $error;
     }

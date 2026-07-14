@@ -39,6 +39,7 @@ function obl_command_api_handle($envelope) {
     if (!$lock['ok']) {
         return obl_command_response_error('COMMAND_IN_PROGRESS', '', null, $request_id);
     }
+    $GLOBALS['obl_command_lock_fp'] = $lock['fp'];
 
     $had_operation_key = array_key_exists('obl_command_operation_key', $GLOBALS);
     $previous_operation_key = $GLOBALS['obl_command_operation_key'] ?? null;
@@ -121,6 +122,10 @@ function obl_command_api_handle($envelope) {
         }
         throw $e;
     } finally {
+        if (!empty($GLOBALS['obl_command_lock_fp'])) {
+            obl_command_release_lock($GLOBALS['obl_command_lock_fp']);
+            $GLOBALS['obl_command_lock_fp'] = null;
+        }
         if ($had_operation_key) {
             $GLOBALS['obl_command_operation_key'] = $previous_operation_key;
         } else {
@@ -272,8 +277,19 @@ function obl_command_acquire_lock($groomid, $pid) {
     $lock_dir = dirname($lock_file);
     if (!is_dir($lock_dir)) @mkdir($lock_dir, 0755, true);
     $fp = fopen($lock_file, 'w');
-    if (!$fp || !flock($fp, LOCK_EX | LOCK_NB)) return array('ok' => false);
+    if (!$fp) return array('ok' => false);
+    if (!flock($fp, LOCK_EX | LOCK_NB)) {
+        fclose($fp);
+        return array('ok' => false);
+    }
     return array('ok' => true, 'fp' => $fp);
+}
+
+function obl_command_release_lock($fp) {
+    if (is_resource($fp)) {
+        flock($fp, LOCK_UN);
+        fclose($fp);
+    }
 }
 
 function obl_command_after_dispatch($command, $contract, &$pdata) {

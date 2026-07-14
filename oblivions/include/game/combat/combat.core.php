@@ -341,6 +341,15 @@ function combat_dispatch($mode, &$actor, $actions = null, $extra = []) {
         $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
     }
 
+    // ── 3.5. Turn start hook：当前 actor 回合开始 ──
+    // 递增 turnNum + 恢复 AP + emit turn_start 事件
+    // 放在 step 3（roundNum 同步）之后、step 4（combat_main）之前，
+    // 保证当前 actor 的所有事件（含 turn_start 自身）都有正确的 bl_round_num 和 bl_turn_num
+    // 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
+    battle_hook_turn_start($actor, $obl_battle_log, $battle_cache);
+    battle_ap_recover($actor, $battle_cache, $obl_battle_log);
+    obl_save_player($actor);
+
     // ── 4. 单回合主函数（sort → verify → execute） ──
     //    combat_main 会修改 $atk_act（移除校验失败的 action）
     combat_debug_log('DISPATCH_MAIN_BEFORE', ['atk_act_count'=>count($atk_act)]);

@@ -290,12 +290,12 @@
 
 #### 框架 B-6：基于文件的玩家锁
 
-**设计意图：** 用文件锁而非数据库锁来防止同一玩家同时执行多个命令。锁文件以玩家 ID 命名，非阻塞方式获取，失败时返回"命令执行中"错误。
+**设计意图：** 用文件锁而非数据库锁来防止同一玩家同时执行多个命令。锁文件以 `(房间 ID, 玩家 ID)` 二元组命名，非阻塞方式获取，失败时返回"命令执行中"错误。锁的获取与释放严格对称——命令总线在获取文件锁后立即将文件句柄存入全局变量，在 finally 块中显式释放（`flock UN` + `fclose`），确保正常返回、业务异常、PHP 致命错误三种路径下锁都被释放。致命错误路径由运行时关闭清理函数兜底，检查全局变量中的文件句柄并释放。获取阶段若 `flock` 失败也显式关闭已打开的文件句柄，避免描述符泄漏。
 
 **边界案例：**
 
 - 锁目录在第一次使用时惰性创建。
-- 锁文件描述符在整个请求期间保持打开，PHP 关闭时自动释放。
+- 锁文件描述符不依赖 PHP 请求结束时的隐式资源清理——在 Windows 环境下隐式清理不可靠，显式释放是唯一可靠路径。
 
 ***
 
@@ -389,11 +389,14 @@
 
 **设计意图：** 顶层调度器，编排单回合的完整生命周期。三个阶段：排序（终结技最后）→ 校验（AP 成本、标签规则）→ 执行（效果应用、持久化）。另外提供完整的战斗初始化入口（创建队列 + 首轮执行）和标准回合分发入口。
 
+**回合开始 hook 由 `combat_dispatch` 入口触发（框架基准）：** `turn_start` 事件的发送时机是"当前 actor 的回合开始时"，而非"前一个 actor 的 `battle_manage_queue` 末尾为下一 actor emit"。`combat_dispatch` 入口（step 3.5，在 roundNum 同步之后、`combat_main` 之前）依次调用 `battle_hook_turn_start`（递增 `BattleLogCollector::$turnNum`）+ `battle_ap_recover`（恢复 AP + emit `turn_start` 事件）+ `obl_save_player`（持久化 AP 恢复状态）。`battle_manage_queue` 末尾不再触发 turn_start hook，只负责状态机推进（`obl_battle_state_set_next_pid` + 状态转换）。这样保证每个 turn（含每场战斗的第一个 turn）都有 `turn_start` 事件，K-1 框架"每个 turn 1 个 round_intro 横幅"的设计基准在所有 turn 上生效。AP 恢复语义同步变化：每个 actor 的回合开始时恢复 AP 到 max（第一个 actor 也恢复，ap_recovered=0 如果本来满 AP）。
+
 **边界案例：**
 
 - 排序必须先于校验 —— 终结技必须排到末尾再进行 AP 和位置投影，否则中间动作会被错误移除。
 - 行动者终止有四种条件（生命值归零、状态标记、逃离、死亡），会导致所有后续动作中断而非跳过。
 - 战斗初始化有一个"第 0 阶段" —— 在战斗名单创建之前先执行非敌对动作（如增益），然后第一个敌对动作构建正式战斗名单。
+- pre-battle 阶段的非敌对动作直接调用 `combat_main`，不经过 `combat_dispatch`，所以没有 `turn_start` 事件——这些动作的 `bl_turn_num=null`，前端归到无 round_intro 的 turn 段，符合"pre-battle 不是正式回合"的语义。
 
 #### 框架 D-2：四层预览/预演系统
 
@@ -735,7 +738,7 @@
 
 #### 框架 I-1：先攻队列编排
 
-**设计意图：** 此模块不是废弃代码 —— 它被新战斗系统积极使用。提供队列创建、加入、退出、重排顺序、追加队尾等原语。编排器管理完整的队列生命周期：排序 → 状态推进 → AP 恢复 → 回合钩子。
+**设计意图：** 此模块不是废弃代码 —— 它被新战斗系统积极使用。提供队列创建、加入、退出、重排顺序、追加队尾等原语。编排器管理队列生命周期：排序 → 状态推进（标记 done、确定下一顺位、状态机转换）→ 解散/重排判定。AP 恢复与 turn_start hook 不在此处触发，而是由 `combat_dispatch` 入口负责（见框架 D-1）。
 
 **边界案例：**
 
@@ -784,14 +787,14 @@
 
 **命令式驱动 + 组件注册模式：** store 与演出组件之间不通过共享响应式状态 + watch 触发通信，而是采用命令式直接调用：组件在 `onMounted` 中通过 `registerBannerPlayer` / `registerModalPlayer` 把实现接口（`SegmentPlayer` / `BannerPlayer`）的引用注册到 store，`onUnmounted` 中注销；store 在 `playSegmentText` / `enterBattleEndMask` / `playBattleEndContent` 中通过 `selectPlayer(segment.kind)` 路由到对应 player 并 `await player.playSegment(...)`。组件返回即播放完成，runner 推进下一步。这一模式消除了"共享状态竞态 + watch 副作用 + 显式 ready 信号"三重耦合，把"播放完成"语义从"watch 触发→组件执行→显式 notify"简化为"调用→await 返回"。组件未注册时 store 抛错；组件播放中 unmounted 时 reject sleep Promise 让错误传播到 store 的 await。
 
-**演出组件视觉语言分级：** BattleBanner（横幅）与 BattleModal（模态框）承担不同语义职责，视觉语言必须分化——横幅是瞬态阶段标记（"轻、快、一眼可读"），模态框是战报详情载体（"重、正式、需细读"）。横幅采用统一的 无框章节卡样式：透明背景、无边框、无阴影，装饰线 + 标题（18px）+ 可选附加信息 + 装饰线，text-shadow 保证可读性，一次性显示完整内容不逐条播放。round_intro 显示"第 N 轮" + 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）；battle_end 显示"战斗结束" + notice.reason 作为附加信息（12px 更淡色调）。视觉分化避免了横幅沦为"缩小版模态框"的同质化问题，让玩家从视觉上即可区分"瞬态宣告"与"战报详情"。
+**演出组件视觉语言分级：** BattleBanner（横幅）与 BattleModal（模态框）承担不同语义职责，视觉语言必须分化——横幅是瞬态阶段标记（"轻、快、一眼可读"），模态框是战报详情载体（"重、正式、需细读"）。横幅采用统一的 无框章节卡样式：透明背景、无边框、无阴影，装饰线 + 标题（18px）+ 可选附加信息 + 装饰线，text-shadow 保证可读性，一次性显示完整内容不逐条播放。round_intro 显示"战斗开始"（第一个 turn，`isBattleStart` 标记）或"第 N 轮"（后续 turn）+ 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）；battle_end 显示"战斗结束" + notice.reason 作为附加信息（12px 更淡色调）。视觉分化避免了横幅沦为"缩小版模态框"的同质化问题，让玩家从视觉上即可区分"瞬态宣告"与"战报详情"。
 
-**回合宣告归属 turn 段（框架基准）：** round_intro 横幅承担回合提示职责，替代原 toast "你的回合"。核心设计：每个 `turn_start` 事件生成一个 `round_intro` 段（actor 来自 `turn_start` 事件的 `payload.actor`，不是 `round_start` 事件的 `rolls[0]`），在 `getTurnSegment` 之前 push 以保证 `[round_intro, turn]` 顺序。这样每个角色的回合都有"第 N 轮 - xx 的回合"横幅宣告，而非每轮只有第一个行动者被宣告。第一个 turn 的 round_intro 自然承担战斗开始的视觉宣告——玩家进入战斗后看到的第一个横幅就是它，不需要独立的"战斗开始"阶段。用 `turn_start` 事件触发而非 directV2 末尾遍历所有 turn 段，是为了避免跨 batch 重复：`directV2` 是无状态纯函数，每个 presentation batch 独立调用，同一敌人回合的事件可能被分到两个 batch（第一个含 `turn_start` + 部分 action，第二个只有 `action_start`），末尾遍历会导致两个 batch 都生成 round_intro；改用 `turn_start` 事件触发后，只有含 `turn_start` 的 batch 才生成 round_intro。BattleModal 内 turn 段的分隔符显示"── xx 的回合 ──"（行动者标识），与横幅形成层次分工：横幅是瞬态宣告（轮次 + 行动者），模态框分隔符是战报内的回合定位（行动者）。toast "你的回合"已移除。
+**回合宣告归属 turn 段（框架基准）：** round_intro 横幅承担回合提示职责，替代原 toast "你的回合"。核心设计：每个 `turn_start` 事件生成一个 `round_intro` 段（actor 来自 `turn_start` 事件的 `payload.actor`，不是 `round_start` 事件的 `rolls[0]`），在 `getTurnSegment` 之前 push 以保证 `[round_intro, turn]` 顺序。这样每个角色的回合都有"第 N 轮 - xx 的回合"横幅宣告，而非每轮只有第一个行动者被宣告。第一个 turn（`roundNum === 1 && turnNum === 1`）的 round_intro 承担战斗开始的视觉宣告——标题显示"战斗开始"而非"第 1 轮"，副标题"xx 的回合"保持不变；后续 round_intro 继续显示"第 N 轮"。`BattleSegmentV2.isBattleStart` 字段由 directV2 根据 `roundNum === 1 && turnNum === 1` 标记，把"战斗开始"的语义判断集中在数据层，BattleBanner 模板只消费标记。用 `turn_start` 事件触发而非 directV2 末尾遍历所有 turn 段，是为了避免跨 batch 重复：`directV2` 是无状态纯函数，每个 presentation batch 独立调用，同一敌人回合的事件可能被分到两个 batch（第一个含 `turn_start` + 部分 action，第二个只有 `action_start`），末尾遍历会导致两个 batch 都生成 round_intro；改用 `turn_start` 事件触发后，只有含 `turn_start` 的 batch 才生成 round_intro。BattleModal 内 turn 段的分隔符显示"── xx 的回合 ──"（行动者标识），与横幅形成层次分工：横幅是瞬态宣告（轮次 + 行动者），模态框分隔符是战报内的回合定位（行动者）。toast "你的回合"已移除。
 
 **阶段切片模型：** 计划层把每个 segment 切成有限种类的播放阶段，是"该播什么"到"按什么顺序播"的核心抽象。按演出语义命名如下（括号内为 `PlaybackStep.kind` 索引锚点 + 承接组件）：
 
 **轮次开场**（round_intro 段，每 `turn_start` 事件 1 个，1 阶段）：
-- **轮次宣告**（`modal_text`，BattleBanner）—— 遮罩 + 章节卡横幅同时淡入，"第 N 轮" + 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）+ 上下装饰线，一次性显示，停留后同时淡出
+- **轮次宣告**（`modal_text`，BattleBanner）—— 遮罩 + 章节卡横幅同时淡入，"战斗开始"（第一个 turn，`isBattleStart` 标记）或"第 N 轮"（后续 turn）+ 回合提示（"你的回合"/"XX的回合"，actor 来自 `turn_start` 事件的 `payload.actor`）+ 上下装饰线，一次性显示，停留后同时淡出
 
 **回合演出**（turn 段，6 阶段严格顺序）：
 - **回合接场**（`segment_context`）—— 更新敌人名称/位置

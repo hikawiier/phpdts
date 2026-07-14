@@ -250,18 +250,10 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
         }
     }
 
-    // ── 6. 存活路径（对应队列生命周期后处理的"下一个人准备上场"）──
-    // 队列未解散时为下一顺位者恢复 AP 并保存
-    $obl_battle_log->setPhase('prepare');
-    if ($next) {
-        $next_data = obl_fetch_playerdata_by_pid((int)$next['pid']);
-        if ($next_data) {
-            // ── Turn start hook：先递增 turnNum，再执行 AP 恢复（emit 时 bl_turn_num 已为当前回合编号）──
-            battle_hook_turn_start($next_data, $obl_battle_log, $battle_cache);
-            battle_ap_recover($next_data, $battle_cache, $obl_battle_log);
-            obl_save_player($next_data);
-        }
-    }
+    // ── 6. 状态转换已就绪 ──
+    // 下一 actor 的 turn_start hook 由其自身的 combat_dispatch 入口触发
+    // （不在此处递增 turnNum / 恢复 AP / emit turn_start，避免第一个 actor 漏发 turn_start）
+    // 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
 
     return $result;
 }
