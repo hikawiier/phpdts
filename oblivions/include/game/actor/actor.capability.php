@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module H 技能效果系统
+ * @framework H-2 能力封锁桥接
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

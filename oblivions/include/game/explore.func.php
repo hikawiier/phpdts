@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-7 探索与交互管道
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

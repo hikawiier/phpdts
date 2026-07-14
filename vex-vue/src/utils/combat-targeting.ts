@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 // 战斗瞄准工具函数：会话匹配、候选目标筛选、按 pid 搜索
 import type { CombatTargetCandidate, CombatTargetsResponse } from '@/types/api';
 import type { Character } from '@/types/character';

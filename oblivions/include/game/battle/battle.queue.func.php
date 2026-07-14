@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module I 旧战斗队列系统
+ * @framework I-1 先攻队列编排
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

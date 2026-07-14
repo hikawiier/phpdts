@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-5 目标结算单元
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

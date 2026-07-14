@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import { createActorRuntime } from '@/composables/useActorRuntime';
 import { createMapSceneGeometry } from '@/composables/mapSceneGeometry';
 import { getSceneGeometry, registerSceneGeometry } from '@/composables/sceneRegistry';

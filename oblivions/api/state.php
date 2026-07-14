@@ -1,4 +1,9 @@
 <?php
+/**
+ * @framework A-1 HTTP 三层入口隔离架构
+ * @module A API 层
+ * State API 入口 —— 纯读 GET，不使用事务和锁，表不存在时返回虚拟空状态
+ */
 
 define('CURSCRIPT', 'api');
 

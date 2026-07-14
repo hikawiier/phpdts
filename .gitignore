@@ -128,3 +128,5 @@ debug_autologin.php
 node_modules/
 /.trae
 /vex-vue/public/img/temp
+codebase-memory-mcp.json
+/.codebase-memory

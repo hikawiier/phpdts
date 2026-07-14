@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-11 战斗状态管理
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

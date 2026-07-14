@@ -1,3 +1,8 @@
+/**
+ * @module K 状态管理层
+ * @framework K-3 多层命令门控
+ */
+
 // ══════════════════════════════════════════════════
 // Oblivions JSON Command Registry
 //

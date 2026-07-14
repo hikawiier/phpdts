@@ -1,4 +1,7 @@
 <?php
+/**
+ * @module B 命令系统
+ */
 // The legacy root command.php path cannot provide the transaction, rollback-only,
 // and post-commit log guarantees required by Oblivions. New clients must use the
 // Command Bus endpoint exclusively.

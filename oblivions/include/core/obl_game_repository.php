@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module C 核心运行时
+ * @framework C-6 游戏仓库（游戏状态表）
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module C 核心运行时
+ * @framework C-5 Tick 编排器
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

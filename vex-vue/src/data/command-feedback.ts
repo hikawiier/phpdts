@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 // ══════════════════════════════════════════════════
 // Command API 结构化反馈渲染 / Command feedback renderer
 //

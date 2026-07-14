@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-9 技能配置校验与模块加载
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

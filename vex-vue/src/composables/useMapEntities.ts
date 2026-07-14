@@ -1,3 +1,7 @@
+/**
+ * @module M 组合式函数
+ */
+
 import { nextTick, shallowRef, watch, type Ref } from 'vue';
 import { createActorRuntime } from '@/composables/useActorRuntime';
 import { getActorById, registerActor, unregisterActor } from '@/composables/actorRegistry';

@@ -1,4 +1,7 @@
-/** Backend-authoritative map location. */
+/**
+ * @module K 状态管理层
+ * Backend-authoritative map location.
+ */
 export interface TileRef {
   pgroup: number;
   pls: number;

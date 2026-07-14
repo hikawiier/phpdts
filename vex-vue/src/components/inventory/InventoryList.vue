@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 // ══════════════════════════════════════════════════
 // 背包列表 / Inventory List
 //

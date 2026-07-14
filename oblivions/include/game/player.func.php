@@ -1,5 +1,8 @@
 <?php
 /**
+ * @module E 游戏逻辑
+ * @framework E-2 统一角色数据模型
+ *
  * Oblivions 玩家系统：认证、数据抓取、格式化、保存
  *
  * 设计原则：

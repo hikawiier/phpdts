@@ -1,5 +1,10 @@
 <?php
 
+/**
+ * @module J 游戏控制
+ * @framework J-1 游戏生命周期状态机
+ * @framework J-2 潮汐区作为空间分布主键
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

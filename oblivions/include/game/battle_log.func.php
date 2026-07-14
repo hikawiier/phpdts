@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module C 核心运行时
+ * @framework C-4 事件批量投递（Presentation 系统）
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

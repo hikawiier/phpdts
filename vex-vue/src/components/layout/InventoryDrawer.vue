@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 // ══════════════════════════════════════════════════
 // 右侧抽屉 / Inventory Drawer — 背包 + 装备
 //

@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 // 实体动画函数库：所有地图实体的 GSAP 动画实现
 // 每个函数接收 ActorElements（anchor/pose/visibility），不关心实体身份
 // 调用方（useMapEntities / battle-actor-executor）负责决定何时播放何种动画

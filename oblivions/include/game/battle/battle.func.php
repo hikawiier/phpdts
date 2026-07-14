@@ -1,4 +1,7 @@
 <?php
+/**
+ * @module I 旧战斗队列系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

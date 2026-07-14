@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module F 物品系统
+ * @framework F-2 配置驱动的合成系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module G 技能系统
+ * @framework G-1 配置驱动的技能清单与三种生命周期
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { MapEntity } from './map-entity';
 import type { ScenePoint, TileRef } from './scene';
 

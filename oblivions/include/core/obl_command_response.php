@@ -1,4 +1,7 @@
 <?php
+/**
+ * @module B 命令系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

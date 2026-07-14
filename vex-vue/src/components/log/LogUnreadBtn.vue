@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 // ══════════════════════════════════════════════════
 // 日志未读提示按钮 / Log Unread Button
 //

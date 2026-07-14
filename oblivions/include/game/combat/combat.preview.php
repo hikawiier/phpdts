@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-2 四层预览/预演系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

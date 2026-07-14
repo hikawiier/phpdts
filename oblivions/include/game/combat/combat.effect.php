@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-3 效果应用器注册表
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

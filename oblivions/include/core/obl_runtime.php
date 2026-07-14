@@ -1,4 +1,10 @@
 <?php
+/**
+ * @module C 核心运行时
+ * @framework C-2 独立运行时启动
+ * @framework C-3 事务管理与房间互斥锁
+ * @framework C-4 事件批量投递（Presentation 系统）
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-8 NPC AI 行为系统
+ */
 if (!defined('IN_GAME')) { exit('Access Denied'); }
 
 // ================================================================

@@ -1,3 +1,7 @@
+/**
+ * @module N API 客户端
+ */
+
 import { API_ACTIONS, type ApiAction } from './endpoints';
 import { perf } from '@/utils/perf';
 import type { PresentationBatchV1 } from '@/types/api';

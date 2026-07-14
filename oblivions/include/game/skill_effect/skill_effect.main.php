@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module H 技能效果系统
+ * @framework H-1 实例化效果生命周期
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

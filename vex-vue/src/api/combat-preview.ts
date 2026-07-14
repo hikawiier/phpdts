@@ -1,3 +1,7 @@
+/**
+ * @module N API 客户端
+ */
+
 import { sendOblCommand } from './obl-command';
 import type {
   CombatPreviewAction,

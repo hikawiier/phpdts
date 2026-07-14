@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module C 核心运行时
+ * @framework C-7 旧版游戏变量兼容镜像
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

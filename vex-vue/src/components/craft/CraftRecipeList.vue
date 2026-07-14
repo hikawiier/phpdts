@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 // ══════════════════════════════════════════════════
 // 合成配方列表 / Craft Recipe List
 //

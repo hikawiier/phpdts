@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 export interface AimLineGeometry {
   pathData: string;
   arrowAngle: number;

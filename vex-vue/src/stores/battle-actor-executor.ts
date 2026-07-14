@@ -1,3 +1,8 @@
+/**
+ * @module K 状态管理层
+ * @framework K-1 战斗回合编排 + 演示播放管道
+ */
+
 import { nextTick } from 'vue';
 import { getActorById } from '@/composables/actorRegistry';
 import { isCueAnimationHandle } from '@/composables/useActorRuntime';

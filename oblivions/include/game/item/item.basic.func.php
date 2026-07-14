@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module F 物品系统
+ * @framework F-1 槽位背包与 itm0 暂存槽协议
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

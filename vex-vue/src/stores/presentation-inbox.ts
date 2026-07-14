@@ -1,3 +1,8 @@
+/**
+ * @module K 状态管理层
+ * @framework K-9 有序批处理消费者 + 间隙检测
+ */
+
 // 演出批次收件箱：缓存来自 command/heartbeat 响应的实时演出事件
 // 按 batch_seq 顺序消费，支持 gap 检测与权威回退（F5 冷启动时的展示快进）
 import type { CommandResult, OblHeartbeatResponse } from '@/api/client';

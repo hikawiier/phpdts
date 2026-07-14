@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-12 五种射程解析模式
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

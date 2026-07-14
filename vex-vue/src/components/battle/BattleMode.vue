@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 // ══════════════════════════════════════════════════
 // 战斗模式容器 / Battle Mode Container
 //

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-9 静态世界生成系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,4 +1,7 @@
 <?php
+/**
+ * @module C 核心运行时
+ */
 
 if (!defined('IN_GAME')) {
     exit('Access Denied');

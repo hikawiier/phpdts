@@ -9,8 +9,8 @@
 | 层 | 目录 | 技术栈 | 文档入口 |
 |----|------|--------|----------|
 | **旧 PHPDTS 核心** | 根目录 | 原生 PHP + MySQL | [CODEBASE.md](CODEBASE.md) · [GLOBALS.md](GLOBALS.md) · [include/STRUCTURE.md](include/STRUCTURE.md) |
-| **Oblivions 后端模式** | `oblivions/` | 原生 PHP（独立子系统） | [oblivions/CODEBASE.md](oblivions/CODEBASE.md) · [oblivions/DESIGN.md](oblivions/DESIGN.md) |
-| **vex-vue 前端** | `vex-vue/` | Vue 3 + Vite + Pinia + TypeScript + Tailwind v4 | [vex-vue/CODEBASE.md](vex-vue/CODEBASE.md) |
+| **Oblivions 后端模式** | `oblivions/` | 原生 PHP（独立子系统） | [oblivions/Dian.md](oblivions/Dian.md) · [oblivions/DESIGN.md](oblivions/DESIGN.md) |
+| **vex-vue 前端** | `vex-vue/` | Vue 3 + Vite + Pinia + TypeScript + Tailwind v4 | [oblivions/Dian.md](oblivions/Dian.md)（模块 K-N）· [oblivions/DESIGN.md](oblivions/DESIGN.md) |
 
 **当前开发重心**：Oblivions 后端模式 + vex-vue 前端。旧 PHPDTS 核心文档仅作历史参考。
 
@@ -27,15 +27,15 @@
 - 不需要考虑对旧系统的兼容性、不需要考虑数据迁移问题、不需要考虑最小实现、不要被旧设计框架限制、污染心智模型、专注于从框架设计上彻底解决问题而不是到处打补丁
 - 每完成一个需求/目标任务后，用自然语言简单描述任务解决的实际需求——聚焦需求层面而非实现细节（保留文件名/表名等索引锚点，不写函数签名与参数释义）。并研判它属于模块 → 基准框架 → 设计意图 → 边界案例四层分级目录的哪一级，按级别收录于 oblivions/Dian.md 中
 - 撰写或修改文档时，以 [DESIGN.md 第三节设计哲学](oblivions/DESIGN.md#三跨任务沉淀的设计哲学) 作为自校准标准。
+- 新增、移动、重命名或删除 Oblivions/Vex-Vue 适用范围内的生产代码文件，或改变其模块/框架职责时，必须遵守 [DESIGN.md 2.12 文档与代码双向锚点契约](oblivions/DESIGN.md#212-文档与代码双向锚点契约)：普通模块文件同步 `@module`；直接实现框架的核心文件同时同步 `@framework` 与 `Dian.md` 代码锚点。全量迁移期间对目标模块运行 `php oblivions/tools/validate_design_anchors.php --module=X`；迁移完成后统一运行 `php oblivions/tools/validate_design_anchors.php`，严格模式通过才可视为完成。
 - 如果存在[user_AGENTS.md](user_AGENTS.md)，可以阅读并参考。
 
 ---
 
 ### 仅涉及Oblivions或Vex-Vue项目时阅读
 
-- 后端代码库文档，包含项目代码、具体函数和参数释义：[CODEBASE.md](oblivions/CODEBASE.md)
-- 前端代码库文档，包含项目代码、具体函数和参数释义：[vex-vue/CODEBASE.md](vex-vue/CODEBASE.md)
 - 项目模块、基准框架、设计意图、边界案例：[Dian.md](oblivions/Dian.md)
 - 概念词典、项目风格、核心原则总体约束与跨任务沉淀的设计哲学：[DESIGN.md](oblivions/DESIGN.md)
+- 代码细节（函数签名、参数释义、目录结构、调用关系）：使用 codebase-memory-mcp 动态查询，不维护静态代码库文档
 
 ---

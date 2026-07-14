@@ -1,4 +1,9 @@
 <?php
+/**
+ * @framework A-1 HTTP 三层入口隔离架构
+ * @module A API 层
+ * Heartbeat API 入口 —— 服务器端写入（tick 推进），使用 MySQL 事务 + 房间锁
+ */
 
 define('CURSCRIPT', 'api');
 

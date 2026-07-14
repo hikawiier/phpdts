@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 export const DEBUG_FLAGS = ['ai', 'actor', 'labels', 'error-poll'] as const;
 
 export type DebugFlag = (typeof DEBUG_FLAGS)[number];

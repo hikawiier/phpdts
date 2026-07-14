@@ -1,3 +1,8 @@
+/**
+ * @module M 组合式函数
+ * @framework M-1 租赁式动画架构
+ */
+
 import gsap from 'gsap';
 import {
   arriveAnim,

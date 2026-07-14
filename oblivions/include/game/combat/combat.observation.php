@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-17 可见性决策系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

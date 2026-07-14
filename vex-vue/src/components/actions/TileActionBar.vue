@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ * @framework L-1 统一交互列表模式
+ */
 // ══════════════════════════════════════════════════
 // 地格动作条 / Tile Action Bar
 //

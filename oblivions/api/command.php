@@ -1,4 +1,9 @@
 <?php
+/**
+ * @framework A-1 HTTP 三层入口隔离架构
+ * @module A API 层
+ * Command API 入口 —— 玩家认证写入，使用 MySQL 事务 + 房间锁 + 文件锁
+ */
 
 define('CURSCRIPT', 'api');
 

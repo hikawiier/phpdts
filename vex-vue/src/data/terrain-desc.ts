@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 // ══════════════════════════════════════════════════
 // Oblivions 地形描述词库 / Oblivions terrain description lexicon
 //

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ * @framework L-6 三列合成界面
+ */
 // ══════════════════════════════════════════════════
 // 合成模态框 / Craft Modal
 //

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-6 视野与感知系统
+ */
 
 if (!defined('IN_GAME')) {
     exit('Access Denied');

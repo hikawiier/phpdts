@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-13 五态参与分类器
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

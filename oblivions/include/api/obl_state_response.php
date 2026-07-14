@@ -1,4 +1,9 @@
 <?php
+/**
+ * @module A API 层
+ * State API 响应封装：成功/错误格式化、HTTP 状态码、JSON 输出、OblStateApiException
+ * 不归属当前 A-1~A-4 任一框架；响应协议待未来框架补充
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

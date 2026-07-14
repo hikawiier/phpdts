@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module B 命令系统
+ * @framework B-3 命令总线执行管道
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

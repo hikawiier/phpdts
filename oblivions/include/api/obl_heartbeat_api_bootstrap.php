@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module A API 层
+ * @framework A-2 最小依赖引导链
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

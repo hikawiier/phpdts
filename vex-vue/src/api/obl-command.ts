@@ -1,3 +1,8 @@
+/**
+ * @module N API 客户端
+ * @framework N-1 请求去重
+ */
+
 // Oblivions 命令发送 API：封装 POST 请求到后端 command.php 端点
 // 自动处理 request_id、JSON 序列化、错误响应、演出事件收件箱
 import { API_BASE, fetchWithTimeout, type CommandResult } from './client';

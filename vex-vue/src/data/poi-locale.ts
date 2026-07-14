@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 export interface PoiLocaleEntry {
   name: string;
   desc: string;

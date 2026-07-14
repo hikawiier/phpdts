@@ -1,5 +1,11 @@
 <?php
-if (!defined('IN_GAME')) { exit('Access Denied'); }
+/**
+ * @module E 游戏逻辑
+ * @framework E-1 Tick 驱动事件调度
+ */
+if (!defined('IN_GAME')) {
+    exit('Access Denied');
+}
 
 // ================================================================
 // Oblivions 游戏刻（Tick）核心模块

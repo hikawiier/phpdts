@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { SceneAnchor, ScenePoint } from './scene';
 
 export type MoveTier = 'duck' | 'jump' | 'long';

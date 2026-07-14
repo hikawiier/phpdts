@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * @module K 状态管理层
+ * @framework K-1 战斗回合编排 + 演示播放管道
+ * @framework L-4 异步播放编排器
+ */
+
 // ══════════════════════════════════════════════════
 // 战斗演出模态框 / Battle Presentation Modal
 //

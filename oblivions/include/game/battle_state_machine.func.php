@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-5 战斗有限状态机
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

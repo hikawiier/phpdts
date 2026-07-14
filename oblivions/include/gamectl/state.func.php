@@ -1,5 +1,9 @@
 <?php
 
+/**
+ * @module J 游戏控制
+ * @framework J-1 游戏生命周期状态机
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-4 结构化事件日志系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

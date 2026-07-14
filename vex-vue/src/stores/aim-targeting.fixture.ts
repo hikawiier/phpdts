@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import { aimTileVisualState, createAimTargetingController, selectAimTileFromMapObject } from './aim-targeting';
 import type { CombatPreviewTargetsResponse } from '@/types/api';
 import { isTileRevealed } from '@/utils/map-visibility';

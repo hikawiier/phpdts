@@ -1,4 +1,11 @@
 <?php
+/**
+ * @module B 命令系统
+ * @framework B-3 命令总线执行管道
+ * @framework B-4 日志即反馈
+ * @framework B-5 乐观并发控制
+ * @framework B-6 基于文件的玩家锁
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

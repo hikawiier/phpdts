@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 export type FogProjection = Record<string, Record<string, unknown>> | null | undefined;
 
 export function isRevealedFogValue(value: unknown): boolean {

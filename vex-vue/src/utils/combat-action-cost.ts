@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { Skill } from '@/types/api';
 
 export function getSkillBaseRange(skill: Skill | undefined): number {

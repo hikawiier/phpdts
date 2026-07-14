@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module G 技能系统
+ * @framework G-2 模块化技能钩子
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

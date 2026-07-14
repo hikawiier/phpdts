@@ -1,3 +1,8 @@
+/**
+ * @module K 状态管理层
+ * @framework K-7 视觉状态过渡机
+ */
+
 import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
 import type { MapEntity } from '@/types/map-entity';

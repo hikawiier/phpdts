@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { ActorCapability, ActorStatusProjection } from '@/types/api';
 
 export interface StatusLocaleEntry {

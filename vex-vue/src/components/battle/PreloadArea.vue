@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ * @framework L-3 战斗装填轨道与时序规划
+ */
 // ══════════════════════════════════════════════════
 // 装填区 / Preload Area（v4 重构版）
 //

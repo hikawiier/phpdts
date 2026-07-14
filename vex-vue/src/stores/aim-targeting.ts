@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import { computed, ref, type Ref } from 'vue';
 import { defineStore } from 'pinia';
 import { dataManager } from '@/stores/data-manager';

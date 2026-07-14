@@ -1,3 +1,8 @@
+/**
+ * @module K 状态管理层
+ * @framework K-1 战斗回合编排 + 演示播放管道
+ */
+
 // 战斗覆盖层动画执行器：创建投射物和爆炸等全局视觉效果
 // 使用 Web Animations API 创建独立于地图实体的覆盖图层
 import gsap from 'gsap';

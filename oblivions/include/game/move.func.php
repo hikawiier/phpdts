@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module E 游戏逻辑
+ * @framework E-3 基于图的移动系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

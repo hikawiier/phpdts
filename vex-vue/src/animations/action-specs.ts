@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { DirectedActionV2 } from '@/stores/battle-director-v2';
 
 export type BattleAnimationCue =

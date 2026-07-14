@@ -1,3 +1,7 @@
+/**
+ * @module M 组合式函数
+ */
+
 import { toValue, type MaybeRefOrGetter, type Ref } from 'vue';
 import type {
   SceneAnchor,

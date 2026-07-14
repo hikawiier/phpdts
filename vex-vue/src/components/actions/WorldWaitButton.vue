@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ */
 import { computed } from 'vue';
 import { commandQueue } from '@/stores/command-queue';
 import { useBattleStore } from '@/stores/battle';

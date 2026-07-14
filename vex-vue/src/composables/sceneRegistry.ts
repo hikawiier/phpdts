@@ -1,3 +1,8 @@
+/**
+ * @module M 组合式函数
+ * @framework M-2 场景差异投影
+ */
+
 import type { SceneGeometry } from '@/types/scene';
 
 let nextGeneration = 0;

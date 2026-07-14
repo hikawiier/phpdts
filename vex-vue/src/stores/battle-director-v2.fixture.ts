@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import type { BattleLogV2Event } from '@/types/api';
 import { resolveBattleAnimationChain } from '@/animations/action-specs';
 import {

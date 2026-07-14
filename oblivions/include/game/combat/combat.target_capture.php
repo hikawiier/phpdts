@@ -1,4 +1,8 @@
 <?php
+/**
+ * @module D 战斗系统（Combat）
+ * @framework D-6 目标捕获注册表
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }

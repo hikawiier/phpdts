@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import { createPinia, setActivePinia } from 'pinia';
 import { commandQueue, CommandQueue, type CommandQueueOptions } from './command-queue';
 import { usePlayerStore } from './player';

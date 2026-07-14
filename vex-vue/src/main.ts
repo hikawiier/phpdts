@@ -1,3 +1,7 @@
+/**
+ * @module K 状态管理层
+ */
+
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';

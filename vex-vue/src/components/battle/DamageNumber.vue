@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * @module L Vue 组件
+ * @framework L-5 附加后演出效果
+ */
 // ══════════════════════════════════════════════════
 // 残留伤害数字 / Damage Number
 //

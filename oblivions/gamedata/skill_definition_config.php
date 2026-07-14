@@ -1,4 +1,7 @@
 <?php
+/**
+ * @module G 技能系统
+ */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
