@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * @module L Vue 组件
+ * @framework L-8 push 模式持久抽屉
  */
 // ══════════════════════════════════════════════════
 // 左侧抽屉 / Player Drawer — 玩家属性详情
@@ -26,6 +27,7 @@ import { useCharacterStore } from '@/stores/character';
 import { useUiStore } from '@/stores/ui';
 import { getPlaceName, getGenderText } from '@/utils/format';
 import { getStatusDisplayName, getStatusLocale } from '@/data/status-locale';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const playerStore = usePlayerStore();
 const characterStore = useCharacterStore();
@@ -81,20 +83,14 @@ const statuses = computed(() => playerStore.statuses);
 </script>
 
 <template>
-  <!-- 遮罩 -->
+  <!-- §3.8 push 模式：抽屉作为 flex 子项参与主布局挤压，关闭时 flex-basis:0 -->
   <div
-    class="drawer-overlay fixed inset-0 bg-black/70 z-[250]"
-    :class="{ open: uiStore.playerDrawerOpen }"
-    @click="uiStore.closePlayerDrawer"
-  ></div>
-  <!-- 抽屉 -->
-  <div
-    class="player-drawer fixed top-0 left-0 w-[280px] h-screen bg-bg z-[300] flex flex-col border-r-2 border-hi"
+    class="player-drawer-push h-full bg-bg flex flex-col overflow-hidden"
     :class="{ open: uiStore.playerDrawerOpen }"
   >
     <!-- 头部 -->
     <div class="flex justify-between items-center px-4 py-3 border-b border-fg-dim/30 text-fg-bright text-xs tracking-widest flex-none">
-      <span>┌─ SURVIVOR</span>
+      <span>┌─ {{ UI_TEXT.SURVIVOR }}</span>
       <button
         class="text-fg-dim hover:text-hi transition-colors cursor-pointer text-sm"
         @click="uiStore.closePlayerDrawer"
@@ -105,7 +101,7 @@ const statuses = computed(() => playerStore.statuses);
       <template v-if="characterStore.player">
         <!-- VITALITY -->
         <div>
-          <div class="drawer-section-title">├─ VITALITY</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.VITALITY }}</div>
           <div class="stat-bar">
             <div class="stat-fill hp" :style="{ width: hpPct + '%' }"></div>
           </div>
@@ -113,7 +109,7 @@ const statuses = computed(() => playerStore.statuses);
         </div>
         <!-- STAMINA -->
         <div>
-          <div class="drawer-section-title">├─ STAMINA</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.STAMINA }}</div>
           <div class="stat-bar">
             <div class="stat-fill sp" :style="{ width: spPct + '%' }"></div>
           </div>
@@ -121,7 +117,7 @@ const statuses = computed(() => playerStore.statuses);
         </div>
         <!-- ACTION POINTS -->
         <div>
-          <div class="drawer-section-title">├─ ACTION POINTS</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.ACTION_POINTS }}</div>
           <div class="stat-bar">
             <div class="stat-fill" style="background:#888;" :style="{ width: apPct + '%' }"></div>
           </div>
@@ -129,21 +125,21 @@ const statuses = computed(() => playerStore.statuses);
         </div>
         <!-- EXPERIENCE -->
         <div>
-          <div class="drawer-section-title">├─ EXPERIENCE</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.EXPERIENCE }}</div>
           <div class="stat-bar">
             <div class="stat-fill exp" :style="{ width: expPct + '%' }"></div>
           </div>
-          <div class="drawer-stat-line">LV{{ lvl }} — {{ exp }} / {{ upexp }}</div>
+          <div class="drawer-stat-line">{{ UI_TEXT.LV }}{{ lvl }} — {{ exp }} / {{ upexp }}</div>
         </div>
         <!-- 杂项 -->
         <div
           class="drawer-stat-line"
           style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);"
         >
-          <div>├─ ATK: {{ att }} | DEF: {{ def }}</div>
-          <div>├─ KILLS: {{ killnum }}</div>
-          <div>├─ POS: {{ placeName }} [{{ pls }}]</div>
-          <div>└─ STATE: {{ state }}</div>
+          <div>├─ {{ UI_TEXT.ATK }}: {{ att }} | {{ UI_TEXT.DEF }}: {{ def }}</div>
+          <div>├─ {{ UI_TEXT.KILLS }}: {{ killnum }}</div>
+          <div>├─ {{ UI_TEXT.POS }}: {{ placeName }} [{{ pls }}]</div>
+          <div>└─ {{ UI_TEXT.STATE }}: {{ state }}</div>
         </div>
         <!-- PROFILE -->
         <div
@@ -151,7 +147,7 @@ const statuses = computed(() => playerStore.statuses);
           class="drawer-stat-line"
           style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);"
         >
-          <div class="drawer-section-title">├─ STATUS EFFECTS</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.STATUS_EFFECTS }}</div>
           <div v-for="status in statuses" :key="status.instance_uid || status.status_id" style="margin-top:6px;">
             <div>├─ {{ getStatusDisplayName(status) }}</div>
             <div class="dim">{{ getStatusLocale(status.status_id).description }}</div>
@@ -162,12 +158,12 @@ const statuses = computed(() => playerStore.statuses);
           class="drawer-stat-line"
           style="padding-top:8px; border-top:1px solid rgba(68,68,68,0.2);"
         >
-          <div class="drawer-section-title">├─ PROFILE</div>
-          <div>├─ name: {{ name }}</div>
+          <div class="drawer-section-title">├─ {{ UI_TEXT.PROFILE }}</div>
+          <div>├─ {{ UI_TEXT.NAME }}: {{ name }}</div>
           <div>└─ {{ genderText }}</div>
         </div>
       </template>
-      <div v-else class="loading">loading...</div>
+      <div v-else class="loading">{{ UI_TEXT.LOADING }}</div>
     </div>
   </div>
 </template>

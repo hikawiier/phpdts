@@ -504,11 +504,6 @@ body::after {
     background: rgba(255,255,255,0.04);
 }
 .tile-row.is-action { cursor: pointer; }
-.tile-tag {
-    color: #eee;
-    font-weight: 700;
-    flex: 0 0 auto;
-}
 .tile-name { flex: 1 1 auto; font-size: 12px; }
 .tile-name .dim { color: #555; font-size: 10px; }
 .tile-empty {
@@ -722,18 +717,51 @@ body::after {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.status-bar-btn {
-    color: #bbb;
-    cursor: pointer;
-    font-size: 12px;
-    background: none;
-    border: none;
-    font-family: inherit;
-    padding: 0;
-    transition: color 0.12s;
+/* ── 导航按钮三分布（§3.6 属性 居左 / 战斗 居中 / 背包 居右） ── */
+.status-nav-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
 }
-.status-bar-btn:hover { color: #fff; }
-.status-bar-btn:disabled { color: #555; cursor: not-allowed; }
+/* §3.6 三分布导航按钮——延用 v0.4 第一版 .status-nav-btn 视觉权重
+   （1px solid #555 边框 + #0a0a0a 背景 + 完整 hover/active 状态机），
+   但每个按钮独立分布（space-between），不再是紧密按钮组，故保留四边完整边框。 */
+.status-nav-btn {
+    box-sizing: border-box;
+    padding: 3px 10px;
+    border: 1px solid #555;
+    background: #0a0a0a;
+    color: #bbb;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    flex: 0 0 auto;
+}
+.status-nav-btn:hover:not(:disabled) {
+    border-color: #fff;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+}
+.status-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+/* 抽屉打开时对应按钮高亮 */
+.status-nav-btn.is-active {
+    border-color: #fff;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+}
+/* 战斗按钮在 battle/aim 态：白边 + 内填提示当前模式 */
+.status-nav-btn.is-battle-active {
+    border-color: #fff;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
 .status-effect-chip {
     color: #f0c36a;
     border: 1px solid rgba(240,195,106,0.55);
@@ -749,16 +777,6 @@ body::after {
     overflow-x: auto;
     scrollbar-width: none;
 }
-.world-wait-button {
-    position: fixed;
-    right: 16px;
-    bottom: 12px;
-    z-index: 500;
-    background: #0b0b0b;
-    box-shadow: 0 0 0 2px #0b0b0b;
-}
-.status-bar-btn.debug { color: #666; }
-.status-bar-btn.debug:hover { color: #bbb; }
 .status-bar-divider {
     color: #444;
     margin: 0 2px;
@@ -905,7 +923,6 @@ body::after {
 }
 .modal-item .item-name { flex: 1; color: #eee; font-size: 12px; }
 .modal-item .item-meta { color: #666; font-size: 10px; flex: 0 0 auto; }
-.modal-item .item-tag { color: #eee; font-weight: 700; flex: 0 0 auto; }
 .modal-footer {
     padding: 8px 0 4px;
     text-align: center;
@@ -976,17 +993,24 @@ body::after {
     margin-left: 4px;
 }
 
-/* ═══ 右侧道具抽屉 ═══ */
+/* ═══ 右侧道具抽屉（§3.3 重设计：透明 overlay 拦截 + 剪纸投影） ═══ */
 
 .inv-drawer-overlay {
     opacity: 0; visibility: hidden;
+    pointer-events: none;
     transition: opacity 0.25s, visibility 0.25s;
 }
-.inv-drawer-overlay.open { opacity: 1; visibility: visible; }
-
+.inv-drawer-overlay.open {
+    opacity: 1; visibility: visible;
+    pointer-events: auto;  /* 拦截所有指针事件，防止穿透到地图 */
+}
 .inv-drawer {
     transform: translateX(100%);
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    /* 内侧（左侧，贴近地图）剪纸硬投影 + 软阴影 */
+    box-shadow:
+        -4px 0 0 0 rgba(0, 0, 0, 0.85),    /* 剪纸硬投影 */
+        -12px 0 24px -4px rgba(0, 0, 0, 0.6);  /* 软阴影扩散 */
 }
 .inv-drawer.open { transform: translateX(0); }
 
@@ -1008,20 +1032,56 @@ body::after {
     border-bottom: 1px solid rgba(68,68,68,0.2);
 }
 
-/* ═══ Drawer ═══ */
+/* ═══ Drawer（§3.8 push 模式：抽屉作为 flex 子项参与布局挤压） ═══ */
 
-.drawer-overlay {
+/* 旧 overlay 模式样式保留（窄屏退化用） */
+.drawer-overlay,
+.inv-drawer-overlay {
     opacity: 0;
     visibility: hidden;
+    pointer-events: none;
     transition: opacity 0.25s, visibility 0.25s;
 }
-.drawer-overlay.open {
+.drawer-overlay.open,
+.inv-drawer-overlay.open {
     opacity: 1;
     visibility: visible;
+    pointer-events: auto;
 }
+
+/* push 模式：抽屉 flex-basis 0→300px 过渡 */
+/* §3.8 push 模式抽屉：边框统一为主内容区标准分隔线 rgba(68,68,68,0.3) 1px
+   —— 与 MapContainer/RightPanel 的 border-fg-dim/30 一致；
+   移除 overlay 遗留的粗白边 + 剪纸硬投影 + 软阴影（push 模式嵌入布局无需浮起投影）。 */
+.player-drawer-push {
+    flex: 0 0 0;
+    border-right: 0 solid rgba(68, 68, 68, 0.3);
+    transition: flex-basis 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                border-right-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.player-drawer-push.open {
+    flex: 0 0 300px;
+    border-right: 1px solid rgba(68, 68, 68, 0.3);
+}
+
+.inv-drawer-push {
+    flex: 0 0 0;
+    border-left: 0 solid rgba(68, 68, 68, 0.3);
+    transition: flex-basis 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                border-left-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.inv-drawer-push.open {
+    flex: 0 0 300px;
+    border-left: 1px solid rgba(68, 68, 68, 0.3);
+}
+
+/* 旧 fixed overlay 模式样式（保留用于窄屏退化） */
 .player-drawer {
     transform: translateX(-100%);
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow:
+        4px 0 0 0 rgba(0, 0, 0, 0.85),
+        12px 0 24px -4px rgba(0, 0, 0, 0.6);
 }
 .player-drawer.open {
     transform: translateX(0);
@@ -1078,6 +1138,18 @@ body::after {
 @keyframes bar-fill { from { width: 0; } }
 .bar-animated { animation: bar-fill 0.6s ease-out; }
 
+/* ═══ prefers-reduced-motion 降级（§3.3.6 抽屉过渡瞬时切换） ═══ */
+@media (prefers-reduced-motion: reduce) {
+    .player-drawer,
+    .inv-drawer,
+    .player-drawer-push,
+    .inv-drawer-push,
+    .drawer-overlay,
+    .inv-drawer-overlay {
+        transition: none !important;
+    }
+}
+
 /* 响应式：窄屏堆叠 */
 @media (max-width: 900px) {
     /* 单栏堆叠 + 允许纵向滚动 */
@@ -1088,9 +1160,11 @@ body::after {
     /* 地图格缩小 */
     .map-cell .cell-name { font-size: 7px; }
     .map-cell .cell-me { font-size: 6px; }
-    /* 抽屉适配 */
-    .player-drawer { width: 85vw; max-width: 320px; }
-    .inv-drawer { width: 85vw; max-width: 320px; }
+    /* 抽屉适配（§3.8 push 模式窄屏退化：300px → 220px 避免过度挤压主内容） */
+    .player-drawer-push.open { flex: 0 0 220px; }
+    .inv-drawer-push.open { flex: 0 0 220px; }
+    .player-drawer { width: 85vw; max-width: 300px; }
+    .inv-drawer { width: 85vw; max-width: 300px; }
     /* 模态框适配 */
     .modal { max-width: 90vw; }
     /* 状态栏适配 */

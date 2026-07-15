@@ -20,6 +20,7 @@ import { computed } from 'vue';
 import { useInventoryStore, EQUIPMENT_SLOTS } from '@/stores/inventory';
 import type { EquipmentSlot } from '@/types/api';
 import { getItemName } from '@/data/item-locale';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const inventoryStore = useInventoryStore();
 
@@ -54,12 +55,12 @@ function equipDisplayName(equip: EquipmentSlot | null): string {
       <span class="eq-label">{{ es.label }}</span>
       <template v-if="!isEquipEmpty(getEquip(es.key))">
         <span class="eq-name">{{ equipDisplayName(getEquip(es.key)) }}</span>
-        <span class="eq-meta">ATK:{{ getEquip(es.key)?.exp || 0 }}</span>
+        <span class="eq-meta">{{ UI_TEXT.ATK }}:{{ getEquip(es.key)?.exp || 0 }}</span>
       </template>
       <template v-else>
         <span class="eq-name">---</span>
       </template>
     </div>
   </div>
-  <div v-else class="loading">loading...</div>
+  <div v-else class="loading">{{ UI_TEXT.LOADING }}</div>
 </template>

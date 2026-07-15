@@ -19,6 +19,7 @@ import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { computed } from 'vue';
 import { getPlaceName } from '@/utils/format';
 import { escapeHtml } from '@/utils/format';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const mapStore = useMapStore();
 const playerAvatarStore = usePlayerAvatarStore();
@@ -26,7 +27,7 @@ const playerAvatarStore = usePlayerAvatarStore();
 // ── 地图信息（响应式渲染，替代 useMapBusiness.updateMapInfo 的 innerHTML） ──
 const mapInfoHtml = computed(() => {
   if (mapStore.loading) {
-    return '<span class="grey">loading...</span>';
+    return '<span class="grey">' + UI_TEXT.LOADING + '</span>';
   }
   if (mapStore.error) {
     return '<span class="grey">数据加载失败</span>';
@@ -35,11 +36,11 @@ const mapInfoHtml = computed(() => {
     return '<span class="grey">等待地图加载...</span>';
   }
   const curName = getPlaceName(mapStore.curLoc);
-  let infoText = '&gt; LOC: <span class="yellow">' + escapeHtml(curName) + '</span>';
+  let infoText = '&gt; ' + UI_TEXT.LOC + ': <span class="yellow">' + escapeHtml(curName) + '</span>';
   if (mapStore.curRegion !== null) {
     const regionInfo = (mapStore.links.regions as Record<string, { name?: string }>)[String(mapStore.curRegion)];
     if (regionInfo) {
-      infoText += ' | REGION: ' + escapeHtml(regionInfo.name || '');
+      infoText += ' | ' + UI_TEXT.REGION + ': ' + escapeHtml(regionInfo.name || '');
     }
   }
   return infoText;
@@ -52,7 +53,7 @@ const mapInfoHtml = computed(() => {
       <!-- ASCII 标题 -->
       <div class="ascii-title flex-none">
         <span>┌─</span>
-        <span class="ascii-label">CARTOGRAPHY</span>
+        <span class="ascii-label">{{ UI_TEXT.CARTOGRAPHY }}</span>
         <span>─</span>
         <span class="flex-1 ascii-line"></span>
         <span>┐</span>

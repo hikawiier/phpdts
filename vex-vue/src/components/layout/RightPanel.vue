@@ -20,12 +20,14 @@ import { useBattleStore } from '@/stores/battle';
 import TileActionBar from '@/components/actions/TileActionBar.vue';
 import LogPanel from '@/components/log/LogPanel.vue';
 import BattleMode from '@/components/battle/BattleMode.vue';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const battleStore = useBattleStore();
 </script>
 
 <template>
-  <div class="flex flex-col min-h-0 overflow-hidden">
+  <!-- §3.8 push 模式：右侧操作区 flex:35，被抽屉挤压时自动收缩 -->
+  <div class="flex flex-col min-h-0 overflow-hidden flex-[35_1_0%] min-w-0">
     <!-- 正常模式：Log + Actions -->
     <div
       v-if="battleStore.currentMode === 'normal'"
@@ -38,7 +40,7 @@ const battleStore = useBattleStore();
       >
         <div class="ascii-title flex-none mb-1.5">
           <span>┌─</span>
-          <span class="ascii-label">CHRONICLE</span>
+          <span class="ascii-label">{{ UI_TEXT.CHRONICLE }}</span>
           <span>─</span>
           <span class="flex-1 ascii-line"></span>
           <span>┐</span>
@@ -54,7 +56,7 @@ const battleStore = useBattleStore();
       >
         <div class="ascii-title flex-none mb-1.5">
           <span>┌─</span>
-          <span class="ascii-label">ACTIONS</span>
+          <span class="ascii-label">{{ UI_TEXT.ACTIONS }}</span>
           <span>─</span>
           <span class="flex-1 ascii-line"></span>
           <span>┐</span>
@@ -71,7 +73,7 @@ const battleStore = useBattleStore();
       <div class="min-h-0 flex flex-col p-3 overflow-hidden flex-1">
         <div class="ascii-title flex-none mb-1.5">
           <span>┌─</span>
-          <span class="ascii-label">COMBAT</span>
+          <span class="ascii-label">{{ UI_TEXT.COMBAT }}</span>
           <span>─</span>
           <span class="flex-1 ascii-line"></span>
           <span>┐</span>

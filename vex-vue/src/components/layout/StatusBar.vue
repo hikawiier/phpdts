@@ -25,6 +25,7 @@ import { commandQueue } from '@/stores/command-queue';
 import { getPlaceName } from '@/utils/format';
 import type { BattleState } from '@/types/api';
 import { getStatusDisplayName, getStatusLocale } from '@/data/status-locale';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const playerStore = usePlayerStore();
 const characterStore = useCharacterStore();
@@ -175,10 +176,10 @@ function onAvatarError(): void {
           ></div>
         </div>
         <span class="bar-text" :class="{ danger: hpDanger }">
-          HP {{ characterStore.player?.hp ?? 0 }}/{{ characterStore.player?.mhp ?? 0 }}
+          {{ UI_TEXT.HP }} {{ characterStore.player?.hp ?? 0 }}/{{ characterStore.player?.mhp ?? 0 }}
         </span>
       </div>
-      <!-- 第二行：位置名 + SP -->
+      <!-- 第二行：位置名 + SP + 状态效果 chip（§3.6 chip 从第三行移入） -->
       <div class="status-bar-row">
         <span class="status-location">{{ locationName }}</span>
         <div class="bar-container">
@@ -187,18 +188,7 @@ function onAvatarError(): void {
             :style="{ width: spPct + '%' }"
           ></div>
         </div>
-        <span class="bar-text">SP {{ characterStore.player?.sp ?? 0 }}/{{ characterStore.player?.msp ?? 0 }}</span>
-      </div>
-      <!-- 第三行：按钮 -->
-      <div class="status-bar-row">
-        <button class="status-bar-btn" @click="uiStore.togglePlayerDrawer">[属性]</button>
-        <button
-          class="status-bar-btn"
-          :disabled="battleButtonDisabled"
-          :title="battleButtonTitle"
-          @click="onBattleBtnClick"
-        >[{{ battleButtonText }}]</button>
-        <button class="status-bar-btn" @click="uiStore.toggleInventoryDrawer">[背包]</button>
+        <span class="bar-text">{{ UI_TEXT.SP }} {{ characterStore.player?.sp ?? 0 }}/{{ characterStore.player?.msp ?? 0 }}</span>
         <span v-if="visibleStatuses.length > 0" class="status-effects">
           <span
             v-for="status in visibleStatuses"
@@ -207,6 +197,30 @@ function onAvatarError(): void {
             :title="statusTitle(status.status_id)"
           >{{ getStatusDisplayName(status) }}</span>
         </span>
+      </div>
+      <!-- 第三行：导航按钮三分布（§3.6 属性 居左 / 战斗 居中 / 背包 居右）
+           §3.6 v0.7：延用 v0.4 第一版 .status-nav-btn 视觉权重，三按钮独立分布 -->
+      <div class="status-bar-row status-nav-row">
+        <button
+          class="status-nav-btn"
+          :class="{ 'is-active': uiStore.playerDrawerOpen }"
+          @click="uiStore.togglePlayerDrawer"
+        >属性</button>
+        <button
+          class="status-nav-btn"
+          :class="{
+            'is-active': battleStore.currentMode === 'battle' || battleStore.currentMode === 'aim',
+            'is-battle-active': battleStore.currentMode === 'battle' || battleStore.currentMode === 'aim',
+          }"
+          :disabled="battleButtonDisabled"
+          :title="battleButtonTitle"
+          @click="onBattleBtnClick"
+        >{{ battleButtonText }}</button>
+        <button
+          class="status-nav-btn"
+          :class="{ 'is-active': uiStore.inventoryDrawerOpen }"
+          @click="uiStore.toggleInventoryDrawer"
+        >背包</button>
       </div>
     </div>
     <!-- 右侧：头像 -->

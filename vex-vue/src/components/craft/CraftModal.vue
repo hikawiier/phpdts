@@ -319,7 +319,6 @@ onUnmounted(() => {
                     :key="'wb-' + wbId"
                     class="pool-row"
                   >
-                    <span class="pool-tag">[T]</span>
                     <span class="pool-name">{{ wbDisplayName(wbId) }}</span>
                     <span class="pool-count dim">不消耗</span>
                   </div>

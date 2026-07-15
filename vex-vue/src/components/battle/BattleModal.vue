@@ -25,6 +25,7 @@
 
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
+import { UI_TEXT } from '@/data/ui-locale';
 import type {
   BattleSegment,
   CombatantView,
@@ -367,7 +368,7 @@ onUnmounted(() => {
                 :style="{ width: enemyHpPercent }"
               ></div>
             </div>
-            <span class="battle-modal-hp-text">HP: {{ enemyHp }}/{{ enemyMaxHp }}</span>
+            <span class="battle-modal-hp-text">{{ UI_TEXT.HP }}: {{ enemyHp }}/{{ enemyMaxHp }}</span>
           </div>
           <div class="battle-modal-combatant player">
             <span class="battle-modal-combatant-name">你</span>
@@ -378,7 +379,7 @@ onUnmounted(() => {
                 :style="{ width: playerHpPercent }"
               ></div>
             </div>
-            <span class="battle-modal-hp-text">HP: {{ playerHp }}/{{ playerMaxHp }}</span>
+            <span class="battle-modal-hp-text">{{ UI_TEXT.HP }}: {{ playerHp }}/{{ playerMaxHp }}</span>
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * @module L Vue 组件
+ * @framework L-8 push 模式持久抽屉
  */
 // ══════════════════════════════════════════════════
 // 右侧抽屉 / Inventory Drawer — 背包 + 装备
@@ -18,20 +19,15 @@
 import { useUiStore } from '@/stores/ui';
 import InventoryList from '@/components/inventory/InventoryList.vue';
 import EquipmentList from '@/components/inventory/EquipmentList.vue';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const uiStore = useUiStore();
 </script>
 
 <template>
-  <!-- 遮罩 -->
+  <!-- §3.8 push 模式：抽屉作为 flex 子项参与主布局挤压，关闭时 flex-basis:0 -->
   <div
-    class="inv-drawer-overlay fixed inset-0 bg-black/70 z-[350]"
-    :class="{ open: uiStore.inventoryDrawerOpen }"
-    @click="uiStore.closeInventoryDrawer"
-  ></div>
-  <!-- 抽屉 -->
-  <div
-    class="inv-drawer fixed top-0 right-0 w-[300px] h-screen bg-bg z-[400] flex flex-col border-l-2 border-hi"
+    class="inv-drawer-push h-full bg-bg flex flex-col overflow-hidden"
     :class="{ open: uiStore.inventoryDrawerOpen }"
   >
     <!-- 头部：标签 + 关闭 -->
@@ -41,12 +37,12 @@ const uiStore = useUiStore();
           class="inv-tab"
           :class="{ active: uiStore.activeInvTab === 'inventory' }"
           @click="uiStore.setActiveInvTab('inventory')"
-        >INVENTORY</button>
+        >{{ UI_TEXT.INVENTORY }}</button>
         <button
           class="inv-tab"
           :class="{ active: uiStore.activeInvTab === 'equipment' }"
           @click="uiStore.setActiveInvTab('equipment')"
-        >ARMAMENT</button>
+        >{{ UI_TEXT.ARMAMENT }}</button>
       </div>
       <button
         class="text-fg-dim hover:text-hi transition-colors cursor-pointer text-sm"

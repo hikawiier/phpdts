@@ -24,6 +24,7 @@ import { commandQueue } from '@/stores/command-queue';
 import type { InventoryItem } from '@/types/api';
 import { getItemName, isInfinite } from '@/data/item-locale';
 import { getItmkName } from '@/data/itmk-locale';
+import { UI_TEXT } from '@/data/ui-locale';
 
 const inventoryStore = useInventoryStore();
 const mapStore = useMapStore();
@@ -61,7 +62,7 @@ function slotMeta(item: InventoryItem): string {
 
 <template>
   <div v-if="inventoryStore.loading && !inventoryStore.inventoryData" class="loading">
-    loading...
+    {{ UI_TEXT.LOADING }}
   </div>
   <template v-else-if="inventoryStore.inventoryData">
     <div class="inv-grid">
@@ -96,5 +97,5 @@ function slotMeta(item: InventoryItem): string {
     </div>
     <div class="slot-info">物品: {{ num }}/{{ limit }}</div>
   </template>
-  <div v-else class="loading">loading...</div>
+  <div v-else class="loading">{{ UI_TEXT.LOADING }}</div>
 </template>

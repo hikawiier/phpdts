@@ -104,6 +104,7 @@
     - [L-5：附加后演出效果](#框架-l-5附加后演出效果)
     - [L-6：三列合成界面](#框架-l-6三列合成界面)
     - [L-7：混合渲染策略地图网格](#框架-l-7混合渲染策略地图网格)
+    - [L-8：push 模式持久抽屉](#框架-l-8push-模式持久抽屉)
   - 模块 M：组合式函数
     - [M-1：租赁式动画架构](#框架-m-1租赁式动画架构)
     - [M-2：场景差异投影](#框架-m-2场景差异投影)
@@ -1013,7 +1014,7 @@
 
 **设计意图：** 用 `v-for` + `v-if` 替代旧的 `innerHTML` 命令式 DOM 内容操作。`TileActionBar` 是核心实现，包含模态状态的分支渲染树（机制结果 vs. 搜索按钮 vs. 物品列表 vs. 空状态）。
 
-**代码锚点：** `vex-vue/src/components/actions/TileActionBar.vue`（统一交互列表、模态状态分支渲染树）
+**代码锚点：** `vex-vue/src/components/actions/TileActionBar.vue`（统一交互列表、模态状态分支渲染树），`vex-vue/src/components/actions/ExploreButton.vue`（合并主操作按钮：探索可用时显示"探索周围"，不可用时退化为"等待"虚线态）
 
 **边界案例：**
 
@@ -1091,6 +1092,18 @@
 
 - 战斗模态播放时阻止地图输入。
 - 战斗模式下非活跃实体半透明。视图层直接查询 `characterStore`，绕过 `presentationScene` 播放态对 `displayEntities` 的冻结——phase 隔离 pls 变化正确，但 `inCombat`/`active` 字段更新不应被阻断。
+
+#### 框架 L-8：push 模式持久抽屉
+
+**设计意图：** PlayerDrawer/InventoryDrawer 不再是 fixed 浮起 overlay，而是作为 flex 子项持久参与主布局挤压——抽屉打开时 `flex-basis` 从 0 过渡到 300px，主内容区（MapContainer/RightPanel）被自动挤压收缩；关闭时反向恢复。push 模式消除了 overlay 的浮起投影、遮罩层、z-index 堆叠上下文问题，抽屉与主内容区是平等的布局参与方。MapGrid 已有 ResizeObserver 监听容器尺寸，push 挤压触发自动重排，无需额外协调。窄屏（max-width: 900px）退化为 overlay 模式。抽屉与主内容区共享标准分隔线 `rgba(68,68,68,0.3)` 1px（与 MapContainer/RightPanel 的 `border-fg-dim/30` 一致），无浮起投影——避免 overlay 遗留的粗白边 + 剪纸硬投影与扁平分隔风格冲突。主布局由 `App.vue` 的 `main` flex 容器承载（PlayerDrawer/LeftPanel/RightPanel/InventoryDrawer 作为 flex 子项），过渡样式定义在 `terminal.css` 的 `.player-drawer-push`/`.inv-drawer-push` 选择器。
+
+**代码锚点：** `vex-vue/src/components/layout/PlayerDrawer.vue`（push 模式左侧抽屉）、`vex-vue/src/components/layout/InventoryDrawer.vue`（push 模式右侧抽屉）
+
+**边界案例：**
+
+- `flex-basis` 与 `border-width` 同步过渡（关闭态 0px、打开态 1px），避免抽屉拉开时边框突现。
+- `prefers-reduced-motion` 降级：禁用 `flex-basis` 与 `border-width` 过渡，抽屉瞬时切换。
+- 窄屏退化为 overlay 模式（max-width: 900px 时改用 `.player-drawer`/`.inv-drawer` fixed 浮起样式）。
 
 ***
 

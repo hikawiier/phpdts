@@ -31,6 +31,7 @@ import type { GroundItem, Poi } from '@/types/api';
 import { getItemName, isInfinite } from '@/data/item-locale';
 import { getItmkName } from '@/data/itmk-locale';
 import { getPoiName } from '@/data/poi-locale';
+import { UI_TEXT } from '@/data/ui-locale';
 import ExploreButton from './ExploreButton.vue';
 
 const tileActionStore = useTileActionStore();
@@ -149,10 +150,6 @@ function onOpenCraft(): void {
   void craftStore.openModal();
 }
 
-function onWait(): void {
-  void tileActionStore.handleWait();
-}
-
 function onCheckGround(): void {
   tileActionStore.openGroundModal();
 }
@@ -233,17 +230,8 @@ function poiCountLabel(poi: Poi): string {
 
 <template>
   <div class="flex-1 overflow-y-auto min-h-0">
-    <div class="action-buttons" style="display:flex;gap:6px;margin-bottom:6px;">
-      <button
-        class="term-btn block"
-        style="flex:1;"
-        :disabled="!commandQueue.canExecute('world.wait')"
-        :title="commandQueue.getBlockDecision('world.wait')?.message || '推进 1 tick，不消耗资源'"
-        @click="onWait"
-      >[W] 等待</button>
-    </div>
     <!-- 加载中 -->
-    <div v-if="tileActionStore.loading && !tileActionStore.tileActions" class="loading">scanning...</div>
+    <div v-if="tileActionStore.loading && !tileActionStore.tileActions" class="loading">{{ UI_TEXT.LOADING }}</div>
 
     <template v-else-if="tileActionStore.tileActions">
       <!-- ── 常驻按钮区 ── -->
@@ -261,7 +249,7 @@ function poiCountLabel(poi: Poi): string {
           style="flex:2;"
           :disabled="!commandQueue.canExecute('map.move')"
           @click="onSwitchRegion"
-        >{{ switchRegionText }}</button>
+        >[{{ switchRegionText }}]</button>
       </div>
 
       <!-- ── 统一交互列表 ── -->
@@ -273,7 +261,6 @@ function poiCountLabel(poi: Poi): string {
           class="tile-row is-action"
           @click="onCheckGround"
         >
-          <span class="tile-tag">[G]</span>
           <span class="tile-name">
             脚边道具
             <span class="dim">×{{ groundItems.length }}</span>
@@ -286,7 +273,6 @@ function poiCountLabel(poi: Poi): string {
           class="tile-row is-action"
           @click="onCheckPoi(poi.iaid)"
         >
-          <span class="tile-tag">[S]</span>
           <span class="tile-name">
             {{ poiDisplayName(poi) }}
             <span v-if="poiSubLabel(poi)" class="dim">{{ poiSubLabel(poi) }}</span>
@@ -339,7 +325,6 @@ function poiCountLabel(poi: Poi): string {
                 class="modal-item"
                 @click="onPickup(item.iid)"
               >
-                <span class="item-tag">[P]</span>
                 <span class="item-name">{{ itemDisplayName(item) }}</span>
                 <span v-if="showItemMeta(item)" class="item-meta">
                   {{ getItmkName(item.itmk) }} {{ itemMeta(item) }}

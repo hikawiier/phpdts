@@ -46,6 +46,7 @@ import {
   getSkillCategory,
   isFinisherSkill,
 } from '@/utils/skill-category';
+import { UI_TEXT } from '@/data/ui-locale';
 
 // ── 类型定义 ──
 type TargetIntent = CombatAimIntent;
@@ -1152,7 +1153,7 @@ defineExpose({
       <!-- 标题行 -->
       <div class="queue-track-header">
         <span class="track-label">装填轨道 ({{ queue.length }})</span>
-        <span class="track-cost">AP {{ queueCost }}</span>
+        <span class="track-cost">{{ UI_TEXT.AP }} {{ queueCost }}</span>
       </div>
 
       <!-- 空状态 -->
@@ -1185,7 +1186,7 @@ defineExpose({
             class="queue-track-item"
             :class="{
               'is-pending': item.isPending,
-              'is-finisher': item.isFinisher,
+              'finisher-item': item.isFinisher,
               'is-dragging': draggingIndex === i,
             }"
             :data-order="item.order"
@@ -1217,10 +1218,7 @@ defineExpose({
           >→ {{ getTargetDisplayText(item.target) }}</span>
 
           <!-- AP 徽标 -->
-          <span class="ap-cost">AP:{{ item.apCost }}</span>
-
-          <!-- finisher 标记 -->
-          <span v-if="item.isFinisher" class="finisher-tag">[F]</span>
+          <span class="ap-cost">{{ UI_TEXT.AP }}:{{ item.apCost }}</span>
 
           <!-- 删除按钮（pending 项无删除） -->
           <button
@@ -1279,7 +1277,7 @@ defineExpose({
         </div>
       </div>
       <div class="ap-aggregate">
-        AP {{ playerAp }}/{{ playerMaxAp }} · 锁定 {{ queueCost }} · 可用 {{ predictedAp }}
+        {{ UI_TEXT.AP }} {{ playerAp }}/{{ playerMaxAp }} · 锁定 {{ queueCost }} · 可用 {{ predictedAp }}
         <span v-if="isOverload"> · 超载 ╳{{ overloadCount }}</span>
         <span v-if="depletedCount > 0 && !isOverload"> · 不可用 {{ depletedCount }}</span>
       </div>
@@ -1312,14 +1310,17 @@ defineExpose({
           v-for="skill in filteredSkills"
           :key="skill.act_id"
           class="skill-row"
-          :class="{ 'is-finisher-exhausted': isFinisherSkill(skill) && hasFinisherInQueue }"
+          :class="{
+            'finisher-item': isFinisherSkill(skill),
+            'is-finisher-exhausted': isFinisherSkill(skill) && hasFinisherInQueue,
+          }"
           :disabled="!skill.available"
           @click="onSkillClick(skill.act_id)"
         >
           <span class="skill-name-text">[{{ getSkillTemplate(skill.act_id).name }}]</span>
           <span class="skill-desc">{{ getSkillTemplate(skill.act_id).desc }}</span>
           <span class="meta">
-            {{ Number(skill.apcost) > 0 ? `AP:${skill.apcost}` : '' }}{{ skillRangeText(skill) }}{{ skillCdText(skill) }}
+            {{ Number(skill.apcost) > 0 ? `${UI_TEXT.AP}:${skill.apcost}` : '' }}{{ skillRangeText(skill) }}{{ skillCdText(skill) }}
           </span>
           <span
             v-if="skill.aimType === 'pid' && canQuickAim(skill)"
@@ -1330,7 +1331,6 @@ defineExpose({
             @click.stop="onQuickAimClick(skill.act_id)"
             @keydown.enter.prevent="onQuickAimClick(skill.act_id)"
           >→{{ quickAimLabel }}</span>
-          <span v-if="isFinisherSkill(skill)" class="finisher-tag">[F]</span>
           <span v-else class="category-tag">{{ SKILL_CATEGORY_LABELS[getSkillCategory(skill)] }}</span>
         </button>
       </div>
@@ -1858,17 +1858,13 @@ defineExpose({
   white-space: nowrap;
 }
 
-.skill-row .finisher-tag {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: var(--color-bg);
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  white-space: nowrap;
+/* ══════════════════════════════════════════════════ */
+/* finisher 视觉标识（替代原 [F] 文字标签，§3.5.6 CSS 类） */
+/* ══════════════════════════════════════════════════ */
+.finisher-item {
+  border-left: 2px solid #fff;
+  padding-left: 6px;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* ══════════════════════════════════════════════════ */
@@ -1891,20 +1887,6 @@ defineExpose({
 /* 耗尽态下技能行不显示快捷标签（canQuickAim 已返回 false，CSS 兜底） */
 .skill-row.is-finisher-exhausted .quick-aim-tag {
   display: none;
-}
-
-/* ══════════════════════════════════════════════════ */
-/* finisher 标记（轨道项内，与技能库项内共享样式） */
-/* ══════════════════════════════════════════════════ */
-.queue-track-item .finisher-tag {
-  padding: 1px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: var(--color-bg);
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
 }
 
 /* ══════════════════════════════════════════════════ */

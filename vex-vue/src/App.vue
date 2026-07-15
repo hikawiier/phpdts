@@ -23,7 +23,6 @@
 //
 // 全局功能：
 //   - onMounted: 加载 player_info（状态栏显示真实数据）
-//   - keydown: ESC/i/p 快捷键（与现有 app.js 一致）
 //   - battle-active 类：战斗模式下红色边框光效
 //   - debug-ai 类：?debug=ai 时显示 tick 调试
 // ══════════════════════════════════════════════════
@@ -38,7 +37,6 @@ import { useInventoryStore } from '@/stores/inventory';
 import { useToastStore } from '@/stores/toast';
 import { useLogStore } from '@/stores/log';
 import { useErrorLogStore } from '@/stores/error-log';
-import { useCraftStore } from '@/stores/craft';
 import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
 import LeftPanel from '@/components/layout/LeftPanel.vue';
@@ -49,7 +47,6 @@ import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
-import WorldWaitButton from '@/components/actions/WorldWaitButton.vue';
 import { isDebugEnabled } from '@/utils/debug-flags';
 
 const playerStore = usePlayerStore();
@@ -61,7 +58,6 @@ const inventoryStore = useInventoryStore();
 const toastStore = useToastStore();
 const logStore = useLogStore();
 const errorLogStore = useErrorLogStore();
-const craftStore = useCraftStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
 const isBattleActive = computed(() => battleStore.currentMode === 'battle');
@@ -69,38 +65,10 @@ const isBattleActive = computed(() => battleStore.currentMode === 'battle');
 // ── ?debug=ai 时加 .debug-ai 类（显示 tick 调试） ──
 const isDebugAi = computed(() => isDebugEnabled('ai'));
 
-// ── 全局键盘快捷键（与现有 app.js 一致） ──
-// ESC: 合成模态框 > 通用模态框 > 右抽屉 > 左抽屉（优先级，合成模态框最优先）
-// i/I: 切换右抽屉
-// p/P: 打开左抽屉
-function onKeydown(e: KeyboardEvent): void {
-  // 忽略输入框内的按键
-  const target = e.target as HTMLElement;
-  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-  if (e.key === 'Escape') {
-    if (craftStore.craftModalOpen) {
-      craftStore.closeModal();
-    } else if (uiStore.modalOpen) {
-      uiStore.closeModal();
-    } else if (uiStore.inventoryDrawerOpen) {
-      uiStore.closeInventoryDrawer();
-    } else if (uiStore.playerDrawerOpen) {
-      uiStore.closePlayerDrawer();
-    }
-  } else if (e.key === 'i' || e.key === 'I') {
-    uiStore.toggleInventoryDrawer();
-  } else if (e.key === 'p' || e.key === 'P') {
-    uiStore.openPlayerDrawer();
-  }
-}
-
 // ── 初始化：加载玩家信息 + 地图数据 ──
 // 与现有 vex/js/app.js loadAll() 一致：player_info + game_map + enemies 并行
 // M4：同时注册 tileAction/inventory/toast 的事件监听（监听 map:loaded 等）
 onMounted(async () => {
-  document.addEventListener('keydown', onKeydown);
-
   // 注册 M4/M5/M6 store 的事件监听（监听 map:loaded / game:action-completed / ui:toast / preload:executed 等）
   tileActionStore.registerListeners();
   inventoryStore.registerListeners();
@@ -134,7 +102,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   battleStore.stopDaemonPoll();
-  document.removeEventListener('keydown', onKeydown);
   errorLogStore.stopPolling();
   commandQueue.destroy();
 });
@@ -153,22 +120,23 @@ onUnmounted(() => {
       <!-- ═══ STATUS BAR ═══ -->
       <StatusBar />
 
-      <!-- ═══ MAIN ═══ -->
-      <main class="flex-1 grid grid-cols-[65%_1fr] min-h-0 overflow-hidden">
-        <!-- LEFT: Map -->
+      <!-- ═══ MAIN（§3.8 push 模式：抽屉作为 flex 子项参与布局挤压） ═══ -->
+      <main class="flex-1 flex min-h-0 overflow-hidden">
+        <!-- LEFT PUSH: PlayerDrawer（属性抽屉，关闭时 flex-basis:0） -->
+        <PlayerDrawer />
+        <!-- CENTER: Map（flex:65，被抽屉挤压时自动收缩） -->
         <LeftPanel />
-        <!-- RIGHT: Log + Actions / Battle Actions -->
+        <!-- RIGHT: Log + Actions / Battle Actions（flex:35） -->
         <RightPanel />
+        <!-- RIGHT PUSH: InventoryDrawer（背包抽屉，关闭时 flex-basis:0） -->
+        <InventoryDrawer />
       </main>
     </div>
 
-    <!-- ═══ 浮动组件 ═══ -->
+    <!-- ═══ 浮动组件（模态框 + Toast，仍 fixed 层） ═══ -->
     <Modal />
     <Itm0Modal />
     <CraftModal />
-    <PlayerDrawer />
-    <InventoryDrawer />
     <ToastContainer />
-    <WorldWaitButton />
   </div>
 </template>

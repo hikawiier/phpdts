@@ -13,5 +13,6 @@ import MapContainer from '@/components/map/MapContainer.vue';
 </script>
 
 <template>
-  <MapContainer />
+  <!-- §3.8 push 模式：左侧地图区 flex:65，被抽屉挤压时自动收缩 -->
+  <MapContainer class="flex-[65_1_0%] min-w-0" />
 </template>
