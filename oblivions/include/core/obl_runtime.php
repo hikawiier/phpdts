@@ -315,11 +315,15 @@ function obl_runtime_persist_logs($pdata = null, $source = 'api', $writers = arr
     $warnings = array();
     if (isset($obl_log) && $obl_log && $obl_log->hasEntries()) obl_log_persist($obl_log, $groomid, $pid);
     if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) obl_error_log_persist($obl_error_log, $groomid, $pid);
-    if (isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()
-        && isset($writers['battle']) && is_callable($writers['battle'])) {
-        // 在线演出已由 response PresentationBatch 投递。这里只保留显式注入的
-        // best-effort archive writer，不再默认维护 mutable played JSON。
-        $persisted = call_user_func($writers['battle'], $obl_battle_log, $groomid, $pid);
+    // 默认 battle writer：把 BattleLogCollector 的事件流追加写入 debug 文件，
+    // 供复现 BUG 时分析。调用方仍可通过 $writers['battle'] 显式注入覆盖。
+    $battle_writer = isset($writers['battle']) && is_callable($writers['battle'])
+        ? $writers['battle']
+        : (function_exists('combat_battle_log_debug_persist') ? 'combat_battle_log_debug_persist' : null);
+    if ($battle_writer !== null && isset($obl_battle_log) && $obl_battle_log && $obl_battle_log->hasEntries()) {
+        // 在线演出已由 response PresentationBatch 投递。这里只保留 best-effort
+        // archive writer，用于 debug 分析，不再默认维护 mutable played JSON。
+        $persisted = call_user_func($battle_writer, $obl_battle_log, $groomid, $pid);
         if ($persisted === false) $warnings[] = 'BATTLELOG_PERSIST_FAILED';
     }
     $debug_writer = isset($writers['debug']) && is_callable($writers['debug'])

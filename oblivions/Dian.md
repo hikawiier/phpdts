@@ -385,6 +385,7 @@
 - 批的战斗 ID 通过反向扫描事件确定，而不是从玩家当前战斗 ID 直接取。
 - 如果玩家角色标识无效，日志持久化直接跳过。
 - `event_seq` 和 `batch_seq` 只承担传输排序，不能替代 `turn_seq` 或 `turn_key`。
+- 未显式注入 `$writers['battle']` 时，`obl_runtime_persist_logs` 默认把 BattleLogCollector 事件流追加写入 debug 文件，供 BUG 复现分析。
 
 #### 框架 C-5：Tick 编排器
 
@@ -428,7 +429,7 @@
 
 **设计意图：** 动作层只执行已经由 E-5 开放并原子认领的权威回合，保持排序（终结技最后）→ 校验（AP 成本、标签规则）→ 执行（效果应用、持久化）的单一职责。`battle.start` 先用无副作用投影确定初始战斗名单，正式建场后把整条预提交动作链绑定到首个权威回合；动作层不创建回合、不递增序号、不恢复回合资源。
 
-**代码锚点：** `oblivions/include/game/combat/combat.runtime.php`（动作运行时与初始化入口）、`oblivions/include/game/combat/combat.core.php`（已认领回合的动作编排）
+**代码锚点：** `oblivions/include/game/combat/combat.runtime.php`（动作运行时入口）、`oblivions/include/game/combat/combat.core.php`（动作编排与战斗调试日志桩子）
 
 **边界案例：**
 
@@ -436,6 +437,7 @@
 - 行动者终止有四种条件（生命值归零、状态标记、逃离、死亡），会导致所有后续动作中断而非跳过。
 - `battle.start` 中位于首个敌对动作之前的移动、增益等意图只在投影阶段预演；正式执行时与敌对动作共享 `turn_seq=1`，保证首回合所有动作事件都有同一个 `turn_key`。
 - 调用方未提供已认领的 `EXECUTING` 回合，或行动者、`turn_seq` 与权威记录不一致时，动作入口拒绝执行。
+- 战斗观测有两条平行通道：轻量观测桩子（命令级流程跟踪）与结构化事件流（权威投影对账），分别落盘到独立 debug 文件，新局初始化时清空。
 
 #### 框架 D-2：四层预览/预演系统
 
@@ -871,6 +873,7 @@
 **边界案例：**
 
 - 敌人放置不能重叠，不能与玩家出生点或区域出入口重合。
+- `obl_rs_game` 初始化时清空战斗调试日志文件（含两个 debug 通道），避免跨局残留。
 
 #### 框架 J-2：潮汐区作为空间分布主键
 
@@ -896,9 +899,9 @@
 
 **阶段切片模型：** `turn_intro` 段单阶段（回合开放宣告）；`turn` 段六阶段严格顺序（回合接场 → 战场就绪 → 动作演出 → 退场演出 → 战报回放 → 伤害浮现）；`system` 段单阶段；`battle_end` 段保持终幕遮罩 → 场景交接 → 终局战报三阶段屏障。
 
-**战报回放文本本地化框架：** `turn` 段"战报回放"阶段的文本生成由 `BATTLE_TEMPLATES` 字典承担，与 `LOG_TEMPLATES` / `SKILL_TEMPLATES` / `command-feedback` 共享同一"字典 + 渲染函数 + 兜底"架构模式。后端 `action_id` / `effect_type` / `reason` / `event_type` 作为索引锚点，前端字典 key 1:1 对齐；匹配失败走硬错误 + 兜底文案，对齐 §4.1 跨层命名契约。`move` / `ap_change` / `custom` effect 不生成文本，由位姿动画与 HP/AP 槽承担视觉反馈（§2.15 灰阶基底）。`OBL_EVENT_LOG_DESIGN.md` §7.2 out-of-scope 约束已解除；跨层字段契约见 `oblivions/docs/战报事件字段本地化契约.md`。
+**战报回放文本本地化框架：** `turn` 段"战报回放"阶段的文本生成由 `BATTLE_TEMPLATES` 字典承担，与 `LOG_TEMPLATES` / `SKILL_TEMPLATES` / `command-feedback` 共享同一"字典 + 渲染函数 + 兜底"架构模式。后端 `action_id` / `effect_type` / `reason` / `event_type` 作为索引锚点 1:1 对齐，匹配失败走硬错误（§4.1）。`SKILL_TEMPLATES.action_desc` 是动词短语唯一真相源。`move` / `ap_change` / `custom` effect 不生成文本，由位姿动画与 HP/AP 槽承担视觉反馈（§2.15）。跨层字段契约见 `oblivions/docs/战报事件字段本地化契约.md`。
 
-**`battle_end` 胜负判定的显式上下文（`BattleEndInfo`）：** 胜负判定不靠推断玩家 pid 再比较 `winner_pid`——玩家逃跑时 `winner_pid` 落到 NPC，NPC 全逃跑时事件流里根本没有玩家 snapshot。改为预扫描整个事件流，显式算出玩家是否幸存、是否逃跑、胜者是谁三个语义状态，`battle_end` 模板按幸存 → 逃离 → 战败的优先级分支，两个场景自动覆盖。`SKILL_TEMPLATES.action_desc` 是动词短语唯一真相源，`BATTLE_ACTION_TEMPLATES` 只包装不造词，`action_desc` 缺失即硬错误（§4.1）。
+**`battle_end` 胜负判定的显式上下文（`BattleEndInfo`）：** 胜负判定不靠推断玩家 pid 再比较 `winner_pid`——玩家逃跑时 `winner_pid` 落到 NPC、NPC 全逃跑时事件流无玩家 snapshot。改为预扫描事件流算出幸存/逃跑/胜者三个语义状态，`battle_end` 模板按幸存 → 逃离 → 战败优先级分支，两个场景自动覆盖。
 
 **代码锚点：** `vex-vue/src/stores/battle.ts`（权威状态、回合编辑会话与演示批编排）、`vex-vue/src/stores/battle-director.ts`（v3 导演层 + 计划层）、`vex-vue/src/data/battle-templates.ts`（战报文本字典 + 渲染函数 + 校验入口）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/PreloadArea.vue`（按权威回合身份建立并关闭动作编辑会话）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
 
@@ -909,7 +912,7 @@
 - `battle_end` 段三步流程：终幕遮罩持续显示，场景交接启动世界动画后立即放行，终局战报并行等待横幅正文与 handoff 动画。
 - `awaitPolicy: 'completion'` 的 step 超时时先取消任务清理动画资源再等 settled，避免资源泄漏；scene guard 检测场景世代变化时立即取消任务并 abort 旧 session。
 - 组件未注册时 store 抛错；组件播放中卸载时错误传播到 store 的 await，runner 的 timeout 兜底确保播放链路安全终止。
-- 横幅正文 XSS 防护：`battle_end` 横幅只显示 `BATTLE_NOTICE_TEMPLATES` 的渲染产物（动态文本在模板内转义），后端原始 `notice.reason` 不直接进 DOM。
+- 横幅正文 XSS 防护：`battle_end` 横幅只显示 `BATTLE_NOTICE_TEMPLATES` 渲染产物，后端原始 `notice.reason` 不直接进 DOM。
 - `battle_end` 胜负判定三个场景由 `BattleEndInfo` 覆盖：玩家逃跑→逃离；NPC 全逃跑→胜利；玩家死亡→战败。
 - `combatant_cleared` 的 `reason='dead'` 在后端 emit 时映射为 `'death'`，前端只识别 `'death'` / `'escaped'` 两种 reason。
 - `reason='escaped'` 在 `visual_policy='retreat'` 模式下于 `combatant_cleared` 阶段串行播 `fade` + `move tier='long'` 退场动画，`startCommit` 退入 fall-through 做 alpha 兜底。`reason='death'` 使用 terminal 优先级租约（不可抢占）+ `fall` 动画，确保死亡动画播完不被中断。

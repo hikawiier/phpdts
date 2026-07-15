@@ -39,6 +39,62 @@ function combat_debug_persist(): bool {
 }
 
 /**
+ * 战斗事件日志（BattleLogCollector）落盘到 debug 文件。
+ *
+ * 与 combat_debug.log（combat_debug_log 桩子的轻量观测日志）不同，本函数持久化
+ * 的是 BattleLogCollector 收集的结构化 battlelog.v3 事件——即战斗演出与权威
+ * 投影的完整事件流。包含 render（前端播放）和 debug（诊断）两种 channel。
+ *
+ * 默认 writer 由 obl_runtime_persist_logs 调用；调用方也可显式注入 writer
+ * 覆盖此行为。落盘格式：每行一个事件，前缀 [ts] [phase] [channel] event_type，
+ * 后接完整 entry 的 JSON。
+ *
+ * @param mixed $log     BattleLogCollector 实例
+ * @param int   $groomid 房间 ID（保留参数，便于自定义 writer 区分归档）
+ * @param int   $pid     触发请求的玩家 PID（保留参数）
+ * @return bool 落盘是否成功
+ */
+function combat_battle_log_debug_persist($log, $groomid = 0, $pid = 0): bool {
+    if (!$log || !method_exists($log, 'getEntries')) return true;
+    $entries = $log->getEntries();
+    if (!is_array($entries) || empty($entries)) return true;
+
+    $lines = '';
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) continue;
+        $ts = isset($entry['ts']) ? date('Y-m-d H:i:s', (int)$entry['ts']) : date('Y-m-d H:i:s');
+        $phase = (string)($entry['phase'] ?? '');
+        $channel = !empty($entry['debug']) ? 'debug' : 'render';
+        $event_type = (string)($entry['event_type'] ?? '');
+        $prefix = '[' . $ts . '] [' . $phase . '] [' . $channel . '] ' . $event_type;
+        $lines .= $prefix . ' ' . json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n";
+    }
+
+    $path = GAME_ROOT . './oblivions/cache/battles/obl_battle_log_debug.log';
+    return @file_put_contents($path, $lines, FILE_APPEND | LOCK_EX) !== false;
+}
+
+/**
+ * 清理战斗调试日志文件（combat_debug.log + obl_battle_log_debug.log）。
+ *
+ * 在 obl_rs_game() 游戏初始化时调用，避免跨游戏残留。同时清空内存中的
+ * combat_debug_entries，确保上一局累积的观测条目不会写入新一局。
+ */
+function combat_debug_clear_all(): void {
+    $dir = GAME_ROOT . './oblivions/cache/battles/';
+    $files = [
+        $dir . 'combat_debug.log',
+        $dir . 'obl_battle_log_debug.log',
+    ];
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            @unlink($file);
+        }
+    }
+    $GLOBALS['obl_combat_debug_entries'] = [];
+}
+
+/**
  * 按技能配置归一化 action target，保留 pid/tile/self/none/all 的语义。
  *
  * 兼容旧 target:number：

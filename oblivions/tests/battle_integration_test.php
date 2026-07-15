@@ -101,7 +101,12 @@ return static function (TestRoom $room): array {
             test_same('status', (string)$statusEffect['effect_type'], 'status effect is emitted after escape effect');
             test_same((string)$effect['effect_uid'], (string)$cleared['payload']['by_effect_uid'], 'clear event remains linked to escape effect uid');
         },
-        'active_flustered_blocks_dynamic_participation_and_pipeline_actor' => static function () use ($room): void {
+        'active_flustered_allows_dynamic_participation_but_blocks_actor_combat_action' => static function () use ($room): void {
+            // 设计变更（2026-07-16）：狼狈的 capability_denies 移除了 participate_combat。
+            // 设计意图：狼狈只阻止"主动行动"维度（world_ai / voluntary_move / enter_combat
+            // / combat_action / free_mutation），不阻止被动进入战斗（被作为目标拉入战场、
+            // 战场动态扩编参战）。若后续需要"完全无法行动"语义（如眩晕/束缚/沉默），
+            // 应在该状态独立声明 participate_combat deny。
             global $gamevars;
             $original_gamevars = $gamevars;
             $room->resetData();
@@ -117,7 +122,7 @@ return static function (TestRoom $room): array {
                     'boundary_id' => 0,
                     'delay_ticks' => 0,
                     'evaluation_tick' => 20,
-                ], 'fx-joinable-blocked');
+                ], 'fx-joinable-allowed');
 
                 $cache = combat_cache_create($attacker, false);
                 $config = combat_action_config_with_target(
@@ -127,8 +132,7 @@ return static function (TestRoom $room): array {
                 $ctx = new CombatContext($attacker, 'unarmed_strike', $config, new BattleLogCollector(), $cache);
                 $target = combat_target_capture_character($joinable);
                 $decision = combat_participation_classify($ctx, $target);
-                test_same('blocked', (string)$decision['state'], 'active flustered target cannot dynamically participate');
-                test_same('TARGET_CAPABILITY_BLOCKED', (string)$decision['reason'], 'participation exposes structured capability reason');
+                test_same('joinable', (string)$decision['state'], 'active flustered target can still be pulled into combat passively');
 
                 skill_effect_apply($attacker, 'flustered', ['kind' => 'test'], [
                     'boundary' => 'immediate',

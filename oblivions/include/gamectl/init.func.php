@@ -60,6 +60,11 @@ function obl_rs_game() {
     if (function_exists('obl_error_log_clear_all')) {
         obl_error_log_clear_all();
     }
+    // 清理战斗调试日志（combat_debug.log + obl_battle_log_debug.log），
+    // 确保下一局复现 BUG 时观测到的是干净的当局事件流。
+    if (function_exists('combat_debug_clear_all')) {
+        combat_debug_clear_all();
+    }
 }
 
 /**
