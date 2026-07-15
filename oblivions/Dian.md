@@ -5,7 +5,7 @@
 - 包括"跨模块特殊案例"额外模块。
 > ▎**写入约束**
 - 写入条目时使用自然语言描述设计意图与框架语义，不出现函数签名、参数释义等实现细节；保留文件名、表名、字段名、标签名、枚举值等索引锚点（便于从代码反查文档）
-- 写入或修改框架描述前，先参考同模块内已有框架的描述风格，保持一致的抽象层级、信息密度与组织方式
+- 写入或修改框架描述前，先参考其他框架（如B-3）的描述风格，保持一致的抽象层级、信息密度与组织方式
 - 文档只描述代码当前实现的框架基准与准确状态，不记载变更历史——不使用版本标记（如"vN 新增"/"vN 补录"），不描述"删除了 X/更新了 X/修正了 X"等变更动作。变更记录属于设计案的修订摘要，不进入本目录
 - 代码细节（函数签名、参数释义、目录结构、调用关系）使用 codebase-memory-mcp 动态查询，不维护静态代码库文档
 - 内容包含概念词典、风格定义、核心原则约束、设计哲学、经验备忘（踩过的坑）写入[DESIGN.md](./DESIGN.md)
@@ -898,7 +898,7 @@
 
 **战报回放文本本地化框架：** `turn` 段"战报回放"阶段的文本生成由 `BATTLE_TEMPLATES` 字典承担，与 `LOG_TEMPLATES` / `SKILL_TEMPLATES` / `command-feedback` 共享同一"字典 + 渲染函数 + 兜底"架构模式。后端 `action_id` / `effect_type` / `reason` / `event_type` 作为索引锚点，前端字典 key 1:1 对齐；匹配失败走硬错误 + 兜底文案，对齐 §4.1 跨层命名契约。`move` / `ap_change` / `custom` effect 不生成文本，由位姿动画与 HP/AP 槽承担视觉反馈（§2.15 灰阶基底）。`OBL_EVENT_LOG_DESIGN.md` §7.2 out-of-scope 约束已解除；跨层字段契约见 `oblivions/docs/战报事件字段本地化契约.md`。
 
-**`battle_end` 胜负判定的显式上下文（`BattleEndInfo`）：** 胜负判定不依赖"推断 `playerPid` 后比较 `winnerPid`"——该模式在两个场景下失败（玩家逃跑时 `winnerPid=NPC` 误判战败；NPC 全逃跑时事件流无玩家 snapshot 导致 `playerPid=0`）。改为 `computeBattleEndContext` 预扫描整个事件流，显式计算 `BattleEndInfo`（`playerPid` / `playerSurvived` / `playerEscaped` / `winnerPid` / `reason`）。`battle_end` 模板按 `playerSurvived` → `playerEscaped` → 默认战败的语义优先级分支，两个场景自动覆盖无需特判：玩家逃跑时 `playerSurvived=false` + `playerEscaped=true` → 逃离；NPC 全逃跑时 `playerSurvived=true` + `winnerPid===playerPid` → 胜利。`SKILL_TEMPLATES.action_desc` 是动词短语唯一真相源，`BATTLE_ACTION_TEMPLATES` 只负责包装模板，`action_desc` 缺失走 `fallbackAction` + `console.warn`（§4.1 静默失败禁止）。
+**`battle_end` 胜负判定的显式上下文（`BattleEndInfo`）：** 胜负判定不靠推断玩家 pid 再比较 `winner_pid`——玩家逃跑时 `winner_pid` 落到 NPC，NPC 全逃跑时事件流里根本没有玩家 snapshot。改为预扫描整个事件流，显式算出玩家是否幸存、是否逃跑、胜者是谁三个语义状态，`battle_end` 模板按幸存 → 逃离 → 战败的优先级分支，两个场景自动覆盖。`SKILL_TEMPLATES.action_desc` 是动词短语唯一真相源，`BATTLE_ACTION_TEMPLATES` 只包装不造词，`action_desc` 缺失即硬错误（§4.1）。
 
 **代码锚点：** `vex-vue/src/stores/battle.ts`（权威状态、回合编辑会话与演示批编排）、`vex-vue/src/stores/battle-director.ts`（v3 导演层 + 计划层）、`vex-vue/src/data/battle-templates.ts`（战报文本字典 + 渲染函数 + 校验入口）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/PreloadArea.vue`（按权威回合身份建立并关闭动作编辑会话）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
 
@@ -909,8 +909,8 @@
 - `battle_end` 段三步流程：终幕遮罩持续显示，场景交接启动世界动画后立即放行，终局战报并行等待横幅正文与 handoff 动画。
 - `awaitPolicy: 'completion'` 的 step 超时时先取消任务清理动画资源再等 settled，避免资源泄漏；scene guard 检测场景世代变化时立即取消任务并 abort 旧 session。
 - 组件未注册时 store 抛错；组件播放中卸载时错误传播到 store 的 await，runner 的 timeout 兜底确保播放链路安全终止。
-- 横幅正文 XSS 防护：`battle_end` 横幅通过 `v-html="notice.text.html"` 显示，`notice.text.html` 是 `BATTLE_NOTICE_TEMPLATES` 渲染产物，所有动态文本（actor 名、reason 等）在模板内经 `escapeHtml` 转义；后端原始 `notice.reason` 仅存于 `DirectedNotice.reason` 字段供调试，不直接进入 DOM。
-- `battle_end` 胜负判定三个场景由 `BattleEndInfo` 显式上下文覆盖：玩家逃跑（`playerSurvived=false` + `playerEscaped=true` → 逃离）；NPC 全逃跑（`playerSurvived=true` + `winnerPid===playerPid` → 胜利）；玩家死亡（`playerSurvived=false` + `playerEscaped=false` → 战败）。`computeBattleEndContext` 预扫描事件流识别 `playerPid`（`type===0` 的 combatant snapshot），不依赖单一事件字段。
+- 横幅正文 XSS 防护：`battle_end` 横幅只显示 `BATTLE_NOTICE_TEMPLATES` 的渲染产物（动态文本在模板内转义），后端原始 `notice.reason` 不直接进 DOM。
+- `battle_end` 胜负判定三个场景由 `BattleEndInfo` 覆盖：玩家逃跑→逃离；NPC 全逃跑→胜利；玩家死亡→战败。
 - `combatant_cleared` 的 `reason='dead'` 在后端 emit 时映射为 `'death'`，前端只识别 `'death'` / `'escaped'` 两种 reason。
 - `reason='escaped'` 在 `visual_policy='retreat'` 模式下于 `combatant_cleared` 阶段串行播 `fade` + `move tier='long'` 退场动画，`startCommit` 退入 fall-through 做 alpha 兜底。`reason='death'` 使用 terminal 优先级租约（不可抢占）+ `fall` 动画，确保死亡动画播完不被中断。
 - 动作演出 `awaitPolicy` 规则：`animation.kind='none'` 且所有 `deliveries` 的 `type='none'` 时为 `'none'`（fire-and-forget），否则为 `'completion'`。`move` 动画的 timeout 比其他动画更短，演员层按距离分 `duck` / `jump` / `long` 三档。
@@ -1103,15 +1103,14 @@
 
 #### 框架 L-8：push 模式持久抽屉
 
-**设计意图：** PlayerDrawer/InventoryDrawer 不再是 fixed 浮起 overlay，而是作为 flex 子项持久参与主布局挤压——抽屉打开时 `flex-basis` 从 0 过渡到 300px，主内容区（MapContainer/RightPanel）被自动挤压收缩；关闭时反向恢复。push 模式消除了 overlay 的浮起投影、遮罩层、z-index 堆叠上下文问题，抽屉与主内容区是平等的布局参与方。MapGrid 已有 ResizeObserver 监听容器尺寸，push 挤压触发自动重排，无需额外协调。窄屏（max-width: 900px）退化为 overlay 模式。抽屉与主内容区共享标准分隔线 `rgba(68,68,68,0.3)` 1px（与 MapContainer/RightPanel 的 `border-fg-dim/30` 一致），无浮起投影——避免 overlay 遗留的粗白边 + 剪纸硬投影与扁平分隔风格冲突。主布局由 `App.vue` 的 `main` flex 容器承载（PlayerDrawer/LeftPanel/RightPanel/InventoryDrawer 作为 flex 子项），过渡样式定义在 `terminal.css` 的 `.player-drawer-push`/`.inv-drawer-push` 选择器。
+**设计意图：** PlayerDrawer/InventoryDrawer 不再是 fixed 浮起 overlay，而是作为 flex 子项持久参与主布局挤压——抽屉打开时主内容区被自动挤压收缩，关闭时反向恢复。push 模式消除了 overlay 的浮起投影、遮罩层、z-index 堆叠上下文问题，抽屉与主内容区是平等的布局参与方。MapGrid 已有 ResizeObserver 监听容器尺寸，push 挤压触发自动重排，无需额外协调。窄屏（max-width: 900px）退化为 overlay 模式。
 
 **代码锚点：** `vex-vue/src/components/layout/PlayerDrawer.vue`（push 模式左侧抽屉）、`vex-vue/src/components/layout/InventoryDrawer.vue`（push 模式右侧抽屉）
 
 **边界案例：**
 
-- `flex-basis` 与 `border-width` 同步过渡（关闭态 0px、打开态 1px），避免抽屉拉开时边框突现。
-- `prefers-reduced-motion` 降级：禁用 `flex-basis` 与 `border-width` 过渡，抽屉瞬时切换。
-- 窄屏退化为 overlay 模式（max-width: 900px 时改用 `.player-drawer`/`.inv-drawer` fixed 浮起样式）。
+- 抽屉边框宽度与尺寸同步过渡，避免拉开时边框突现。
+- `prefers-reduced-motion` 降级时禁用过渡，抽屉瞬时切换。
 
 ***
 
