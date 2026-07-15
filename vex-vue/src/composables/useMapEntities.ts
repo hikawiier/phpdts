@@ -1,5 +1,7 @@
 /**
  * @module M 组合式函数
+ * @framework K-10 角色动画意图派发
+ * @framework M-1 租赁式动画架构
  */
 
 import { nextTick, shallowRef, watch, type Ref } from 'vue';
@@ -414,13 +416,15 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
   );
 
   const stopIntentWatch = watch(
-    () => playerAvatarStore.intentSeq,
-    async () => {
+    () => ({
+      intentSeq: playerAvatarStore.intentSeq,
+      intent: playerAvatarStore.intent,
+    }),
+    async ({ intentSeq, intent }) => {
       await nextTick();
       const runtime = getActorById('player');
       if (!runtime) return;
-      const intent = playerAvatarStore.intent;
-      const sessionId = `player-intent:${playerAvatarStore.intentSeq}:${runtime.generation}`;
+      const sessionId = `player-intent:${intentSeq}:${runtime.generation}`;
       if (intent === 'move') return;
 
       if (intent === 'battle-start' || intent === 'battle-end') {
@@ -433,8 +437,14 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
             replaceEqualOwner: true,
           });
           if (!visibleLease) return;
-          await visibleLease.play({ kind: 'reset-visible' }).finished;
-          visibleLease.release();
+          try {
+            await Promise.all([
+              visibleLease.play({ kind: 'reset-pose' }).finished,
+              visibleLease.play({ kind: 'reset-visible' }).finished,
+            ]);
+          } finally {
+            visibleLease.release();
+          }
           return;
         }
         const transformLease = runtime.acquire({
@@ -444,23 +454,28 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
           replaceEqualOwner: true,
         });
         if (!transformLease) return;
-        const [result] = await Promise.all([
-          transformLease.play({
-            kind: 'transform-appearance',
-            swap: () => {
-              if (playerAvatarStore.desiredAppearance === targetAppearance) {
-                playerAvatarStore.commitAppearance(targetAppearance);
-              }
-            },
-          }).finished,
-          transformLease.play({ kind: 'reset-visible' }).finished,
-        ]);
-        if (result.status !== 'completed'
-          && playerAvatarStore.desiredAppearance === targetAppearance
-          && playerAvatarStore.currentAppearance !== targetAppearance) {
-          playerAvatarStore.commitAppearance(targetAppearance);
+        try {
+          const [result] = await Promise.all([
+            transformLease.play({
+              kind: 'transform-appearance',
+              swap: () => {
+                if (playerAvatarStore.intentSeq === intentSeq
+                  && playerAvatarStore.desiredAppearance === targetAppearance) {
+                  playerAvatarStore.commitAppearance(targetAppearance);
+                }
+              },
+            }).finished,
+            transformLease.play({ kind: 'reset-visible' }).finished,
+          ]);
+          if (result.status !== 'completed'
+            && playerAvatarStore.intentSeq === intentSeq
+            && playerAvatarStore.desiredAppearance === targetAppearance
+            && playerAvatarStore.currentAppearance !== targetAppearance) {
+            playerAvatarStore.commitAppearance(targetAppearance);
+          }
+        } finally {
+          transformLease.release();
         }
-        transformLease.release();
         return;
       }
 

@@ -163,15 +163,21 @@ CharacterHub 与表现场景 store 分离，构成"权威投影 vs 演出投影"
 | | 瞬态战斗 | 常态战斗 |
 |---|---|---|
 | **定义** | `battle.start` 在同一请求内执行完玩家回合并触发 `battle_end` | 战斗跨多个回合，玩家与 NPC 交替行动 |
-| **后端状态机** | IDLE → PROCESSING → IDLE（一进一出） | IDLE → PROCESSING → PLAYER_TURN → PROCESSING → … → IDLE |
+| **后端状态机** | IDLE → AWAITING_INPUT → EXECUTING → IDLE（一进一出） | IDLE → AWAITING_INPUT / AUTO_PENDING → EXECUTING → 下一回合 → … → IDLE |
 | **前端 `enterBattleMode`** | 跳过——`refreshBattle` 读到 `action !== 'battle'`，不建立多回合基础设施 | 被调用——`action === 'battle'` 触发，设置 `currentQid` |
-| **battlelog 播放** | 单个 presentation batch 内完整播放（turn segment + battle_end segment） | 跨多个 batch，每个回合一批，通过 `drainBattleTicksToStable` 持续消费 |
+| **battlelog 播放** | 通常在一次命令响应内完整播放（`turn_intro` + turn + battle_end） | 可跨多个 batch；`turn_key` 保持回合身份，`drainBattleTicksToStable` 持续消费 |
 | **多回合基础设施** | 不需要（跨批次 session 复用、NPC 轮询、动作面板均不需要） | 需要 |
 | **退出** | `applyVerifiedBattleState` → `exitBattleMode` | 同左 |
 
 **设计基准**：前端"战斗被感知"的判据是 battlelog 事件流，不是 `enterBattleMode`。瞬态战斗跳过 `enterBattleMode` 是正确行为——它不需要多回合基础设施，battlelog + 播放架构已完整传递战斗内容（动作动画、文本日志、HP 变化、结束模态框、handoff）。`startBattle` 设的 `currentMode='battle'`（UI 锁定）+ battlelog 播放（内容传递）+ `exitBattleMode`（清理）已完整覆盖瞬态战斗的生命周期，无需为它建立独立概念。
 
 **概念用途**：沟通时说"瞬态战斗"即指"1 回合内结束、`enterBattleMode` 被跳过、单 batch 完整播放"这一完整语义；说"常态战斗"即指"多回合、`enterBattleMode` 正常调用、跨 batch drain 消费"这一完整语义。
+
+### 1.17 BattleTurn / 权威回合身份
+
+BattleTurn 是战场级持久状态，不是请求、tick 或 presentation batch 的别名。`oblbattle_state.turn_seq` 在同一 `qid` 内单调递增并组成稳定 `turn_key=qid:turn_seq`；`round_num` 只表达轮次规则和显示，不承担身份。
+
+回合开放与动作执行是两个边界：`AWAITING_INPUT` / `AUTO_PENDING` 表示控制权已经交给玩家或系统，`EXECUTING` 表示该回合已被原子认领。玩家命令必须提交 `expected_turn_seq`；事件通过 `turn_opened` 和同一组 `qid`、`round_num`、`turn_seq`、`turn_key` 陈述领域事实，前端不得从请求次数或数字组合反推回合身份。
 
 
 

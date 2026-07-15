@@ -31,9 +31,9 @@ AimIntent
 | `combat.pipeline.php` | 入口编排：Aim -> Capture -> TargetResolutionUnit，不再按 stage 批量遍历所有目标 |
 | `combat.chain.php` | verify/preview 的 planned-state 投影，复用同一 Aim/Capture/Unit 语义 |
 | `combat.effect.php` | 只对 current target 或显式 `scope=actor` 应用效果；move 写入也在 applier 内 |
-| `combat.core.php` | 动作排序、初始 roster、执行链和 `battle_manage_queue()` 收尾 |
+| `combat.core.php` | 动作排序、首回合意图绑定，以及已认领回合的执行链 |
 | `combat.skill.php` | 技能配置加载及 aim/capture/execution/delivery 组合校验 |
-| `combat.log.php` | `action_delivery`、`combatant_joined`、逐目标 effect 等 battlelog.v2 事件 |
+| `combat.log.php` | `turn_opened`、`action_delivery`、逐目标 effect 等 battlelog.v3 事件 |
 | `combat.preview.php` | 无 DB/文件日志/RNG 副作用的 engage/single/chain 预览 |
 | `combat.target.php` | 仅保留旧入口 facade，领域实现位于 aim/capture 文件 |
 
@@ -58,6 +58,6 @@ AimIntent
 
 ## 共享边界
 
-`battle/` 仍提供先攻计算、队列编排、状态机和 battle log collector。动态参战只允许调用锁定后的 `battle_queue_append_tail()`；会先删除 PID 旧队列记录的 unsafe join 接口已经移除。动作链结束后仍由 `battle_manage_queue()` 统一推进顺位。
+`battle/` 只提供先攻计算和队列顺位原语；E-5 的 `battle_turn.func.php` 统一开放、认领和关闭权威回合。动态参战只允许调用锁定后的 `battle_queue_append_tail()`；会先删除 PID 旧队列记录的 unsafe join 接口已经移除。
 
 旧 battle engine 已下线，`obl_config.php` 的 `combat_engine='new'` 仅保留为历史配置键。

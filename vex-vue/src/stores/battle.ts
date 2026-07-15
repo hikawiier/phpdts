@@ -12,10 +12,10 @@
 // - normal（探索）→ 玩家点击敌人 → startBattle() → battle
 // - battle（战斗）→ 玩家/NPC 回合交替 → 播放 battlelog → 继续 battle 或回 normal
 //
-// presentation 数据流（不可变批次 + v2 导演编排）：
+// presentation 数据流（不可变批次 + v3 导演编排）：
 // - command/heartbeat 顶层返回 presentation.v1 批次
-// - inbox 按 batch_seq 去重并连续交给 DirectorV2.directV2() 编排为脚本
-// - DirectorV2.planPlaybackV2() 把语义脚本编排为 playback steps
+// - inbox 按 batch_seq 去重并连续交给导演编排为脚本
+// - 计划层把语义脚本编排为 playback steps
 // - BattlePlaybackRunner 按 steps 执行动作动画、文本模态框、残留反馈
 // - presentation.v1 批次按 batch_seq 连续消费，成功播放后推进本地 cursor
 //
@@ -47,16 +47,17 @@ import { ingestPresentationResponse, presentationInbox } from '@/stores/presenta
 import type { ApiAction } from '@/api/endpoints';
 import { getSceneGeometry } from '@/composables/sceneRegistry';
 import { actorTraceEnabled } from '@/composables/useDebugBus';
-import type { BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse } from '@/types/api';
+import type { BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse, BattleState } from '@/types/api';
 import type { PresentationAnimationRun } from '@/types/presentation-scene';
 import {
-  directV2,
-  isBattleLogV2Event,
-  planPlaybackV2,
+  directBattleEvents,
+  isBattleLogV3Event,
+  planBattlePlayback,
+  selectUnconsumedBattleEvents,
   type BattlePlaybackPlan,
-  type BattlePlayScriptV2,
-  type BattleSegmentV2,
-} from './battle-director-v2';
+  type BattlePlayScript,
+  type BattleSegment,
+} from './battle-director';
 import { runBattlePlaybackPlan, type SegmentPlayOptions } from './battle-playback-runner';
 import {
   createBattlePresentationSession,
@@ -73,16 +74,20 @@ import { getStatusLocale } from '@/data/status-locale';
 /** NPC 回合自动刷新间隔（毫秒）— 与 commandQueue pendingNpc 轮询一致 */
 export const NPC_TURN_REFRESH_INTERVAL = 1000;
 
-/** 守护进程快心跳间隔（毫秒）— PROCESSING 时尽快推进 NPC / battlelog */
+/** 守护进程快心跳间隔（毫秒）— 系统回合待认领/执行时尽快推进 */
 const DAEMON_BEAT_FAST_INTERVAL = 300;
 
 if (actorTraceEnabled) initializeBattleDebugGlobals();
 
-/** 守护进程慢心跳间隔（毫秒）— 非 PROCESSING 时降低空转请求 */
+/** 守护进程慢心跳间隔（毫秒）— 玩家输入或空闲时降低空转请求 */
 const DAEMON_BEAT_IDLE_INTERVAL = 1000;
 
 /** 单次刷新最多连续推进的战斗 tick，防止异常状态导致无限排空。 */
 const MAX_BATTLE_DRAIN_CYCLES = 32;
+
+function isBattleProcessingState(state: BattleState): boolean {
+  return state === 'AUTO_PENDING' || state === 'EXECUTING';
+}
 
 // ══════════════════════════════════════════════════
 // 段文本播放器接口
@@ -93,23 +98,23 @@ const MAX_BATTLE_DRAIN_CYCLES = 32;
 // —— runner 串行执行保证不会重入，onUnmounted 兜底保证 unmount 时 Promise reject。
 // ══════════════════════════════════════════════════
 
-/** 普通段播放器（round_intro / turn / system） */
+/** 普通段播放器（turn_intro / turn / system） */
 export interface SegmentPlayer {
   /** 播放一个段：横幅/overlay 淡入 → 段分隔符 → 逐条正文 → 停留 → 淡出 */
-  playSegment(segment: BattleSegmentV2, sessionId: string, options: SegmentPlayOptions): Promise<void>;
+  playSegment(segment: BattleSegment, sessionId: string, options: SegmentPlayOptions): Promise<void>;
 }
 
 /** 终局战报播放器（battle_end 段，分两阶段） */
 export interface BattleEndPlayer {
   /** 显示终幕遮罩（仅遮罩层淡入），保持遮罩状态，等待 showContent 调用 */
-  showMask(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  showMask(segment: BattleSegment, sessionId: string): Promise<void>;
   /** 在已显示的遮罩上显示终局战报正文：正文淡入 → 播放 → 淡出 → 遮罩淡出 */
-  showContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  showContent(segment: BattleSegment, sessionId: string): Promise<void>;
   /** 关闭持续显示的遮罩（仅纯遮罩阶段生效；正文播放中为 no-op） */
   cancelMask(): void;
 }
 
-/** BattleBanner 同时实现 SegmentPlayer（round_intro）和 BattleEndPlayer（battle_end） */
+/** BattleBanner 同时实现 SegmentPlayer（turn_intro）和 BattleEndPlayer（battle_end） */
 export type BannerPlayer = SegmentPlayer & BattleEndPlayer;
 
 export function closePresentationSessionOwnership(
@@ -121,7 +126,7 @@ export function closePresentationSessionOwnership(
   if (session.active) session.abort(reason);
 }
 
-function extractNpcPidFromScriptV2(script: BattlePlayScriptV2): number {
+function extractNpcPidFromScript(script: BattlePlayScript): number {
   for (const segment of script.segments) {
     if (segment.actor && segment.actor.type > 0) return segment.actor.pid;
     for (const action of segment.actions) {
@@ -159,6 +164,8 @@ export const useBattleStore = defineStore('battle', () => {
   // ── 演出状态（供组件响应式读取） ──
   /** 当前是否玩家回合（供 BattleActionBar 决定显示装填区还是等待提示） */
   const isPlayerTurn = ref<boolean>(false);
+  /** 已成功提交但权威投影尚未越过的玩家回合；只用于关闭旧编辑会话。 */
+  let submittedPlayerTurnKey: string | null = null;
 
   // ── NPC 回合自动刷新定时器（不响应式，仅内部使用） ──
   let npcTurnRefreshRunning = false;
@@ -174,6 +181,7 @@ export const useBattleStore = defineStore('battle', () => {
   let presentationSession: BattlePresentationSession | null = null;
   let presentationSceneGeneration = 0;
   let activePresentationBatchSeq: number | null = null;
+  const consumedEventUids = new Set<string>();
   let pendingBattleEndHandoff: {
     sessionId: string;
     sceneGeneration: number;
@@ -412,9 +420,9 @@ export const useBattleStore = defineStore('battle', () => {
   // 守护进程（纯后端 tick 激活器）
   // ══════════════════════════════════════════════════
 
-  /** 当前心跳间隔：PROCESSING 快速推进，其他状态降低空转请求 */
+  /** 当前心跳间隔：系统回合快速推进，其他状态降低空转请求 */
   function getDaemonBeatInterval(): number {
-    return usePlayerStore().oblBattleState === 'PROCESSING'
+    return isBattleProcessingState(usePlayerStore().oblBattleState)
       ? DAEMON_BEAT_FAST_INTERVAL
       : DAEMON_BEAT_IDLE_INTERVAL;
   }
@@ -433,7 +441,7 @@ export const useBattleStore = defineStore('battle', () => {
       if (currentMode.value === 'normal'
         && !isPlayingBattleLog.value
         && !isProcessingBattle.value
-        && playerStore.oblBattleState !== 'PROCESSING') {
+        && !isBattleProcessingState(playerStore.oblBattleState)) {
         await rebasePresentationScene();
       }
     } catch {
@@ -518,6 +526,7 @@ export const useBattleStore = defineStore('battle', () => {
     currentQid.value = null;
     combatContext.value = null;
     combatTargets.value = { qid: null, suggestedTargetPid: null, candidates: [] };
+    submittedPlayerTurnKey = null;
     isPlayerTurn.value = false;
     // 组件中断由 currentMode='normal' → BattleMode 卸载 → onUnmounted 兜底 reject Promise
     cancelPendingBattleEndHandoff('battle_exited');
@@ -535,8 +544,17 @@ export const useBattleStore = defineStore('battle', () => {
    * 更新动作面板：玩家顺位时显示装填区，否则显示等待提示
    */
   function updateActionPanel(playerTurn: boolean, context: CombatViewModel | null = combatContext.value, initialize = false): void {
-    isPlayerTurn.value = playerTurn;
-    if (playerTurn) {
+    const turnKey = context ? `${context.qid}:${context.turn_seq}` : null;
+    if (playerTurn && turnKey !== null
+      && submittedPlayerTurnKey !== null
+      && submittedPlayerTurnKey !== turnKey) {
+      submittedPlayerTurnKey = null;
+    }
+    const editSessionOpen = playerTurn
+      && turnKey !== null
+      && submittedPlayerTurnKey !== turnKey;
+    isPlayerTurn.value = editSessionOpen;
+    if (editSessionOpen) {
       nextTick(() => {
         dataManager.broadcast(initialize ? 'battle:preload-init' : 'battle:preload-context-refresh', {
           mode: 'in-battle',
@@ -546,6 +564,29 @@ export const useBattleStore = defineStore('battle', () => {
         });
       });
     }
+  }
+
+  /**
+   * 成功提交后立即关闭对应回合的本地编辑会话。
+   * 权威状态仍由后端投影决定；若刷新已经进入不同 turn_seq，则不遮蔽新回合。
+   */
+  function markPlayerTurnSubmitted(qid: number | null, turnSeq: number | null): void {
+    const submittedKey = qid !== null && turnSeq !== null
+      ? `${qid}:${turnSeq}`
+      : 'pre-battle';
+    const currentKey = combatContext.value
+      ? `${combatContext.value.qid}:${combatContext.value.turn_seq}`
+      : null;
+    if (currentKey !== null && currentKey !== submittedKey) {
+      submittedPlayerTurnKey = null;
+      const playerInfo = usePlayerStore().playerInfo;
+      const playerTurn = playerInfo?.obl_battle_state === 'AWAITING_INPUT'
+        && combatContext.value?.active_pid === Number(playerInfo.pid);
+      updateActionPanel(playerTurn, combatContext.value, false);
+      return;
+    }
+    submittedPlayerTurnKey = submittedKey;
+    isPlayerTurn.value = false;
   }
 
   // ══════════════════════════════════════════════════
@@ -574,6 +615,7 @@ export const useBattleStore = defineStore('battle', () => {
     currentEnemyPid.value = enemyPid;
     currentQid.value = null;
     combatContext.value = null;
+    submittedPlayerTurnKey = null;
     isPlayerTurn.value = true;
 
     nextTick(() => {
@@ -604,10 +646,10 @@ export const useBattleStore = defineStore('battle', () => {
    * - 退出战斗模式的判断不在本函数，由 consumePresentationBatches 排空批次并
    *   到达稳定状态后决定
    *
-   * 状态机驱动（3 态）：
+   * 状态机驱动（4 态）：
    *  - 用 obl_battle_state 作为单一数据源决定轮询行为
-   *  - PROCESSING → 继续轮询（后端正在处理）
-   *  - PLAYER_TURN → 停止轮询，启用玩家操作
+   *  - AUTO_PENDING / EXECUTING → 继续轮询
+   *  - AWAITING_INPUT → 停止轮询，启用玩家操作
    *  - IDLE → 停止轮询
    */
   async function refreshBattle(prefetchedHeartbeat?: OblHeartbeatResponse): Promise<void> {
@@ -616,7 +658,7 @@ export const useBattleStore = defineStore('battle', () => {
 
     try {
       // 阶段三后只读 API 不再隐式推进世界；战斗刷新必须显式等待 tick 结算，
-      // 否则可能读到旧的 PROCESSING 状态或拿不到刚生成的 battlelog。
+      // 否则可能读到旧的执行状态或拿不到刚生成的 battlelog。
       //
       // 若调用方已通过 commandQueue._checkBattleState 拿到 heartbeat 结果
       // （经 game:tick-advanced 事件传入），直接复用，避免重复 POST heartbeat。
@@ -633,11 +675,12 @@ export const useBattleStore = defineStore('battle', () => {
 
       if (action === 'battle') {
         const enemyPid = resolveEnemyPid(battleQueue, nextCombatContext);
-        const playerTurn = battleState === 'PLAYER_TURN';
+        const playerTurn = battleState === 'AWAITING_INPUT'
+          && nextCombatContext?.active_pid === Number(playerInfo.pid);
         enterBattleMode(enemyPid, playerTurn, nextCombatContext);
         await loadCombatTargets();
 
-        if (battleState === 'PROCESSING') {
+        if (isBattleProcessingState(battleState)) {
           startNpcTurnRefresh();
         } else {
           stopNpcTurnRefresh();
@@ -646,7 +689,7 @@ export const useBattleStore = defineStore('battle', () => {
         stopNpcTurnRefresh();
       }
 
-      // 拉取并播放 battlelog；内部会持续推进 PROCESSING，并先排空 heartbeat
+      // 拉取并播放 battlelog；内部会持续推进系统回合，并先排空 heartbeat
       // 新生成的日志，再由稳定状态决定退出还是继续。
       await consumePresentationBatches();
       if (currentMode.value === 'normal' && action !== 'battle') {
@@ -688,8 +731,15 @@ export const useBattleStore = defineStore('battle', () => {
       await rebasePresentationScene();
     }
     if (afterAction === 'battle') {
-      // 继续战斗
-      currentEnemyPid.value = resolveEnemyPid(afterInfo.battle_queue || null, combatContext.value);
+      // 继续战斗：排空循环可能已经跨过完整 NPC 回合，必须发布最终稳定回合。
+      const nextContext = afterInfo.combat_context || null;
+      const playerTurn = afterBattleState === 'AWAITING_INPUT'
+        && nextContext?.active_pid === Number(afterInfo.pid);
+      enterBattleMode(
+        resolveEnemyPid(afterInfo.battle_queue || null, nextContext),
+        playerTurn,
+        nextContext,
+      );
     } else {
       // 后端校验说"不在战斗了"，退出
       exitBattleMode();
@@ -708,29 +758,34 @@ export const useBattleStore = defineStore('battle', () => {
         presentationInbox.commitGap(gapHead);
         continue;
       }
-      const v2Events = batch.events.filter(isBattleLogV2Event);
+      const selected = selectUnconsumedBattleEvents(
+        batch.events.filter(isBattleLogV3Event),
+        consumedEventUids,
+      );
+      const events = selected.events;
       const authorityHead = usePlayerStore().playerInfo?.presentation_head_seq ?? 0;
       if (authorityHead < batch.batch_seq) break;
-      if (v2Events.length > 0) {
-        const scriptV2 = directV2(v2Events);
+      if (events.length > 0) {
+        const script = directBattleEvents(events);
         if (actorTraceEnabled) {
-          (globalThis as Record<string, unknown>).__battleScriptV2 = scriptV2;
-          (globalThis as Record<string, unknown>).__battleRawEventsV2 = v2Events;
+          (globalThis as Record<string, unknown>).__battleScriptV3 = script;
+          (globalThis as Record<string, unknown>).__battleRawEventsV3 = events;
           (globalThis as Record<string, unknown>).__presentationBatchV1 = batch;
-          captureBattleDebugBatch(batch.batch_seq, v2Events, scriptV2);
+          captureBattleDebugBatch(batch.batch_seq, events, script);
         }
 
-        if (scriptV2.segments.length > 0) {
-          const npcPid = extractNpcPidFromScriptV2(scriptV2);
+        if (script.segments.length > 0) {
+          const npcPid = extractNpcPidFromScript(script);
           activePresentationBatchSeq = batch.batch_seq;
           try {
-            await playScriptV2(scriptV2, npcPid);
+            await playScript(script, npcPid);
           } finally {
             activePresentationBatchSeq = null;
           }
         }
+        for (const uid of selected.eventUids) consumedEventUids.add(uid);
       } else if (batch.events.length > 0 && import.meta.env.DEV) {
-        console.warn('[Battle] ignored non-v2 presentation events.', batch.events);
+        console.warn('[Battle] ignored duplicate or non-v3 presentation events.', batch.events);
       }
       presentationInbox.commit(batch.batch_seq);
       played += batch.events.length;
@@ -748,7 +803,7 @@ export const useBattleStore = defineStore('battle', () => {
    * 职责：
    * - command/heartbeat 响应批次经 inbox 去重后交给导演播放
    * - heartbeat 每次推进后先播放它新生成的批次
-   * - 非 PROCESSING 且尾随日志排空后，由后端 action 决定退出还是继续
+   * - 非系统执行态且尾随日志排空后，由后端 action 决定退出还是继续
    */
   async function consumePresentationBatches(): Promise<void> {
     if (isPlayingBattleLog.value) return;
@@ -763,7 +818,7 @@ export const useBattleStore = defineStore('battle', () => {
         maxCycles: MAX_BATTLE_DRAIN_CYCLES,
         advance: advanceAndReadBattleState,
         playPending: playPendingPresentationBatches,
-        isProcessing: info => info.obl_battle_state === 'PROCESSING',
+        isProcessing: info => isBattleProcessingState(info.obl_battle_state),
       });
       if (drain.status === 'stable' && drain.snapshot) {
         await applyVerifiedBattleState(drain.snapshot);
@@ -789,10 +844,10 @@ export const useBattleStore = defineStore('battle', () => {
    *
    * battle.ts 只提供状态更新和模态框播放能力，不再内联动作动画编排。
    */
-  async function playScriptV2(script: BattlePlayScriptV2, npcPid: number): Promise<void> {
-    const plan = planPlaybackV2(script);
+  async function playScript(script: BattlePlayScript, npcPid: number): Promise<void> {
+    const plan = planBattlePlayback(script);
     if (actorTraceEnabled) {
-      (globalThis as Record<string, unknown>).__battlePlaybackPlanV2 = plan;
+      (globalThis as Record<string, unknown>).__battlePlaybackPlanV3 = plan;
       captureBattleDebugPlan(activePresentationBatchSeq, plan);
     }
 
@@ -831,18 +886,18 @@ export const useBattleStore = defineStore('battle', () => {
     return getSceneGeometry();
   }
 
-  async function updateSegmentContext(_segment: BattleSegmentV2, _npcPid: number): Promise<void> {
+  async function updateSegmentContext(_segment: BattleSegment, _npcPid: number): Promise<void> {
     // 参数 _segment / _npcPid 保留以兼容 runBattlePlaybackPlan 调用签名。
   }
 
   /**
-   * 播放段文本（round_intro / turn / system）
+   * 播放段文本（turn_intro / turn / system）
    *
    * 命令式调用：根据 segment.kind 路由到对应的 player（banner 或 modal），
    * await player.playSegment 返回即播放完成。
    */
   async function playSegmentText(
-    segment: BattleSegmentV2,
+    segment: BattleSegment,
     options: SegmentPlayOptions,
   ): Promise<void> {
     // 无正文时的处理：
@@ -857,9 +912,9 @@ export const useBattleStore = defineStore('battle', () => {
   }
 
   /** 根据段类型路由到对应的播放器 */
-  function selectPlayer(segment: BattleSegmentV2): SegmentPlayer | null {
+  function selectPlayer(segment: BattleSegment): SegmentPlayer | null {
     switch (segment.kind) {
-      case 'round_intro':
+      case 'turn_intro':
         return bannerPlayer;
       case 'turn':
       case 'system':
@@ -875,13 +930,13 @@ export const useBattleStore = defineStore('battle', () => {
    * 命令式调用 bannerPlayer.showMask 显示遮罩并 await 过渡完成。
    * 返回后遮罩持续显示，等待 playBattleEndContent 调用。
    */
-  async function enterBattleEndMask(segment: BattleSegmentV2, sessionId: string): Promise<void> {
+  async function enterBattleEndMask(segment: BattleSegment, sessionId: string): Promise<void> {
     if (presentationSession?.id !== sessionId) throw new Error('stale battle-end presentation session');
     if (!bannerPlayer) throw new Error('banner player not registered');
     await bannerPlayer.showMask(segment, sessionId);
   }
 
-  async function handoffPresentationScene(_segment: BattleSegmentV2, sessionId: string): Promise<void> {
+  async function handoffPresentationScene(_segment: BattleSegment, sessionId: string): Promise<void> {
     const session = presentationSession;
     if (session?.id !== sessionId) throw new Error('stale presentation handoff');
     // Authority refresh starts when responses arrive. Handoff only joins any
@@ -969,7 +1024,7 @@ export const useBattleStore = defineStore('battle', () => {
    * - 异常分支（pending 缺失 / bannerPlayer 缺失 / handoff 失败导致 showContent 未被调用）：
    *   cancelMask 关闭纯遮罩阶段持续显示的遮罩
    */
-  async function playBattleEndContent(segment: BattleSegmentV2, sessionId: string): Promise<void> {
+  async function playBattleEndContent(segment: BattleSegment, sessionId: string): Promise<void> {
     try {
       const pending = pendingBattleEndHandoff;
       if (!pending || pending.sessionId !== sessionId) throw new Error('battle-end handoff run is missing');
@@ -987,7 +1042,7 @@ export const useBattleStore = defineStore('battle', () => {
     }
   }
 
-  function segmentHasRenderableText(segment: BattleSegmentV2): boolean {
+  function segmentHasRenderableText(segment: BattleSegment): boolean {
     if (segment.notices.some(notice => Boolean(notice.text.html))) return true;
     return segment.actions.some(action =>
       action.text.some(text => Boolean(text.html)) ||
@@ -1068,6 +1123,7 @@ export const useBattleStore = defineStore('battle', () => {
     combatTargets.value = { qid: null, suggestedTargetPid: null, candidates: [] };
     isPlayingBattleLog.value = false;
     isProcessingBattle.value = false;
+    submittedPlayerTurnKey = null;
     isPlayerTurn.value = false;
     // 组件中断由 currentMode='normal' → BattleMode 卸载 → onUnmounted 兜底 reject Promise
     cancelPendingBattleEndHandoff('battle_reset');
@@ -1075,6 +1131,7 @@ export const useBattleStore = defineStore('battle', () => {
     presentationSession = null;
     presentationSceneGeneration = 0;
     activePresentationBatchSeq = null;
+    consumedEventUids.clear();
     authorityRefreshGeneration++;
     pendingAuthorityScopes.clear();
     usePlayerAvatarStore().resetAppearance();
@@ -1105,6 +1162,7 @@ export const useBattleStore = defineStore('battle', () => {
     enterBattleMode,
     exitBattleMode,
     updateActionPanel,
+    markPlayerTurnSubmitted,
     // 玩家主动攻击
     startBattle,
     // 主刷新
@@ -1130,14 +1188,14 @@ interface BattleDebugBatchSnapshot {
   batchSeq: number;
   capturedAt: number;
   rawEvents: readonly unknown[];
-  script: BattlePlayScriptV2;
+  script: BattlePlayScript;
   plan: BattlePlaybackPlan | null;
 }
 
 function captureBattleDebugBatch(
   batchSeq: number,
   rawEvents: readonly unknown[],
-  script: BattlePlayScriptV2,
+  script: BattlePlayScript,
 ): void {
   initializeBattleDebugGlobals();
   const root = globalThis as Record<string, unknown>;

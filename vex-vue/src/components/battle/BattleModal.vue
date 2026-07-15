@@ -11,7 +11,7 @@
 // 处理 turn（战报回放）和 system（系统段）的视觉呈现。
 // 实现 SegmentPlayer 接口，由 store 命令式调用 playSegment。
 //
-// 纯展示模态框，按 BattleSegmentV2 分段播放 battlelog 条目：
+// 纯展示模态框，按 BattleSegment 分段播放 battlelog 条目：
 // - 逐条显示，每条带淡入动画
 // - 段首插入段分隔符（turn 段显示"── xx 的回合 ──"）
 // - HP 条从 effect delta 更新（仅 turn 段显示）
@@ -26,12 +26,12 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
 import type {
-  BattleSegmentV2,
+  BattleSegment,
   CombatantView,
-  DirectedActionV2,
-  DirectedEffectV2,
+  DirectedAction,
+  DirectedEffect,
   TextCue,
-} from '@/stores/battle-director-v2';
+} from '@/stores/battle-director';
 import type { SegmentPlayOptions } from '@/stores/battle-playback-runner';
 
 // ── 播放参数 ──
@@ -47,7 +47,7 @@ const overlayClosing = ref<boolean>(false);
 const playing = ref<boolean>(false);
 
 // ── 当前段（由 playSegment 设置，供 computed 使用） ──
-const currentSeg = ref<BattleSegmentV2 | null>(null);
+const currentSeg = ref<BattleSegment | null>(null);
 
 // ── 显示的条目 ──
 interface DisplayedEntry {
@@ -60,8 +60,8 @@ const displayedEntries = ref<DisplayedEntry[]>([]);
 interface PlaybackItem {
   rawLogId: number;
   cue: TextCue;
-  action?: DirectedActionV2;
-  effect?: DirectedEffectV2;
+  action?: DirectedAction;
+  effect?: DirectedEffect;
 }
 
 // ── HP 条状态 ──
@@ -153,7 +153,7 @@ function waitForOverlayTransition(): Promise<void> {
 // 段内容收集
 // ══════════════════════════════════════════════════
 
-function collectPlaybackItems(segment: BattleSegmentV2): PlaybackItem[] {
+function collectPlaybackItems(segment: BattleSegment): PlaybackItem[] {
   const items: PlaybackItem[] = [];
   for (const action of segment.actions) {
     for (const cue of action.text) {
@@ -171,16 +171,16 @@ function collectPlaybackItems(segment: BattleSegmentV2): PlaybackItem[] {
   return items;
 }
 
-function hasHpEffect(segment: BattleSegmentV2): boolean {
+function hasHpEffect(segment: BattleSegment): boolean {
   return segment.actions.some(action => action.effects.some(isHpEffect));
 }
 
-function isHpEffect(effect: DirectedEffectV2): boolean {
+function isHpEffect(effect: DirectedEffect): boolean {
   return (effect.type === 'damage' || effect.type === 'heal') && Boolean(effect.target.snapshot);
 }
 
 /** 从段首 HP effect 初始化 HP 条 */
-function initHpFromSegment(segment: BattleSegmentV2): void {
+function initHpFromSegment(segment: BattleSegment): void {
   for (const action of segment.actions) {
     const effect = action.effects.find(isHpEffect);
     if (effect) {
@@ -190,7 +190,7 @@ function initHpFromSegment(segment: BattleSegmentV2): void {
   }
 }
 
-function initHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): void {
+function initHpFromEffect(action: DirectedAction, effect: DirectedEffect): void {
   const target = effect.target.snapshot;
   if (!target) return;
 
@@ -213,7 +213,7 @@ function initHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): v
 }
 
 /** 根据 effect delta 更新 HP 条 */
-function updateHpFromEffect(action: DirectedActionV2, effect: DirectedEffectV2): void {
+function updateHpFromEffect(action: DirectedAction, effect: DirectedEffect): void {
   const target = effect.target.snapshot;
   if (!target || !isHpEffect(effect)) return;
 
@@ -237,9 +237,9 @@ function setEnemyHpFromCombatant(combatant: CombatantView | null | undefined): v
 }
 
 /** 获取段的分隔符（接收 segment 参数，不读 store） */
-function getSegmentDivider(seg: BattleSegmentV2): { html: string } | null {
+function getSegmentDivider(seg: BattleSegment): { html: string } | null {
   switch (seg.kind) {
-    case 'round_intro': return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
+    case 'turn_intro': return { html: `── 第 ${seg.roundNum ?? 0} 轮 ──` };
     case 'turn':
       if (!seg.actor) return null;
       return { html: `── ${seg.actor.type === 0 ? '你' : seg.actor.name} 的回合 ──` };
@@ -254,7 +254,7 @@ function getSegmentDivider(seg: BattleSegmentV2): { html: string } | null {
 
 /** 播放 turn / system 段：overlay 淡入 → HP 条 → 段分隔符 → 逐条正文 → HP 同步 → 停留 → overlay 淡出 */
 async function playSegment(
-  segment: BattleSegmentV2,
+  segment: BattleSegment,
   _sessionId: string,
   options: SegmentPlayOptions,
 ): Promise<void> {

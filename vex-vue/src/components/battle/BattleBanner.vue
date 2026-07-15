@@ -7,14 +7,14 @@
 // ══════════════════════════════════════════════════
 // 战斗横幅组件 / Battle Banner
 //
-// 接管 round_intro（轮次宣告）和 battle_end（终局战报）段的视觉呈现。
+// 接管 turn_intro（权威回合开放）和 battle_end（终局战报）段的视觉呈现。
 // 实现 BannerPlayer 接口（SegmentPlayer & BattleEndPlayer），
 // 由 store 命令式调用 playSegment / showMask / showContent / cancelMask。
 //
 // 两层结构：
-// - 遮罩层（mask）：round_intro 和 battle_end 段均使用
+// - 遮罩层（mask）：turn_intro 和 battle_end 段均使用
 // - 内容层（banner）：无框章节卡样式，装饰线 + 标题 + (可选附加信息) + 装饰线
-//   round_intro 显示"战斗开始"（第一个 turn，isBattleStart）或"第 N 轮"（后续 turn）；battle_end 显示"战斗结束" + reason 附加信息
+//   turn_intro 直接投影 openingKind；battle_end 显示"战斗结束" + reason 附加信息
 //
 // 两套独立状态机：
 // - maskOpen / maskClosing：遮罩层
@@ -25,12 +25,12 @@
 
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useBattleStore } from '@/stores/battle';
-import type { BattleSegmentV2 } from '@/stores/battle-director-v2';
+import type { BattleSegment } from '@/stores/battle-director';
 import type { SegmentPlayOptions } from '@/stores/battle-playback-runner';
 
 // ── 播放参数 ──
-const COMPLETE_HOLD = 1500;       // 播放完停留 ms
-const TRANSITION_FALLBACK = 1000; // 过渡兜底超时 ms
+const COMPLETE_HOLD = 750;       // 播放完停留 ms
+const TRANSITION_FALLBACK = 500; // 过渡兜底超时 ms
 
 // ── 遮罩层状态 ──
 const maskOpen = ref<boolean>(false);
@@ -44,7 +44,7 @@ const bannerClosing = ref<boolean>(false);
 const playing = ref<boolean>(false);
 
 // ── 当前段（由 playSegment / showContent 设置，供 template 渲染） ──
-const currentSeg = ref<BattleSegmentV2 | null>(null);
+const currentSeg = ref<BattleSegment | null>(null);
 
 // ── 播放控制 ──
 let currentTimer: ReturnType<typeof setTimeout> | null = null;
@@ -104,11 +104,11 @@ function waitForBannerTransition(): Promise<void> {
 // ══════════════════════════════════════════════════
 
 /**
- * 播放 round_intro 段：
+ * 播放 turn_intro 段：
  * 遮罩 + 内容同时淡入 → 停留 → 遮罩 + 内容同时淡出
  */
 async function playSegment(
-  segment: BattleSegmentV2,
+  segment: BattleSegment,
   _sessionId: string,
   _options: SegmentPlayOptions,
 ): Promise<void> {
@@ -149,7 +149,7 @@ async function playSegment(
 
 /** 显示终幕遮罩（仅遮罩层淡入），保持遮罩状态，等待 showContent 调用 */
 async function showMask(
-  _segment: BattleSegmentV2,
+  _segment: BattleSegment,
   _sessionId: string,
 ): Promise<void> {
   const entered = waitForMaskTransition();
@@ -163,7 +163,7 @@ async function showMask(
  * 内容淡入 → 停留 → 内容淡出 → 遮罩淡出
  */
 async function showContent(
-  segment: BattleSegmentV2,
+  segment: BattleSegment,
   _sessionId: string,
 ): Promise<void> {
   currentSeg.value = segment;
@@ -240,18 +240,18 @@ onUnmounted(() => {
       class="battle-banner-mask"
       :class="{ open: maskOpen, closing: maskClosing }"
     ></div>
-    <!-- 横幅内容层（round_intro / battle_end 共用无框章节卡样式） -->
+    <!-- 横幅内容层（turn_intro / battle_end 共用无框章节卡样式） -->
     <div
       ref="bannerRef"
       class="battle-banner"
       :class="{ open: bannerOpen, closing: bannerClosing }"
     >
-      <!-- round_intro: 装饰线 + 标题 + 回合提示 + 装饰线 -->
-      <template v-if="currentSeg?.kind === 'round_intro'">
+      <!-- turn_intro: 装饰线 + 标题 + 回合提示 + 装饰线 -->
+      <template v-if="currentSeg?.kind === 'turn_intro'">
         <div class="banner-line"></div>
-        <div class="banner-title">{{ currentSeg.isBattleStart ? '战斗开始' : `第 ${currentSeg.roundNum ?? 0} 轮` }}</div>
+        <div class="banner-title">{{ currentSeg.openingKind === 'battle_start' ? '战斗开始' : `第 ${currentSeg.roundNum ?? 0} 轮` }}</div>
         <div class="banner-subtitle" v-if="currentSeg.actor">
-          {{ currentSeg.actor.type === 0 ? '你的回合' : `${currentSeg.actor.name}的回合` }}
+          {{ currentSeg.controller === 'player' ? '你的回合' : `${currentSeg.actor.name}的回合` }}
         </div>
         <div class="banner-line"></div>
       </template>

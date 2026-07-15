@@ -95,13 +95,14 @@ const battleStateText = computed(() => {
   const state = playerStore.oblBattleState;
   const stateMap: Record<BattleState, string> = {
     IDLE: '空闲',
-    PLAYER_TURN: '等待玩家',
-    PROCESSING: '处理中',
+    AWAITING_INPUT: '等待玩家',
+    AUTO_PENDING: '系统待行动',
+    EXECUTING: '执行中',
   };
   return stateMap[state] || state;
 });
 
-// ── 后端处理中提示（由状态机派生，PROCESSING 状态时显示） ──
+// ── 后端系统回合提示（由 AUTO_PENDING / EXECUTING 派生） ──
 // 非 debug 模式下显示"NPC 行动中…"轻量提示；debug 模式下由 tick 调试信息覆盖
 const npcPending = computed(() => commandQueue.pendingNpc);
 const visibleStatuses = computed(() => playerStore.statuses);

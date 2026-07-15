@@ -24,10 +24,10 @@ import type { BattlePresentationSession } from './battle-presentation-session';
 import type {
   CombatantView,
   CombatTargetView,
-  DirectedActionV2,
-  DirectedEffectV2,
-  DirectedNoticeV2,
-} from './battle-director-v2';
+  DirectedAction,
+  DirectedEffect,
+  DirectedNotice,
+} from './battle-director';
 
 const MAP_READY_RETRIES = 10;
 
@@ -88,7 +88,7 @@ export function prepareBattlefield(context: BattleActorExecutionContext): Playba
 }
 
 export function playActionChoreography(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
 ): PlaybackExecutionTask {
   switch (action.animation.kind) {
@@ -165,7 +165,7 @@ type ChoreographyStage =
 
 async function playHitSequence(
   spec: ReturnType<typeof resolveBattleAnimationChain>,
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): Promise<void> {
@@ -184,7 +184,7 @@ async function playHitSequence(
 async function playCueStage(
   stage: ChoreographyStage,
   cues: readonly BattleAnimationCue[],
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): Promise<void> {
@@ -196,7 +196,7 @@ async function playCueStage(
 function startCues(
   stage: ChoreographyStage,
   cues: readonly BattleAnimationCue[],
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -206,7 +206,7 @@ function startCues(
 function startCue(
   stage: ChoreographyStage,
   cue: BattleAnimationCue,
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -232,7 +232,7 @@ function startCue(
 }
 
 function startTargetHits(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -255,7 +255,7 @@ function startTargetHits(
 }
 
 function startUnarmedHitPopups(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -275,7 +275,7 @@ function startUnarmedHitPopups(
 }
 
 function startProjectileDeliveries(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -298,7 +298,7 @@ function startProjectileDeliveries(
 }
 
 function startExplosionDeliveries(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
   scope: TaskScope,
 ): AnimationHandle[] {
@@ -321,7 +321,7 @@ function waitHandles(handles: readonly AnimationHandle[]): Promise<void> {
 }
 
 export function playCombatantCleared(
-  notice: DirectedNoticeV2,
+  notice: DirectedNotice,
   context: BattleActorExecutionContext,
 ): PlaybackExecutionTask {
   const combatant = notice.combatant;
@@ -344,7 +344,7 @@ export function playCombatantCleared(
   return retreat ? completedTask() : taskFromHandle(lease.play({ kind: 'fade' }));
 }
 
-function readRetreatTarget(notice: DirectedNoticeV2): { pgroup: number; pls: number } | null {
+function readRetreatTarget(notice: DirectedNotice): { pgroup: number; pls: number } | null {
   const raw = notice.detail?.retreat_target;
   const target = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   const pgroup = Number(target?.pgroup ?? notice.combatant?.pgroup);
@@ -353,7 +353,7 @@ function readRetreatTarget(notice: DirectedNoticeV2): { pgroup: number; pls: num
 }
 
 function playMoveAction(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
 ): PlaybackExecutionTask {
   const target = getMoveTarget(action);
@@ -379,7 +379,7 @@ function taskFromHandle(handle: AnimationHandle): PlaybackExecutionTask {
 }
 
 function resolvePrimaryTargetScenePoint(
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
 ): ScenePoint | null {
   const target = action.targets.find(candidate => candidate.kind !== 'none')
@@ -390,7 +390,7 @@ function resolvePrimaryTargetScenePoint(
 
 function resolveTargetScenePoint(
   target: CombatTargetView,
-  action: DirectedActionV2,
+  action: DirectedAction,
   context: BattleActorExecutionContext,
 ): ScenePoint | null {
   if (target.kind === 'tile' && target.pgroup !== undefined && target.pls !== undefined) {
@@ -423,14 +423,14 @@ function directionBetween(source: ScenePoint | null | undefined, target: ScenePo
   return source.x < target.x ? 1 : -1;
 }
 
-function getMoveTarget(action: DirectedActionV2): CombatTargetView | null {
+function getMoveTarget(action: DirectedAction): CombatTargetView | null {
   return action.effects.find(effect =>
     effect.type === 'move' && effect.visual.kind === 'move_avatar' && effect.target.kind === 'tile')?.target
     ?? action.targets.find(target => target.kind === 'tile')
     ?? null;
 }
 
-function isDamageHpDrop(effect: DirectedEffectV2): boolean {
+function isDamageHpDrop(effect: DirectedEffect): boolean {
   if (effect.type !== 'damage' || !effect.target.snapshot) return false;
   const before = Number(effect.delta?.hp_before ?? effect.target.snapshot.hp);
   const after = Number(effect.delta?.hp_after ?? effect.target.snapshot.hp);
@@ -451,7 +451,7 @@ function combatantEntityId(combatant: CombatantView): string {
   return combatant.type === 0 ? 'player' : `enemy-${combatant.pid}`;
 }
 
-function damagedCombatants(action: DirectedActionV2): CombatantView[] {
+function damagedCombatants(action: DirectedAction): CombatantView[] {
   return uniqueCombatants(action.effects
     .filter(isDamageHpDrop)
     .map(effect => effect.target.snapshot)
@@ -459,7 +459,7 @@ function damagedCombatants(action: DirectedActionV2): CombatantView[] {
 }
 
 function traceHandle(
-  action: DirectedActionV2,
+  action: DirectedAction,
   stage: ChoreographyStage,
   cue: BattleAnimationCue,
   handle: AnimationHandle,
@@ -472,7 +472,7 @@ function traceHandle(
 }
 
 function traceChoreography(
-  action: DirectedActionV2,
+  action: DirectedAction,
   step: string,
   data: Record<string, unknown> = {},
 ): void {

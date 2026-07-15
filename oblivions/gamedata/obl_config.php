@@ -27,7 +27,7 @@ return [
     'log_max_debug_entries' => 50,   // debug 日志最大条目数（与正式日志分开计数，互不挤占）
 
     // ─── 战斗 / Battle ──────────────────────────────────
-    // battlelog.v2 是唯一玩家战斗演出事件结构。
+    // battlelog.v3 是唯一玩家战斗演出事件结构。
     'battlelog_schema'      => 'v2',
 
     // ─── 战斗引擎 / Combat Engine ──────────────────────

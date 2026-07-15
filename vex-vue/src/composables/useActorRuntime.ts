@@ -13,6 +13,7 @@ import {
   jumpActor,
   moveActor,
   popUp,
+  resetPose,
   setDown,
   startIdle,
   transformAppearance,
@@ -318,6 +319,9 @@ class ActorRuntimeImpl implements ActorRuntime {
       case 'transform-appearance':
         animation = transformAppearance(elements.pose, command.swap);
         break;
+      case 'reset-pose':
+        animation = resetPose(elements.pose);
+        break;
       case 'move': {
         const from = this.getScenePoint();
         const target = command.target.point;
@@ -495,6 +499,7 @@ function requiredChannels(command: ActorCommand): ActorChannel[] {
     case 'arrive':
     case 'fall': return ['pose', 'visibility'];
     case 'transform-appearance': return ['pose'];
+    case 'reset-pose': return ['pose'];
     case 'move': return command.tier === 'long'
       ? ['spatial', 'pose', 'visibility']
       : ['spatial', 'pose'];

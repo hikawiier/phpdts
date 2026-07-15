@@ -153,13 +153,16 @@ function obl_runtime_release_room_lock($lock_name) {
 }
 
 function obl_runtime_transaction_begin() {
-    global $db;
+    global $db, $obl_battle_log;
     if (!empty($GLOBALS['obl_transaction_active'])) {
         throw new RuntimeException('Oblivions transaction already active');
     }
     $GLOBALS['obl_db_throw_on_error'] = true;
     $db->query('START TRANSACTION');
     $GLOBALS['obl_transaction_active'] = true;
+    $GLOBALS['obl_battle_log_transaction_checkpoint'] = isset($obl_battle_log) && $obl_battle_log
+        ? $obl_battle_log->checkpoint()
+        : 0;
 }
 
 function obl_runtime_transaction_commit() {
@@ -168,10 +171,11 @@ function obl_runtime_transaction_commit() {
     $db->query('COMMIT');
     $GLOBALS['obl_transaction_active'] = false;
     $GLOBALS['obl_db_throw_on_error'] = false;
+    unset($GLOBALS['obl_battle_log_transaction_checkpoint']);
 }
 
 function obl_runtime_transaction_rollback() {
-    global $db;
+    global $db, $obl_battle_log;
     if (empty($GLOBALS['obl_transaction_active'])) {
         $GLOBALS['obl_db_throw_on_error'] = false;
         return;
@@ -181,8 +185,13 @@ function obl_runtime_transaction_rollback() {
     } catch (Throwable $e) {
         // Connection loss rolls the server transaction back automatically.
     } finally {
+        if (isset($obl_battle_log) && $obl_battle_log) {
+            $obl_battle_log->rollbackTo((int)($GLOBALS['obl_battle_log_transaction_checkpoint'] ?? 0));
+        }
+        if (function_exists('battle_turn_set_event_context')) battle_turn_set_event_context(null);
         $GLOBALS['obl_transaction_active'] = false;
         $GLOBALS['obl_db_throw_on_error'] = false;
+        unset($GLOBALS['obl_battle_log_transaction_checkpoint']);
     }
 }
 

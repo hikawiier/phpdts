@@ -48,7 +48,7 @@ function battle_queue_setup(&$actor_data, &$obl_battle_log, $combatants_map)
  * 重建先攻队列
  *
  * 复用 qid，重置 done=0，重投先攻（ambush_pid=0，重建时无突袭）。
- * 不设 bid，不建状态机（bid 已存在，状态机已在创建时建立）。
+ * 不设 bid、不写战斗状态、不发射领域事件。
  *
  * @param int    $qid             队列编号
  * @param array  &$actor_data     发起者数据（用于日志记录）
@@ -62,15 +62,7 @@ function battle_queue_rebuild($qid, &$actor_data, &$obl_battle_log): array
 
     obl_queue_reset_done_by_qid($qid);
 
-    // ── Round 边界：先递增 DB round_num → 同步到 collector → 再 emit round_start
-    //    确保 render 事件携带的新轮次编号正确（0-indexed）──
-    obl_battle_state_increment_round($qid);
-    if ($obl_battle_log) {
-        $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
-    }
-
-    // 重建时无突袭，ambush_pid = 0
-    // battle_queue_set_initiative 内部会 emit round_start（携带新 bl_round_num）
+    // 重建时无突袭，ambush_pid = 0。
     $result = battle_queue_set_initiative($qid, $actor_data, $obl_battle_log, 0);
 
     if ($obl_battle_log) {
@@ -145,7 +137,13 @@ function battle_disband_cleanup($qid, &$actor_data, &$obl_battle_log): array {
  */
 function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): array
 {
-    $result = ['disbanded' => false, 'rebuilt' => false, 'next' => null];
+    $result = [
+        'ended' => false,
+        'reason' => null,
+        'rebuilt' => false,
+        'next' => null,
+        'queue_rows' => array(),
+    ];
 
     $qid = (int)$actor_data['bid'];
 
@@ -154,28 +152,11 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
     // ── 一次性读取所有队列行 ──
     $queue_rows = obl_fetch_queue_all_by_qid($qid);
     if (empty($queue_rows)) {
-        // 极端兜底：队列不存在但 actor 还有 bid（队列被意外删除）
-        if ($obl_battle_log && function_exists('combat_log_v2_battle_end')) {
-            combat_log_v2_battle_end($obl_battle_log, 'queue_empty', (int)$actor_data['pid']);
-        }
-        // 清理所有 bid 指向此 qid 的人（队列行已不存在，改扫玩家表）
-        $stale_pids = obl_fetch_pids_by_bid($qid);
-        foreach ($stale_pids as $pid) {
-            if ((int)$pid === (int)$actor_data['pid']) {
-                battle_disband_cleanup_actor($qid, $actor_data, $obl_battle_log);
-            } else {
-                $c_data = obl_fetch_playerdata_by_pid($pid);
-                if (!$c_data) continue;
-                battle_disband_cleanup_actor($qid, $c_data, $obl_battle_log);
-            }
-        }
-        if ($qid > 0) {
-            obl_battle_state_transition($qid, 'battle_end');
-            obl_battle_state_destroy($qid);
-        }
-        $result['disbanded'] = true;
+        $result['ended'] = true;
+        $result['reason'] = 'queue_empty';
         return $result;
     }
+    $result['queue_rows'] = $queue_rows;
 
     // ── 从全量数据推导各派生值（基于 active=1 计数）──
     $active_count = 0;
@@ -204,23 +185,8 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
 
     // ── 2. 解散判定（基于 active=1 计数）──
     if ($active_count <= 1 || !$has_player) {
-        if ($obl_battle_log && function_exists('combat_log_v2_battle_end')) {
-            $survivors = [];
-            if (function_exists('combat_log_v2_combatant_snapshot')) {
-                foreach ($queue_rows as $r) {
-                    if ((int)$r['active'] !== 1) continue;
-                    $survivor_data = obl_fetch_playerdata_by_pid((int)$r['pid']);
-                    $snapshot = combat_log_v2_combatant_snapshot($survivor_data);
-                    if ($snapshot !== null) $survivors[] = $snapshot;
-                }
-            }
-            combat_log_v2_battle_end($obl_battle_log, 'disband', (int)$actor_data['pid'], $survivors);
-        }
-        battle_disband_cleanup($qid, $actor_data, $obl_battle_log);
-        obl_queue_delete_by_qid($qid);
-        obl_battle_state_transition($qid, 'battle_end');
-        obl_battle_state_destroy($qid);
-        $result['disbanded'] = true;
+        $result['ended'] = true;
+        $result['reason'] = 'disband';
         return $result;
     }
 
@@ -237,27 +203,9 @@ function battle_manage_queue(&$actor_data, &$obl_battle_log, &$battle_cache): ar
         }
     }
 
-    // ── 5. 确定下一顺位 + 状态转换 ──
-    // 注意：玩家回合中的 battle_manage_queue 调用时状态为 PLAYER_TURN，
-    // 此时不应重复触发 player_turn（PROCESSING → PLAYER_TURN），
-    // 由 Command Bus / Tick Orchestrator 在玩家行动完成后执行 PLAYER_TURN → PROCESSING。
+    // ── 5. 只返回下一候选者；战斗状态由 E-5 统一推进 ──
     $next = $undone[0] ?? null;
     $result['next'] = $next;
-    obl_battle_state_set_next_pid($qid, $next ? (int)$next['pid'] : 0);
-    if ($next) {
-        if ((int)$next['type'] == 0) {
-            if (obl_battle_state_get($qid) !== OBL_BS_PLAYER_TURN) {
-                obl_battle_state_transition($qid, 'player_turn');
-            }
-        } else {
-            obl_battle_state_refresh($qid);
-        }
-    }
-
-    // ── 6. 状态转换已就绪 ──
-    // 下一 actor 的 turn_start hook 由其自身的 combat_dispatch 入口触发
-    // （不在此处递增 turnNum / 恢复 AP / emit turn_start，避免第一个 actor 漏发 turn_start）
-    // 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
 
     return $result;
 }

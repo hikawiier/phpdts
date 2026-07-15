@@ -91,7 +91,8 @@ return static function (TestRoom $room): array {
             try {
                 $thrown = false; obl_runtime_transaction_begin();
                 try {
-                    combat_dispatch('npc_turn', $npc, [['act_id' => 'unarmed_strike', 'target' => ['type' => 'pid', 'id' => $joinable['pid']]]]);
+                    $turn = obl_battle_state_get_record(44);
+                    combat_dispatch('npc_turn', $npc, [['act_id' => 'unarmed_strike', 'target' => ['type' => 'pid', 'id' => $joinable['pid']]]], ['turn' => $turn]);
                     obl_runtime_transaction_commit();
                 } catch (Throwable $e) { $thrown = true; obl_runtime_transaction_rollback(); }
                 test_assert($thrown, 'NPC heartbeat turn propagates infrastructure fault');
@@ -108,7 +109,7 @@ return static function (TestRoom $room): array {
             ]);
             $player = $room->player('heartbeat-orchestrator-player', 0, ['hp' => 77, 'pls' => 1]);
             $room->queue($npc, 45, 1); $room->queue($player, 45, 2);
-            $db->query("UPDATE {$room->prefix}oblbattle_state SET state='PROCESSING', next_pid=" . (int)$npc['pid'] . " WHERE qid=45");
+            $db->query("UPDATE {$room->prefix}oblbattle_state SET state='AUTO_PENDING', active_pid=" . (int)$npc['pid'] . ", turn_seq=1 WHERE qid=45");
             $db->query("UPDATE {$room->prefix}oblgame SET tick=11, processed_tick=10, vars_json='{\"obl_tick\":11,\"obl_pretick\":10}' WHERE id=1");
             $cuser = (string)$player['name'];
             $gamevars = ['obl_tick' => 11, 'obl_pretick' => 10];
@@ -282,16 +283,16 @@ return static function (TestRoom $room): array {
             obl_gamevars_sync_from_globals();
 
             $obl_battle_log = new BattleLogCollector();
-            $obl_battle_log->setPhase('battlelog_v2');
+            $obl_battle_log->setPhase('battlelog_v3');
             $obl_battle_log->emit([
-                'schema' => 'battlelog.v2',
+                'schema' => 'battlelog.v3',
                 'event_type' => 'notice',
                 'channel' => 'render',
                 'event_uid' => 'presentation-render-1',
                 'payload' => ['qid' => 44, 'message' => 'render'],
             ], false);
             $obl_battle_log->emit([
-                'schema' => 'battlelog.v2',
+                'schema' => 'battlelog.v3',
                 'event_type' => 'notice',
                 'channel' => 'debug',
                 'event_uid' => 'presentation-debug-1',
@@ -316,9 +317,9 @@ return static function (TestRoom $room): array {
             test_same('presentation.v1', (string)$attached['presentation']['schema'], 'response exposes immutable batch');
 
             $obl_battle_log = new BattleLogCollector();
-            $obl_battle_log->setPhase('battlelog_v2');
+            $obl_battle_log->setPhase('battlelog_v3');
             $obl_battle_log->emit([
-                'schema' => 'battlelog.v2',
+                'schema' => 'battlelog.v3',
                 'event_type' => 'notice',
                 'channel' => 'render',
                 'event_uid' => 'presentation-render-rollback',

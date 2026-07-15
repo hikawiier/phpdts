@@ -77,6 +77,9 @@ require_once GAME_ROOT . './oblivions/include/game/combat/combat.chain.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.preview.php';
 require_once GAME_ROOT . './oblivions/include/game/combat/combat.log.php';
 
+// 第 4.8 层：E-5 权威回合编排器（依赖状态机、队列、combat 与 v3 事件构造器）
+require_once GAME_ROOT . './oblivions/include/game/battle_turn.func.php';
+
 // 第 5 层：探索交互 + 敌人 AI（依赖 vision，无循环依赖）
 require_once GAME_ROOT . './oblivions/include/game/explore.func.php';
 require_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';

@@ -10,7 +10,7 @@
 // 模态框关闭后，在地图格上淡入显示伤害数字（残留反馈）。
 //
 // 触发方式：监听 dataManager 'battle:play-damage-numbers' 事件
-// 数据格式：{ effects: DirectedEffectV2[], npcPid: number }
+// 数据格式：{ effects: DirectedEffect[], npcPid: number }
 //
 // 实现方式：
 // - 用 Vue 响应式 damageList ref + v-for 渲染（替代原前端的 document.createElement）
@@ -20,7 +20,7 @@
 
 import { ref, onMounted, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
-import type { DirectedEffectV2 } from '@/stores/battle-director-v2';
+import type { DirectedEffect } from '@/stores/battle-director';
 import type { PlayDamageNumbersEventData } from '@/types/events';
 
 // 残留时间（与 CSS 动画 damage-linger 时长匹配）
@@ -77,7 +77,7 @@ function getCharacterElement(pid: number, player = false): HTMLElement | null {
  *
  * 迁移自现有 vex/js/battle-animation.js playDamageNumbersAfterModal()。
  */
-function playDamageNumbersAfterModal(effects: DirectedEffectV2[], enemyPid: number): void {
+function playDamageNumbersAfterModal(effects: DirectedEffect[], enemyPid: number): void {
   if (!effects || !effects.length) return;
 
   for (let i = 0; i < effects.length; i++) {
@@ -140,7 +140,7 @@ defineExpose({
   playDamageNumbersAfterModal,
 });
 
-function getTargetElement(effect: DirectedEffectV2, enemyPid: number): HTMLElement | null {
+function getTargetElement(effect: DirectedEffect, enemyPid: number): HTMLElement | null {
   const snapshot = effect.target.snapshot;
   if (snapshot?.type === 0 || effect.target.id === 'player') {
     return getCharacterElement(snapshot?.pid ?? effect.target.pid ?? 0, true);

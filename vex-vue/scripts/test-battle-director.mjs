@@ -58,10 +58,11 @@ try {
   if (stationaryAim.pathData !== 'M 10 20 L 10 20' || stationaryAim.arrowAngle !== 0) {
     throw new Error('stationary aim geometry mismatch');
   }
-  const fixture = await server.ssrLoadModule('/src/stores/battle-director-v2.fixture.ts');
-  fixture.assertBattleDirectorV2Fixture();
+  const fixture = await server.ssrLoadModule('/src/stores/battle-director.fixture.ts');
+  fixture.assertBattleDirectorFixture();
   const actorRuntimeFixture = await server.ssrLoadModule('/src/stores/actor-runtime.fixture.ts');
   actorRuntimeFixture.assertActorRuntimeContractFixture();
+  await actorRuntimeFixture.assertAppearancePreemptionConvergenceFixture();
   actorRuntimeFixture.assertMapSceneGeometryFixture();
   await actorRuntimeFixture.assertPostCombatHandoffRunFixture();
   await actorRuntimeFixture.assertPresentationRebaseMoveFixture();
@@ -85,11 +86,11 @@ try {
   const pendingScopes = scopes.take().sort().join(',');
   if (pendingScopes !== 'combat_targets,enemies,game_map') throw new Error('pending authority scopes did not accumulate');
   if (scopes.take().length !== 0) throw new Error('pending authority scopes were not consumed atomically');
-  if (uiPolicy.shouldCommitBattleVisualState('battle', 'PROCESSING')) throw new Error('PROCESSING visual state committed early');
-  if (!uiPolicy.shouldCommitBattleVisualState('battle', 'PLAYER_TURN')) throw new Error('PLAYER_TURN visual state not committed');
+  if (uiPolicy.shouldCommitBattleVisualState('battle', 'EXECUTING')) throw new Error('EXECUTING visual state committed early');
+  if (!uiPolicy.shouldCommitBattleVisualState('battle', 'AWAITING_INPUT')) throw new Error('AWAITING_INPUT visual state not committed');
   if (!uiPolicy.shouldCommitBattleVisualState('', 'IDLE')) throw new Error('IDLE visual state not committed');
   const drainOrder = [];
-  const drainStates = ['PROCESSING', 'IDLE'];
+  const drainStates = ['AUTO_PENDING', 'IDLE'];
   const drainResult = await uiPolicy.drainBattleTicksToStable({
     maxCycles: 4,
     advance: async () => {
@@ -97,7 +98,7 @@ try {
       return { state: drainStates.shift() ?? 'IDLE' };
     },
     playPending: async () => { drainOrder.push('play'); },
-    isProcessing: snapshot => snapshot.state === 'PROCESSING',
+    isProcessing: snapshot => snapshot.state === 'AUTO_PENDING' || snapshot.state === 'EXECUTING',
   });
   if (drainResult.status !== 'stable' || drainResult.cycles !== 2) {
     throw new Error('battle drain did not reach the expected stable snapshot');

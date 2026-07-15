@@ -74,7 +74,7 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$qid = (int)$qdata['qid'];
 		if ($qid <= 0) continue;
 
-		$processing_state = defined('OBL_BS_PROCESSING') ? OBL_BS_PROCESSING : 'PROCESSING';
+		$processing_state = defined('OBL_BS_AUTO_PENDING') ? OBL_BS_AUTO_PENDING : 'AUTO_PENDING';
 		$battle_state = function_exists('obl_battle_state_get') ? obl_battle_state_get($qid) : (defined('OBL_BS_IDLE') ? OBL_BS_IDLE : 'IDLE');
 		if ($battle_state !== $processing_state) {
 			obl_tick_ctx_add_domain_event($ctx, 'battle_queue_skipped_by_state', array(
@@ -88,12 +88,10 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		$current = obl_fetch_queue_current_initiator($qid);
 		if (!$current) continue;
 
-		# 当前顺位者是玩家 → 不执行 NPC 回合（等待玩家提交 obl_battle_action）
+		# AWAITING_INPUT 不会进入本分支；若数据异常指向玩家，只记录并跳过。
 		if ($current['type'] == 0) {
-			# 战斗状态机：仅当状态为 PROCESSING 时触发 player_turn
-			obl_battle_state_transition($qid, 'player_turn');
 			obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'combat_targets', 'game_map'));
-			obl_tick_ctx_add_domain_event($ctx, 'player_turn_ready', array(
+			obl_tick_ctx_add_domain_event($ctx, 'battle_turn_controller_mismatch', array(
 				'qid' => $qid,
 				'pid' => (int)$current['pid'],
 			));
@@ -122,8 +120,18 @@ function obl_tick_phase_battle_npc($delta, &$ctx) {
 		# 通过新 combat 入口调度 NPC 回合。
 		# 内部调用 battle_manage_queue，已包含：done → update → 确定 next + 状态转换 + try_end
 		error_log("[combat_engine] routed to new system: npc_turn (pid={$npc_data['pid']})");
+		$claim = battle_turn_claim_system($qid, (int)$npc_data['pid']);
+		if (empty($claim['ok'])) {
+			obl_tick_ctx_add_domain_event($ctx, 'battle_turn_claim_failed', array(
+				'qid' => $qid,
+				'pid' => (int)$npc_data['pid'],
+				'code' => (string)($claim['code'] ?? 'STALE_TURN'),
+			));
+			continue;
+		}
 		$result = combat_dispatch('npc_turn', $npc_data, $atk_act, [
 			'allow_empty_actions' => true,
+			'turn' => $claim['turn'],
 		]);
 		obl_tick_ctx_add_changed_scopes($ctx, array('player_info', 'enemies', 'combat_targets', 'game_map'));
 		obl_tick_ctx_add_domain_event($ctx, 'npc_turn_resolved', array(

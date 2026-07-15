@@ -154,12 +154,12 @@ return static function (TestRoom $room): array {
             $actor = $room->player('stable-operation-key');
             $GLOBALS['obl_request_uid'] = 'random-request-a';
             $GLOBALS['obl_command_operation_key'] = 'client-request-42';
-            $first = combat_log_v2_make_action_uid($actor, 'escape', 1);
+            $first = combat_log_v3_make_action_uid($actor, 'escape', 1);
             $GLOBALS['obl_request_uid'] = 'random-request-b';
-            $second = combat_log_v2_make_action_uid($actor, 'escape', 1);
+            $second = combat_log_v3_make_action_uid($actor, 'escape', 1);
             test_same($first, $second, 'client request id stabilizes action uid across request retries');
             $GLOBALS['obl_command_operation_key'] = 'client-request-43';
-            test_assert($first !== combat_log_v2_make_action_uid($actor, 'escape', 1), 'different operation keys produce different action uids');
+            test_assert($first !== combat_log_v3_make_action_uid($actor, 'escape', 1), 'different operation keys produce different action uids');
             unset($GLOBALS['obl_command_operation_key']);
         },
     ]);

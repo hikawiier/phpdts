@@ -87,16 +87,18 @@ export interface CapabilityDecision {
 export type ActorCapabilitiesProjection = Partial<Record<ActorCapability, CapabilityDecision>>;
 
 /**
- * 战斗状态机枚举（3 态）
+ * 权威战斗与回合生命周期状态
  *
  * - IDLE：无活跃战斗
- * - PLAYER_TURN：轮到玩家操作（可提交指令，停止轮询）
- * - PROCESSING：后端处理中（按钮灰掉，启动轮询直到变回 PLAYER_TURN 或 IDLE）
+ * - AWAITING_INPUT：玩家回合已开放
+ * - AUTO_PENDING：系统行动者回合已开放，等待 tick 认领
+ * - EXECUTING：当前回合已被原子认领并正在执行
  */
 export type BattleState =
   | 'IDLE'
-  | 'PLAYER_TURN'
-  | 'PROCESSING';
+  | 'AWAITING_INPUT'
+  | 'AUTO_PENDING'
+  | 'EXECUTING';
 
 /** 先攻队列（player_info.battle_queue） */
 export interface BattleQueue {
@@ -114,11 +116,12 @@ export interface BattleQueueEntry {
 export interface CombatViewModel {
   qid: number;
   state: BattleState;
-  playerPid: number;
-  roundNum: number;
-  currentActorPid: number | null;
-  currentActorType: number | null;
-  canSubmitTurn: boolean;
+  round_num: number;
+  turn_seq: number;
+  turn_key: string;
+  active_pid: number;
+  opened_at_tick: number;
+  controller: 'player' | 'system';
   combatants: CombatantViewModel[];
   validTargets: CombatTargetViewModel[];
   suggestedTargetPid: number | null;
@@ -477,9 +480,8 @@ export interface RollData {
   is_ambush: boolean;
 }
 
-export type BattleLogV2EventType =
-  | 'round_start'
-  | 'turn_start'
+export type BattleLogV3EventType =
+  | 'turn_opened'
   | 'action_start'
   | 'action_delivery'
   | 'combatant_joined'
@@ -490,7 +492,7 @@ export type BattleLogV2EventType =
   | 'battle_end'
   | 'notice';
 
-export type BattleLogV2Channel = 'render' | 'debug' | 'diagnostic';
+export type BattleLogV3Channel = 'render' | 'debug' | 'diagnostic';
 
 export interface CombatantSnapshot {
   pid: number;
@@ -522,7 +524,7 @@ export interface StateDelta {
   state_after?: number;
 }
 
-export interface BattleLogV2Payload {
+export interface BattleLogV3Payload {
   qid?: number | null;
   action_uid?: string | null;
   action_id?: string | null;
@@ -550,23 +552,26 @@ export interface BattleLogV2Payload {
   survivors?: CombatantSnapshot[];
   rolls?: RollData[];
   ambush_pid?: number | null;
+  controller?: 'player' | 'system';
+  opening_kind?: 'battle_start' | 'turn';
+  ap_recovered?: number;
   [key: string]: unknown;
 }
 
-export interface BattleLogV2Event {
+export interface BattleLogV3Event {
   /** presentation.v1 批次内的稳定顺序；旧 fixture/兼容数据可能缺省。 */
   event_seq?: number;
   log_id: number;
   played: number;
   ts: number;
-  phase: 'battlelog_v2' | string;
-  schema: 'battlelog.v2';
-  event_type: BattleLogV2EventType;
-  channel: BattleLogV2Channel;
+  phase: 'battlelog_v3' | string;
+  schema: 'battlelog.v3';
+  event_type: BattleLogV3EventType;
+  channel: BattleLogV3Channel;
   event_uid: string;
   action_uid: string | null;
   effect_uid: string | null;
-  payload: BattleLogV2Payload;
+  payload: BattleLogV3Payload;
   debug: boolean;
   qid: number | null;
   actor_pid: number | null;
@@ -579,12 +584,12 @@ export interface BattleLogV2Event {
   winner_pid: number | null;
   cleared_pid: number | null;
   cleared_name: string | null;
-  bl_turn_num: number | null;
-  bl_round_num: number | null;
-  bl_segment_flag: 'round_start' | 'turn_start' | 'battle_end' | 'ambush_battle_end' | null;
+  round_num: number;
+  turn_seq: number;
+  turn_key: string;
 }
 
-export type BattleLogRawEntry = BattleLogV2Event;
+export type BattleLogRawEntry = BattleLogV3Event;
 
 export interface PresentationStateAfter {
   pid: number;
@@ -608,7 +613,7 @@ export interface PresentationBatchV1 {
   request_id: string;
   tick: number;
   state_after: PresentationStateAfter;
-  events: BattleLogV2Event[];
+  events: BattleLogV3Event[];
 }
 
 /** 敌人列表响应（oblivions/api/state.php?scope=enemies） */

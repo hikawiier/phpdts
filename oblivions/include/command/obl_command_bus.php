@@ -242,7 +242,7 @@ function obl_command_gate($command, $contract, $payload, $envelope, &$pdata) {
     if (!empty($contract['advances_tick']) && obl_tick_has_busy_battle()) {
         $qid = isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
         $own_state = $qid > 0 ? obl_battle_state_get($qid) : '';
-        if (!($command === 'battle.submit_turn' && $own_state === (defined('OBL_BS_PLAYER_TURN') ? OBL_BS_PLAYER_TURN : 'PLAYER_TURN'))) {
+        if (!($command === 'battle.submit_turn' && $own_state === (defined('OBL_BS_AWAITING_INPUT') ? OBL_BS_AWAITING_INPUT : 'AWAITING_INPUT'))) {
             return array('ok' => false, 'code' => 'BATTLE_BUSY');
         }
     }
@@ -300,11 +300,7 @@ function obl_command_release_lock($fp) {
 }
 
 function obl_command_after_dispatch($command, $contract, &$pdata) {
-    if (empty($contract['advances_tick'])) return;
-    $player_qid = isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
-    if ($player_qid > 0 && obl_battle_state_get($player_qid) === (defined('OBL_BS_PLAYER_TURN') ? OBL_BS_PLAYER_TURN : 'PLAYER_TURN')) {
-        obl_battle_state_transition($player_qid, 'player_acted');
-    }
+    // E-5 在动作执行事务内完成认领、关闭与下一回合开放。
 }
 
 function obl_command_save_and_tick($command, $contract, &$pdata, $dispatched, $ctx = null) {

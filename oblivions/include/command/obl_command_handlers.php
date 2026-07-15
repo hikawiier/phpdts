@@ -52,7 +52,15 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             if (!$latest) return array('ok' => false, 'code' => 'ACTOR_NOT_FOUND');
             obl_format_playerdata($latest);
             $pdata = $latest;
-            return combat_dispatch('player_turn', $pdata, $payload['actions']);
+            $qid = (int)$payload['qid'];
+            if ($qid !== (int)($pdata['bid'] ?? 0)) return array('ok' => false, 'code' => 'STALE_TURN');
+            $claim = battle_turn_claim_player(
+                $qid,
+                (int)$pdata['pid'],
+                (int)$payload['expected_turn_seq']
+            );
+            if (empty($claim['ok'])) return $claim;
+            return combat_dispatch('player_turn', $pdata, $payload['actions'], array('turn' => $claim['turn']));
         case 'combat.can_engage':
             // L0 可达性查询：前端"点击敌人发起战斗"前的预判
             // 返回 reachable / max_attack_range / move_power / distance / reason

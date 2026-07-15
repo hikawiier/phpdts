@@ -190,14 +190,11 @@ function obl_state_build_combat_context($pdata) {
         $combatants[] = obl_state_combatant_view($players[$pid], $qrow);
     }
 
-    $current = obl_fetch_queue_current_initiator($qid);
-    $current_pid = $current ? (int)$current['pid'] : null;
-    $battle_state = function_exists('obl_battle_state_get')
-        ? obl_battle_state_get($qid)
-        : 'IDLE';
-    $round_num = function_exists('obl_battle_state_get_round_num')
-        ? obl_battle_state_get_round_num($qid)
-        : 0;
+    $turn = function_exists('obl_battle_state_get_record')
+        ? obl_battle_state_get_record($qid)
+        : null;
+    if (!$turn) return null;
+    $battle_state = (string)$turn['state'];
 
     $player_pid = (int)$pdata['pid'];
     $valid_targets = array();
@@ -217,11 +214,12 @@ function obl_state_build_combat_context($pdata) {
     return array(
         'qid' => $qid,
         'state' => $battle_state,
-        'playerPid' => $player_pid,
-        'roundNum' => $round_num,
-        'currentActorPid' => $current_pid,
-        'currentActorType' => $current ? (int)$current['type'] : null,
-        'canSubmitTurn' => $battle_state === 'PLAYER_TURN' && $current_pid === $player_pid,
+        'round_num' => (int)$turn['round_num'] + 1,
+        'turn_seq' => (int)$turn['turn_seq'],
+        'turn_key' => battle_turn_key($qid, (int)$turn['turn_seq']),
+        'active_pid' => (int)$turn['active_pid'],
+        'opened_at_tick' => (int)$turn['opened_at_tick'],
+        'controller' => (int)$turn['active_pid'] === $player_pid ? 'player' : 'system',
         'combatants' => $combatants,
         'validTargets' => $valid_targets,
         'suggestedTargetPid' => $default_target_pid,
@@ -324,7 +322,7 @@ function obl_state_handle_player_info($ctx) {
             ? (int)$gamevars['obl_presentation_head_seq']
             : 0,
         // 战斗状态机：当前玩家所在战场的状态（单一数据源）
-        // IDLE / PLAYER_TURN / PROCESSING
+        // IDLE / AWAITING_INPUT / AUTO_PENDING / EXECUTING
         'obl_battle_state' => (function_exists('obl_battle_state_get') && (int)$pdata['bid'] > 0)
             ? obl_battle_state_get((int)$pdata['bid'])
             : 'IDLE',

@@ -92,12 +92,6 @@ function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata,
 
         obl_tick_advance();
 
-        $player_qid = isset($pdata['bid']) ? (int)$pdata['bid'] : 0;
-        $processing = defined('OBL_BS_PROCESSING') ? OBL_BS_PROCESSING : 'PROCESSING';
-        if ($player_qid > 0 && function_exists('obl_battle_state_get') && obl_battle_state_get($player_qid) === $processing) {
-            obl_battle_state_refresh($player_qid);
-        }
-
         obl_tick_orchestrator_persist();
     } elseif (isset($gamevars) && is_array($gamevars)) {
         unset($gamevars['obl_pending_tick_actor_behavior']);
@@ -169,16 +163,20 @@ function obl_tick_orchestrator_recover_stale_battles($ctx = null, $ttl = 30) {
         return $recovered;
     }
 
-    $processing = defined('OBL_BS_PROCESSING') ? OBL_BS_PROCESSING : 'PROCESSING';
-    $player_turn = defined('OBL_BS_PLAYER_TURN') ? OBL_BS_PLAYER_TURN : 'PLAYER_TURN';
-    $stale_qids = obl_battle_state_find_stale((int)$ttl, $processing);
+    $executing = defined('OBL_BS_EXECUTING') ? OBL_BS_EXECUTING : 'EXECUTING';
+    $awaiting = defined('OBL_BS_AWAITING_INPUT') ? OBL_BS_AWAITING_INPUT : 'AWAITING_INPUT';
+    $auto_pending = defined('OBL_BS_AUTO_PENDING') ? OBL_BS_AUTO_PENDING : 'AUTO_PENDING';
+    $stale_qids = obl_battle_state_find_stale((int)$ttl, $executing);
     foreach ($stale_qids as $stale_qid) {
-        $current = function_exists('obl_fetch_queue_current_initiator')
-            ? obl_fetch_queue_current_initiator((int)$stale_qid)
+        $record = function_exists('obl_battle_state_get_record')
+            ? obl_battle_state_get_record((int)$stale_qid)
+            : null;
+        $current = $record && (int)$record['active_pid'] > 0
+            ? obl_fetch_queue_by_pid((int)$record['active_pid'])
             : false;
 
         if ($current && (int)$current['type'] === 0 && function_exists('obl_battle_state_reset')) {
-            obl_battle_state_reset($stale_qid, $player_turn);
+            obl_battle_state_reset($stale_qid, $awaiting);
             $recovered[] = (int)$stale_qid;
             continue;
         }
@@ -190,9 +188,7 @@ function obl_tick_orchestrator_recover_stale_battles($ctx = null, $ttl = 30) {
             if ($processed_tick >= $tick && function_exists('obl_tick_advance')) {
                 obl_tick_advance();
             }
-            if (function_exists('obl_battle_state_refresh')) {
-                obl_battle_state_refresh((int)$stale_qid);
-            }
+            obl_battle_state_reset($stale_qid, $auto_pending);
             if (isset($obl_error_log) && $obl_error_log) {
                 $obl_error_log->emit('battle_state.recover_npc_pending_tick', array(
                     'qid' => (int)$stale_qid,

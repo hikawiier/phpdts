@@ -5,17 +5,17 @@
 
 import type {
   BattleLogRawEntry,
-  BattleLogV2Event,
-  CombatantSnapshots,
+  BattleLogV3Event,
+  CombatantSnapshot,
   CombatTargetRef,
   StateDelta,
 } from '@/types/api';
 import { escapeHtml } from '@/utils/format';
 import { getStatusLocale } from '@/data/status-locale';
 
-// 战斗导演系统（v2）：将后端 battlelog v2 事件流编导为语义化的播控脚本
+// 战斗导演系统：将后端 battlelog.v3 领域事件编导为语义化播控脚本
 // 职责：事件分组 → DirectedAction → PlaybackStep，供播放管道消费
-export type BattleSegmentKindV2 = 'round_intro' | 'turn' | 'battle_end' | 'system';
+export type BattleSegmentKind = 'turn_intro' | 'turn' | 'battle_end' | 'system';
 
 export interface CombatantView {
   id: string;
@@ -58,7 +58,7 @@ export interface EffectVisualPlan {
   value?: number;
 }
 
-export interface DirectedEffectV2 {
+export interface DirectedEffect {
   effectUid: string;
   rawLogId: number;
   type: 'damage' | 'heal' | 'move' | 'escape' | 'ap_change' | 'status' | 'custom';
@@ -71,13 +71,13 @@ export interface DirectedEffectV2 {
   text?: TextCue;
 }
 
-export interface DirectedDeliveryV2 {
+export interface DirectedDelivery {
   rawLogId: number;
   type: string;
   resolvedAim: CombatTargetView;
 }
 
-export interface DirectedCombatantJoinedV2 {
+export interface DirectedCombatantJoined {
   rawLogId: number;
   qid: number | null;
   combatant: CombatantView;
@@ -86,22 +86,22 @@ export interface DirectedCombatantJoinedV2 {
   done: number;
 }
 
-export interface DirectedActionV2 {
+export interface DirectedAction {
   actionUid: string;
   rawLogId: number;
   actionId: string;
   actor: CombatantView;
   targets: CombatTargetView[];
-  effects: DirectedEffectV2[];
-  deliveries: DirectedDeliveryV2[];
-  joinedCombatants: DirectedCombatantJoinedV2[];
+  effects: DirectedEffect[];
+  deliveries: DirectedDelivery[];
+  joinedCombatants: DirectedCombatantJoined[];
   success: boolean;
   reason?: string | null;
   animation: ActionAnimationPlan;
   text: TextCue[];
 }
 
-export interface DirectedNoticeV2 {
+export interface DirectedNotice {
   type: 'action_failed' | 'combatant_cleared' | 'battle_end' | 'notice' | 'diagnostic';
   text: TextCue;
   rawLogId: number;
@@ -114,19 +114,21 @@ export interface DirectedNoticeV2 {
   detail?: Record<string, unknown>;
 }
 
-export interface BattleSegmentV2 {
-  kind: BattleSegmentKindV2;
+export interface BattleSegment {
+  kind: BattleSegmentKind;
+  turnKey?: string;
   roundNum?: number;
-  turnNum?: number;
+  turnSeq?: number;
   actor?: CombatantView;
-  isBattleStart?: boolean;
-  actions: DirectedActionV2[];
-  notices: DirectedNoticeV2[];
+  controller?: 'player' | 'system';
+  openingKind?: 'battle_start' | 'turn';
+  actions: DirectedAction[];
+  notices: DirectedNotice[];
 }
 
-export interface BattlePlayScriptV2 {
-  schema: 'battleplay.v2';
-  segments: BattleSegmentV2[];
+export interface BattlePlayScript {
+  schema: 'battleplay.v3';
+  segments: BattleSegment[];
   rawLogIds: number[];
 }
 
@@ -152,29 +154,29 @@ export interface PlaybackStepBase {
 
 export interface PrepareMapStep extends PlaybackStepBase {
   kind: 'prepare_map';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
 }
 
 export interface SegmentContextStep extends PlaybackStepBase {
   kind: 'segment_context';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
 }
 
 export interface ActionChoreographyStep extends PlaybackStepBase {
   kind: 'action_choreography';
-  segment: BattleSegmentV2;
-  action: DirectedActionV2;
+  segment: BattleSegment;
+  action: DirectedAction;
 }
 
 export interface CombatantClearedStep extends PlaybackStepBase {
   kind: 'combatant_cleared';
-  segment: BattleSegmentV2;
-  notice: DirectedNoticeV2;
+  segment: BattleSegment;
+  notice: DirectedNotice;
 }
 
 export interface ModalTextStep extends PlaybackStepBase {
   kind: 'modal_text';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
   options: {
     alwaysShowHeader?: boolean;
   };
@@ -182,23 +184,23 @@ export interface ModalTextStep extends PlaybackStepBase {
 
 export interface BattleEndOverlayEnterStep extends PlaybackStepBase {
   kind: 'battle_end_overlay_enter';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
 }
 
 export interface PresentationSceneHandoffStep extends PlaybackStepBase {
   kind: 'presentation_scene_handoff';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
 }
 
 export interface BattleEndModalContentStep extends PlaybackStepBase {
   kind: 'battle_end_modal_content';
-  segment: BattleSegmentV2;
+  segment: BattleSegment;
 }
 
 export interface DamageLingerStep extends PlaybackStepBase {
   kind: 'damage_linger';
-  segment: BattleSegmentV2;
-  effects: DirectedEffectV2[];
+  segment: BattleSegment;
+  effects: DirectedEffect[];
 }
 
 export type PlaybackStep =
@@ -214,45 +216,60 @@ export type PlaybackStep =
 
 export interface BattlePlaybackPlan {
   schema: 'battleplayback.v1';
-  script: BattlePlayScriptV2;
+  script: BattlePlayScript;
   steps: PlaybackStep[];
 }
 
 interface PendingAction {
-  action: DirectedActionV2;
-  roundNum?: number;
-  turnNum?: number;
+  action: DirectedAction;
+  turnKey: string;
   order: number;
 }
 
-export function isBattleLogV2Event(entry: BattleLogRawEntry): entry is BattleLogV2Event {
-  return (entry as BattleLogV2Event).schema === 'battlelog.v2';
+export function isBattleLogV3Event(entry: BattleLogRawEntry): entry is BattleLogV3Event {
+  return (entry as BattleLogV3Event).schema === 'battlelog.v3';
 }
 
-export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
+export function selectUnconsumedBattleEvents(
+  events: BattleLogV3Event[],
+  consumed: ReadonlySet<string>,
+): { events: BattleLogV3Event[]; eventUids: string[] } {
+  const selected: BattleLogV3Event[] = [];
+  const eventUids: string[] = [];
+  const claimed = new Set<string>();
+  for (const event of events) {
+    if (consumed.has(event.event_uid) || claimed.has(event.event_uid)) continue;
+    claimed.add(event.event_uid);
+    eventUids.push(event.event_uid);
+    selected.push(event);
+  }
+  return { events: selected, eventUids };
+}
+
+export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript {
   const renderEvents = events
     .filter(e => e.channel === 'render')
     .slice()
     .sort((a, b) => Number(a.log_id) - Number(b.log_id));
 
   const pending = new Map<string, PendingAction>();
-  const segments: BattleSegmentV2[] = [];
+  const segments: BattleSegment[] = [];
   const rawLogIds = events.map(e => Number(e.log_id)).filter(id => id > 0);
   let order = 0;
 
-  const getTurnSegment = (event: BattleLogV2Event, actor?: CombatantView): BattleSegmentV2 => {
-    const roundNum = event.bl_round_num !== null ? event.bl_round_num + 1 : undefined;
-    const turnNum = event.bl_turn_num ?? undefined;
+  const getTurnSegment = (event: BattleLogV3Event, actor?: CombatantView): BattleSegment => {
+    const turnKey = String(event.turn_key || '');
+    if (!turnKey) throw new Error(`battlelog.v3 ${event.event_type} missing turn_key`);
     let segment = segments.find(seg =>
       seg.kind === 'turn' &&
-      seg.roundNum === roundNum &&
-      seg.turnNum === turnNum,
+      seg.turnKey === turnKey,
     );
     if (!segment) {
       segment = {
         kind: 'turn',
-        roundNum,
-        turnNum,
+        turnKey,
+        roundNum: event.round_num,
+        turnSeq: event.turn_seq,
         actor,
         actions: [],
         notices: [],
@@ -264,7 +281,7 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
     return segment;
   };
 
-  const flushAction = (uid: string, event: BattleLogV2Event): void => {
+  const flushAction = (uid: string, event: BattleLogV3Event): void => {
     const item = pending.get(uid);
     if (!item) return;
     const segment = getTurnSegment(event, item.action.actor);
@@ -277,19 +294,20 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
   for (const event of renderEvents) {
     const payload = event.payload || {};
 
-    if (event.event_type === 'turn_start') {
+    if (event.event_type === 'turn_opened') {
       const actor = toCombatantView(payload.actor);
-      const roundNum = event.bl_round_num !== null ? event.bl_round_num + 1 : undefined;
-      const turnNum = event.bl_turn_num ?? undefined;
-      // 第一个 turn（roundNum=1 && turnNum=1）承担战斗开始的视觉宣告，标题显示"战斗开始"
-      const isBattleStart = roundNum === 1 && turnNum === 1;
-      // 先 push round_intro 段（每 turn 1 个，由 turn_start 事件触发），保证顺序为 [round_intro, turn]
+      const turnKey = String(event.turn_key || '');
+      if (!turnKey) throw new Error('battlelog.v3 turn_opened missing turn_key');
+      const openingKind = payload.opening_kind === 'battle_start' ? 'battle_start' : 'turn';
+      const controller = payload.controller === 'player' ? 'player' : 'system';
       segments.push({
-        kind: 'round_intro',
-        roundNum,
-        turnNum,
+        kind: 'turn_intro',
+        turnKey,
+        roundNum: event.round_num,
+        turnSeq: event.turn_seq,
         actor: actor ?? undefined,
-        isBattleStart: isBattleStart || undefined,
+        controller,
+        openingKind,
         actions: [],
         notices: [],
       });
@@ -300,6 +318,8 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
     if (event.event_type === 'action_start') {
       const actor = toCombatantView(payload.actor);
       if (!actor) continue;
+      const turnKey = String(event.turn_key || '');
+      if (!turnKey) throw new Error('battlelog.v3 action_start missing turn_key');
       const actionUid = String(payload.action_uid ?? event.action_uid ?? '');
       if (!actionUid) continue;
       const targets = Array.isArray(payload.targets)
@@ -308,8 +328,7 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
       const actionId = String(payload.action_id ?? event.action_id ?? 'unknown');
       pending.set(actionUid, {
         order: order++,
-        roundNum: event.bl_round_num ?? undefined,
-        turnNum: event.bl_turn_num ?? undefined,
+        turnKey,
         action: {
           actionUid,
           rawLogId: event.log_id,
@@ -450,16 +469,11 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
   }
 
   for (const item of Array.from(pending.values()).sort((a, b) => a.order - b.order)) {
-    let segment = segments.find(seg =>
-      seg.kind === 'turn' &&
-      seg.roundNum === (item.roundNum !== undefined ? item.roundNum + 1 : undefined) &&
-      seg.turnNum === item.turnNum,
-    );
+    let segment = segments.find(seg => seg.kind === 'turn' && seg.turnKey === item.turnKey);
     if (!segment) {
       segment = {
         kind: 'turn',
-        roundNum: item.roundNum !== undefined ? item.roundNum + 1 : undefined,
-        turnNum: item.turnNum,
+        turnKey: item.turnKey,
         actor: item.action.actor,
         actions: [],
         notices: [],
@@ -469,24 +483,23 @@ export function directV2(events: BattleLogV2Event[]): BattlePlayScriptV2 {
     segment.actions.push(item.action);
   }
 
-  return { schema: 'battleplay.v2', segments, rawLogIds };
+  return { schema: 'battleplay.v3', segments, rawLogIds };
 }
 
-export function planPlaybackV2(script: BattlePlayScriptV2): BattlePlaybackPlan {
+export function planBattlePlayback(script: BattlePlayScript): BattlePlaybackPlan {
   const steps: PlaybackStep[] = [];
   let order = 0;
-  const nextId = (kind: PlaybackStepKind, segment: BattleSegmentV2): string => {
+  const nextId = (kind: PlaybackStepKind, segment: BattleSegment): string => {
     const segKey = [
       segment.kind,
-      segment.roundNum ?? 'x',
-      segment.turnNum ?? 'x',
+      segment.turnKey ?? 'x',
       order++,
     ].join('-');
     return `${kind}-${segKey}`;
   };
 
   for (const segment of script.segments) {
-    if (segment.kind === 'round_intro') {
+    if (segment.kind === 'turn_intro') {
       steps.push({
         id: nextId('modal_text', segment),
         kind: 'modal_text',
@@ -650,7 +663,7 @@ function toResolvedAimView(value: unknown): CombatTargetView {
   return { id: 'none', kind: 'none' };
 }
 
-function toDirectedEffect(event: BattleLogV2Event): DirectedEffectV2 {
+function toDirectedEffect(event: BattleLogV3Event): DirectedEffect {
   const payload = event.payload || {};
   const effectType = normalizeEffectType(String(payload.effect_type ?? event.effect_type ?? 'custom'));
   const target = payload.target
@@ -677,7 +690,7 @@ function toDirectedEffect(event: BattleLogV2Event): DirectedEffectV2 {
   };
 }
 
-function normalizeEffectType(type: string): DirectedEffectV2['type'] {
+function normalizeEffectType(type: string): DirectedEffect['type'] {
   if (type === 'damage' || type === 'heal' || type === 'move' || type === 'escape' || type === 'ap_change' || type === 'status') {
     return type;
   }
@@ -698,7 +711,7 @@ function decideActionAnimation(actionId: string, actor: CombatantView, targets: 
   return { kind: 'none', attackerId: actor.id, targetIds };
 }
 
-function deriveActionAnimationFromEffects(action: DirectedActionV2): ActionAnimationPlan {
+function deriveActionAnimationFromEffects(action: DirectedAction): ActionAnimationPlan {
   const moveEffect = action.effects.find(effect =>
     effect.type === 'move' &&
     effect.target.kind === 'tile' &&
@@ -749,7 +762,7 @@ function uniqueIds(ids: string[]): string[] {
   return Array.from(new Set(ids.filter(id => id !== 'none')));
 }
 
-function decideEffectVisual(type: DirectedEffectV2['type'], target: CombatTargetView, value?: number): EffectVisualPlan {
+function decideEffectVisual(type: DirectedEffect['type'], target: CombatTargetView, value?: number): EffectVisualPlan {
   if (type === 'damage') return { kind: 'damage_number', targetId: target.id, value };
   if (type === 'heal') return { kind: 'heal_number', targetId: target.id, value };
   if (type === 'move') return { kind: 'move_avatar', targetId: target.id };
@@ -766,7 +779,7 @@ function buildActionText(actionId: string, actor: CombatantView, targets: Combat
 }
 
 function buildEffectText(
-  type: DirectedEffectV2['type'],
+  type: DirectedEffect['type'],
   target: CombatTargetView,
   value?: number,
   detail: Record<string, unknown> = {},
@@ -790,7 +803,7 @@ function buildEffectText(
   return undefined;
 }
 
-function buildNoticeText(event: BattleLogV2Event): string {
+function buildNoticeText(event: BattleLogV3Event): string {
   const payload = event.payload || {};
   const text = payload.message ?? payload.text ?? payload.title ?? payload.reason ?? event.reason;
   if (text !== undefined && text !== null && String(text) !== '') return String(text);

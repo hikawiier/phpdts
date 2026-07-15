@@ -43,23 +43,22 @@ export const usePlayerStore = defineStore('player', () => {
     return capabilities.value[capability] ?? { allowed: true };
   }
 
-  // ── 战斗状态机（3 态） ──
+  // ── 权威战斗与回合生命周期 ──
   /** 当前玩家所在战场的状态 */
   const oblBattleState = computed<BattleState>(
     () => playerInfo.value?.obl_battle_state ?? 'IDLE',
   );
-  /** 战斗是否活跃（PLAYER_TURN / PROCESSING） */
+  /** 战斗是否活跃 */
   const isBattleActive = computed(
-    () => oblBattleState.value === 'PLAYER_TURN'
-      || oblBattleState.value === 'PROCESSING',
+    () => oblBattleState.value !== 'IDLE',
   );
-  /** 是否轮到玩家行动（PLAYER_TURN 状态） */
+  /** 是否轮到玩家行动 */
   const isPlayerTurn = computed(
-    () => oblBattleState.value === 'PLAYER_TURN',
+    () => oblBattleState.value === 'AWAITING_INPUT',
   );
-  /** 后端是否正在处理中（PROCESSING 状态，前端应继续轮询） */
+  /** 系统回合是否待认领或执行中 */
   const isNpcActing = computed(
-    () => oblBattleState.value === 'PROCESSING',
+    () => oblBattleState.value === 'AUTO_PENDING' || oblBattleState.value === 'EXECUTING',
   );
 
   /**

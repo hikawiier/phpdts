@@ -216,7 +216,7 @@
 }
 
 /* ═══ 战斗横幅 ═══ */
-/* 接管 round_intro / battle_end 段的视觉呈现 */
+/* 接管 turn_intro / battle_end 段的视觉呈现 */
 /* 两层结构：遮罩层 + 内容层（按段类型分化样式） */
 
 /* 遮罩层（与 battle-modal-overlay 视觉一致） */
@@ -227,7 +227,7 @@
     z-index: 500;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.25s ease-out, visibility 0.25s ease-out;
+    transition: opacity 0.125s ease-out, visibility 0.125s ease-out;
 }
 
 .battle-banner-mask.open {
@@ -237,10 +237,10 @@
 
 .battle-banner-mask.closing {
     opacity: 0;
-    transition: opacity 0.2s ease-in;
+    transition: opacity 0.1s ease-in;
 }
 
-/* 横幅内容层（通用无框章节卡样式，round_intro / battle_end 共用） */
+/* 横幅内容层（通用无框章节卡样式，turn_intro / battle_end 共用） */
 .battle-banner {
     position: fixed;
     top: 50%;
@@ -249,8 +249,8 @@
     z-index: 501;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.25s ease-out, visibility 0.25s ease-out,
-                transform 0.3s cubic-bezier(0.2, 0.8, 0.3, 1);
+    transition: opacity 0.125s ease-out, visibility 0.125s ease-out,
+                transform 0.15s cubic-bezier(0.2, 0.8, 0.3, 1);
     pointer-events: none;
     background: transparent;
     border: none;
@@ -265,7 +265,7 @@
 
 .battle-banner.closing {
     opacity: 0;
-    transition: opacity 0.2s ease-in;
+    transition: opacity 0.1s ease-in;
 }
 
 /* 装饰线 */

@@ -10,8 +10,8 @@
 // 防止快速连续点击导致重复提交，支持冷却时间。
 //
 // 状态机（3 态，由 playerStore.oblBattleState 派生）：
-//   - IDLE / PLAYER_TURN / PROCESSING
-//   - 轮询由 battle.ts 统一管理（PROCESSING 300ms / 其他 1000ms 心跳守护进程 + 1000ms NPC 状态轮询）
+//   - IDLE / AWAITING_INPUT / AUTO_PENDING / EXECUTING
+//   - 轮询由 battle.ts 统一管理（系统回合 300ms / 其他 1000ms）
 //   - pendingNpc getter 仅用于 UI 状态展示（StatusBar NPC 指示器）
 //
 // 锁结构（5 层，详见 docs/战斗锁定白名单-设计案.md §2.7.2）：
@@ -19,7 +19,7 @@
 //   2. itm0 锁（inventoryStore.itm0 !== null，按命令 itm0Allowed 拦截）
 //   3. 模式锁（battleStore.currentMode，按命令 mode 拦截）
 //   4. battle 命令演出水位锁（PresentationScene 必须 caught up）
-//   5. PROCESSING 锁（仅拦截 advancesTick 命令）
+//   5. 系统回合锁（仅拦截 advancesTick 命令）
 //
 // canExecute(command) 与 execute() 共用 _checkLocks()，保证 UI 查询与
 // 实际执行判断完全一致——避免重蹈 isLocked 与 execute 行为分叉的隐性 bug。
@@ -92,7 +92,7 @@ export class CommandQueue {
    * 统一的前置检查逻辑（execute 与 canExecute 共用）
    * 返回 null 表示通过所有锁；否则返回锁定原因。
    *
-   * 锁顺序：HTTP/冷却 → itm0 → 模式/演出水位 → capability → PROCESSING
+   * 锁顺序：HTTP/冷却 → itm0 → 模式/演出水位 → capability → 系统回合
    */
   private _blockDecision(command: string): CommandBlockDecision | null {
     // ── 第 1 层：HTTP 请求锁 + 冷却 ──
@@ -124,8 +124,11 @@ export class CommandQueue {
       if (block) return block;
     }
 
-    // ── 第 5 层：PROCESSING 锁（仅拦截推进 tick 命令） ──
-    if (spec.advancesTick && playerStore.oblBattleState === 'PROCESSING') {
+    // ── 第 5 层：系统回合锁（仅拦截推进 tick 命令） ──
+    if (spec.advancesTick && (
+      playerStore.oblBattleState === 'AUTO_PENDING'
+      || playerStore.oblBattleState === 'EXECUTING'
+    )) {
       return { code: 'BATTLE_PROCESSING', message: '战斗处理中，请稍候。' };
     }
 
@@ -160,7 +163,7 @@ export class CommandQueue {
    *
    * @param envelope 提交给 Oblivions JSON Command API 的命令信封
    * @returns CommandResult（由 sendOblCommand 适配旧调用语义）
-   *   - 锁定/冷却/演出/itm0/模式/PROCESSING 任一不通过返回 { success: false, error: 'LOCKED', message: '当前状态不可执行此操作' }
+   *   - 锁定/冷却/演出/itm0/模式/系统回合任一不通过时返回失败
    */
   async execute<TPayload = unknown>(envelope: OblCommandEnvelope<TPayload>): Promise<CommandResult> {
     const command = envelope.command || '';
@@ -256,7 +259,7 @@ export class CommandQueue {
   /**
    * 全局锁：对所有命令都生效的锁
    *
-   * 仅包含 HTTP 请求锁。演出水位、PROCESSING、itm0、模式锁都只针对特定命令，
+   * 仅包含 HTTP 请求锁。演出水位、系统回合、itm0、模式锁都只针对特定命令，
    * 不纳入 isLocked，
    * 应通过 canExecute(command) 查询具体命令是否可执行。
    *
@@ -267,9 +270,10 @@ export class CommandQueue {
     return this._locked.value;
   }
 
-  /** 后端是否处理中（PROCESSING 状态，由状态机派生，供 UI 绑定） */
+  /** 后端系统回合是否待认领或执行中 */
   get pendingNpc(): boolean {
-    return usePlayerStore().oblBattleState === 'PROCESSING';
+    const state = usePlayerStore().oblBattleState;
+    return state === 'AUTO_PENDING' || state === 'EXECUTING';
   }
 
   /** 剩余冷却时间（毫秒） */

@@ -1,6 +1,7 @@
 <?php
 /**
  * @module D 战斗系统（Combat）
+ * @framework D-1 动作生命周期编排
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -147,7 +148,7 @@ function combat_skill_cd_check(array $actor_data, string $act_id, array $config)
 
 function combat_emit_action_failure(&$log, array $actor_data, string $act_id, string $reason, array $extra = []): void {
     if (!$log) return;
-    combat_log_v2_action_failed($log, $actor_data, $act_id, $reason, $extra);
+    combat_log_v3_action_failed($log, $actor_data, $act_id, $reason, $extra);
 }
 
 // ================================================================
@@ -227,51 +228,33 @@ function combat_start_battle(&$actor, $actions): array {
 
     combat_sort_actions($atk_act);
     $prebattle_cache = combat_cache_create($actor, false);
-    $prebattle_results = [];
-    $remaining_actions = [];
     $initial_target_pids = [];
+    $initial_hostile_index = null;
 
+    // battle.start 只是预先提交首回合意图。先用无副作用投影找出首个合法敌对动作，
+    // 正式建场并开放 turn_seq=1 后，再在同一个权威回合内执行整条动作链。
+    $projection = combat_chain_project($actor, $atk_act, $prebattle_cache, $obl_battle_log, [
+        'emit_failures' => false,
+        'check_ownership' => true,
+        'check_cd' => true,
+    ]);
     foreach ($atk_act as $index => $action) {
         $config = combat_skill_get_config((string)$action['act_id']);
-        if (!$config) continue;
-        $projection = combat_chain_project($actor, [$action], $prebattle_cache, $obl_battle_log, [
-            'emit_failures' => false,
-            'check_ownership' => true,
-            'check_cd' => true,
-        ]);
-        $projected = $projection['actions'][0] ?? ['success' => false];
-        $is_hostile = (string)($config['capture']['participation'] ?? 'none') !== 'none';
-        $candidate_pids = [];
+        $projected = $projection['actions'][$index] ?? ['success' => false];
+        if (!$config || (string)($config['capture']['participation'] ?? 'none') === 'none') continue;
+        if (empty($projected['success'])) continue;
         foreach (($projected['target_results'] ?? []) as $target_result) {
             if (($target_result['status'] ?? '') === 'resolved' && (int)($target_result['pid'] ?? 0) > 0) {
-                $candidate_pids[(int)$target_result['pid']] = true;
+                $initial_target_pids[(int)$target_result['pid']] = true;
             }
         }
-
-        if ($is_hostile && !empty($projected['success']) && !empty($candidate_pids)) {
-            $initial_target_pids = array_keys($candidate_pids);
-            $remaining_actions = array_slice($atk_act, $index);
+        if (!empty($initial_target_pids)) {
+            $initial_hostile_index = $index;
             break;
         }
-
-        $single = [$action];
-        $single_results = combat_main($actor, $single, $obl_battle_log, $prebattle_cache);
-        if (empty($single_results)) {
-            $prebattle_results[] = [
-                'index' => count($prebattle_results),
-                'actId' => (string)$action['act_id'],
-                'status' => 'failed',
-                'reason' => (string)($projected['reason'] ?? 'verification_failed'),
-                'apCost' => 0,
-                'resolvedAim' => $projected['resolved_aim'] ?? null,
-                'capturedTargetCount' => (int)($projected['captured_target_count'] ?? 0),
-                'targets' => $projected['target_results'] ?? [],
-            ];
-        } else {
-            foreach ($single_results as $result) $prebattle_results[] = $result;
-        }
-        if (combat_actor_terminated($actor, $prebattle_cache)) break;
     }
+
+    $initial_target_pids = array_keys($initial_target_pids);
 
     if (empty($initial_target_pids)) {
         return ['ok' => false, 'code' => 'NO_BATTLE_STARTED', 'rollback' => true];
@@ -298,16 +281,51 @@ function combat_start_battle(&$actor, $actions): array {
         obl_save_player($target_data);
     }
 
-    $battle = combat_dispatch('player_turn', $actor, $remaining_actions);
+    $opened = battle_turn_open($qid, 'battle_start');
+    if (empty($opened['ok']) || empty($opened['turn'])) {
+        return ['ok' => false, 'code' => $opened['code'] ?? 'TURN_OPEN_FAILED', 'rollback' => true];
+    }
+    if ((int)$opened['turn']['active_pid'] !== $actor_pid) {
+        return ['ok' => false, 'code' => 'INITIAL_TURN_ACTOR_MISMATCH', 'rollback' => true];
+    }
+    if (!empty($opened['actor']) && is_array($opened['actor'])) $actor = $opened['actor'];
+    $claim = battle_turn_claim_player($qid, $actor_pid, (int)$opened['turn']['turn_seq']);
+    if (empty($claim['ok'])) return ['ok' => false, 'code' => $claim['code'], 'rollback' => true];
+
+    $battle = combat_dispatch('player_turn', $actor, $atk_act, ['turn' => $claim['turn']]);
+    if (!is_array($battle) || empty($battle['ok'])) {
+        return is_array($battle) ? $battle : ['ok' => false, 'code' => 'TURN_EXECUTION_FAILED', 'rollback' => true];
+    }
     $battle_results = is_array($battle['data']['actions'] ?? null) ? $battle['data']['actions'] : [];
+    $all_results = array();
+    $executed_index = 0;
+    foreach (($projection['actions'] ?? array()) as $index => $projected) {
+        if (!empty($projected['success'])) {
+            if (isset($battle_results[$executed_index])) {
+                $all_results[] = $battle_results[$executed_index++];
+            }
+            continue;
+        }
+        $all_results[] = array(
+            'index' => (int)$index,
+            'actId' => (string)($atk_act[$index]['act_id'] ?? ''),
+            'status' => 'failed',
+            'reason' => (string)($projected['reason'] ?? 'verification_failed'),
+            'apCost' => 0,
+            'resolvedAim' => $projected['resolved_aim'] ?? null,
+            'capturedTargetCount' => (int)($projected['captured_target_count'] ?? 0),
+            'targets' => $projected['target_results'] ?? array(),
+        );
+    }
+
     $first_resolved = [];
-    foreach (($battle_results[0]['targets'] ?? []) as $target_result) {
+    foreach (($all_results[$initial_hostile_index]['targets'] ?? []) as $target_result) {
         if (($target_result['status'] ?? '') === 'resolved') $first_resolved[(int)($target_result['pid'] ?? 0)] = true;
     }
     foreach ($initial_target_pids as $pid) {
         if (empty($first_resolved[(int)$pid])) throw new RuntimeException('INITIAL_ROSTER_DIVERGED:' . (int)$pid);
     }
-    $all_results = array_values(array_merge($prebattle_results, $battle_results));
+    $all_results = array_values($all_results);
     foreach ($all_results as $index => &$result) $result['index'] = $index;
     unset($result);
     return ['ok' => true, 'data' => ['actions' => $all_results]];
@@ -325,49 +343,42 @@ function combat_dispatch($mode, &$actor, $actions = null, $extra = []) {
     }
 
     $is_npc = ($mode === 'npc_turn');
+    $turn = isset($extra['turn']) && is_array($extra['turn']) ? $extra['turn'] : null;
+    if (!$turn || !battle_turn_assert_executing($turn, $actor)) {
+        return ['ok' => false, 'code' => 'STALE_TURN'];
+    }
+    battle_turn_set_event_context($turn);
 
     // ── 1. 动作解析（new combat 专用，保留结构化 target intent） ──
     $atk_act = combat_action_normalize_all($actions, (int)$actor['pid'], $mode, $is_npc);
     combat_debug_log('DISPATCH_PARSE', ['atk_act_count'=>count($atk_act), 'atk_act'=>$atk_act]);
     // 非 NPC 模式空动作直接返回（玩家/突袭者必须提交动作）
-    if (!$is_npc && empty($atk_act)) return;
+    if (!$is_npc && empty($atk_act)) {
+        return ['ok' => false, 'code' => 'INVALID_ACTIONS', 'rollback' => true];
+    }
 
     // ── 2. 构建战斗缓存（已有队列中的标准回合） ──
     $battle_cache = combat_cache_create($actor, false);
     combat_debug_log('DISPATCH_CACHE', ['combatants'=>$battle_cache['combatants']??[], 'is_ambush'=>$battle_cache['is_ambush']??false, 'actor_bid'=>(int)($actor['bid']??0)]);
 
-    // ── 3. 同步 roundNum 到 battle_log ──
-    //    保证 battle_main 中 emit 的内容条目携带正确的 bl_round_num，
-    //    供前端区分 Phase 0（突袭）/ Phase 1（标准战斗）。
-    $qid = (int)($actor['bid'] ?? 0);
-    if ($qid > 0 && $obl_battle_log) {
-        $obl_battle_log->setRoundNum(obl_battle_state_get_round_num($qid));
-    }
-
-    // ── 3.5. Turn start hook：当前 actor 回合开始 ──
-    // 递增 turnNum + 恢复 AP + emit turn_start 事件
-    // 放在 step 3（roundNum 同步）之后、step 4（combat_main）之前，
-    // 保证当前 actor 的所有事件（含 turn_start 自身）都有正确的 bl_round_num 和 bl_turn_num
-    // 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
-    battle_hook_turn_start($actor, $obl_battle_log, $battle_cache);
-    battle_ap_recover($actor, $battle_cache, $obl_battle_log);
-    obl_save_player($actor);
-
-    // ── 4. 单回合主函数（sort → verify → execute） ──
+    // ── 3. 单回合主函数（sort → verify → execute） ──
     //    combat_main 会修改 $atk_act（移除校验失败的 action）
     combat_debug_log('DISPATCH_MAIN_BEFORE', ['atk_act_count'=>count($atk_act)]);
     $action_results = combat_main($actor, $atk_act, $obl_battle_log, $battle_cache);
     combat_debug_log('DISPATCH_MAIN_AFTER', ['atk_act_count'=>count($atk_act), 'atk_act'=>$atk_act]);
 
-    // ── 5. 集中 cleanup（统一清理退出者） ──
+    // ── 4. 集中 cleanup（统一清理退出者） ──
     combat_main_end($actor, $atk_act, $obl_battle_log, $battle_cache);
     combat_debug_log('DISPATCH_MAIN_END', ['combatants'=>$battle_cache['combatants']??[], 'actor_hp'=>(int)($actor['hp']??0), 'actor_state'=>(int)($actor['state']??0)]);
 
-    // ── 6. 队列管理（状态机推进由 battle_manage_queue 接管） ──
-    //    spec §1：battle_manage_queue 是适配层，新旧系统共用
-    $result = battle_manage_queue($actor, $obl_battle_log, $battle_cache);
+    // ── 5. E-5 关闭当前回合并开放下一回合 ──
+    $result = battle_turn_complete_and_open_next($actor, $obl_battle_log, $battle_cache, $turn);
+    if (is_array($result) && isset($result['ok']) && !$result['ok']) {
+        $result['rollback'] = true;
+        return $result;
+    }
 
-    // ── 7. 返回（仅 npc_turn 需要结果，供 tick 编排使用） ──
+    // ── 6. 返回 ──
     if ($is_npc) {
         if (is_array($result)) $result['actions'] = $action_results;
         return $result;
@@ -552,7 +563,7 @@ function combat_execute(&$actor_data, &$atk_act, &$log, &$battle_cache): array {
         // 从 action 读 _ap_cost（wallet 模型，不重算）
         // persist 阶段会读 $ctx->ap_cost 扣除，无需修改 combat_stage_persist
         $ctx->ap_cost = (int)($action['_ap_cost'] ?? 0);
-        $ctx->action_uid = $action['_action_uid'] ?? combat_log_v2_make_action_uid($actor_data, $act_id, $action_seq);
+        $ctx->action_uid = $action['_action_uid'] ?? combat_log_v3_make_action_uid($actor_data, $act_id, $action_seq);
         combat_action_reserve_resources($ctx);
 
         // 跑管道（内部含强校验：check_rules 阶段做规则匹配，失败标 skip）
@@ -566,10 +577,10 @@ function combat_execute(&$actor_data, &$atk_act, &$log, &$battle_cache): array {
         if (!$ctx->success) {
             combat_action_restore_uncommitted_resources($ctx);
             $reason = $ctx->failure_reason ?? 'pipeline_failed';
-            combat_log_v2_action_failed_from_context($ctx, $reason);
+            combat_log_v3_action_failed_from_context($ctx, $reason);
             $status = 'failed';
         } else {
-            combat_log_v2_action_end($ctx);
+            combat_log_v3_action_end($ctx);
             $skipped = count(array_filter($ctx->target_results, fn($r) => ($r['status'] ?? '') === 'skipped'));
             $status = $skipped > 0 ? 'partial' : 'resolved';
         }
@@ -617,7 +628,6 @@ function combat_main_end(&$actor_data, &$atk_act, &$log, &$battle_cache): void {
 
     // ── 1. Turn end hook（仅 Phase 1：bid>0 排除 Phase 0 突袭，action==='battle' 排除已退出者）──
     if (!empty($actor_data['bid']) && ($actor_data['action'] ?? '') === 'battle') {
-        battle_hook_turn_end($actor_data, $log, $battle_cache);
     }
 
     // ── 2. Actor 补充死亡检测（写缓存，统一由 foreach 处理）──
@@ -676,7 +686,7 @@ function combat_main_end(&$actor_data, &$atk_act, &$log, &$battle_cache): void {
                     ],
                 ];
             }
-            combat_log_v2_combatant_cleared($log, $target_data, $reason, null, null, $extra);
+            combat_log_v3_combatant_cleared($log, $target_data, $reason, null, null, $extra);
         }
 
         // 调新系统 combat_state_clear（签名：$pid, $reason, &$actor_data, &$battle_cache, $log）

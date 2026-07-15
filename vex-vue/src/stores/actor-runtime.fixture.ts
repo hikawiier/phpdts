@@ -12,6 +12,7 @@ import { runBattlePlaybackPlan } from '@/stores/battle-playback-runner';
 import { DataManager } from '@/stores/data-manager';
 import { ref } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
+import gsap from 'gsap';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { useCharacterStore } from '@/stores/character';
 import { useEntitiesStore } from '@/stores/entities';
@@ -26,7 +27,7 @@ import type { ApiResponse } from '@/api/client';
 import type { ActorElements } from '@/types/actor-runtime';
 import type { AnimationResult, PresentationLease } from '@/types/actor-runtime';
 import type { SceneAnchor } from '@/types/scene';
-import type { BattlePlaybackPlan, BattleSegmentV2 } from '@/stores/battle-director-v2';
+import type { BattlePlaybackPlan, BattleSegment } from '@/stores/battle-director';
 import type { BattlePresentationSession } from '@/stores/battle-presentation-session';
 import type { MapEntity } from '@/types/map-entity';
 
@@ -57,6 +58,48 @@ export function assertActorRuntimeContractFixture(): void {
   assertRegionTransitionContract();
 }
 
+export async function assertAppearancePreemptionConvergenceFixture(): Promise<void> {
+  const runtime = createActorRuntime('player');
+  const elements = createActorElements();
+  runtime.setElements(elements);
+  gsap.set(elements.pose, { x: 3, y: -4, rotation: 12, rotationY: 90, scaleX: 0.08, scaleY: 1.06 });
+  gsap.set(elements.visibility, { alpha: 0.4 });
+
+  const older = runtime.acquire({
+    owner: 'battle',
+    channels: ['pose', 'visibility'],
+    sessionId: 'player-intent:1:1',
+    replaceEqualOwner: true,
+  });
+  assert(older, 'initial appearance lease was not acquired');
+  const latest = runtime.acquire({
+    owner: 'battle',
+    channels: ['pose', 'visibility'],
+    sessionId: 'player-intent:2:1',
+    replaceEqualOwner: true,
+  });
+  assert(latest, 'latest appearance lease was not acquired');
+  assert(older.released, 'latest appearance intent did not preempt the older lease');
+  older.release();
+  assert(!latest.released, 'stale appearance callback released the latest lease');
+
+  const [poseResult, visibilityResult] = await Promise.all([
+    latest.play({ kind: 'reset-pose' }).finished,
+    latest.play({ kind: 'reset-visible' }).finished,
+  ]);
+  assert(poseResult.status === 'completed' && visibilityResult.status === 'completed',
+    'appearance convergence animations did not complete');
+  assert(Number(gsap.getProperty(elements.pose, 'x')) === 0
+    && Number(gsap.getProperty(elements.pose, 'y')) === 0
+    && Number(gsap.getProperty(elements.pose, 'rotation')) === 0
+    && Number(gsap.getProperty(elements.pose, 'rotationY')) === 0
+    && Number(gsap.getProperty(elements.pose, 'scaleX')) === 1
+    && Number(gsap.getProperty(elements.pose, 'scaleY')) === 1,
+  'appearance convergence did not restore the neutral pose');
+  latest.release();
+  runtime.dispose();
+}
+
 export async function assertDataManagerRefreshContractFixture(): Promise<void> {
   const pending: Array<(response: ApiResponse) => void> = [];
   let requestCount = 0;
@@ -80,10 +123,10 @@ export async function assertDataManagerRefreshContractFixture(): Promise<void> {
 
 export async function assertPlaybackSceneGuardFixture(): Promise<void> {
   let active = true;
-  const segment: BattleSegmentV2 = { kind: 'system', actions: [], notices: [] };
+  const segment: BattleSegment = { kind: 'system', actions: [], notices: [] };
   const plan: BattlePlaybackPlan = {
     schema: 'battleplayback.v1',
-    script: { schema: 'battleplay.v2', segments: [segment], rawLogIds: [] },
+    script: { schema: 'battleplay.v3', segments: [segment], rawLogIds: [] },
     steps: [{ id: 'scene-guard', kind: 'segment_context', awaitPolicy: 'completion', segment }],
   };
   const scene = {
@@ -127,7 +170,7 @@ export async function assertPlaybackSceneGuardFixture(): Promise<void> {
 }
 
 export async function assertPlaybackTimeoutCancellationFixture(): Promise<void> {
-  const segment: BattleSegmentV2 = { kind: 'turn', actions: [], notices: [] };
+  const segment: BattleSegment = { kind: 'turn', actions: [], notices: [] };
   const combatant = { id: 'enemy-3', pid: 3, type: 1, name: 'enemy', hp: 10, mhp: 10 };
   const notice = {
     type: 'combatant_cleared' as const,
@@ -138,7 +181,7 @@ export async function assertPlaybackTimeoutCancellationFixture(): Promise<void> 
   };
   const plan: BattlePlaybackPlan = {
     schema: 'battleplayback.v1',
-    script: { schema: 'battleplay.v2', segments: [segment], rawLogIds: [1] },
+    script: { schema: 'battleplay.v3', segments: [segment], rawLogIds: [1] },
     steps: [{
       id: 'timeout-cancel', kind: 'combatant_cleared', awaitPolicy: 'completion', timeout: 5,
       segment, notice,
@@ -191,10 +234,10 @@ export async function assertPlaybackTimeoutCancellationFixture(): Promise<void> 
 }
 
 export async function assertBattleEndParallelBarrierFixture(): Promise<void> {
-  const segment: BattleSegmentV2 = { kind: 'battle_end', actions: [], notices: [] };
+  const segment: BattleSegment = { kind: 'battle_end', actions: [], notices: [] };
   const plan: BattlePlaybackPlan = {
     schema: 'battleplayback.v1',
-    script: { schema: 'battleplay.v2', segments: [segment], rawLogIds: [] },
+    script: { schema: 'battleplay.v3', segments: [segment], rawLogIds: [] },
     steps: [
       { id: 'overlay', kind: 'battle_end_overlay_enter', awaitPolicy: 'completion', segment },
       { id: 'handoff', kind: 'presentation_scene_handoff', awaitPolicy: 'completion', segment },
@@ -440,7 +483,7 @@ export function assertPresentationClaimFixture(): void {
       schema: 'presentation.v1', batch_seq: 1, groomid: 1, recipient_pid: 1,
       qid: 1, request_id: 'claim-fixture', tick: 1,
       state_after: {
-        pid: 1, action: 'battle', bid: 1, battle_state: 'PROCESSING',
+        pid: 1, action: 'battle', bid: 1, battle_state: 'EXECUTING',
         pgroup: 1, pls: 1, state: 0, hp: 100, ap: 10,
       },
       events: [],
@@ -454,7 +497,7 @@ export function assertPresentationClaimFixture(): void {
       schema: 'presentation.v1', batch_seq: 1, groomid: 1, recipient_pid: 1,
       qid: 1, request_id: 'claim-fixture', tick: 1,
       state_after: {
-        pid: 1, action: 'battle', bid: 1, battle_state: 'PROCESSING',
+        pid: 1, action: 'battle', bid: 1, battle_state: 'EXECUTING',
         pgroup: 1, pls: 1, state: 0, hp: 100, ap: 10,
       },
       events: [],
@@ -826,9 +869,12 @@ function createDomLikeElement(): HTMLElement {
     width: 0,
     height: 0,
     alpha: 1,
+    opacity: 1,
     scaleX: 1,
     scaleY: 1,
     rotation: 0,
+    rotationY: 0,
+    transformPerspective: 0,
     classList: {
       toggle(name: string, force?: boolean) {
         const next = force ?? !classes.has(name);

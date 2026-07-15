@@ -204,6 +204,19 @@ export function transformAppearance(
   return tl;
 }
 
+export function resetPose(pose: HTMLElement): gsap.core.Timeline {
+  gsap.killTweensOf(pose);
+  return gsap.timeline().set(pose, {
+    x: 0,
+    y: 0,
+    rotation: 0,
+    rotationY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    transformPerspective: 0,
+  });
+}
+
 export function fadeOut(visibility: HTMLElement): gsap.core.Timeline {
   gsap.killTweensOf(visibility);
   return gsap.timeline().to(visibility, {

@@ -2,7 +2,7 @@
  * @module K 状态管理层
  */
 
-import type { DirectedActionV2 } from '@/stores/battle-director-v2';
+import type { DirectedAction } from '@/stores/battle-director';
 
 export type BattleAnimationCue =
   | 'actor-melee'
@@ -69,7 +69,7 @@ const AREA_CHAIN: BattleAnimationChainSpec = {
   hitAfter: EMPTY,
 };
 
-export function resolveBattleAnimationChain(action: DirectedActionV2): BattleAnimationChainSpec {
+export function resolveBattleAnimationChain(action: DirectedAction): BattleAnimationChainSpec {
   const hasProjectile = action.deliveries.some(delivery => isProjectileDelivery(delivery.type));
   const hasExplosion = action.deliveries.some(delivery => isExplosionDelivery(delivery.type));
 

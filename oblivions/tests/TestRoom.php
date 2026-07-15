@@ -28,6 +28,7 @@ final class TestRoom {
         $obl_log = new OblivionsLogger();
         $obl_error_log = new OblivionsErrorLogger();
         $obl_battle_log = new BattleLogCollector();
+        if (function_exists('battle_turn_set_event_context')) battle_turn_set_event_context(null);
         $this->logFilesBefore = $this->fileSnapshot();
     }
 
@@ -45,6 +46,7 @@ final class TestRoom {
         $obl_log = new OblivionsLogger();
         $obl_error_log = new OblivionsErrorLogger();
         $obl_battle_log = new BattleLogCollector();
+        if (function_exists('battle_turn_set_event_context')) battle_turn_set_event_context(null);
     }
 
     public function player(string $name, int $type = 0, array $override = []): array {
@@ -79,7 +81,9 @@ final class TestRoom {
         $player['bid'] = $qid;
         $player['action'] = 'battle';
         obl_save_player($player);
-        $db->query("INSERT IGNORE INTO {$this->prefix}oblbattle_state(qid,state,next_pid,round_num,updated_at) VALUES ({$qid},'PLAYER_TURN'," . (int)$player['pid'] . ",0," . time() . ")");
+        $db->query("INSERT IGNORE INTO {$this->prefix}oblbattle_state"
+            . "(qid,state,round_num,turn_seq,active_pid,opened_at_tick,updated_at) VALUES ("
+            . "{$qid},'EXECUTING',0,1," . (int)$player['pid'] . ",10," . time() . ")");
     }
 
     public function reveal(int ...$tiles): void {

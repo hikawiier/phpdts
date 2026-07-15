@@ -82,14 +82,14 @@ function combat_effect_target_ref(CombatContext $ctx, array $target_data): array
         return [
             'kind' => 'self',
             'pid' => $pid,
-            'snapshot' => combat_log_v2_combatant_snapshot($ctx->actor_data),
+            'snapshot' => combat_log_v3_combatant_snapshot($ctx->actor_data),
         ];
     }
     if ($pid > 0) {
         return [
             'kind' => 'pid',
             'pid' => $pid,
-            'snapshot' => combat_log_v2_combatant_snapshot($target_data),
+            'snapshot' => combat_log_v3_combatant_snapshot($target_data),
         ];
     }
     return ['kind' => 'none'];
@@ -136,7 +136,7 @@ function combat_effect_damage(CombatContext $ctx, array $effect): bool {
     // 反击预留：当前不实现反击检查，仅读取字段以备未来扩展
     $is_counter = !empty($effect['is_counter']);
 
-    combat_log_v2_effect_applied($ctx, 'damage', [
+    combat_log_v3_effect_applied($ctx, 'damage', [
         'target' => combat_effect_target_ref($ctx, $target_data),
         'value' => $value,
         'delta' => [
@@ -173,7 +173,7 @@ function combat_effect_heal(CombatContext $ctx, array $effect): bool {
     $target_data['hp'] = min($mhp, $hp_before + $value);
     $hp_after = (int)$target_data['hp'];
 
-    combat_log_v2_effect_applied($ctx, 'heal', [
+    combat_log_v3_effect_applied($ctx, 'heal', [
         'target' => combat_effect_target_ref($ctx, $target_data),
         'value' => $value,
         'delta' => [
@@ -215,8 +215,8 @@ function combat_effect_move(CombatContext $ctx, array $effect): bool {
         $ctx->failure_reason = 'move_failed:' . ($result['reason'] ?? 'unknown');
         return false;
     }
-    combat_log_v2_effect_applied($ctx, 'move', [
-        'target' => combat_log_v2_target_ref($ctx, $target),
+    combat_log_v3_effect_applied($ctx, 'move', [
+        'target' => combat_log_v3_target_ref($ctx, $target),
         'delta' => [
             'pls_before' => (int)($effect['payload']['from_pls'] ?? 0),
             'pls_after' => (int)($effect['payload']['to_pls'] ?? 0),
@@ -322,8 +322,8 @@ function combat_effect_escape(CombatContext $ctx, array $effect): bool {
     // combatants 标记为 0（不再活跃，main_end 流程集中 cleanup）
     $ctx->battle_cache['combatants'][$actor_pid] = 0;
 
-    combat_log_v2_effect_applied($ctx, 'escape', [
-        'target' => combat_log_v2_actor_target_ref($ctx),
+    combat_log_v3_effect_applied($ctx, 'escape', [
+        'target' => combat_log_v3_actor_target_ref($ctx),
         'delta' => [
             'state_before' => $state_before,
             'state_after' => (int)($ctx->actor_data['state'] ?? 0),
@@ -375,7 +375,7 @@ function combat_effect_skill_effect_apply(CombatContext $ctx, array $effect): bo
         return false;
     }
 
-    combat_log_v2_effect_applied($ctx, 'status', [
+    combat_log_v3_effect_applied($ctx, 'status', [
         'target' => combat_effect_target_ref($ctx, $ctx->actor_data),
         'detail' => [
             'operation' => 'apply',
@@ -404,8 +404,8 @@ function combat_effect_ap_change(CombatContext $ctx, array $effect): bool {
     $target = &$ctx->getCurrentTarget();
     $ap_before = (int)($ctx->actor_data['ap'] ?? 0);
 
-    combat_log_v2_effect_applied($ctx, 'ap_change', [
-        'target' => combat_log_v2_target_ref($ctx, $target),
+    combat_log_v3_effect_applied($ctx, 'ap_change', [
+        'target' => combat_log_v3_target_ref($ctx, $target),
         'value' => $delta,
         'delta' => [
             'ap_before' => $ap_before,

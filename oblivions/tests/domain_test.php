@@ -41,7 +41,7 @@ return static function (TestRoom $room): array {
             $beforeCollector = serialize($obl_battle_log->getEntries());
             $beforeGamevars = serialize($gamevars);
             $beforeRequestUid = $GLOBALS['obl_request_uid'] ?? null;
-            $uidBefore = combat_log_v2_next_event_uid('preview_probe');
+            $uidBefore = combat_log_v3_next_event_uid('preview_probe');
             preg_match('/-(\d+)$/', $uidBefore, $beforeMatch);
             mt_srand(24680);
             $expectedFirst = mt_rand(); $expectedSecond = mt_rand();
@@ -49,7 +49,7 @@ return static function (TestRoom $room): array {
             $actualFirst = mt_rand();
             $result = combat_preview_chain($actor, [['act_id' => 'unarmed_strike', 'target' => ['type' => 'pid', 'id' => $target['pid']]]], combat_cache_create($actor, false));
             $actualSecond = mt_rand();
-            $uidAfter = combat_log_v2_next_event_uid('preview_probe');
+            $uidAfter = combat_log_v3_next_event_uid('preview_probe');
             preg_match('/-(\d+)$/', $uidAfter, $afterMatch);
             test_assert(!empty($result['actions'][0]['success']), 'preview action succeeds');
             test_same($beforeDb, serialize([$room->tableRows('oblplayers'), $room->tableRows('oblqueue'), $room->tableRows('oblbattle_state')]), 'preview DB unchanged');

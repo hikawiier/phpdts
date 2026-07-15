@@ -37,6 +37,7 @@ export type ActorCommand =
   | { kind: 'enter' }
   | { kind: 'arrive' }
   | { kind: 'transform-appearance'; swap: () => void }
+  | { kind: 'reset-pose' }
   | { kind: 'move'; target: SceneAnchor; tier: MoveTier; hold?: boolean }
   | { kind: 'attack'; target?: ScenePoint; attackKind: AttackKind }
   | { kind: 'hit'; direction: -1 | 0 | 1 }

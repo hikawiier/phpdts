@@ -63,7 +63,7 @@
     - [E-2：统一角色数据模型](#框架-e-2统一角色数据模型)
     - [E-3：基于图的移动系统](#框架-e-3基于图的移动系统)
     - [E-4：结构化事件日志系统](#框架-e-4结构化事件日志系统)
-    - [E-5：战斗有限状态机](#框架-e-5战斗有限状态机)
+    - [E-5：权威战斗与回合生命周期状态机](#框架-e-5权威战斗与回合生命周期状态机)
     - [E-6：视野与感知系统](#框架-e-6视野与感知系统)
     - [E-7：探索与交互管道](#框架-e-7探索与交互管道)
     - [E-8：NPC AI 行为系统](#框架-e-8npc-ai-行为系统)
@@ -374,7 +374,7 @@
 
 #### 框架 C-4：事件批量投递（Presentation 系统）
 
-**设计意图：** 命令或心跳执行期间收集的战斗事件，在响应内联打包为一个"演示批"返回，省去了单独的事件轮询。批包含模式版本、元数据、状态快照和事件列表。前端接收后直接播放。
+**设计意图：** 命令或心跳执行期间产生的领域事件，在事务提交前冻结为一个演示批，提交后随响应投递。请求级收集器只维护事件顺序和回滚检查点，不生成回合编号或段落语义；数据库回滚时同步撤销未提交事件，避免播放不存在的回合。
 
 **代码锚点：** `oblivions/include/core/obl_runtime.php`（演示批打包与投递）、`oblivions/include/game/battle_log.func.php`（战斗演出事件收集器）
 
@@ -383,6 +383,7 @@
 - 如果玩家数据为空（如心跳时玩家尚未生成），状态快照使用全零默认值。
 - 批的战斗 ID 通过反向扫描事件确定，而不是从玩家当前战斗 ID 直接取。
 - 如果玩家角色标识无效，日志持久化直接跳过。
+- `event_seq` 和 `batch_seq` 只承担传输排序，不能替代 `turn_seq` 或 `turn_key`。
 
 #### 框架 C-5：Tick 编排器
 
@@ -424,18 +425,16 @@
 
 #### 框架 D-1：动作生命周期编排
 
-**设计意图：** 顶层调度器，编排单回合的完整生命周期。三个阶段：排序（终结技最后）→ 校验（AP 成本、标签规则）→ 执行（效果应用、持久化）。另外提供完整的战斗初始化入口（创建队列 + 首轮执行）和标准回合分发入口。
+**设计意图：** 动作层只执行已经由 E-5 开放并原子认领的权威回合，保持排序（终结技最后）→ 校验（AP 成本、标签规则）→ 执行（效果应用、持久化）的单一职责。`battle.start` 先用无副作用投影确定初始战斗名单，正式建场后把整条预提交动作链绑定到首个权威回合；动作层不创建回合、不递增序号、不恢复回合资源。
 
-**回合开始 hook 由 `combat_dispatch` 入口触发（框架基准）：** `turn_start` 事件的发送时机是"当前 actor 的回合开始时"，而非"前一个 actor 的 `battle_manage_queue` 末尾为下一 actor emit"。`combat_dispatch` 入口（step 3.5，在 roundNum 同步之后、`combat_main` 之前）依次调用 `battle_hook_turn_start`（递增 `BattleLogCollector::$turnNum`）+ `battle_ap_recover`（恢复 AP + emit `turn_start` 事件）+ `obl_save_player`（持久化 AP 恢复状态）。`battle_manage_queue` 末尾不再触发 turn_start hook，只负责状态机推进（`obl_battle_state_set_next_pid` + 状态转换）。这样保证每个 turn（含每场战斗的第一个 turn）都有 `turn_start` 事件，K-1 框架"每个 turn 1 个 round_intro 横幅"的设计基准在所有 turn 上生效。AP 恢复语义同步变化：每个 actor 的回合开始时恢复 AP 到 max（第一个 actor 也恢复，ap_recovered=0 如果本来满 AP）。
-
-**代码锚点：** `oblivions/include/game/combat/combat.runtime.php`（动作生命周期编排 + 战斗初始化入口）
+**代码锚点：** `oblivions/include/game/combat/combat.runtime.php`（动作运行时与初始化入口）、`oblivions/include/game/combat/combat.core.php`（已认领回合的动作编排）
 
 **边界案例：**
 
 - 排序必须先于校验 —— 终结技必须排到末尾再进行 AP 和位置投影，否则中间动作会被错误移除。
 - 行动者终止有四种条件（生命值归零、状态标记、逃离、死亡），会导致所有后续动作中断而非跳过。
-- 战斗初始化有一个"第 0 阶段" —— 在战斗名单创建之前先执行非敌对动作（如增益），然后第一个敌对动作构建正式战斗名单。
-- pre-battle 阶段的非敌对动作直接调用 `combat_main`，不经过 `combat_dispatch`，所以没有 `turn_start` 事件——这些动作的 `bl_turn_num=null`，前端归到无 round_intro 的 turn 段，符合"pre-battle 不是正式回合"的语义。
+- `battle.start` 中位于首个敌对动作之前的移动、增益等意图只在投影阶段预演；正式执行时与敌对动作共享 `turn_seq=1`，保证首回合所有动作事件都有同一个 `turn_key`。
+- 调用方未提供已认领的 `EXECUTING` 回合，或行动者、`turn_seq` 与权威记录不一致时，动作入口拒绝执行。
 
 #### 框架 D-2：四层预览/预演系统
 
@@ -466,15 +465,16 @@
 
 #### 框架 D-4：结构化战斗事件发射器
 
-**设计意图：** 在收集器之上提供新格式的事件（battlelog.v2），包含类型化事件、唯一关联 ID、通道分离（渲染 vs 调试）。每个动作和效果有且仅发射一次事件（幂等防护）。
+**设计意图：** `battlelog.v3` 将请求级传输元数据与领域坐标分离。`turn_opened` 明确陈述控制者、`opening_kind` 和 AP 恢复后的行动者快照；动作、效果、退场和终局事件携带同一权威 `turn_key`，每个动作和效果仍保持单次发射与关联 ID。
 
-**代码锚点：** `oblivions/include/game/combat/combat.log.php`（battlelog.v2 事件发射器）
+**代码锚点：** `oblivions/include/game/combat/combat.log.php`（battlelog.v3 领域事件构造器）
 
 **边界案例：**
 
 - 包含回滚检查点 —— 在目标结算中使用保存点回滚时可以撤销已发射的事件。
 - 原因映射：内部使用 `dead` 标记，对外暴露为 `death` 原因。
 - 泄露 ID 按类型分组追踪，用于清除事件引用特定效果。
+- `turn_opened.event_uid` 由 `qid` 与 `turn_seq` 确定，重试不能生成第二个回合宣告身份。
 
 #### 框架 D-5：目标结算单元
 
@@ -686,17 +686,17 @@
 - 调试 ID 列表标记高频事件（如敌人移动），前端默认不渲染。
 - 错误日志固定 50 条，与常规日志物理隔离。
 
-#### 框架 E-5：战斗有限状态机
+#### 框架 E-5：权威战斗与回合生命周期状态机
 
-**设计意图：** 简约的三状态机：空闲 → 玩家回合 → 处理中。每个先攻队列独立运作。状态转换表是唯一权威来源，非法转换只记录错误不阻塞流程。
+**设计意图：** 每个 `qid` 由一行 `oblbattle_state` 持久化当前回合身份和四态边界：`IDLE`、`AWAITING_INPUT`、`AUTO_PENDING`、`EXECUTING`。只有回合开放能递增 `turn_seq`；玩家命令和 NPC tick 都必须先按当前状态、`active_pid`、`turn_seq` 原子认领，再进入动作执行。AP 恢复与回合开始效果在输入开放前完成，关闭当前回合后才向 I-1 请求下一候选者。
 
-**代码锚点：** `oblivions/include/game/battle_state_machine.func.php`（战斗有限状态机）
+**代码锚点：** `oblivions/include/game/battle_state_machine.func.php`（持久状态与原子转换）、`oblivions/include/game/battle_turn.func.php`（回合开放、认领与关闭编排）
 
 **边界案例：**
 
-- 非法转换记录到错误日志，当前状态不变 —— 不抛出异常，不阻塞流程。
-- 状态创建使用忽略冲突的插入语义 —— 记录已存在时不覆盖。
-- 卡死检测：处理中状态的默认超时 30 秒。
+- 同一 `expected_turn_seq` 第一次认领后状态已进入 `EXECUTING`，重复提交、旧页面提交和错误 PID 均返回陈旧回合。
+- 回合开放期间行动者失效时不发布输入状态或普通横幅，关闭该身份并继续选择下一候选者。
+- `EXECUTING` 卡死恢复按 `active_pid` 的控制类型回到 `AWAITING_INPUT` 或 `AUTO_PENDING`，保留原回合身份。
 
 #### 框架 E-6：视野与感知系统
 
@@ -841,13 +841,13 @@
 
 #### 框架 I-1：先攻队列编排
 
-**设计意图：** 此模块不是废弃代码 —— 它被新战斗系统积极使用。提供队列创建、加入、退出、重排顺序、追加队尾等原语。编排器管理队列生命周期：排序 → 状态推进（标记 done、确定下一顺位、状态机转换）→ 解散/重排判定。AP 恢复与 turn_start hook 不在此处触发，而是由 `combat_dispatch` 入口负责（见框架 D-1）。
+**设计意图：** 此模块是纯顺位基础设施，提供队列创建、加入、退出、完成标记、轮次重建和下一候选者选择。它只回答"谁按顺位可行动"以及队列是否应结束或重建，不写 `oblbattle_state`、不恢复 AP、不发射回合事件；E-5 根据返回结果决定关闭、结束或开放回合。
 
 **代码锚点：** `oblivions/include/game/battle/battle.queue.func.php`（先攻队列原语：创建、加入、退出、更新、解散、重建）、`oblivions/include/game/battle/battle.queue.main.php`（队列编排：setup、manage_queue、rebuild）
 
 **边界案例：**
 
-- 队列为空但行动者仍有战斗 ID 时触发紧急清理 —— 按战斗 ID 扫描玩家清理，然后解散状态机。
+- 队列为空但行动者仍有战斗 ID 时返回 `queue_empty` 结束事实，由 E-5 扫描并清理残留战斗成员。
 - 解散条件：活跃成员数 ≤ 1 或没有人类玩家剩余。
 - 重排条件：所有活跃成员已完成当前轮次 → 重置完成标志、轮次递增、重新掷先攻。
 
@@ -887,15 +887,15 @@
 
 #### 框架 K-1：战斗回合编排 + 演示播放管道
 
-**设计意图：** 总编排器（battle store）协调整个战斗生命周期的状态切换、守护进程心跳轮询、NPC 自动刷新、演示批处理消费与场景重基准——非阻塞协调器将动画委托给执行器，将演示委托给会话，将场景过渡委托给场景存储。
+**设计意图：** 总编排器同时消费两个互不推导的输入源：权威 `combat_context` 决定玩家回合 UI 与 `expected_turn_seq`，presentation 事件决定横幅、动作和终局演出。玩家动作编辑会话以 `qid + turn_seq` 为身份，提交成功后用一次性闩锁立即关闭旧会话，直到权威投影发布不同回合；闩锁不生成回合身份、不推进状态。守护进程只在 `AUTO_PENDING` / `EXECUTING` 推进，通用 presentation 水位继续阻塞战斗命令；前端不建立第二套回合状态机。
 
-内部承载一套**四层职责分离**的战斗演出架构，把"原料 → 编排 → 步骤 → 执行"切成四个互不越界的层：导演层把后端 `battlelog.v2` 事件流聚合为播放脚本（按 `action_uid` 分组，输出 `round_intro` / `turn` / `battle_end` / `system` 四类 segment）；计划层把脚本拆解为播放计划（每步附 `awaitPolicy` 与 `timeout`）；执行器按 step 顺序串行执行；演员层只通过租约与会话执行动作，不查询 DOM，不直接更新 HP（HP 由演出组件按 effect delta 自行同步）。store 与演出组件之间采用**命令式驱动 + 组件注册**而非共享响应式状态 + watch——这一模式消除了"共享状态竞态 + watch 副作用 + 显式 ready 信号"三重耦合。视觉语言分级：BattleBanner 承担瞬态阶段标记（"轻、快"），BattleModal 承担战报详情载体（"重、正式"），视觉分化避免横幅沦为"缩小版模态框"。
+内部承载一套**四层职责分离**的战斗演出架构，把"原料 → 编排 → 步骤 → 执行"切成四个互不越界的层：导演层把后端 `battlelog.v3` 事件流按 `turn_key` 和 `action_uid` 聚合为 `turn_intro` / `turn` / `battle_end` / `system` 四类 segment；计划层拆解播放步骤；执行器串行等待；演员层只通过租约与会话执行动作。视觉语言继续由 BattleBanner 承担瞬态阶段标记、BattleModal 承担战报详情。
 
-**回合宣告归属 turn 段：** 每个角色的回合都有独立的横幅宣告。`round_intro` 段由 `turn_start` 事件触发，在 turn 段之前 push。用 `turn_start` 事件触发而非末尾遍历，是为了避免跨批重复——同一回合的事件可能被分到两个 batch，末尾遍历会导致两个 batch 都生成 `round_intro`。
+**回合宣告只投影领域事实：** 只有 `turn_opened` 能创建 `turn_intro`；`opening_kind='battle_start'` 显示战斗开始，其余显示事件给出的轮次。动作批次即使与 `turn_opened` 分离，也不能补建横幅；缺少 `turn_key` 直接视为契约错误。
 
-**阶段切片模型：** `round_intro` 段单阶段（轮次宣告）；`turn` 段六阶段严格顺序（回合接场 → 战场就绪 → 动作演出 → 退场演出 → 战报回放 → 伤害浮现）；`system` 段单阶段（系统文本）；`battle_end` 段三阶段（终幕遮罩 → 场景交接 → 终局战报）。
+**阶段切片模型：** `turn_intro` 段单阶段（回合开放宣告）；`turn` 段六阶段严格顺序（回合接场 → 战场就绪 → 动作演出 → 退场演出 → 战报回放 → 伤害浮现）；`system` 段单阶段；`battle_end` 段保持终幕遮罩 → 场景交接 → 终局战报三阶段屏障。
 
-**代码锚点：** `vex-vue/src/stores/battle.ts`（总编排器）、`vex-vue/src/stores/battle-director-v2.ts`（导演层 + 计划层）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
+**代码锚点：** `vex-vue/src/stores/battle.ts`（权威状态、回合编辑会话与演示批编排）、`vex-vue/src/stores/battle-director.ts`（v3 导演层 + 计划层）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/PreloadArea.vue`（按权威回合身份建立并关闭动作编辑会话）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
 
 **边界案例：**
 
@@ -910,6 +910,8 @@
 - 动作演出 `awaitPolicy` 规则：`animation.kind='none'` 且所有 `deliveries` 的 `type='none'` 时为 `'none'`（fire-and-forget），否则为 `'completion'`。`move` 动画的 timeout 比其他动画更短，演员层按距离分 `duck` / `jump` / `long` 三档。
 - `hitTrigger='attack-impact'` 时等攻击 impact cue 后并行播放 hit + attackHandles，避免命中反馈早于攻击动画（视觉因果倒置）。
 - 伤害浮现是唯一 `awaitPolicy='none'` 的阶段，通过事件总线派发，DamageNumber 组件按角色定位自行播放——主时序不等待伤害数字浮现。
+- 页面重连或 presentation gap 直接重基准到当前权威状态，不从 `combat_context` 补播已经错过的瞬态横幅。
+- 一次刷新可完整跨过 NPC 回合，使组件观察到的玩家回合布尔值保持 `true`；动作区仍须以变化后的 `qid + turn_seq` 清空旧队列并建立新会话。同一回合提交成功时立即关闭动作区，避免权威刷新到达前重复提交。
 
 #### 框架 K-2：合成模态状态机 + 防抖预览
 
@@ -993,14 +995,15 @@
 
 #### 框架 K-10：角色动画意图派发
 
-**设计意图：** 存储只负责发布"意图"（应该发生什么），组合式函数负责动画库执行。意图序列号在非防抖触发时递增——同一意图 50ms 内重复触发会被抑制（`dispatchIntent` 内 `return`），用于绕过 Vue ref 对相同值赋值不触发 watch 的特性，确保连续同值意图（如连续移动）能被观察者捕获。
+**设计意图：** 存储只负责发布"意图"（应该发生什么），组合式函数负责动画库执行。意图序列号在非防抖触发时递增——同一意图 50ms 内重复触发会被抑制（`dispatchIntent` 内 `return`），用于绕过 Vue ref 对相同值赋值不触发 watch 的特性，确保连续同值意图（如连续移动）能被观察者捕获。异步执行器进入时必须捕获不可变的 `intent + intentSeq` 快照，形态中点提交与取消兜底只有在序号仍属于当前意图时才能写入；最新意图通过独立 session 抢占旧动画，并将姿态与可见性收敛到最终形态。
 
-**代码锚点：** `vex-vue/src/stores/player-avatar.ts`
+**代码锚点：** `vex-vue/src/stores/player-avatar.ts`（意图与目标形态发布）、`vex-vue/src/composables/useMapEntities.ts`（意图快照、形态动画抢占与终态收敛）
 
 **边界案例：**
 
 - 玩家倒地后非倒地意图会被排队，等起身后再派发。
 - 战斗结束时特殊处理逃逸状态：派发入场意图而非战斗结束意图，然后连锁到战斗结束意图。
+- Header 快速交替触发 `battle-start` / `battle-end` 时，每次回调使用捕获的唯一序号；旧回调不能因目标形态再次相同而越权提交，也不能释放新 session。若图片已是目标形态，仍需重置 pose 与 visibility，清除被抢占动画留下的中间变换。
 
 ***
 
@@ -1030,7 +1033,7 @@
 
 #### 框架 L-3：战斗装填轨道与时序规划
 
-**设计意图：** 装填队列是玩家规划的**本回合动作时序**——序号显式可见、时序约束（终结技必须末尾）可见、时序可调整（拖拽重排）、总成本聚合显示。队列项状态机为草稿（可编辑）→ 锁定（已提交执行）→ 已提交（回合结束）。半成品动作（瞄准中）建模为虚拟待定项，不入正式队列但参与轨道渲染；激活时技能库和轨道操作禁用。任意已入队项的目标可点击重新瞄准，无需删除重加。
+**设计意图：** 装填队列是玩家规划的**本回合动作时序**——序号显式可见、时序约束（终结技必须末尾）可见、时序可调整（拖拽重排）、总成本聚合显示。队列项状态机为草稿（可编辑）→ 锁定（提交中）→ 已提交（移出当前编辑会话）；提交成功后队列立即清空，下一编辑会话只由新的权威 `qid + turn_seq` 开放。半成品动作（瞄准中）建模为虚拟待定项，不入正式队列但参与轨道渲染；激活时技能库和轨道操作禁用。任意已入队项的目标可点击重新瞄准，无需删除重加。
 
 **AP 预算槽四态编码：** AP 是离散预算，显示为 N 个独立方块：可用 / 队列锁定 / 超载 / 本回合不可用。总槽位数在超载时扩展为 max(最大AP, 队列消耗)。槽位的 `lockedByOrder` 标记表达"归属哪个动作"而非"第几槽"——位置已表达槽序，归属序号是增量信息。
 
@@ -1046,6 +1049,7 @@
 - 快速瞄准：需瞄准敌人的技能（`aimType: 'pid'`）显示"→目标名(位置)"快捷标签，点击跳过瞄准模式直接入队。标签始终带位置以消除同名敌人歧义。详细边界见独立设计案 §2.6。
 - 重新瞄准时原目标已死亡：提示用户，保持半成品态等待重新选择。
 - 回合结束时半成品项仍激活：先执行取消流程，再锁定队列为已提交态。
+- 刷新一次跨过完整 NPC 回合时，玩家回合布尔值可能没有 `false → true` 跳变；装填区必须按 `qid + turn_seq` 变化重建空队列。同一身份提交期间和提交成功后均不可再次执行。
 - 战前/战中模式差异：仅执行命令不同，其余交互一致。
 - 技能表未加载时终结性集合为空，所有项暂时被视为非终结技；初始化流程保证此时用户无法点击技能。
 - StatusBar 战斗按钮五态：normal（可用/禁用）、battle（退出预战斗 / 常态战斗禁用，`action: 'battle'` 显示"战斗中"避免"取消"误导）、aim（取消瞄准）。
@@ -1096,13 +1100,14 @@
 
 **设计意图：** 每个地图实体通过角色运行时管理动画，核心概念是"通道租赁" —— 空间、动作、可见性、姿态四个动画通道可以被不同优先级的所有者租赁并获得独占访问权。优先级从低到高：环境 < 世界 < 战斗 < 终点。租赁冲突时优先级仲裁解决。
 
-**代码锚点：** `vex-vue/src/composables/useActorRuntime.ts`（通道租赁、优先级仲裁、动画生命周期）、`vex-vue/src/composables/actorRegistry.ts`（角色注册表、租约管理）
+**代码锚点：** `vex-vue/src/composables/useActorRuntime.ts`（通道租赁、优先级仲裁、动画生命周期）、`vex-vue/src/composables/actorRegistry.ts`（角色注册表、租约管理）、`vex-vue/src/composables/useMapEntities.ts`（世界与意图动画的租约编排、抢占与释放）
 
 **边界案例：**
 
 - 释放租赁时处理待定锚点的协调。
 - 释放姿态通道时无其他所有者占据则恢复空闲动画。
 - 终点处理：既有终点又倒下的角色走特殊路线。
+- 同一 owner 的不同 session 只有显式 `replaceEqualOwner` 才能抢占；被抢占租约后续重复释放必须保持幂等，不影响新租约。取消形态翻转后可通过 `reset-pose` 在 pose 通道内即时收敛到中性变换。
 
 #### 框架 M-2：场景差异投影
 
@@ -1232,6 +1237,10 @@
 ### 模式 13：字段驱动的前端语义判定（Field-Driven Frontend Semantic Judgment）
 
 当后端配置中存在表达"语义约束"或"展示分类"的字段（如终结性标记、功能分类、优先级、唯一性等），前端必须以该字段为唯一权威数据源，不得维护独立的硬编码判定表。后端值域应与前端需求 1:1 对齐（如需要细分分类时，后端配置就细化值域，而非前端另起映射表）。前端将后端字段派生为响应式集合（computed），供所有调用点统一查询。后端配置变更新增/移除标记或新增技能时，前端自动跟随，零双重同步。典型案例：技能的 `finisher` 字段和 `category` 字段均由后端配置下发，前端分类与约束（排序、唯一、拖拽、标签页筛选）全部派生自这两个字段，而非硬编码技能 ID 到分类的映射表。与模式 8（前端控制渲染）互补——模式 8 解决"渲染决策权归属"，模式 13 解决"语义标记数据源归属"。
+
+### 模式 14：权威回合边界协议
+
+E-5 持久化"现在是谁的第几个回合、处于什么阶段"，I-1 只提供顺位候选，D-1 只执行已认领回合，D-4 用 `battlelog.v3` 陈述同一 `turn_key` 下的领域事实，C-4 只负责排序投递，K-1 只负责演出投影。命令必须引用 `expected_turn_seq`，事件必须引用 `turn_key`，玩家动作编辑会话必须引用同一 `qid + turn_seq`；请求、tick、batch、前端标题和 UI 布尔跳变都不能生成或替代回合身份。该协议把控制权交接、动作执行和视觉宣告拆成可独立验证的边界，同时允许页面重连直接恢复权威状态而不补播瞬态演出。
 
 ***
 

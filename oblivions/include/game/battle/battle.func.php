@@ -5,17 +5,14 @@
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
-
 // ================================================================
-// Shared combat infrastructure — 轻量状态 / AP恢复 / turn hook
+// Shared combat infrastructure — 轻量状态与行动资格检查
 //
 // 说明：
 // - 旧 battle engine 的主执行链已下线，但本文件不是死代码。
 // - 当前仍由 new combat / queue 层复用：
 //   - 轻量 action= battle/'' 切换
-//   - AP 恢复
 //   - actor 可行动检查
-//   - turn 生命周期 hook
 // - Tag 系统、射程/距离检查、旧 damage 应用已迁移至 combat/（2026-07-11 清理）
 //
 // 已被 combat/ 替代的职责：
@@ -66,16 +63,11 @@ function battle_state_clear(&$actor_data, &$obl_battle_log, &$battle_cache, $rea
 
 function battle_ap_recover(&$actor_data, &$battle_cache, &$obl_battle_log)
 {
-    #AP恢复函数：每个 turn 开始时（combat_dispatch 入口），当前 actor 恢复 AP，恢复量为当前AP+AP上限，不会超过AP上限
-    #设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
+    # AP 恢复原语。调用边界由 E-5 battle_turn_open 决定。
     $old_ap = (int)$actor_data['ap'];
     $max_ap = (int)$actor_data['max_ap'];
     $actor_data['ap'] = min($old_ap + $max_ap, $max_ap);
-    $recovered = $actor_data['ap'] - $old_ap;
-
-    if ($obl_battle_log && function_exists('combat_log_v2_turn_start')) {
-        combat_log_v2_turn_start($obl_battle_log, $actor_data, $recovered);
-    }
+    return $actor_data['ap'] - $old_ap;
 }
 
 // ================================================================
@@ -118,56 +110,4 @@ function battle_actor_can_act(&$actor_data, &$obl_battle_log, &$battle_cache = n
         $battle_cache['tag_mutations'][(int)$actor_data['pid']]['dead'] = true;
     }
     return !$dead;
-}
-
-// ================================================================
-// Turn 生命周期 hook / Turn lifecycle hooks
-//
-// Turn start / Turn end 在代码中的精确位置。
-// 仅 Phase 1（有先攻队列的标准战斗）中存在 Turn；Phase 0（Ambush）无 Turn。
-//
-// Turn 的身份由先攻队列的 done 标志位标识：
-//   - done=0 的 combatant 即为当前回合持有者
-//   - manage_queue 在 step 5 取下一顺位时读的就是 done=0 的首行
-//   - 因此在 Turn start hook 中可通过 queue 行定位 current turn holder
-//
-// Turn start hook 内递增 BattleLogCollector::$turnNum，使后续 emit 的
-// bl_turn_num 标识"当前回合"。
-//
-// 调用时机：combat_dispatch 入口（step 3.5），"当前 combatant 的回合开始"。
-// 设计案：oblivions/docs/turn_start发送时机修复-2026-07-14.md
-// ================================================================
-
-/**
- * Turn start hook
- *
- * 在 combat_dispatch 入口（step 3.5）调用，"当前 combatant 的回合开始"。
- * 此时当前 combatant 即将执行动作，AP 恢复由配套的 battle_ap_recover 完成。
- *
- * 递增 BattleLogCollector 的 turnNum，使后续 emit 的 bl_turn_num 标识当前回合。
- *
- * @param array  &$actor_data   当前 combatant 的数据
- * @param array  &$obl_battle_log
- * @param array  &$battle_cache
- */
-function battle_hook_turn_start(&$actor_data, &$obl_battle_log, &$battle_cache): void {
-    if ($obl_battle_log) {
-        $obl_battle_log->nextTurn();
-    }
-}
-
-/**
- * Turn end hook
- *
- * 在共享回合收尾入口调用，"当前 combatant 的行动已全部执行完毕"。
- * 仅 Phase 1 时触发（有先攻队列），Phase 0（Ambush）不触发。
- *
- * 不操作计数器（Turn end 不递增，Turn start 才递增——turn_num 标识"当前回合"）。
- *
- * @param array  &$actor_data   当前 combatant 的数据（刚刚完成行动的 actor）
- * @param array  &$obl_battle_log
- * @param array  &$battle_cache
- */
-function battle_hook_turn_end(&$actor_data, &$obl_battle_log, &$battle_cache): void {
-    // ── Turn end placeholder ──
 }

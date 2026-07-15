@@ -18,9 +18,9 @@ import type { BattlePresentationSession } from './battle-presentation-session';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
 import type {
   BattlePlaybackPlan,
-  BattleSegmentV2,
+  BattleSegment,
   PlaybackStep,
-} from './battle-director-v2';
+} from './battle-director';
 
 export interface SegmentPlayOptions {
   alwaysShowHeader?: boolean;
@@ -32,11 +32,11 @@ export interface BattlePlaybackRuntime {
   npcPid: number;
   scene: SceneGeometry;
   presentation: BattlePresentationSession;
-  updateSegmentContext(segment: BattleSegmentV2, npcPid: number): Promise<void>;
-  playSegmentText(segment: BattleSegmentV2, options: SegmentPlayOptions): Promise<void>;
-  enterBattleEndMask(segment: BattleSegmentV2, sessionId: string): Promise<void>;
-  handoffPresentationScene(segment: BattleSegmentV2, sessionId: string): Promise<void>;
-  playBattleEndContent(segment: BattleSegmentV2, sessionId: string): Promise<void>;
+  updateSegmentContext(segment: BattleSegment, npcPid: number): Promise<void>;
+  playSegmentText(segment: BattleSegment, options: SegmentPlayOptions): Promise<void>;
+  enterBattleEndMask(segment: BattleSegment, sessionId: string): Promise<void>;
+  handoffPresentationScene(segment: BattleSegment, sessionId: string): Promise<void>;
+  playBattleEndContent(segment: BattleSegment, sessionId: string): Promise<void>;
 }
 
 // 播放入口：遍历所有 PlaybackStep 并串行执行

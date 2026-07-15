@@ -193,13 +193,6 @@ function obl_queue_update_last_acted($pid, $qid, $myorder)
     $db->query("UPDATE {$tablepre}oblqueue SET last_acted = " . (int)$myorder . " WHERE qid = " . (int)$qid . " AND pid = " . (int)$pid);
 }
 
-function obl_state_set_next_pid($qid, $pid)
-{
-    global $db, $tablepre;
-    if ($qid <= 0) return;
-    $db->query("UPDATE {$tablepre}oblbattle_state SET next_pid = " . (int)$pid . " WHERE qid = " . (int)$qid);
-}
-
 function obl_queue_next_qid()
 {
     global $db, $tablepre;
@@ -229,11 +222,28 @@ function obl_queue_reset_done_by_qid($qid) {
 
 // ── 状态机读写 ──
 
-function obl_state_get($qid) {
+function obl_state_get_record($qid, $for_update = false) {
     global $db, $tablepre;
-    if ($qid <= 0) return 'IDLE';
-    $result = $db->query("SELECT state FROM {$tablepre}oblbattle_state WHERE qid = " . (int)$qid);
+    if ($qid <= 0) return null;
+    $sql = "SELECT qid, state, round_num, turn_seq, active_pid, opened_at_tick, updated_at"
+        . " FROM {$tablepre}oblbattle_state WHERE qid = " . (int)$qid;
+    if ($for_update) $sql .= " FOR UPDATE";
+    $result = $db->query($sql);
     $row = $db->fetch_array($result);
+    if (!$row) return null;
+    return array(
+        'qid' => (int)$row['qid'],
+        'state' => (string)$row['state'],
+        'round_num' => (int)$row['round_num'],
+        'turn_seq' => (int)$row['turn_seq'],
+        'active_pid' => (int)$row['active_pid'],
+        'opened_at_tick' => (int)$row['opened_at_tick'],
+        'updated_at' => (int)$row['updated_at'],
+    );
+}
+
+function obl_state_get($qid) {
+    $row = obl_state_get_record($qid);
     return $row ? $row['state'] : 'IDLE';
 }
 
@@ -243,12 +253,13 @@ function obl_state_set($qid, $state) {
     $db->query("UPDATE {$tablepre}oblbattle_state SET state = '" . addslashes($state) . "', updated_at = " . (int)$now . " WHERE qid = " . (int)$qid);
 }
 
-function obl_state_create($qid, $initial_state) {
+function obl_state_create($qid, $initial_state = 'IDLE') {
     global $db, $tablepre, $now;
     if ($qid <= 0) return;
     if (!isset($now)) $now = time();
-    $db->query("INSERT IGNORE INTO {$tablepre}oblbattle_state (qid, state, round_num, updated_at) VALUES ("
-        . (int)$qid . ", '" . addslashes($initial_state) . "', 0, " . (int)$now . ")");
+    $db->query("INSERT IGNORE INTO {$tablepre}oblbattle_state"
+        . " (qid, state, round_num, turn_seq, active_pid, opened_at_tick, updated_at) VALUES ("
+        . (int)$qid . ", '" . addslashes($initial_state) . "', 0, 0, 0, 0, " . (int)$now . ")");
 }
 
 function obl_state_destroy($qid) {
@@ -269,7 +280,7 @@ function obl_state_get_all_active() {
 
 function obl_state_has_busy_battle() {
     global $db, $tablepre;
-    $result = $db->query("SELECT 1 FROM {$tablepre}oblbattle_state WHERE state = 'PROCESSING' LIMIT 1");
+    $result = $db->query("SELECT 1 FROM {$tablepre}oblbattle_state WHERE state IN ('AUTO_PENDING','EXECUTING') LIMIT 1");
     return (bool)$db->fetch_array($result);
 }
 

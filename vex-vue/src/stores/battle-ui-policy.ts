@@ -60,7 +60,7 @@ export class PendingAuthorityScopes {
 }
 
 export function shouldCommitBattleVisualState(action: string, battleState: BattleState): boolean {
-  return action !== 'battle' || battleState === 'PLAYER_TURN' || battleState === 'IDLE';
+  return action !== 'battle' || battleState === 'AWAITING_INPUT' || battleState === 'IDLE';
 }
 
 export function isBattleMapInputLocked(state: BattleMapInputState): boolean {

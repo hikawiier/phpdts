@@ -161,20 +161,14 @@ function battle_queue_create_and_init(&$actor_data, array $pids, &$obl_battle_lo
     $actor_data['bid'] = $qid;
     obl_save_player($actor_data);
 
-    obl_battle_state_create($qid, OBL_BS_PROCESSING);
+    obl_battle_state_create($qid, OBL_BS_IDLE);
 
     if ($obl_battle_log) {
-        // 队列新建 = Round 1（0-indexed）；render 层输出 round_start，
-        // collector 内部仍复用历史 initiative 语义做边界管理。
-        $obl_battle_log->setRoundNum(0);
         $obl_battle_log->setPhase('queue_create');
         $obl_battle_log->emit([
             'qid'        => $qid,
             'combatants' => $sorted,
         ], true);  // debug
-        if (function_exists('combat_log_v2_round_start')) {
-            combat_log_v2_round_start($obl_battle_log, $qid, $sorted, $ambush_pid > 0 ? (int)$actor_data['pid'] : 0);
-        }
     }
 
     return $qid;
@@ -213,10 +207,6 @@ function battle_queue_set_initiative($qid, &$actor_data, &$obl_battle_log, $ambu
         obl_queue_update_myorder($r['pid'], $qid, $r['myorder']);
     }
 
-    if ($obl_battle_log && function_exists('combat_log_v2_round_start')) {
-        combat_log_v2_round_start($obl_battle_log, $qid, $sorted, $ambush_pid);
-    }
-
     return $sorted;
 }
 
@@ -236,7 +226,7 @@ function battle_queue_append_tail(array &$target_data, int $qid, array &$battle_
     obl_save_player($target_data);
     $battle_cache['combatants'][(int)$target_data['pid']] = 1;
     $battle_cache['_queue_order'][(int)$target_data['pid']] = $myorder;
-    if (function_exists('combat_log_v2_combatant_joined')) combat_log_v2_combatant_joined($ctx, $target_data, $myorder);
+    if (function_exists('combat_log_v3_combatant_joined')) combat_log_v3_combatant_joined($ctx, $target_data, $myorder);
     return ['ok' => true, 'joined' => true, 'participation' => 'joined', 'myorder' => $myorder];
 }
 

@@ -17,7 +17,7 @@ export interface SkillTemplate {
   name: string;
   /** 技能描述（显示在按钮副文本） */
   desc: string;
-  /** 动作描述（用于 battle_log / battlelog.v2 演出文案） */
+  /** 动作描述（用于 battle_log / battlelog.v3 演出文案） */
   action_desc: string;
 }
 

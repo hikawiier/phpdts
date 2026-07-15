@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * @module L Vue 组件
+ * @framework K-1 战斗回合编排 + 演示播放管道
  * @framework L-3 战斗装填轨道与时序规划
  */
 // ══════════════════════════════════════════════════
@@ -110,6 +111,7 @@ const enemyPid = ref<number>(0);
 const playerPid = ref<number>(0);
 const combatContext = ref<CombatViewModel | null>(null);
 const sessionKey = ref<string>('');
+const submitting = ref<boolean>(false);
 
 // ── 新增状态 ──
 const activeCategory = ref<'all' | SkillCategory>('all');
@@ -130,10 +132,12 @@ const battleStore = useBattleStore();
 async function initPreloadArea(data: PreloadInitEventData): Promise<void> {
   const nextQid = data.combatContext?.qid ?? null;
   const nextSessionKey = data.mode === 'in-battle'
-    ? `in-battle:${nextQid ?? 'none'}`
+    ? `in-battle:${nextQid ?? 'none'}:${data.combatContext?.turn_seq ?? 'none'}`
     : `pre-battle:${data.playerPid || 0}`;
   if (sessionKey.value === nextSessionKey) {
-    onPreloadContextRefresh(data);
+    combatContext.value = data.combatContext || combatContext.value;
+    enemyPid.value = battleStore.combatTargets.suggestedTargetPid || data.enemyPid || enemyPid.value;
+    playerPid.value = data.playerPid || playerPid.value;
     await fetchSkillList();
     return;
   }
@@ -145,6 +149,7 @@ async function initPreloadArea(data: PreloadInitEventData): Promise<void> {
     : (battleStore.combatTargets.suggestedTargetPid || combatContext.value?.suggestedTargetPid || data.enemyPid || 0);
   playerPid.value = data.playerPid || 0;
   queue.value = [];
+  submitting.value = false;
   aimMode.value = false;
   pendingActId.value = null;
   pendingTargetMode.value = 'enemy';
@@ -412,7 +417,7 @@ function getCombatPlayer(): Character | CombatantViewModel | null {
   if (player) return player;
   const ctx = combatContext.value;
   if (!ctx) return null;
-  return ctx.combatants.find((c) => Number(c.pid) === Number(ctx.playerPid)) || null;
+  return ctx.combatants.find((c) => Number(c.pid) === Number(playerPid.value)) || null;
 }
 
 /**
@@ -981,47 +986,59 @@ const executeBlock = computed(() => commandQueue.getBlockDecision(executeCommand
 
 /** v2 修正：超载 AP 禁用通过 PreloadArea 内部派生（command-queue 的 5 层锁不含 AP 检查） */
 const executeDisabled = computed<boolean>(() =>
-  executeBlock.value !== null || isOverload.value || pendingItem.value !== null
+  submitting.value || executeBlock.value !== null || isOverload.value || pendingItem.value !== null
 );
 
 async function onExecute(): Promise<void> {
-  if (executeDisabled.value || queue.value.length === 0) return;
+  if (submitting.value || executeDisabled.value || queue.value.length === 0) return;
 
   const actions = queue.value.slice();
-
-  let result;
-  if (mode.value === 'pre-battle') {
-    result = await commandQueue.execute({
-      command: 'battle.start',
-      payload: { actions: normalizeActions(actions) },
-    });
-  } else {
-    result = await commandQueue.execute({
-      command: 'battle.submit_turn',
-      payload: { actions: normalizeActions(actions) },
-    });
-  }
-
-  if (!result.success) {
-    useToastStore().showToast(
-      result.message || result.error || '战斗指令提交失败',
-      'error',
-      3000,
-      !!result.messageIsHtml,
-    );
+  const preBattle = mode.value === 'pre-battle';
+  const turn = preBattle ? null : combatContext.value;
+  if (!preBattle && (!turn || turn.state !== 'AWAITING_INPUT' || turn.active_pid !== playerPid.value)) {
+    useToastStore().showToast('当前回合已经变化，请等待状态刷新', 'error');
     return;
   }
 
-  // 锁定队列（设置 submitted 状态）
-  queue.value.forEach(item => { item.status = 'submitted'; });
-  mode.value = '';
-  if (aimMode.value || pendingItem.value) {
-    if (pendingItem.value) pendingItem.value = null;
-    exitAimMode();
-  }
+  submitting.value = true;
+  try {
+    const result = preBattle
+      ? await commandQueue.execute({
+          command: 'battle.start',
+          payload: { actions: normalizeActions(actions) },
+        })
+      : await commandQueue.execute({
+          command: 'battle.submit_turn',
+          payload: {
+            qid: turn!.qid,
+            expected_turn_seq: turn!.turn_seq,
+            actions: normalizeActions(actions),
+          },
+        });
 
-  // 广播执行完成事件，battleStore 监听后刷新
-  dataManager.broadcast('preload:executed', { result });
+    if (!result.success) {
+      useToastStore().showToast(
+        result.message || result.error || '战斗指令提交失败',
+        'error',
+        3000,
+        !!result.messageIsHtml,
+      );
+      return;
+    }
+
+    battleStore.markPlayerTurnSubmitted(turn?.qid ?? null, turn?.turn_seq ?? null);
+    queue.value = [];
+    mode.value = '';
+    if (aimMode.value || pendingItem.value) {
+      if (pendingItem.value) pendingItem.value = null;
+      exitAimMode();
+    }
+
+    // 广播执行完成事件，battleStore 监听后刷新
+    dataManager.broadcast('preload:executed', { result });
+  } finally {
+    submitting.value = false;
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -1071,16 +1088,14 @@ function onPreloadInit(data: unknown): void {
 
 function onPreloadContextRefresh(data: unknown): void {
   if (!data) return;
-  const next = data as PreloadInitEventData;
-  combatContext.value = next.combatContext || combatContext.value;
-  enemyPid.value = battleStore.combatTargets.suggestedTargetPid || next.enemyPid || enemyPid.value;
-  playerPid.value = next.playerPid || playerPid.value;
+  void initPreloadArea(data as PreloadInitEventData);
 }
 
 function onBattleEnded(): void {
   sessionKey.value = '';
   mode.value = '';
   queue.value = [];
+  submitting.value = false;
   aimMode.value = false;
   pendingActId.value = null;
   pendingTargetMode.value = 'enemy';

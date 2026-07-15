@@ -108,13 +108,15 @@ function obl_command_contracts() {
             'legacy' => 'obl_battle_action',
             'ui_mode' => 'battle',
             'allowed_actions' => array('battle'),
-            'battle_state_required' => defined('OBL_BS_PLAYER_TURN') ? OBL_BS_PLAYER_TURN : 'PLAYER_TURN',
-            'queue_actor_required' => 'self',
             'advances_tick' => true,
             'itm0_allowed' => false,
             'required_capabilities' => array('combat_action'),
-            'payload_schema' => array('actions' => array('type' => 'actions', 'required' => true)),
-            'refresh' => array('player_info', 'enemies'),
+            'payload_schema' => array(
+                'qid' => array('type' => 'int', 'required' => true, 'min' => 1),
+                'expected_turn_seq' => array('type' => 'int', 'required' => true, 'min' => 1),
+                'actions' => array('type' => 'actions', 'required' => true),
+            ),
+            'refresh' => array('player_info', 'enemies', 'game_map'),
         ),
         'combat.can_engage' => array(
             // L0 可达性查询（read-only）：前端"点击敌人发起战斗"前的预判

@@ -81,13 +81,13 @@ class CombatContext {
     /** @var string|null 当前 action 的 v2 关联 ID */
     public ?string $action_uid = null;
     /** @var bool action_start 是否已发射 */
-    public bool $v2_action_started = false;
+    public bool $event_action_started = false;
     /** @var bool action_end 是否已发射 */
-    public bool $v2_action_ended = false;
+    public bool $event_action_ended = false;
     /** @var array 本 action 已发射的 effect_uid 列表 */
-    public array $v2_effect_uids = [];
+    public array $event_effect_uids = [];
     /** @var array<string,array<int,string>> 本 action 按 effect type 分组的 effect_uid */
-    public array $v2_effect_uids_by_type = [];
+    public array $event_effect_uids_by_type = [];
 
     // ── 预校验层 ──
     public bool $dry_run = false;

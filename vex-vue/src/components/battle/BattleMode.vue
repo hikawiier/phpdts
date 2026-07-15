@@ -10,7 +10,7 @@
 //
 // 子组件职责：
 // - BattleActionBar：动作按钮区（玩家回合嵌入 PreloadArea，NPC 回合显示等待提示）
-// - BattleBanner：战斗横幅（Teleport to body，承担 round_intro / battle_end 段）
+// - BattleBanner：战斗横幅（Teleport to body，承担 turn_intro / battle_end 段）
 // - BattleModal：战斗演出模态框（Teleport to body，承担 turn / system 段）
 // - DamageNumber：残留伤害数字（Teleport to body）
 // - AimMode：瞄准模式（Teleport to body，SVG 路径线）
@@ -31,7 +31,7 @@ import AimMode from '@/components/battle/AimMode.vue';
     <!-- 动作按钮区（玩家回合：装填区；NPC 回合：等待提示） -->
     <BattleActionBar />
 
-    <!-- 战斗横幅（Teleport to body，承担 round_intro / battle_end 段） -->
+    <!-- 战斗横幅（Teleport to body，承担 turn_intro / battle_end 段） -->
     <BattleBanner />
 
     <!-- 战斗演出模态框（Teleport to body，承担 turn / system 段） -->

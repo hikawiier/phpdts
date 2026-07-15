@@ -18,7 +18,7 @@ if (!defined('IN_GAME')) {
 //
 // 策略 B 核心设计（spec §与 tick 系统的集成）：
 //   - 新系统**不重写** battle_manage_queue，直接调用它。
-//   - 状态机集成（PROCESSING/PLAYER_TURN/IDLE）、Turn/Round 计数、AP 恢复
+//   - 权威回合状态由 E-5 battle_turn 编排器统一管理
 //     全部由 battle_manage_queue 内部自动处理。
 //   - 新系统**不直接调** obl_battle_state_* 函数（spec §1 不可违反约束）。
 //
@@ -33,7 +33,7 @@ if (!defined('IN_GAME')) {
  *
  * 转调 battle_queue_create_and_init。旧函数内部已完成：
  *   - batch fetch playerdata → 算先攻 → INSERT（带 myorder）→ 设 bid
- *   - obl_battle_state_create($qid, OBL_BS_PROCESSING) 建状态机
+ *   - obl_battle_state_create($qid, OBL_BS_IDLE) 建立战场记录
  *   - emit v2 `round_start` render 事件
  * 新函数无需独立调状态机创建。
  *
@@ -86,11 +86,8 @@ function combat_queue_exit(array &$actor_data, $log, array &$battle_cache): void
  *   - 删除队列所有行（obl_queue_delete_by_qid）
  *   - 清理所有 bid 指向此 qid 的玩家 bid（obl_player_set_bid(pid, 0)）
  *
- * 注意：本函数**不**做状态机转换（obl_battle_state_transition/destroy）——
- * 遵守 spec §1 "新系统不直接调 obl_battle_state_*" 约束。
- * 状态机清理由 battle_manage_queue 的 disband 分支自动处理；
- * 若绕过 manage_queue 直接调用本函数，调用方需自行确保状态机一致性
- * （通常通过 battle_manage_queue 走完收尾流程）。
+ * 注意：本函数不关闭权威回合。生产流程必须由 battle_turn_complete_and_open_next
+ * 统一收尾；直接调用仅适用于明确不处于活动回合的维护路径。
  *
  * @param int $qid
  */
