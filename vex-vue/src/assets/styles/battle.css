@@ -201,9 +201,12 @@
     white-space: pre-wrap;
 }
 
-.battle-log-entry .yellow { color: #ddd44; }
-.battle-log-entry .red { color: #ff6b6b; }
-.battle-log-entry .text-fg-dim { color: #666; }
+/* 战报文本灰阶高亮类（DESIGN.md §2.15 灰阶基底）
+   与 terminal.css .log-content 灰阶映射保持一致，
+   替代历史彩色信号色 #ddd44 / #ff6b6b 残留 */
+.battle-log-entry .yellow { color: #fff; font-weight: 700; }
+.battle-log-entry .red { color: #ccc; font-weight: 700; text-decoration: underline; }
+.battle-log-entry .grey { color: #555; }
 
 /* 模态框底部：自动关闭提示 */
 .battle-modal-footer {

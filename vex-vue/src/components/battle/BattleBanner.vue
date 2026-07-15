@@ -256,12 +256,16 @@ onUnmounted(() => {
         <div class="banner-line"></div>
       </template>
 
-      <!-- battle_end: 装饰线 + 标题 + 附加信息 + 装饰线 -->
+      <!-- battle_end: 装饰线 + 标题 + 本地化附加信息 + 装饰线 -->
       <template v-else-if="currentSeg?.kind === 'battle_end'">
         <div class="banner-line"></div>
         <div class="banner-title">战斗结束</div>
         <div class="banner-subtitle">
-          <span v-for="notice in currentSeg.notices" :key="notice.rawLogId">{{ notice.reason }}</span>
+          <span
+            v-for="notice in currentSeg.notices"
+            :key="notice.rawLogId"
+            v-html="notice.text.html"
+          ></span>
         </div>
         <div class="banner-line"></div>
       </template>

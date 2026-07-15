@@ -896,7 +896,11 @@
 
 **阶段切片模型：** `turn_intro` 段单阶段（回合开放宣告）；`turn` 段六阶段严格顺序（回合接场 → 战场就绪 → 动作演出 → 退场演出 → 战报回放 → 伤害浮现）；`system` 段单阶段；`battle_end` 段保持终幕遮罩 → 场景交接 → 终局战报三阶段屏障。
 
-**代码锚点：** `vex-vue/src/stores/battle.ts`（权威状态、回合编辑会话与演示批编排）、`vex-vue/src/stores/battle-director.ts`（v3 导演层 + 计划层）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/PreloadArea.vue`（按权威回合身份建立并关闭动作编辑会话）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
+**战报回放文本本地化框架：** `turn` 段"战报回放"阶段的文本生成由 `BATTLE_TEMPLATES` 字典承担，与 `LOG_TEMPLATES` / `SKILL_TEMPLATES` / `command-feedback` 共享同一"字典 + 渲染函数 + 兜底"架构模式。后端 `action_id` / `effect_type` / `reason` / `event_type` 作为索引锚点，前端字典 key 1:1 对齐；匹配失败走硬错误 + 兜底文案，对齐 §4.1 跨层命名契约。`move` / `ap_change` / `custom` effect 不生成文本，由位姿动画与 HP/AP 槽承担视觉反馈（§2.15 灰阶基底）。`OBL_EVENT_LOG_DESIGN.md` §7.2 out-of-scope 约束已解除；跨层字段契约见 `oblivions/docs/战报事件字段本地化契约.md`。
+
+**`battle_end` 胜负判定的显式上下文（`BattleEndInfo`）：** 胜负判定不依赖"推断 `playerPid` 后比较 `winnerPid`"——该模式在两个场景下失败（玩家逃跑时 `winnerPid=NPC` 误判战败；NPC 全逃跑时事件流无玩家 snapshot 导致 `playerPid=0`）。改为 `computeBattleEndContext` 预扫描整个事件流，显式计算 `BattleEndInfo`（`playerPid` / `playerSurvived` / `playerEscaped` / `winnerPid` / `reason`）。`battle_end` 模板按 `playerSurvived` → `playerEscaped` → 默认战败的语义优先级分支，两个场景自动覆盖无需特判：玩家逃跑时 `playerSurvived=false` + `playerEscaped=true` → 逃离；NPC 全逃跑时 `playerSurvived=true` + `winnerPid===playerPid` → 胜利。`SKILL_TEMPLATES.action_desc` 是动词短语唯一真相源，`BATTLE_ACTION_TEMPLATES` 只负责包装模板，`action_desc` 缺失走 `fallbackAction` + `console.warn`（§4.1 静默失败禁止）。
+
+**代码锚点：** `vex-vue/src/stores/battle.ts`（权威状态、回合编辑会话与演示批编排）、`vex-vue/src/stores/battle-director.ts`（v3 导演层 + 计划层）、`vex-vue/src/data/battle-templates.ts`（战报文本字典 + 渲染函数 + 校验入口）、`vex-vue/src/stores/battle-playback-runner.ts`（执行器）、`vex-vue/src/stores/battle-actor-executor.ts`（演员层）、`vex-vue/src/stores/battle-presentation-session.ts`（演出会话）、`vex-vue/src/stores/battle-overlay-executor.ts`（覆盖层动画）、`vex-vue/src/stores/battle-ui-policy.ts`（批处理排空 + 重基准判断）、`vex-vue/src/components/battle/PreloadArea.vue`（按权威回合身份建立并关闭动作编辑会话）、`vex-vue/src/components/battle/BattleBanner.vue`（横幅演出组件）、`vex-vue/src/components/battle/BattleModal.vue`（模态框演出组件）
 
 **边界案例：**
 
@@ -905,7 +909,8 @@
 - `battle_end` 段三步流程：终幕遮罩持续显示，场景交接启动世界动画后立即放行，终局战报并行等待横幅正文与 handoff 动画。
 - `awaitPolicy: 'completion'` 的 step 超时时先取消任务清理动画资源再等 settled，避免资源泄漏；scene guard 检测场景世代变化时立即取消任务并 abort 旧 session。
 - 组件未注册时 store 抛错；组件播放中卸载时错误传播到 store 的 await，runner 的 timeout 兜底确保播放链路安全终止。
-- 横幅正文 XSS 防护：`notice.reason` 是后端原始字符串（未转义），横幅用文本插值而非 `v-html` 渲染。
+- 横幅正文 XSS 防护：`battle_end` 横幅通过 `v-html="notice.text.html"` 显示，`notice.text.html` 是 `BATTLE_NOTICE_TEMPLATES` 渲染产物，所有动态文本（actor 名、reason 等）在模板内经 `escapeHtml` 转义；后端原始 `notice.reason` 仅存于 `DirectedNotice.reason` 字段供调试，不直接进入 DOM。
+- `battle_end` 胜负判定三个场景由 `BattleEndInfo` 显式上下文覆盖：玩家逃跑（`playerSurvived=false` + `playerEscaped=true` → 逃离）；NPC 全逃跑（`playerSurvived=true` + `winnerPid===playerPid` → 胜利）；玩家死亡（`playerSurvived=false` + `playerEscaped=false` → 战败）。`computeBattleEndContext` 预扫描事件流识别 `playerPid`（`type===0` 的 combatant snapshot），不依赖单一事件字段。
 - `combatant_cleared` 的 `reason='dead'` 在后端 emit 时映射为 `'death'`，前端只识别 `'death'` / `'escaped'` 两种 reason。
 - `reason='escaped'` 在 `visual_policy='retreat'` 模式下于 `combatant_cleared` 阶段串行播 `fade` + `move tier='long'` 退场动画，`startCommit` 退入 fall-through 做 alpha 兜底。`reason='death'` 使用 terminal 优先级租约（不可抢占）+ `fall` 动画，确保死亡动画播完不被中断。
 - 动作演出 `awaitPolicy` 规则：`animation.kind='none'` 且所有 `deliveries` 的 `type='none'` 时为 `'none'`（fire-and-forget），否则为 `'completion'`。`move` 动画的 timeout 比其他动画更短，演员层按距离分 `duck` / `jump` / `long` 三档。
@@ -913,6 +918,9 @@
 - 伤害浮现是唯一 `awaitPolicy='none'` 的阶段，通过事件总线派发，DamageNumber 组件按角色定位自行播放——主时序不等待伤害数字浮现。
 - 页面重连或 presentation gap 直接重基准到当前权威状态，不从 `combat_context` 补播已经错过的瞬态横幅。
 - 一次刷新可完整跨过 NPC 回合，使组件观察到的玩家回合布尔值保持 `true`；动作区仍须以变化后的 `qid + turn_seq` 清空旧队列并建立新会话。同一回合提交成功时立即关闭动作区，避免权威刷新到达前重复提交。
+- `move` effect 不生成位移文本，由地图位姿动画承担视觉反馈——避免文本与动画重复抢占注意力（§2.15 灰阶基底）。
+- `battle.css` 的 `.battle-log-entry` 灰阶高亮类需独立维护——该容器不含 `.log-content` 类，不会自动回退到 `terminal.css` 的灰阶映射规则。
+- 后端 `combat_preview_reason_public` 的前缀剥离仅用于 preview 通道，BattleLog 通道未剥离，前端 reason 字典必须覆盖原始前缀。
 
 #### 框架 K-2：合成模态状态机 + 防抖预览
 

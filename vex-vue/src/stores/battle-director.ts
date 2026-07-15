@@ -10,8 +10,14 @@ import type {
   CombatTargetRef,
   StateDelta,
 } from '@/types/api';
-import { escapeHtml } from '@/utils/format';
-import { getStatusLocale } from '@/data/status-locale';
+import {
+  renderBattleAction,
+  renderBattleEffect,
+  renderBattleNotice,
+  combatantViewFromSnapshot,
+  type NoticeTextContext,
+  type BattleEndInfo,
+} from '@/data/battle-templates';
 
 // 战斗导演系统：将后端 battlelog.v3 领域事件编导为语义化播控脚本
 // 职责：事件分组 → DirectedAction → PlaybackStep，供播放管道消费
@@ -102,7 +108,7 @@ export interface DirectedAction {
 }
 
 export interface DirectedNotice {
-  type: 'action_failed' | 'combatant_cleared' | 'battle_end' | 'notice' | 'diagnostic';
+  type: 'action_failed' | 'combatant_cleared' | 'battle_end' | 'combatant_joined' | 'notice' | 'diagnostic';
   text: TextCue;
   rawLogId: number;
   actor?: CombatantView | null;
@@ -252,6 +258,9 @@ export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript
     .slice()
     .sort((a, b) => Number(a.log_id) - Number(b.log_id));
 
+  // 预扫描：计算 battle_end 胜负判定的显式上下文（BattleEndInfo）
+  const battleEndCtx = computeBattleEndContext(renderEvents);
+
   const pending = new Map<string, PendingAction>();
   const segments: BattleSegment[] = [];
   const rawLogIds = events.map(e => Number(e.log_id)).filter(id => id > 0);
@@ -372,15 +381,26 @@ export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript
       const actionUid = String(payload.source_action_uid ?? payload.action_uid ?? event.action_uid ?? '');
       const item = pending.get(actionUid);
       const combatant = toCombatantView(payload.combatant);
-      if (!item || !combatant) continue;
-      item.action.joinedCombatants.push({
-        rawLogId: event.log_id,
-        qid: payload.qid === null || payload.qid === undefined ? event.qid : Number(payload.qid),
-        combatant,
-        sourceActionUid: actionUid,
-        myorder: Number(payload.myorder ?? 0),
-        done: Number(payload.done ?? 0),
-      });
+      if (item && combatant) {
+        item.action.joinedCombatants.push({
+          rawLogId: event.log_id,
+          qid: payload.qid === null || payload.qid === undefined ? event.qid : Number(payload.qid),
+          combatant,
+          sourceActionUid: actionUid,
+          myorder: Number(payload.myorder ?? 0),
+          done: Number(payload.done ?? 0),
+        });
+      }
+      // 追加 notice 文本生成（动态参战场景的叙事完整性）
+      if (combatant) {
+        const segment = getTurnSegment(event);
+        segment.notices.push({
+          type: 'combatant_joined',
+          rawLogId: event.log_id,
+          combatant,
+          text: buildNoticeText(event, battleEndCtx, { combatant }),
+        });
+      }
       continue;
     }
 
@@ -400,18 +420,17 @@ export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript
       if (actionUid) pending.delete(actionUid);
       const actor = toCombatantView(payload.actor);
       const segment = getTurnSegment(event, actor ?? undefined);
+      const actionId = String(payload.action_id ?? event.action_id ?? '动作');
+      const reason = String(payload.reason ?? event.reason ?? 'unknown');
       segment.notices.push({
         type: 'action_failed',
         rawLogId: event.log_id,
         actor,
-        actionId: String(payload.action_id ?? event.action_id ?? '动作'),
-        reason: String(payload.reason ?? event.reason ?? 'unknown'),
+        actionId,
+        reason,
         delta: payload.delta,
         detail: payload.detail,
-        text: {
-          html: `${htmlText(actor?.name ?? '行动者')}的${htmlText(payload.action_id ?? event.action_id ?? '动作')}失败：${htmlText(payload.reason ?? event.reason ?? 'unknown')}`,
-          tone: 'danger',
-        },
+        text: buildNoticeText(event, battleEndCtx, { actor, actionId, reason }),
       });
       continue;
     }
@@ -419,36 +438,33 @@ export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript
     if (event.event_type === 'combatant_cleared') {
       const combatant = toCombatantView(payload.combatant);
       const segment = getTurnSegment(event, combatant ?? undefined);
+      const reason = String(payload.reason ?? event.reason ?? 'unknown');
       segment.notices.push({
         type: 'combatant_cleared',
         rawLogId: event.log_id,
         combatant,
-        reason: String(payload.reason ?? event.reason ?? 'unknown'),
+        reason,
         delta: payload.delta,
         detail: payload.detail,
-        text: {
-          html: `${htmlText(combatant?.name ?? event.cleared_name ?? '参战者')}已退出战斗（${htmlText(payload.reason ?? event.reason ?? 'unknown')}）`,
-          tone: 'system',
-        },
+        text: buildNoticeText(event, battleEndCtx, { combatant, reason }),
       });
       continue;
     }
 
     if (event.event_type === 'battle_end') {
+      const reason = String(payload.reason ?? event.reason ?? 'unknown');
+      const winnerPid = payload.winner_pid !== undefined && payload.winner_pid !== null
+        ? Number(payload.winner_pid)
+        : (event.winner_pid ?? null);
       segments.push({
         kind: 'battle_end',
         actions: [],
         notices: [{
           type: 'battle_end',
           rawLogId: event.log_id,
-          reason: String(payload.reason ?? event.reason ?? 'unknown'),
-          winnerPid: payload.winner_pid !== undefined && payload.winner_pid !== null
-            ? Number(payload.winner_pid)
-            : (event.winner_pid ?? null),
-          text: {
-            html: `战斗结束：${htmlText(payload.reason ?? event.reason ?? 'unknown')}`,
-            tone: 'system',
-          },
+          reason,
+          winnerPid,
+          text: buildNoticeText(event, battleEndCtx, { reason, winnerPid }),
         }],
       });
       continue;
@@ -459,11 +475,8 @@ export function directBattleEvents(events: BattleLogV3Event[]): BattlePlayScript
       segment.notices.push({
         type: 'notice',
         rawLogId: event.log_id,
-        reason: buildNoticeText(event),
-        text: {
-          html: buildNoticeText(event),
-          tone: 'system',
-        },
+        reason: event.reason ?? null,
+        text: buildNoticeText(event, battleEndCtx),
       });
     }
   }
@@ -771,11 +784,7 @@ function decideEffectVisual(type: DirectedEffect['type'], target: CombatTargetVi
 }
 
 function buildActionText(actionId: string, actor: CombatantView, targets: CombatTargetView[]): TextCue {
-  const targetNames = targets.map(t => t.name).filter(Boolean).join('、');
-  return {
-    html: `${htmlText(actor.name || '行动者')}使用了${htmlText(actionId)}${targetNames ? `，目标：${htmlText(targetNames)}` : ''}`,
-    tone: 'normal',
-  };
+  return renderBattleAction(actionId, actor, targets);
 }
 
 function buildEffectText(
@@ -784,35 +793,98 @@ function buildEffectText(
   value?: number,
   detail: Record<string, unknown> = {},
 ): TextCue | undefined {
-  const name = target.name || target.id;
-  if (type === 'damage') return { html: `${htmlText(name)}受到${htmlText(value ?? 0)}点伤害`, tone: 'damage' };
-  if (type === 'heal') return { html: `${htmlText(name)}恢复${htmlText(value ?? 0)}点生命`, tone: 'heal' };
-  if (type === 'move') return { html: `${htmlText(name)}发生了位移`, tone: 'system' };
-  if (type === 'escape') return { html: `${htmlText(name)}尝试脱离战斗`, tone: 'system' };
-  if (type === 'status') {
-    const statusId = String(detail.status_id ?? detail.skill_id ?? 'status');
-    const statusName = getStatusLocale(statusId).name;
-    const activated = detail.operation === 'activate' || detail.state === 'active';
-    return {
-      html: activated
-        ? `${htmlText(name)}陷入了${htmlText(statusName)}`
-        : `${htmlText(name)}获得了${htmlText(statusName)}，战斗结束后生效`,
-      tone: 'system',
-    };
-  }
-  return undefined;
+  return renderBattleEffect(type, target, value, detail);
 }
 
-function buildNoticeText(event: BattleLogV3Event): string {
-  const payload = event.payload || {};
-  const text = payload.message ?? payload.text ?? payload.title ?? payload.reason ?? event.reason;
-  if (text !== undefined && text !== null && String(text) !== '') return String(text);
-  if (payload.detail && typeof payload.detail === 'object') {
-    return JSON.stringify(payload.detail);
-  }
-  return '战斗事件';
+interface NoticeFields {
+  actor?: CombatantView | null;
+  combatant?: CombatantView | null;
+  actionId?: string | null;
+  reason?: string | null;
+  winnerPid?: number | null;
 }
 
-function htmlText(value: unknown): string {
-  return escapeHtml(String(value));
+function buildNoticeText(
+  event: BattleLogV3Event,
+  battleEndInfo: BattleEndInfo | null,
+  fields?: NoticeFields,
+): TextCue {
+  const ctx: NoticeTextContext = {
+    event,
+    battleEnd: battleEndInfo,
+    actor: fields?.actor ?? null,
+    combatant: fields?.combatant ?? null,
+    actionId: fields?.actionId ?? null,
+    reason: fields?.reason ?? null,
+    winnerPid: fields?.winnerPid ?? null,
+  };
+  return renderBattleNotice(ctx);
+}
+
+/**
+ * 预扫描事件流，显式计算 battle_end 胜负判定的上下文（BattleEndInfo）。
+ *
+ * 框架基准设计（非推断补丁）：
+ * - playerPid：从事件流中所有 combatant snapshot（actor/combatant/survivors）识别 type===0
+ * - playerSurvived：battle_end.payload.survivors 中是否含 playerPid（显式检查，非推断）
+ * - playerEscaped：事件流中是否存在玩家本人的 combatant_cleared.reason==='escaped'
+ * - winnerPid / reason：从 battle_end 事件获取
+ *
+ * 两个场景的自动覆盖：
+ * - 玩家逃跑：playerSurvived=false + playerEscaped=true → 逃离
+ * - NPC 全逃跑：playerSurvived=true + winnerPid===playerPid → 胜利
+ */
+function computeBattleEndContext(events: BattleLogV3Event[]): BattleEndInfo | null {
+  let playerPid = 0;
+  let playerEscaped = false;
+  let playerSurvived = false;
+  let winnerPid: number | null = null;
+  let reason = '';
+  let hasBattleEnd = false;
+
+  for (const event of events) {
+    const payload = (event.payload || {}) as Record<string, unknown>;
+
+    // 识别 playerPid：从任何含 combatant snapshot 的字段扫描 type=0
+    if (playerPid === 0) {
+      const candidates: unknown[] = [
+        payload.actor,
+        payload.combatant,
+        ...(Array.isArray(payload.survivors) ? payload.survivors : []),
+      ];
+      for (const candidate of candidates) {
+        const view = combatantViewFromSnapshot(candidate as CombatantSnapshot);
+        if (view && view.type === 0) {
+          playerPid = view.pid;
+          break;
+        }
+      }
+    }
+
+    // 玩家本人 escaped
+    if (event.event_type === 'combatant_cleared' && !playerEscaped && playerPid > 0) {
+      const clearedReason = String(payload.reason ?? event.reason ?? '');
+      if (clearedReason === 'escaped' && payload.combatant && typeof payload.combatant === 'object') {
+        const view = combatantViewFromSnapshot(payload.combatant as CombatantSnapshot);
+        if (view && view.pid === playerPid) {
+          playerEscaped = true;
+        }
+      }
+    }
+
+    // 从 battle_end 获取 winnerPid、reason，并检查 playerSurvived
+    if (event.event_type === 'battle_end') {
+      hasBattleEnd = true;
+      winnerPid = event.winner_pid ?? null;
+      reason = String(event.reason ?? '');
+      if (playerPid > 0 && Array.isArray(payload.survivors)) {
+        playerSurvived = (payload.survivors as CombatantSnapshot[]).some(
+          s => Number(s.pid) === playerPid,
+        );
+      }
+    }
+  }
+
+  if (!hasBattleEnd) return null;
+  return { playerPid, playerSurvived, playerEscaped, winnerPid, reason };
 }

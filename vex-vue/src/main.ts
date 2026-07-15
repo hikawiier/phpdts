@@ -6,6 +6,7 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
 import { useToastStore } from '@/stores/toast';
+import { validateBattleTemplates } from '@/data/battle-templates';
 import './assets/styles/input.css';
 import './assets/styles/terminal.css';
 import './assets/styles/battle.css';
@@ -13,6 +14,12 @@ import './assets/styles/battle.css';
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
+
+// ── 开发模式：跨层契约校验 ──
+// 校验 BATTLE_TEMPLATES 字典对后端已知枚举值的覆盖度（§3.3 跨层契约可校验）
+if (import.meta.env.DEV) {
+  validateBattleTemplates();
+}
 
 // ── 全局错误处理 ──
 // 捕获 Vue 组件渲染/生命周期错误（mount 前注册以捕获初始渲染错误）
