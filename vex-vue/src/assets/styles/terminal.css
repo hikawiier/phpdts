@@ -236,7 +236,7 @@ body::after {
 }
 
 /* 朝右时镜像翻转立绘（scaleX(-1) 在 translateX(-50%) 之后，保持居中不被反转） */
-.entity.facing-right .entity-img {
+.actor-pose.facing-right .entity-img {
     transform: translateX(-50%) scaleX(-1);
 }
 

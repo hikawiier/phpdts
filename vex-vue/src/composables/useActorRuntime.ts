@@ -222,9 +222,9 @@ class ActorRuntimeImpl implements ActorRuntime {
   }
 
   setFacing(direction: 'left' | 'right'): void {
-    const anchor = this.elements?.anchor;
-    if (!anchor) return;
-    anchor.classList.toggle('facing-right', direction === 'right');
+    const pose = this.elements?.pose;
+    if (!pose) return;
+    pose.classList.toggle('facing-right', direction === 'right');
   }
 
   markTerminal(): void {

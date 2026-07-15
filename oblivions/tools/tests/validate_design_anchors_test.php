@@ -323,6 +323,32 @@ MD), array(
     da_test_assert_has_code(design_anchor_validate($root), 'TAG001');
 };
 
+$tests['runtime cache php files are excluded'] = function () use ($suiteRoot) {
+    $root = da_test_fixture($suiteRoot, 'cache-excluded', da_test_dian(<<<'MD'
+### 模块 A：API 层
+#### 框架 A-1：入口
+**代码锚点：** `oblivions/api/core.php`（入口）
+MD), array(
+        'oblivions/api/core.php' => da_test_php('A', array('A-1')),
+        'oblivions/cache/locks/obl_lock_1_19.php' => "<?php\n",
+        'oblivions/cache/logs/request.php' => "<?php\n",
+    ));
+    $report = design_anchor_validate($root);
+    da_test_assert($report['passed'], design_anchor_render_text($report));
+};
+
+$tests['cache prefix does not exclude similarly named source directory'] = function () use ($suiteRoot) {
+    $root = da_test_fixture($suiteRoot, 'cache-prefix-boundary', da_test_dian(<<<'MD'
+### 模块 A：API 层
+#### 框架 A-1：入口
+**代码锚点：** `oblivions/api/core.php`（入口）
+MD), array(
+        'oblivions/api/core.php' => da_test_php('A', array('A-1')),
+        'oblivions/cacheable/unowned.php' => "<?php\n",
+    ));
+    da_test_assert_has_code(design_anchor_validate($root), 'TAG001');
+};
+
 $tests['module mode ignores unowned files outside declared relation'] = function () use ($suiteRoot) {
     $root = da_test_fixture($suiteRoot, 'scoped-coverage', da_test_dian(<<<'MD'
 ### 模块 A：API 层

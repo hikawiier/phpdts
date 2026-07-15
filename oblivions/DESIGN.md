@@ -363,6 +363,7 @@ Oblivions 后端与 Vex-Vue 前端使用框架编号连接设计语义与代码�
 - 全项目严格校验：`php oblivions/tools/validate_design_anchors.php`
 - 迁移期间模块校验：`php oblivions/tools/validate_design_anchors.php --module=A`（将 `A` 替换为目标模块；局部通过不代表全项目合规）
 - 校验器测试：`php oblivions/tools/tests/validate_design_anchors_test.php`
+- 生产源码扫描排除 `oblivions/cache/**` 等运行时生成目录；缓存文件即使使用 `.php` 扩展名也不参与模块覆盖率与框架锚点检查。
 - 实现与错误模型见[文档与代码双向锚点校验器设计案](./docs/文档与代码双向锚点校验器设计案.md)
 
 严格模式是项目满足本契约的唯一机器验收入口。模块模式只服务迁移过程，不得代替最终严格校验。

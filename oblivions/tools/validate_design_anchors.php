@@ -384,6 +384,7 @@ class DesignAnchorValidator {
             'oblivions/tests/',
             'oblivions/tools/',
             'oblivions/docs/',
+            'oblivions/cache/',
             'vex-vue/node_modules/',
             'vex-vue/dist/',
         );

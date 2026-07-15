@@ -52,10 +52,28 @@ export function assertActorRuntimeContractFixture(): void {
   assertTransformChannelIsolationContract();
   assertMoveRefStabilityContract();
   assertInitialEnterPreemptionContract();
+  assertFacingClassIsolationContract();
   assertPostureAndEscapeContract();
   assertTerminalAbortContract();
   assertCombatTargetResolutionContract();
   assertRegionTransitionContract();
+}
+
+function assertFacingClassIsolationContract(): void {
+  const runtime = createActorRuntime('enemy-facing');
+  const elements = createActorElements();
+  runtime.setElements(elements);
+
+  runtime.setFacing('right');
+  assert(elements.pose.classList.contains('facing-right'),
+    'right-facing state was not applied to the pose node');
+  assert(!elements.anchor.classList.contains('facing-right'),
+    'right-facing state leaked onto the Vue-managed entity root');
+
+  runtime.setFacing('left');
+  assert(!elements.pose.classList.contains('facing-right'),
+    'left-facing state did not clear the pose class');
+  runtime.dispose();
 }
 
 export async function assertAppearancePreemptionConvergenceFixture(): Promise<void> {
@@ -876,6 +894,9 @@ function createDomLikeElement(): HTMLElement {
     rotationY: 0,
     transformPerspective: 0,
     classList: {
+      contains(name: string) {
+        return classes.has(name);
+      },
       toggle(name: string, force?: boolean) {
         const next = force ?? !classes.has(name);
         if (next) classes.add(name);
