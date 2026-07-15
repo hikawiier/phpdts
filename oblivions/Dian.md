@@ -906,7 +906,7 @@
 - 组件未注册时 store 抛错；组件播放中卸载时错误传播到 store 的 await，runner 的 timeout 兜底确保播放链路安全终止。
 - 横幅正文 XSS 防护：`notice.reason` 是后端原始字符串（未转义），横幅用文本插值而非 `v-html` 渲染。
 - `combatant_cleared` 的 `reason='dead'` 在后端 emit 时映射为 `'death'`，前端只识别 `'death'` / `'escaped'` 两种 reason。
-- `reason='escaped'` 在 `visual_policy='retreat'` 模式下不播 fade 动画——退场动画交给稳定边界 reconcile，避免与世界 rebase 打架。`reason='death'` 使用 terminal 优先级租约（不可抢占）+ `fall` 动画，确保死亡动画播完不被中断。
+- `reason='escaped'` 在 `visual_policy='retreat'` 模式下于 `combatant_cleared` 阶段串行播 `fade` + `move tier='long'` 退场动画，`startCommit` 退入 fall-through 做 alpha 兜底。`reason='death'` 使用 terminal 优先级租约（不可抢占）+ `fall` 动画，确保死亡动画播完不被中断。
 - 动作演出 `awaitPolicy` 规则：`animation.kind='none'` 且所有 `deliveries` 的 `type='none'` 时为 `'none'`（fire-and-forget），否则为 `'completion'`。`move` 动画的 timeout 比其他动画更短，演员层按距离分 `duck` / `jump` / `long` 三档。
 - `hitTrigger='attack-impact'` 时等攻击 impact cue 后并行播放 hit + attackHandles，避免命中反馈早于攻击动画（视觉因果倒置）。
 - 伤害浮现是唯一 `awaitPolicy='none'` 的阶段，通过事件总线派发，DamageNumber 组件按角色定位自行播放——主时序不等待伤害数字浮现。
@@ -1090,7 +1090,7 @@
 **边界案例：**
 
 - 战斗模态播放时阻止地图输入。
-- 战斗模式下非活跃实体半透明。
+- 战斗模式下非活跃实体半透明。视图层直接查询 `characterStore`，绕过 `presentationScene` 播放态对 `displayEntities` 的冻结——phase 隔离 pls 变化正确，但 `inCombat`/`active` 字段更新不应被阻断。
 
 ***
 

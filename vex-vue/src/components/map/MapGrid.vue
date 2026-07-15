@@ -101,17 +101,24 @@ function imgStyle(entity: MapEntity): Record<string, string> {
 }
 
 // ─── 实体 class 计算（含战斗中非活跃实体半透明） ───
-// inCombat === true：正常不透明
-// inCombat === false 且 currentMode === 'battle' 且 hasActiveCombat：半透明
+// 直接查询 characterStore.getCharacter(pid)?.combat，绕过 displayEntities 的 phase 冻结
+// combat.inCombat === true 且 combat.active === true：正常不透明
+// combat.inCombat !== true 或 combat.active === false 且 currentMode === 'battle' 且 hasActiveCombat：半透明
 // 预装填阶段（currentMode='battle' 但 combatContext 未加载）：hasActiveCombat=false，不半透明
-// 探索模式：忽略 inCombat，全部正常显示
+// 探索模式：忽略 combat，全部正常显示
 const hasActiveCombat = computed(() =>
   displayEntities.value.some(entity => entity.inCombat === true),
 );
 
 function entityClass(entity: MapEntity): Record<string, boolean> {
   const inBattle = battleStore.currentMode === 'battle';
-  const dimmed = inBattle && hasActiveCombat.value && entity.inCombat === false;
+  // 直接查询 characterStore，绕过 displayEntities 的 phase 冻结
+  const character = entity.characterPid != null
+    ? characterStore.getCharacter(entity.characterPid)
+    : undefined;
+  const combat = character?.combat;
+  const dimmed = inBattle && hasActiveCombat.value
+    && (combat?.inCombat !== true || combat?.active === false);
   const pid = entity.characterPid;
   const aimState = pid != null ? aimTargetingStore.getEnemyAimState(pid) : null;
   return {

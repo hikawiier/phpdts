@@ -341,7 +341,18 @@ export function playCombatantCleared(
   );
   if (!lease) return completedTask();
   context.presentation.markBattleExit(actorId, 'escaped', retreatTarget);
-  return retreat ? completedTask() : taskFromHandle(lease.play({ kind: 'fade' }));
+  if (!retreat) return taskFromHandle(lease.play({ kind: 'fade' }));
+
+  // retreat 路径：串行 fade（原格淡出）+ move tier='long'（teleport + arriveAnim 弹起）
+  const retreatAnchor = context.scene.resolveTile(retreatTarget!);
+  if (!retreatAnchor) return completedTask();
+  return createTask(async scope => {
+    const fadeHandle = scope.add(lease.play({ kind: 'fade' }));
+    await fadeHandle.finished;
+    if (scope.cancelled) return;
+    const moveHandle = scope.add(lease.play({ kind: 'move', target: retreatAnchor, tier: 'long' }));
+    await moveHandle.finished;
+  });
 }
 
 function readRetreatTarget(notice: DirectedNotice): { pgroup: number; pls: number } | null {

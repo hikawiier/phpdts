@@ -145,21 +145,6 @@ class BattlePresentationSessionImpl implements BattlePresentationSession {
         continue;
       }
       let lease = this.leases.get(handoff.actorId) ?? null;
-      if (handoff.visualPolicy === 'retreat') {
-        const target = actor.getProjectedAnchor();
-        if (lease && target) {
-          const from = handoff.fromPoint;
-          const gridDistance = from
-            ? Math.max(
-              Math.abs(target.point.x - from.x) / target.cellWidth,
-              Math.abs(target.point.y - from.y) / target.cellHeight,
-            )
-            : Number.POSITIVE_INFINITY;
-          const tier = gridDistance <= 1.5 ? 'duck' : gridDistance <= 6.5 ? 'jump' : 'long';
-          animations.push(lease.play({ kind: 'move', target, tier }));
-          continue;
-        }
-      }
       if (handoff.visualPolicy === 'hidden-relocate-arrive' || handoff.visualPolicy === 'retreat') {
         lease?.release({ reconcile: true });
         lease = actor.acquire({
