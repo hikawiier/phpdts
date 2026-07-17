@@ -16,7 +16,16 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             obl_explore($pdata);
             break;
         case 'poi.search':
-            obl_search_poi($payload['iaid'], $pdata);
+            // E-10 三档判定：先按 iaid 查 POI 实例 + 位置校验，再调用新签名 obl_search_poi($pdata, $poi, $tool_id, $skill_id)
+            $iaid = (int)$payload['iaid'];
+            $tool_id = isset($payload['tool_id']) ? (string)$payload['tool_id'] : null;
+            $skill_id = isset($payload['skill_id']) ? (string)$payload['skill_id'] : null;
+            $poi = obl_lookup_poi_for_search($iaid, $pdata);
+            if ($poi === null) {
+                // lookup 函数已 emit 错误日志（not_found / not_adjacent）
+                break;
+            }
+            obl_search_poi($pdata, $poi, $tool_id, $skill_id);
             break;
         case 'world.wait':
             global $obl_log;
@@ -138,4 +147,41 @@ function obl_command_handler_inventory_organize(&$pdata) {
             $obl_log->emit('organize.fail', 'system', array('item_id' => $item_id));
         }
     }
+}
+
+/**
+ * 查询 POI 实例并校验玩家位置（poi.search 命令路由辅助）
+ *
+ * 流程：
+ *   1. SELECT * FROM oblmappoi WHERE iaid=X
+ *   2. 不存在 → emit search.not_found 并返回 null
+ *   3. pgroup/pls 与玩家不一致 → emit search.not_adjacent 并返回 null
+ *   4. 返回 POI 实例行
+ *
+ * 由 poi.search 命令分支调用，调用方拿到 POI 实例后传给 E-10 的 obl_search_poi($pdata, $poi, $tool_id, $skill_id)。
+ *
+ * @param int   $iaid  POI 实例 ID
+ * @param array $pdata 玩家数据（用于读 pgroup/pls）
+ * @return array|null POI 实例行或 null（找不到/位置不匹配）
+ */
+function obl_lookup_poi_for_search($iaid, $pdata) {
+    global $db, $tablepre, $obl_log;
+
+    $iaid = (int)$iaid;
+    $cur_pgroup = (int)$pdata['pgroup'];
+    $cur_pls = (int)$pdata['pls'];
+
+    $result = $db->query("SELECT * FROM {$tablepre}oblmappoi WHERE iaid='$iaid'");
+    if (!$result || !$db->num_rows($result)) {
+        if (isset($obl_log) && $obl_log) $obl_log->emit('search.not_found', 'search');
+        return null;
+    }
+    $poi = $db->fetch_array($result);
+
+    if ((int)$poi['pgroup'] != $cur_pgroup || (int)$poi['pls'] != $cur_pls) {
+        if (isset($obl_log) && $obl_log) $obl_log->emit('search.not_adjacent', 'search');
+        return null;
+    }
+
+    return $poi;
 }

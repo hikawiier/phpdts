@@ -83,16 +83,37 @@ function obl_clear_fog($pgroup, $visible_tiles) {
     $fog_values = [];
     foreach ($visible_tiles as $t_pls => $info) {
         $t_pls = (int)$t_pls;
-        $fog_values[] = "($pgroup_i, $t_pls, 1, 0, '')";
+        $fog_values[] = "($pgroup_i, $t_pls, 1, 0, '', 0, 0)";
     }
 
     // INSERT ... ON DUPLICATE KEY UPDATE fog=1（幂等）
+    // 注：INSERT 字段含 last_refresh_turn/refresh_count 占位 0，但 ON DUPLICATE KEY UPDATE 只更新 fog，
+    //     已存在记录的刷新字段不会被重置（保留已有野生道具刷新元数据）。
     foreach (array_chunk($fog_values, 500) as $batch) {
-        $qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags)
+        $qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags, last_refresh_turn, refresh_count)
                 VALUES " . implode(',', $batch) . "
                 ON DUPLICATE KEY UPDATE fog=1";
         $db->query($qry);
     }
+}
+
+/**
+ * 查询地图格是否已点亮（fog=1）
+ *
+ * 任务2b：解耦敌人移动与迷雾——敌人移动到迷雾格时通过此函数判定是否仍可见
+ *
+ * @param int $pgroup 区域 ID
+ * @param int $pls    格子 ID
+ * @return bool true=已点亮（fog=1），false=在迷雾中或记录不存在
+ */
+function obl_is_tile_visible($pgroup, $pls) {
+    global $db, $tablepre;
+    $pgroup_i = (int)$pgroup;
+    $pls_i = (int)$pls;
+    $result = $db->query("SELECT fog FROM {$tablepre}oblmapstates
+                          WHERE pgroup='{$pgroup_i}' AND pls='{$pls_i}' LIMIT 1");
+    $row = $db->fetch_array($result);
+    return !empty($row['fog']);
 }
 
 /**
@@ -145,8 +166,10 @@ function obl_discover_enemies($player_pgroup, $player_pls, $vision_range) {
 /**
  * 敌人移动后更新 discovered 状态
  *
- * 超出玩家视野 → discovered=0（静默移除，不 emit 日志）
- * 仍在玩家视野内 → 清除该格迷雾（确保前端可见）
+ * 解耦敌人移动与迷雾（任务2b）：敌人在迷雾格中移动不再自动点亮迷雾
+ *   - 超出玩家视野 → discovered=0（静默移除，不 emit 日志）
+ *   - 在玩家视野内但目标格仍在迷雾中 → discovered=0（敌人变为未被发现，不点亮迷雾）
+ *   - 在玩家视野内且目标格已点亮 → 保持 discovered=1
  *
  * @param array &$enemy  敌人数据
  * @param array &$player 当前玩家数据
@@ -167,8 +190,16 @@ function obl_update_enemy_discovered(&$enemy, &$player) {
     $player_vision = obl_get_player_vision_range($player);
     if ($distance < 0 || $distance > $player_vision) {
         $enemy['discovered'] = 0;
-    } else {
-        // 敌人在玩家视野内，清除该格迷雾（确保前端可见）
-        obl_clear_fog($enemy['pgroup'], array($enemy['pls'] => array('distance' => $distance)));
+        return;
     }
+
+    // 在玩家视野内，但目标格仍在迷雾中 → 敌人变为未发现（不点亮迷雾）
+    // 解耦敌人移动与迷雾：敌人在迷雾中移动不再自动点亮迷雾
+    if (!obl_is_tile_visible($enemy['pgroup'], $enemy['pls'])) {
+        $enemy['discovered'] = 0;
+        return;
+    }
+
+    // 目标格已点亮（玩家可见）→ 敌人保持被发现状态
+    // 注：不再调用 obl_clear_fog，因为该格已经被点亮，无需重复操作
 }

@@ -76,7 +76,8 @@ const feedbackHtml = computed<string>(() => {
   // craft.ready：注入配方名，显示"可合成：xxx"
   const params = { ...log.params };
   if (log.id === 'craft.ready' && craftStore.previewResult?.recipe_id) {
-    params.recipe_name = getRecipeName(craftStore.previewResult.recipe_id);
+    const recipe = craftStore.recipes.find(r => r.recipe_id === craftStore.previewResult?.recipe_id);
+    params.recipe_name = getRecipeName(craftStore.previewResult.recipe_id, recipe?.name);
   }
   const fakeEntry: LogEntry = {
     id: log.id,

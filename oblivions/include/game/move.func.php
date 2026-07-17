@@ -357,12 +357,18 @@ function obl_check_move_sp(&$pdata, $distance = 1) {
 }
 
 /**
- * 移动后钩子：自动探索（跳过体力检查）
+ * 移动后钩子：点亮视野内迷雾（解耦移动与探索，不自动发现道具/敌人）
+ *
+ * 设计意图（任务2a）：移动是空间行为，探索是主动行为。解耦后：
+ *   - 移动后玩家能看到新地图（迷雾点亮，含玩家所在格+视野内格子）
+ *   - 玩家需主动点击 [探索周围] 按钮才能发现道具/敌人/触发探索后钩子
+ *   - 探索命令消耗体力（按 obl_config.explore_sp_cost），移动不再消耗探索体力
  *
  * @param array &$pdata 玩家数据
  */
 function obl_post_move_hook(&$pdata) {
-    // 移动后自动触发探索，不消耗探索体力
-    include_once GAME_ROOT . './oblivions/include/game/explore.func.php';
-    obl_explore($pdata, true);
+    // 移动后只点亮视野内迷雾，不发现道具/敌人（解耦移动与探索）
+    include_once GAME_ROOT . './oblivions/include/game/vision.func.php';
+    $visible_tiles = obl_calc_vision_range($pdata['pgroup'], $pdata['pls'], $pdata);
+    obl_clear_fog($pdata['pgroup'], $visible_tiles);
 }

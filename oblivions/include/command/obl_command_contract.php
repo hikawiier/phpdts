@@ -37,7 +37,11 @@ function obl_command_contracts() {
             'advances_tick' => true,
             'itm0_allowed' => false,
             'required_capabilities' => array('time_pass'),
-            'payload_schema' => array('iaid' => array('type' => 'int', 'required' => true, 'min' => 1)),
+            'payload_schema' => array(
+                'iaid' => array('type' => 'int', 'required' => true, 'min' => 1),
+                'tool_id' => array('type' => 'string', 'required' => false),
+                'skill_id' => array('type' => 'string', 'required' => false),
+            ),
             'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
         'item.pickup' => array(

@@ -162,6 +162,10 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   'explore.success': {
     text: '你仔细观察了周围的环境。',
   },
+  // 探索后钩子完成（调试日志，三段式占位骨架的完成标记）
+  'explore.hook_completed': {
+    render: () => `<span class="grey">[调试] 探索钩子已执行。</span>`,
+  },
 
   // ─── search ─────────────────────────────────────
   'search.not_found': {
@@ -193,15 +197,112 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     highlight: ['poi_name'],
     highlightClass: 'yellow',
   },
+  // 普通档掉落（params={iaid, item_ids}；search.result 仅在 loot 命中时 emit）
   'search.result': {
     render: (params) => {
-      const items = params.items as string[] | undefined;
-      if (items && items.length > 0) {
-        const itemsHtml = items.map(escapeHtml).join('、');
-        return `你搜索了${escapeHtml(params.poi_name as string)}，发现了<span class="yellow">${itemsHtml}</span>。`;
+      const itemIds = params.item_ids as string[] | undefined;
+      if (itemIds && itemIds.length > 0) {
+        const itemsHtml = itemIds
+          .map((id) => ITEM_LOCALE[id]?.name ?? id)
+          .map(escapeHtml)
+          .join('、');
+        return `发现了 <span class="yellow">${itemsHtml}</span>。`;
       }
-      return `你搜索了${escapeHtml(params.poi_name as string)}，但什么也没找到。`;
+      return `<span class="grey">什么也没找到。</span>`;
     },
+  },
+  // POI 实例无效（防御性，params=[]）
+  'search.invalid_poi': {
+    render: () => `<span class="grey">[系统] 无效的建筑物。</span>`,
+  },
+  // POI 已搜空（终态，params={iaid}）
+  'search.exhausted': {
+    text: '这里已经被搜空了。',
+  },
+  // POI 冷却中（params={iaid, until?}）
+  'search.in_cooldown': {
+    text: '这里暂时没有可搜刮的东西，稍后再来。',
+  },
+  // 保底机制触发（params={iaid, item_ids}）
+  'search.pity_triggered': {
+    render: (params) => {
+      const itemIds = params.item_ids as string[] | undefined;
+      if (itemIds && itemIds.length > 0) {
+        const itemsHtml = itemIds
+          .map((id) => ITEM_LOCALE[id]?.name ?? id)
+          .map(escapeHtml)
+          .join('、');
+        return `<span class="yellow">保底触发！</span>发现了 <span class="yellow">${itemsHtml}</span>。`;
+      }
+      return `<span class="yellow">保底触发！</span>但什么也没找到。`;
+    },
+  },
+  // 空档：什么也没找到（params={iaid}）
+  'search.nothing_found': {
+    render: () => `搜刮了一番，<span class="grey">什么也没找到。</span>`,
+  },
+  // 并发冲突（乐观锁抢占失败，params={iaid, old_state, new_state}）
+  'search.concurrent_conflict': {
+    render: () => `<span class="grey">[系统] 操作冲突，请重试。</span>`,
+  },
+  // 事件函数未定义（降级为普通档判定，params={event_id}）
+  'search.event_pending': {
+    render: (params) =>
+      `<span class="grey">[系统] 事件「${escapeHtml(String(params.event_id))}」尚未实现。</span>`,
+  },
+  // 事件：发现额外补给箱（良性，params={iaid, item_ids}）
+  'search.event.find_extra_cache': {
+    render: (params) => {
+      const itemIds = params.item_ids as string[] | undefined;
+      if (itemIds && itemIds.length > 0) {
+        const itemsHtml = itemIds
+          .map((id) => ITEM_LOCALE[id]?.name ?? id)
+          .map(escapeHtml)
+          .join('、');
+        return `发现一个<span class="yellow">额外的补给箱</span>！里面装着 <span class="yellow">${itemsHtml}</span>。`;
+      }
+      return `发现一个<span class="yellow">额外的补给箱</span>！但里面是空的。`;
+    },
+  },
+  // 事件：发现安全路径（良性，params={iaid, expires_turn}）
+  'search.event.safe_route': {
+    render: (params) => {
+      const expires = Number(params.expires_turn);
+      const suffix = !Number.isNaN(expires) && expires > 0 ? `（持续至 tick ${expires}）` : '';
+      return `发现一条<span class="yellow">安全路径</span>，下次移动体力消耗减半！${suffix}`;
+    },
+  },
+  // 事件：触发陷阱（恶性，params={iaid, damage}）
+  'search.event.trap_trigger': {
+    render: (params) => {
+      const damage = Number(params.damage) || 0;
+      return `<span class="red">触发了陷阱！</span>受到 <span class="red">${damage}</span> 点伤害。`;
+    },
+  },
+  // 事件：结构坍塌（恶性，params={iaid}）
+  'search.event.structure_collapse': {
+    render: () =>
+      `<span class="red">建筑物在你搜刮时坍塌了！</span>所有物资都被压坏了。`,
+  },
+
+  // ─── loot（错误日志，红色高亮） ─────────────────
+  // 战利品表未找到（params={table_id}）
+  'loot.table_not_found': {
+    render: (params) =>
+      `<span class="red">[战利品] 表「${escapeHtml(String(params.table_id))}」未找到。</span>`,
+  },
+  // 战利品表条目超限（params={table_id, total, limit}）
+  'loot.entries_exceed_limit': {
+    render: (params) => {
+      const total = Number(params.total) || 0;
+      const limit = Number(params.limit) || 0;
+      return `<span class="red">[战利品] 表「${escapeHtml(String(params.table_id))}」条目超限（${total}/${limit}）。</span>`;
+    },
+  },
+  // 道具模板缺失（params={item_id}）
+  'loot.item_template_missing': {
+    render: (params) =>
+      `<span class="red">[战利品] 道具模板「${escapeHtml(String(params.item_id))}」缺失。</span>`,
   },
 
   // ─── pickup ─────────────────────────────────────

@@ -90,6 +90,20 @@ require_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
 
+// 第 5.6 层：F-4 战利品表引擎（依赖 item_table 数据 + log/error_log；被 E-7/E-10 调用）
+require_once GAME_ROOT . './oblivions/include/game/loot/loot.engine.func.php';
+
+// 第 5.65 层：E-10 POI 搜刮三档判定系统（依赖 F-4 引擎 + move 的 obl_get_map_data + tick.func.php 的 obl_tick_get；
+// 由命令分发层 obl_command_handlers.php 在 poi.search 命令中调用）
+// 加载顺序：poi.search.func.php 先（定义主入口与概率计算/pity_timer/状态机/物化），
+// poi.event.func.php 后（事件池分发框架与 4 个测试事件，依赖 poi.search.func.php 的辅助函数）
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.search.func.php';
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.event.func.php';
+
+// 第 5.7 层：E-9 野生道具刷新（依赖 move 的 obl_get_map_data；定义 tick post phase 监听器，
+// 由第 6 层 tick.func.php 末尾注册，需在 tick.func.php 之前加载）
+require_once GAME_ROOT . './oblivions/include/game/wild_refresh.func.php';
+
 // 第 6 层：依赖最广，末尾注册 tick 监听器
 require_once GAME_ROOT . './oblivions/include/game/tick.func.php';
 skill_effect_register_tick_listener();

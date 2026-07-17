@@ -386,7 +386,10 @@ export const useCraftStore = defineStore('craft', () => {
     if (inventoryStore.itm0Locked) {
       // 产物卡 itm0（背包满）→ 关闭，全局 toast 提示
       const craftedRecipeId = previewResult.value?.recipe_id;
-      const recipeName = craftedRecipeId ? getRecipeName(craftedRecipeId) : '';
+      const craftedRecipe = craftedRecipeId
+        ? recipes.value.find(r => r.recipe_id === craftedRecipeId)
+        : undefined;
+      const recipeName = craftedRecipeId ? getRecipeName(craftedRecipeId, craftedRecipe?.name) : '';
       dataManager.broadcast('ui:toast', {
         type: 'success',
         msg: recipeName ? `合成成功：${recipeName}` : '合成成功',
@@ -395,7 +398,10 @@ export const useCraftStore = defineStore('craft', () => {
     } else {
       // 产物入背包 → 清空素材池，模态框顶部 banner 提示（支持连续合成）
       const craftedRecipeId = previewResult.value?.recipe_id;
-      const recipeName = craftedRecipeId ? getRecipeName(craftedRecipeId) : '';
+      const craftedRecipe = craftedRecipeId
+        ? recipes.value.find(r => r.recipe_id === craftedRecipeId)
+        : undefined;
+      const recipeName = craftedRecipeId ? getRecipeName(craftedRecipeId, craftedRecipe?.name) : '';
       successRecipeName.value = recipeName || '合成成功';
       backpackSlots.value = [];
       wbMaterialIds.value = [];

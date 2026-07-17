@@ -31,12 +31,12 @@ import { onMounted, onUnmounted, computed } from 'vue';
 import { usePlayerStore } from '@/stores/player';
 import { useMapStore } from '@/stores/map';
 import { useBattleStore } from '@/stores/battle';
-import { useUiStore } from '@/stores/ui';
 import { useTileActionStore } from '@/stores/tileAction';
 import { useInventoryStore } from '@/stores/inventory';
 import { useToastStore } from '@/stores/toast';
 import { useLogStore } from '@/stores/log';
 import { useErrorLogStore } from '@/stores/error-log';
+import { usePoiStore } from '@/stores/poi';
 import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
 import LeftPanel from '@/components/layout/LeftPanel.vue';
@@ -46,18 +46,19 @@ import InventoryDrawer from '@/components/layout/InventoryDrawer.vue';
 import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
+import PoiModal from '@/components/poi/PoiModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
 import { isDebugEnabled } from '@/utils/debug-flags';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
 const battleStore = useBattleStore();
-const uiStore = useUiStore();
 const tileActionStore = useTileActionStore();
 const inventoryStore = useInventoryStore();
 const toastStore = useToastStore();
 const logStore = useLogStore();
 const errorLogStore = useErrorLogStore();
+const poiStore = usePoiStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
 const isBattleActive = computed(() => battleStore.currentMode === 'battle');
@@ -76,6 +77,7 @@ onMounted(async () => {
   logStore.registerListeners();
   battleStore.registerListeners();
   errorLogStore.registerListeners();
+  poiStore.registerListeners();
 
   // 启动前端守护进程心跳（纯后端 tick 激活，200ms 间隔）
   battleStore.startDaemonPoll();
@@ -137,6 +139,7 @@ onUnmounted(() => {
     <Modal />
     <Itm0Modal />
     <CraftModal />
+    <PoiModal />
     <ToastContainer />
   </div>
 </template>

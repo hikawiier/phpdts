@@ -344,6 +344,24 @@ export interface Poi {
   mechanic_value?: string | number;
   search_count?: number;
   repeat_limit?: number;
+  /** 状态机当前态（idle/searched/cooldown/exhausted，P1-3） */
+  state?: string;
+  /** 冷却到期 tick（cooldown 态下有意义，P1-3） */
+  cooldown_until_turn?: number;
+  /** 剩余可搜次数（-1=无限，0=耗尽，>0=剩余次数，P1-3） */
+  search_count_remaining?: number;
+  /** 剩余冷却 tick（后端按 current_tick 计算好的差值，方便直接显示，P1-3） */
+  cooldown_remaining_turn?: number;
+  /** E-10 基础物资概率（0-1，前端概率条数据源） */
+  base_loot_chance?: number;
+  /** E-10 基础良性事件概率（0-1） */
+  base_good_event_chance?: number;
+  /** E-10 基础恶性事件概率（0-1） */
+  base_bad_event_chance?: number;
+  /** L-9 接受 prob_mods 的工具白名单（POI 模板 prob_mods_source，前端据此过滤有效工具） */
+  prob_mods_source?: string[];
+  /** L-9 支持掉落表改良的工具 ID 列表（POI 模板 loot_table_overrides 的 keys，不含表 ID） */
+  loot_table_overrides?: string[];
   [key: string]: unknown;
 }
 
@@ -672,6 +690,8 @@ export interface CraftRecipe {
   category: string;
   materials: CraftMaterial[];
   results: CraftResult[];
+  /** 后端投影的配方名（取首产物名），前端 locale 缺失时作为 fallback */
+  name?: string;
 }
 
 /** 配方素材项 */

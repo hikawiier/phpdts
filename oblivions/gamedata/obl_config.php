@@ -17,7 +17,11 @@ return [
     // ─── 探索 / Explore ──────────────────────────────────
     'explore_sp_cost'  => 0,    // 探索消耗体力（基础值 0，不消耗）
     'vision_range'     => 1,    // 视野范围等级（1 = 脚下 + 邻接格，BFS 跳数）
-    'memory_range'     => 3,    // 每次探索最多发现的道具数量
+    'memory_range'     => 3,    // 每次探索最多发现的道具数量（兜底值，技能系统未加载或 scavenge 未注册时使用）
+    // 技能化发现数量：discover_base + discover_per_level * scavenge_skill_level
+    // 默认值与 memory_range 对齐，确保 G-1 技能系统未加载或 Lv0 玩家与旧版行为一致
+    'discover_base'       => 3,    // 基础发现数量（Lv0 时返回此值）
+    'discover_per_level'  => 1,    // 每级搜刮技能增加的发现数量
 
     // ─── 移动 / Move ─────────────────────────────────────
     'move_sp_cost'     => 0,    // 每格移动消耗体力（基础值 0，不消耗）
@@ -40,4 +44,14 @@ return [
     // 未来若改为配置驱动可直接启用。
     'use_item_advances_tick' => false,
     'craft_advances_tick'    => false,
+
+    // ─── 野生道具刷新 / Wild Item Refresh ──────────────────
+    // 时间流逝刷新由 tick post phase 监听器触发，每 N tick 全局扫描所有"已发现过"的图格
+    'wild_item_refresh_interval_ticks' => 100,   // 刷新间隔 tick 数；0=不刷新
+    'wild_item_capacity_per_tile'      => 5,     // 单格野生道具容量上限（应用层校验，不在 DB 硬约束）
+    'wild_item_refresh_rate_by_tide'   => [      // 潮汐倍率表：越危险越丰沛（作用于 refresh 相位的 rate）
+        'shallow' => 0.5,
+        'deep'    => 1.0,
+        'abyss'   => 1.5,
+    ],
 ];

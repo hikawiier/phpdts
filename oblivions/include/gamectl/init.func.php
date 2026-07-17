@@ -180,13 +180,13 @@ function obl_init_fog($map_data) {
             // 仅可通行格建立状态记录（不可通行格无需迷雾管理）
             if (empty($tile['passable'])) continue;
             $pls = (int)$pls;
-            $values[] = "($pgroup, $pls, 0, 0, '')";
+            $values[] = "($pgroup, $pls, 0, 0, '', 0, 0)";
         }
     }
 
     // 分批插入，每批 500 条
     foreach (array_chunk($values, 500) as $batch) {
-        $qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags) VALUES " . implode(',', $batch);
+        $qry = "INSERT INTO {$tablepre}oblmapstates (pgroup, pls, fog, damaged, flags, last_refresh_turn, refresh_count) VALUES " . implode(',', $batch);
         $db->query($qry);
     }
 }

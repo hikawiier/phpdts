@@ -85,6 +85,12 @@ function obl_generate_region_pois($pgroup, $tiles, $poi_pool, $poi_table) {
             $count = isset($cfg['per_region']) ? (int)$cfg['per_region'] : 0;
             if ($count <= 0) continue;
 
+            // 读取模板的 repeat_limit，映射为 search_count_remaining：
+            // repeat_limit=0 → -1（无限）；repeat_limit>0 → repeat_limit
+            $tpl = $poi_table[$poi_id];
+            $repeat_limit = isset($tpl['repeat_limit']) ? (int)$tpl['repeat_limit'] : 0;
+            $search_count_remaining = ($repeat_limit > 0) ? $repeat_limit : -1;
+
             // 排除该区域已占用的格
             $available = array_values(array_diff($grid_list, $occupied));
             if (count($available) < $count) {
@@ -101,7 +107,8 @@ function obl_generate_region_pois($pgroup, $tiles, $poi_pool, $poi_table) {
             foreach ($selected as $pls) {
                 $pls = (int)$pls;
                 $poi_id_esc = $db->escape_string($poi_id);
-                $values[] = "($pgroup, $pls, '$poi_id_esc', 0, 0, 0)";
+                // 字段顺序：(pgroup, pls, poi_id, state, search_count, search_count_remaining, last_search_turn, cooldown_until_turn, searched)
+                $values[] = "($pgroup, $pls, '$poi_id_esc', 'idle', 0, $search_count_remaining, 0, 0, 0)";
                 $occupied[] = $pls;
             }
         }
@@ -111,7 +118,7 @@ function obl_generate_region_pois($pgroup, $tiles, $poi_pool, $poi_table) {
     if (!empty($values)) {
         foreach (array_chunk($values, 500) as $batch) {
             $qry = "INSERT INTO {$tablepre}oblmappoi
-                    (pgroup, pls, poi_id, searched, search_count, last_search_turn)
+                    (pgroup, pls, poi_id, state, search_count, search_count_remaining, last_search_turn, cooldown_until_turn, searched)
                     VALUES " . implode(',', $batch);
             $db->query($qry);
         }
@@ -126,7 +133,7 @@ function obl_generate_region_pois($pgroup, $tiles, $poi_pool, $poi_table) {
  *
  * @param int   $pgroup      区域 ID
  * @param array $tiles       [pls => tile]
- * @param array $scatter_pool scatter_pool.php 返回的 [tide => [cfg...]]
+ * @param array $scatter_pool scatter_pool.php 返回的 [tide => ['initial' => [cfg...], 'refresh' => [cfg...]]]
  * @param array $item_table  item_table.php 返回的 [item_id => template]
  * @global object $db
  * @global string $tablepre
@@ -147,11 +154,11 @@ function obl_generate_wild_items($pgroup, $tiles, $scatter_pool, $item_table) {
 
     $values = array();
 
-    // 2. 逐 tide 桶、逐道具配置生成
+    // 2. 逐 tide 桶、逐道具配置生成（使用 initial 相位，区域初始化专用）
     foreach ($by_tide as $tide => $grid_list) {
-        if (!isset($scatter_pool[$tide]) || !is_array($scatter_pool[$tide])) continue;
+        if (!isset($scatter_pool[$tide]['initial']) || !is_array($scatter_pool[$tide]['initial'])) continue;
 
-        foreach ($scatter_pool[$tide] as $cfg) {
+        foreach ($scatter_pool[$tide]['initial'] as $cfg) {
             $item_id = isset($cfg['item_id']) ? (string)$cfg['item_id'] : '';
             if ($item_id === '' || !isset($item_table[$item_id])) continue;
 

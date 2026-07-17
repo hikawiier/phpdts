@@ -394,6 +394,15 @@ function obl_state_handle_tile_actions($ctx) {
         $tpl = isset($poi_table[$poi_id]) ? $poi_table[$poi_id] : null;
         if (!$tpl) continue;
 
+        // 状态机字段（P1-3：前端依据 state 判定可搜性，避免 exhausted/cooldown 误显示"再搜刮"）
+        $poi_state = isset($poi['state']) ? (string)$poi['state'] : 'idle';
+        $cooldown_until = (int)(isset($poi['cooldown_until_turn']) ? $poi['cooldown_until_turn'] : 0);
+        $search_count_remaining = isset($poi['search_count_remaining']) ? (int)$poi['search_count_remaining'] : -1;
+        $current_tick = function_exists('obl_tick_get') ? (int)obl_tick_get() : 0;
+        $cooldown_remaining = ($poi_state === 'cooldown' && $cooldown_until > $current_tick)
+            ? ($cooldown_until - $current_tick)
+            : 0;
+
         $poi_data = array(
             'iaid'          => (int)$poi['iaid'],
             'poi_id'        => $poi_id,
@@ -404,6 +413,18 @@ function obl_state_handle_tile_actions($ctx) {
             'repeatable'    => !empty($tpl['repeatable']),
             'searched'      => !empty($poi['searched']),
             'search_count'  => (int)$poi['search_count'],
+            // 状态机字段（P1-3）
+            'state'                     => $poi_state,
+            'cooldown_until_turn'       => $cooldown_until,
+            'search_count_remaining'    => $search_count_remaining,
+            'cooldown_remaining_turn'   => $cooldown_remaining,
+            // E-10 三档判定基础概率（0-1，前端概率条数据源；prob_mods 实时修正未实现，前端仅展示基础值）
+            'base_loot_chance'         => isset($tpl['base_loot_chance']) ? (float)$tpl['base_loot_chance'] : 0.0,
+            'base_good_event_chance'   => isset($tpl['base_good_event_chance']) ? (float)$tpl['base_good_event_chance'] : 0.0,
+            'base_bad_event_chance'    => isset($tpl['base_bad_event_chance']) ? (float)$tpl['base_bad_event_chance'] : 0.0,
+            // L-9 工具有效性白名单：prob_mods_source ∪ loot_table_overrides keys（前端据此过滤右侧工具列表）
+            'prob_mods_source'         => isset($tpl['prob_mods_source']) && is_array($tpl['prob_mods_source']) ? $tpl['prob_mods_source'] : array(),
+            'loot_table_overrides'     => isset($tpl['loot_table_overrides']) && is_array($tpl['loot_table_overrides']) ? array_keys($tpl['loot_table_overrides']) : array(),
             'items'         => array(),
         );
 

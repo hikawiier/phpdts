@@ -529,14 +529,29 @@ function item_recipe_visibility_filter($recipe, &$pdata) {
  * 软锁通过资源可达性自然限制（玩家不到 POI → 工作台素材不可用 → 配方实际无法合成）。
  * visibility_filter 作为未来剧情/事件门控的扩展钩子保留（默认返回 true）。
  *
+ * 返回字段包含 name（取首产物的 itm 中文名），供前端作为 fallback 显示名。
+ *
  * @param array &$pdata
- * @return array [{recipe_id, category, materials, results}]
+ * @return array [{recipe_id, category, materials, results, name}]
  */
 function item_get_visible_recipes(&$pdata) {
+    $item_table = null;
     $result = [];
     foreach (item_get_all_recipes() as $recipe_id => $recipe) {
         if (!item_recipe_visibility_filter($recipe, $pdata)) {
             continue;
+        }
+
+        // 投影 name：取首产物的中文 itm 名（recipe_table 自身无 name 字段）
+        $name = '';
+        if (!empty($recipe['results'])) {
+            $first_result_item_id = $recipe['results'][0]['item_id'] ?? '';
+            if ($first_result_item_id !== '') {
+                if ($item_table === null) {
+                    $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
+                }
+                $name = $item_table[$first_result_item_id]['itm'] ?? '';
+            }
         }
 
         $result[] = [
@@ -544,6 +559,7 @@ function item_get_visible_recipes(&$pdata) {
             'category'  => $recipe['category'],
             'materials' => $recipe['materials'],
             'results'   => $recipe['results'],
+            'name'      => $name,
         ];
     }
 

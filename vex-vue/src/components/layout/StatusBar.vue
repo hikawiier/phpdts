@@ -209,8 +209,8 @@ function onAvatarError(): void {
         <button
           class="status-nav-btn"
           :class="{
-            'is-active': battleStore.currentMode === 'battle' || battleStore.currentMode === 'aim',
-            'is-battle-active': battleStore.currentMode === 'battle' || battleStore.currentMode === 'aim',
+            'is-active': battleStore.currentMode === 'battle',
+            'is-battle-active': battleStore.currentMode === 'battle',
           }"
           :disabled="battleButtonDisabled"
           :title="battleButtonTitle"

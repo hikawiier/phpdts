@@ -722,3 +722,7 @@ obl_tick_register_listener('idle_npc',   'obl_tick_phase_idle_npc');
 if (function_exists('skill_effect_register_tick_listener')) {
     skill_effect_register_tick_listener();
 }
+// E-9 野生道具时间流逝刷新（wild_refresh.func.php 由 obl_bootstrap.php 在本文件之前加载）
+if (function_exists('obl_tick_phase_refresh_wild_items')) {
+    obl_tick_register_listener('post', 'obl_tick_phase_refresh_wild_items');
+}

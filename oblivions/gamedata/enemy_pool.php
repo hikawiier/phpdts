@@ -19,13 +19,13 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 return [
     // ─── 浅水区 (shallow) ──────────────────────────────────
     'shallow' => [
-        ['enemy_type' => 1, 'count' => [3, 5]],  // 废铁史莱姆 3-5 个
-        ['enemy_type' => 2, 'count' => [1, 2]],  // 锈蚀守卫 1-2 个
+        //['enemy_type' => 1, 'count' => [3, 5]],  // 废铁史莱姆 3-5 个
+        //['enemy_type' => 2, 'count' => [1, 2]],  // 锈蚀守卫 1-2 个
     ],
 
     // ─── 深水区 (deep) ──────────────────────────────────
     'deep' => [
-        ['enemy_type' => 2, 'count' => [3, 5]],
+        //['enemy_type' => 2, 'count' => [3, 5]],
         // ['enemy_type' => 3, 'count' => [1, 3]],  // 未来扩展更强的敌人
     ],
 

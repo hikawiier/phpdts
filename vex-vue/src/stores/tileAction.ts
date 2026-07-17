@@ -11,7 +11,7 @@
 //   - tileActions 状态（pois / ground_items）
 //   - loadTileAction()：拉取当前格交互数据
 //   - handleExplore()：探索命令
-//   - handleSearch(iaid)：搜索 POI
+//   - handleSearch(iaid, tool_id?, skill_id?)：搜索 POI（扩展签名对齐后端 poi.search 单值 payload）
 //   - handlePickup(iid)：拾取单个道具
 //   - handlePickupAll(items)：批量拾取
 //   - handleSwitchRegion()：区域切换
@@ -32,6 +32,7 @@ import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import type { TileActions, Poi, GroundItem } from '@/types/api';
+import type { CommandResult } from '@/api/client';
 import { getPoiName } from '@/data/poi-locale';
 
 export type ModalType = 'ground' | 'poi' | null;
@@ -173,13 +174,25 @@ export const useTileActionStore = defineStore('tileAction', () => {
    * 迁移自现有 tile-action.js handleSearch()：
    *   - commandQueue.execute(poi.search)
    *   - 成功后失效 tile_actions/player_inventory + 广播 + 重新打开该 POI 模态框
+   *
+   * 扩展签名（L-9）：接受可选的 tool_id / skill_id 单值字符串，
+   * 对齐后端 obl_command_contract.php 的 poi.search payload_schema。
+   * 返回 CommandResult 供调用方（poiStore.doSearch）写入 lastSearchFeedback。
    */
-  async function handleSearch(iaid: string | number): Promise<void> {
-    debugBus.emit('action', 'search:trigger', { iaid });
+  async function handleSearch(
+    iaid: string | number,
+    tool_id?: string | null,
+    skill_id?: string | null,
+  ): Promise<CommandResult> {
+    debugBus.emit('action', 'search:trigger', { iaid, tool_id, skill_id });
+    const payload: Record<string, unknown> = { iaid: Number(iaid) };
+    if (tool_id) payload.tool_id = tool_id;
+    if (skill_id) payload.skill_id = skill_id;
+
     try {
       const result = await commandQueue.execute({
         command: 'poi.search',
-        payload: { iaid: Number(iaid) },
+        payload,
       });
       if (result.success) {
         dataManager.invalidate('tile_actions');
@@ -194,11 +207,18 @@ export const useTileActionStore = defineStore('tileAction', () => {
           isHtml: !!result.messageIsHtml,
         });
       }
+      return result;
     } catch (e) {
       debugBus.emit('error', 'search:error', {
         error: e instanceof Error ? e.message : String(e),
       });
       dataManager.broadcast('ui:toast', { type: 'error', msg: '搜索失败：' + (e instanceof Error ? e.message : String(e)) });
+      // 异常时返回失败 CommandResult，保持返回类型一致
+      return {
+        success: false,
+        error: 'NETWORK_ERROR',
+        message: e instanceof Error ? e.message : String(e),
+      };
     }
   }
 

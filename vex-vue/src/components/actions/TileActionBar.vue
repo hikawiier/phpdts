@@ -15,15 +15,18 @@
 //   [G] 脚边道具 ×N    [S] POI 名称
 //   ...
 //
-// 模态框（点击脚边道具/POI 时打开）：
+// 模态框（仅脚边道具，POI 交互由 L-9 PoiModal 接管）：
 //   - ground：道具列表 + [全部拾取]
-//   - poi：搜索按钮 + 道具列表 + [全部拾取] / 机制触发结果
+//
+// POI 入口（onCheckPoi）委托 poiStore.openModal()，由 PoiModal.vue (L-9)
+// 承载列表态 + 交互态双态切换。tileActionStore 的 POI 模态框逻辑保留但不再使用。
 //
 // 渲染策略（M4）：v-for + v-if 响应式渲染，无 innerHTML 依赖。
 // ══════════════════════════════════════════════════
 
 import { computed } from 'vue';
 import { useTileActionStore } from '@/stores/tileAction';
+import { usePoiStore } from '@/stores/poi';
 import { useMapStore } from '@/stores/map';
 import { useCraftStore } from '@/stores/craft';
 import { commandQueue } from '@/stores/command-queue';
@@ -35,6 +38,7 @@ import { UI_TEXT } from '@/data/ui-locale';
 import ExploreButton from './ExploreButton.vue';
 
 const tileActionStore = useTileActionStore();
+const poiStore = usePoiStore();
 const mapStore = useMapStore();
 const craftStore = useCraftStore();
 
@@ -73,72 +77,16 @@ const hasGround = computed<boolean>(() => groundItems.value.length > 0);
 const hasPois = computed<boolean>(() => pois.value.length > 0);
 const isEmpty = computed<boolean>(() => !hasGround.value && !hasPois.value);
 
-// ── 模态框数据 ──
+// ── 模态框数据（仅 ground 模态框；POI 模态框由 PoiModal.vue L-9 接管） ──
 const modalOpen = computed<boolean>(() => tileActionStore.modalOpen);
 const modalType = computed(() => tileActionStore.modalType);
-const modalPoi = computed<Poi | null>(() => tileActionStore.modalPoi);
 const modalTitle = computed<string>(() => tileActionStore.modalTitle);
 const modalItems = computed<GroundItem[]>(() => tileActionStore.modalItems);
 
-/** 是否显示搜索按钮 */
-const showSearchBtn = computed<boolean>(() => {
-  const poi = modalPoi.value;
-  if (!poi) return false;
-  // 可搜索且未搜索 → 显示
-  if (poi.searchable && !poi.searched) return true;
-  // 可搜索 + 可重复 + 未达上限 → 显示
-  if (poi.searchable && poi.repeatable) {
-    const limit = Number(poi.repeat_limit) || 0;
-    const count = Number(poi.search_count) || 0;
-    if (limit > 0 && count >= limit) return false;
-    return true;
-  }
-  return false;
-});
-
-/** 搜索按钮文字 */
-const searchBtnText = computed<string>(() => {
-  const poi = modalPoi.value;
-  if (!poi) return '[搜索]';
-  if (poi.mechanic) {
-    return poi.searched ? '[再触碰]' : '[触碰]';
-  }
-  return poi.searched ? '[再搜索]' : '[搜索]';
-});
-
-/** 是否已达搜索上限 */
-const searchLimitReached = computed<boolean>(() => {
-  const poi = modalPoi.value;
-  if (!poi || !poi.searchable || !poi.repeatable) return false;
-  const limit = Number(poi.repeat_limit) || 0;
-  const count = Number(poi.search_count) || 0;
-  return limit > 0 && count >= limit;
-});
-
-/** 是否显示机制触发结果（已搜索的机制型 POI） */
-const showMechanicResult = computed<boolean>(() => {
-  const poi = modalPoi.value;
-  return !!(poi && poi.mechanic && poi.searched);
-});
-
-/** 是否显示道具列表 */
+/** 是否显示道具列表（ground 模态框且非空时） */
 const showItemsList = computed<boolean>(() => {
-  if (modalType.value === 'ground') return modalItems.value.length > 0;
-  const poi = modalPoi.value;
-  if (!poi) return false;
-  // 机制型已搜索 → 不显示道具列表（只显示机制结果）
-  if (poi.mechanic && poi.searched) return false;
+  if (modalType.value !== 'ground') return false;
   return modalItems.value.length > 0;
-});
-
-/** 是否显示"无可交互内容" */
-const showEmptyContent = computed<boolean>(() => {
-  if (modalType.value !== 'poi') return false;
-  const poi = modalPoi.value;
-  if (!poi) return false;
-  if (poi.mechanic && poi.searched) return false;
-  if (poi.searchable) return false;
-  return modalItems.value.length === 0;
 });
 
 // ── 交互处理 ──
@@ -154,13 +102,9 @@ function onCheckGround(): void {
   tileActionStore.openGroundModal();
 }
 
-function onCheckPoi(iaid: string | number): void {
-  tileActionStore.openPoiModal(iaid);
-}
-
-function onSearch(): void {
-  if (!modalPoi.value) return;
-  tileActionStore.handleSearch(modalPoi.value.iaid);
+/** 点击 POI 入口 → 委托 poiStore 打开 L-9 PoiModal（双态切换由 PoiModal 内部承载） */
+function onCheckPoi(_iaid: string | number): void {
+  poiStore.openModal();
 }
 
 function onPickup(iid: string | number): void {
@@ -211,10 +155,24 @@ function itemMeta(item: GroundItem): string {
   return `${eff}/${dur}`;
 }
 
-/** POI 行的副标签（已搜索/可搜索/搜索次数） */
+/** POI 行的副标签（按 state 优先判定，缺失时 fallback 到旧字段） */
 function poiSubLabel(poi: Poi): string {
+  const state = poi.state;
+  // P1-3 新增的 state 字段优先
+  if (state === 'exhausted') return '(已搜空)';
+  if (state === 'cooldown') {
+    const remaining = Number(poi.cooldown_remaining_turn) || 0;
+    return remaining > 0 ? `(冷却: ${remaining} tick)` : '(冷却中)';
+  }
+  if (state === 'searched') return '(已搜索)';
+  if (state === 'idle') {
+    if (poi.searched) return '(已搜索)'; // 兼容旧字段
+    if (poi.searchable) return '(可搜索)';
+    return '';
+  }
+  // state 缺失时 fallback 到旧字段
   if (poi.searched) return '(已搜索)';
-  if (poi.searchable) return '可搜索';
+  if (poi.searchable) return '(可搜索)';
   return '';
 }
 
@@ -282,7 +240,7 @@ function poiCountLabel(poi: Poi): string {
       </div>
     </template>
 
-    <!-- ── 模态框（点击脚边道具/POI 时打开） ── -->
+    <!-- ── 脚边道具模态框（POI 模态框由 PoiModal.vue L-9 独立承载） ── -->
     <div
       v-if="modalOpen"
       class="modal-overlay open"
@@ -294,56 +252,32 @@ function poiCountLabel(poi: Poi): string {
           <button class="modal-close" @click="onCloseModal">[X]</button>
         </div>
         <div class="modal-body">
-          <!-- 机制触发结果（已搜索的机制型 POI） -->
-          <div v-if="showMechanicResult" class="mechanic-result">
-            <div class="mechanic-effect">
-              ✦ {{ modalPoi?.mechanic }} +{{ modalPoi?.mechanic_value || 0 }}
+          <!-- 脚边道具列表 -->
+          <template v-if="showItemsList">
+            <div
+              v-for="item in modalItems"
+              :key="item.iid"
+              class="modal-item"
+              @click="onPickup(item.iid)"
+            >
+              <span class="item-name">{{ itemDisplayName(item) }}</span>
+              <span v-if="showItemMeta(item)" class="item-meta">
+                {{ getItmkName(item.itmk) }} {{ itemMeta(item) }}
+              </span>
             </div>
             <div class="modal-footer">
-              <button class="term-btn" @click="onCloseModal">[确认]</button>
-            </div>
-          </div>
-
-          <template v-else>
-            <!-- 搜索按钮 -->
-            <div v-if="searchLimitReached" class="tile-empty" style="margin-bottom:8px;">
-              已达搜索上限
-            </div>
-            <div v-else-if="showSearchBtn" style="margin-bottom:8px;">
               <button
-                class="term-btn block"
-                :disabled="!commandQueue.canExecute('poi.search')"
-                @click="onSearch"
-              >{{ searchBtnText }}</button>
-            </div>
-
-            <!-- 道具列表 -->
-            <template v-if="showItemsList">
-              <div
-                v-for="item in modalItems"
-                :key="item.iid"
-                class="modal-item"
-                @click="onPickup(item.iid)"
-              >
-                <span class="item-name">{{ itemDisplayName(item) }}</span>
-                <span v-if="showItemMeta(item)" class="item-meta">
-                  {{ getItmkName(item.itmk) }} {{ itemMeta(item) }}
-                </span>
-              </div>
-              <div class="modal-footer">
-                <button
-                  class="term-btn"
-                  :disabled="!commandQueue.canExecute('item.pickup')"
-                  @click="onPickupAll"
-                >[全部拾取]</button>
-              </div>
-            </template>
-
-            <!-- 无可交互内容 -->
-            <div v-else-if="showEmptyContent" class="tile-empty">
-              无可交互内容
+                class="term-btn"
+                :disabled="!commandQueue.canExecute('item.pickup')"
+                @click="onPickupAll"
+              >[全部拾取]</button>
             </div>
           </template>
+
+          <!-- 无可交互内容 -->
+          <div v-else class="tile-empty">
+            无可交互内容
+          </div>
         </div>
       </div>
     </div>

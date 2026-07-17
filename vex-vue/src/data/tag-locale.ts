@@ -17,6 +17,17 @@ export const TAG_LOCALE: Record<string, string> = {
   tag_equippable: '可装备',
   tag_usable: '可使用',
   tag_weapon_throwing: '投掷武器',
+
+  // ─── 性质描述 Tag（任务3/4 内容扩充）──
+  tag_heavy_weight: '重物',
+  tag_tool: '工具',
+  tag_tool_crowbar: '撬棍类工具',
+  tag_tool_vision: '视觉类工具',
+  tag_tool_light: '照明类工具',
+  tag_tool_igniter: '点火类工具',
+  tag_tool_lockpick: '开锁类工具',
+  tag_conductor: '导电材料',
+  tag_perishable: '易腐物品',
 };
 
 /**

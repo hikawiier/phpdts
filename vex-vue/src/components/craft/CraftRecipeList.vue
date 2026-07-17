@@ -218,7 +218,7 @@ function materialDesc(mat: CraftMaterial): string {
               >
                 <span v-if="currentRecipeId === recipe.recipe_id" class="precise-marker">*</span>
                 <span v-else class="marker-space"></span>
-                <span class="recipe-name" @click="onRecipeNameClick(recipe, 'craftable')">{{ getRecipeName(recipe.recipe_id) }}</span>
+                <span class="recipe-name" @click="onRecipeNameClick(recipe, 'craftable')">{{ getRecipeName(recipe.recipe_id, recipe.name) }}</span>
                 <span class="expand-toggle dim" @click.stop="toggleRecipeExpand(recipe.recipe_id)">
                   {{ expandedRecipes.has(recipe.recipe_id) ? '-' : '+' }}
                 </span>
@@ -267,7 +267,7 @@ function materialDesc(mat: CraftMaterial): string {
                 class="recipe-row partial"
               >
                 <span class="marker-space"></span>
-                <span class="recipe-name" @click="onRecipeNameClick(recipe, 'partial')">{{ getRecipeName(recipe.recipe_id) }}</span>
+                <span class="recipe-name" @click="onRecipeNameClick(recipe, 'partial')">{{ getRecipeName(recipe.recipe_id, recipe.name) }}</span>
                 <span class="expand-toggle dim" @click.stop="toggleRecipeExpand(recipe.recipe_id)">
                   {{ expandedRecipes.has(recipe.recipe_id) ? '-' : '+' }}
                 </span>
@@ -316,7 +316,7 @@ function materialDesc(mat: CraftMaterial): string {
                 class="recipe-row uncraftable"
               >
                 <span class="marker-space"></span>
-                <span class="recipe-name dim" @click="onRecipeNameClick(recipe, 'unrelated')">{{ getRecipeName(recipe.recipe_id) }}</span>
+                <span class="recipe-name dim" @click="onRecipeNameClick(recipe, 'unrelated')">{{ getRecipeName(recipe.recipe_id, recipe.name) }}</span>
                 <span class="expand-toggle dim" @click.stop="toggleRecipeExpand(recipe.recipe_id)">
                   {{ expandedRecipes.has(recipe.recipe_id) ? '-' : '+' }}
                 </span>

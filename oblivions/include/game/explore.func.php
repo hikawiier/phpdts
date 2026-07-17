@@ -30,7 +30,7 @@ if (!defined('IN_GAME')) {
  *
  * @param int   $pgroup 当前区域
  * @param int   $pls    当前格
- * @param array &$pdata 玩家数据（预留：读取视野等级等加成）
+ * @param array &$pdata 玩家数据（读取技能等级影响发现上限）
  */
 function obl_update_vision($pgroup, $pls, &$pdata) {
     // 计算视野范围（BFS）
@@ -40,34 +40,80 @@ function obl_update_vision($pgroup, $pls, &$pdata) {
     obl_clear_fog($pgroup, $visible_tiles);
 
     // 子功能 2：发现道具（道具可操作性）
-    obl_discover_items($pgroup, $visible_tiles);
+    obl_discover_items($pgroup, $visible_tiles, $pdata);
 }
 
 // ----------------------------------------------------------------
-// 4.1c 道具发现（记忆范围随机抽取）
+// 4.1b 发现数量技能化（G-1 scavenge 技能影响发现上限）
 // ----------------------------------------------------------------
 
 /**
- * 根据记忆范围，从视野内未发现道具中随机抽取 N 个设为 discovered
+ * 计算玩家本次探索的道具发现上限
+ *
+ * 公式：discover_base + discover_per_level * scavenge_skill_level
+ *
+ * 兜底策略（任一条件不满足时回退 memory_range）：
+ *   - $pdata['skillpara'] 缺失
+ *   - scavenge 技能未注册
+ *   - scavenge 技能等级为 0（与 Lv0 行为一致：使用 discover_base）
+ *
+ * 注意：Lv0 玩家与"技能系统未加载"行为相同——均返回 discover_base
+ * （与 memory_range 对齐，避免 G-1 落地前后行为不一致）。
+ *
+ * @param array &$pdata 玩家数据（读取 skillpara.scavenge.level）
+ * @return int 发现数量上限（>=0）
+ */
+function obl_get_discovery_limit(&$pdata) {
+    $cfg = obl_get_config();
+    $discover_base      = (int)($cfg['discover_base'] ?? 3);
+    $discover_per_level = (int)($cfg['discover_per_level'] ?? 1);
+    $memory_range       = (int)($cfg['memory_range'] ?? 3);
+
+    // 兜底：skillpara 缺失 → 回退 memory_range
+    if (!isset($pdata['skillpara']) || !is_array($pdata['skillpara'])) {
+        return $memory_range;
+    }
+
+    // 兜底：scavenge 技能未注册 → 回退 memory_range
+    if (!isset($pdata['skillpara']['scavenge']) || !is_array($pdata['skillpara']['scavenge'])) {
+        return $memory_range;
+    }
+
+    $scavenge_level = isset($pdata['skillpara']['scavenge']['level'])
+        ? (int)$pdata['skillpara']['scavenge']['level']
+        : 0;
+    if ($scavenge_level < 0) $scavenge_level = 0;
+
+    return $discover_base + $discover_per_level * $scavenge_level;
+}
+
+// ----------------------------------------------------------------
+// 4.1c 道具发现（记忆范围随机抽取，技能化发现上限）
+// ----------------------------------------------------------------
+
+/**
+ * 根据发现上限，从视野内未发现道具中随机抽取 N 个设为 discovered
  *
  * 规则：
- * - 每次探索最多发现 memory_range 个道具（配置项，基础值 3）
+ * - 每次探索最多发现 obl_get_discovery_limit($pdata) 个道具
+ *   （由 G-1 scavenge 技能等级驱动；技能系统未加载时回退 memory_range）
  * - 从视野范围内所有 discovered=0 的道具中随机抽取
  * - 距离 <= 1（脚下+相邻格）→ discovered=1（正常可见）
  * - 距离 > 1（视野边缘格）→ discovered=2（近视/拟态怪）
  * - 仅更新 discovered=0 的道具（已发现的不降级）
  * - 同一格重复探索可继续发现剩余未发现道具
  *
- * @param int   $pgroup       当前区域
+ * @param int   $pgroup        当前区域
  * @param array $visible_tiles [pls => ['distance' => int]]
+ * @param array &$pdata        玩家数据（读取技能等级影响发现上限）
  */
-function obl_discover_items($pgroup, $visible_tiles) {
+function obl_discover_items($pgroup, $visible_tiles, &$pdata) {
     global $db, $tablepre;
 
     if (empty($visible_tiles)) return;
 
-    $cfg = obl_get_config();
-    $memory_range = (int)($cfg['memory_range'] ?? 3);
+    $discover_limit = obl_get_discovery_limit($pdata);
+    if ($discover_limit <= 0) return;
 
     $pgroup_i = (int)$pgroup;
 
@@ -86,9 +132,9 @@ function obl_discover_items($pgroup, $visible_tiles) {
 
     if (empty($undiscovered)) return;
 
-    // 2. 随机抽取 memory_range 个
+    // 2. 随机抽取 discover_limit 个
     shuffle($undiscovered);
-    $to_discover = array_slice($undiscovered, 0, $memory_range);
+    $to_discover = array_slice($undiscovered, 0, $discover_limit);
 
     // 3. 按距离分组更新 discovered 状态
     $d1_iids = [];  // discovered=1
@@ -186,162 +232,58 @@ function obl_explore(&$pdata, $skip_sp_check = false) {
 }
 
 // ----------------------------------------------------------------
-// 4.4 探索后钩子（预留）
+// 4.4 探索后钩子（三段式占位骨架）
 // ----------------------------------------------------------------
 
 /**
- * 探索后钩子（预留）
- * 后续在此实现：事件点触发、地板属性效果、成就判定等
+ * 探索后钩子（三段式占位骨架）
+ *
+ * 三个扩展点占位（待对应子系统落地后填充）：
+ *   1. obl_trigger_tile_event_points($pdata)  — 事件点触发（待事件系统落地）
+ *   2. obl_apply_tile_floor_effects($pdata)   — 地板属性效果（待地板属性系统落地）
+ *   3. obl_notify_explore_completes_quests($pdata) — 任务进度通知（待任务系统落地）
+ *
+ * 占位函数未定义时通过 function_exists 守卫跳过，避免崩溃。
+ * 原型阶段每次调用末尾 emit 一条 explore.hook_completed 调试日志。
  *
  * @param array &$pdata 玩家数据
  */
 function obl_post_explore_hook(&$pdata) {
-    // 预留：未来扩展
+    global $obl_log;
+
+    // 1. 事件点触发（占位，待事件系统落地）
+    if (function_exists('obl_trigger_tile_event_points')) {
+        obl_trigger_tile_event_points($pdata);
+    }
+
+    // 2. 地板属性效果（占位，待地板属性系统落地）
+    if (function_exists('obl_apply_tile_floor_effects')) {
+        obl_apply_tile_floor_effects($pdata);
+    }
+
+    // 3. 任务进度通知（占位，待任务系统落地）
+    if (function_exists('obl_notify_explore_completes_quests')) {
+        obl_notify_explore_completes_quests($pdata);
+    }
+
+    // 调试日志：钩子完成
+    if (isset($obl_log) && $obl_log) {
+        $obl_log->emit('explore.hook_completed', 'explore');
+    }
 }
 
 // ----------------------------------------------------------------
-// 4.5 搜索建筑物
+// 4.5 搜索建筑物（已迁移到 E-10）
 // ----------------------------------------------------------------
-
-/**
- * 搜索建筑物：掉落表结算 + 机制触发
- *
- * @param int   $iaid   建筑物实例 ID（bra_oblmappoi.iaid）
- * @param array &$pdata 玩家数据
- */
-function obl_search_poi($iaid, &$pdata) {
-    global $db, $tablepre, $obl_log, $obl_error_log;
-
-    $iaid = (int)$iaid;
-    $cur_pgroup = (int)$pdata['pgroup'];
-    $cur_pls = (int)$pdata['pls'];
-
-    // 1. 读取 POI 实例
-    $result = $db->query("SELECT * FROM {$tablepre}oblmappoi WHERE iaid='$iaid'");
-    if (!$db->num_rows($result)) {
-        $obl_log->emit('search.not_found', 'search');
-        return;
-    }
-    $poi = $db->fetch_array($result);
-
-    // 2. 位置检查：只能搜索当前格的建筑物
-    if ((int)$poi['pgroup'] != $cur_pgroup || (int)$poi['pls'] != $cur_pls) {
-        $obl_log->emit('search.not_adjacent', 'search');
-        return;
-    }
-
-    // 3. 载入 POI 模板
-    $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
-    $poi_id = $poi['poi_id'];
-    if (!isset($poi_table[$poi_id])) {
-        // 数据配置错误：POI 实例存在但模板表无对应条目，迁移到 obl_error_log
-        // 避免被 obl_log 的 200 条上限挤掉，前端通过错误 Toast 感知
-        if (isset($obl_error_log) && $obl_error_log) {
-            $obl_error_log->emit('search.data_error', array(
-                'poi_id' => $poi_id,
-                'iaid'   => $iaid,
-            ), 'command');
-        }
-        return;
-    }
-    $template = $poi_table[$poi_id];
-
-    // 4. 可搜索检查
-    if (empty($template['searchable'])) {
-        $obl_log->emit('search.not_searchable', 'search', [
-            'poi_name' => $template['name'],
-        ]);
-        return;
-    }
-
-    // 5. 重复搜索检查（v1 简化：不检查冷却，允许无限重复搜索）
-    // 后续版本在此加入 repeat_limit / repeat_cooldown 判定
-
-    // 6. 选择掉落表
-    $poi_loot = include GAME_ROOT . './oblivions/gamedata/poi_loot.php';
-    $loot_config = isset($poi_loot[$poi_id]) ? $poi_loot[$poi_id] : [];
-
-    $is_repeat = !empty($poi['searched']);
-    $loot_table = [];
-
-    if ($is_repeat && isset($loot_config['repeat_loot'])) {
-        $loot_table = $loot_config['repeat_loot'];
-    } elseif (!$is_repeat && isset($loot_config['loot'])) {
-        $loot_table = $loot_config['loot'];
-    } elseif ($is_repeat && !isset($loot_config['repeat_loot'])) {
-        // 一次性建筑物已搜索过
-        $obl_log->emit('search.already_searched', 'search', [
-            'poi_name' => $template['name'],
-        ]);
-        return;
-    }
-
-    // 7. 机制触发型 POI
-    $has_mechanic = !empty($template['mechanic']);
-    if ($has_mechanic) {
-        obl_execute_mechanic($template, $pdata);
-    }
-
-    // 8. 掉落表结算
-    $item_table = include GAME_ROOT . './oblivions/gamedata/item_table.php';
-    $dropped_items = [];
-
-    foreach ($loot_table as $drop) {
-        $rate = isset($drop['rate']) ? (float)$drop['rate'] : 0;
-        if ($rate <= 0) continue;
-        if (mt_rand() / mt_getrandmax() > $rate) continue;
-
-        $item_id = isset($drop['item_id']) ? (string)$drop['item_id'] : '';
-        if ($item_id === '' || !isset($item_table[$item_id])) continue;
-
-        // count 可以是单值或 [min,max] 区间
-        $count = isset($drop['count']) ? $drop['count'] : 1;
-        if (is_array($count)) {
-            $lo = isset($count[0]) ? (int)$count[0] : 1;
-            $hi = isset($count[1]) ? (int)$count[1] : $lo;
-            if ($hi < $lo) { $tmp = $lo; $lo = $hi; $hi = $tmp; }
-            $n = rand($lo, $hi);
-        } else {
-            $n = (int)$count;
-        }
-
-        for ($i = 0; $i < $n; $i++) {
-            $tpl = $item_table[$item_id];
-            // 模板名称属于前端 locale；实例 itm 只保留自定义名称。
-            $itm     = '';
-            $itmk    = $db->escape_string((string)$tpl['itmk']);
-            $itme    = (int)$tpl['itme'];
-            $itms    = $db->escape_string((string)$tpl['itms']);
-            $itmsk   = $db->escape_string((string)$tpl['itmsk']);
-            $itmpara = $db->escape_string((string)$tpl['itmpara']);
-            $item_id_e = $db->escape_string($item_id);
-
-            $db->query("INSERT INTO {$tablepre}oblmapitem
-                        (pgroup, pls, iaid, item_id, itm, itmk, itme, itms, itmsk, itmpara, discovered, fake_item_id, is_trap)
-                        VALUES ('$cur_pgroup', '$cur_pls', '$iaid', '$item_id_e', '$itm', '$itmk', $itme, '$itms', '$itmsk', '$itmpara', 1, '', 0)");
-
-            $dropped_items[] = $tpl['itm'];
-        }
-    }
-
-    // 9. 更新 POI 状态（原子递增 search_count，避免并发丢计数）
-    $db->query("UPDATE {$tablepre}oblmappoi
-                SET searched=1, search_count=search_count+1
-                WHERE iaid='$iaid'");
-
-    // 10. 日志
-    if ($has_mechanic) {
-        $obl_log->emit('search.mechanic_triggered', 'search', [
-            'poi_name' => $template['name'],
-        ]);
-        // 机制效果日志由 obl_execute_mechanic 写入
-    } else {
-        $obl_log->emit('search.result', 'search', [
-            'poi_name' => $template['name'],
-            'items'    => $dropped_items,
-        ]);
-    }
-}
+// 旧 obl_search_poi($iaid, &$pdata) 实现已整体迁移到 E-10：
+//   - 主入口：oblivions/include/game/poi/poi.search.func.php
+//     新签名 obl_search_poi($pdata, $poi, $tool_id = null, $skill_id = null)
+//     接收已查到的 POI 实例行 + 玩家数据引用，而非裸 iaid
+//   - 事件池分发：oblivions/include/game/poi/poi.event.func.php
+//   - 命令分发层 obl_command_handlers.php 改为先按 iaid 查 POI 实例 + 位置校验，
+//     再调用新签名
+// 本文件保留 obl_execute_mechanic 机制分发框架（life_totem/skill_totem 等机制型 POI 仍走该路径），
+// 与 E-10 三档判定并列。
 
 // ----------------------------------------------------------------
 // 4.6 机制分发框架
