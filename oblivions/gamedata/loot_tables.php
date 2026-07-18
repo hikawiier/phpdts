@@ -844,4 +844,26 @@ return [
             ],
         ],
     ],
+
+    // ─── 上锁宝箱掉落（F-6 lockpick_open_chest 效果专用）──────────────
+    // 由 poi_interact_effect_open_container 调用 F-4 引擎掷骰，
+    // 物化到 oblmapitem（source_iaid = POI.iaid, discovered=1）。
+    // 一次性开箱（POI state 同步改为 'exhausted'）。
+    'locked_chest_loot' => [
+        'name' => '上锁宝箱掉落',
+        'durability_decay' => true,
+        'groups' => [
+            [
+                'chance' => 1.0,
+                'entries' => [
+                    ['item_id' => 'scrap_metal',     'weight' => 30, 'count' => [2, 5]],
+                    ['item_id' => 'supply_pack',     'weight' => 25, 'count' => [1, 3]],
+                    ['item_id' => 'health_potion',   'weight' => 15, 'count' => 1],
+                    ['item_id' => 'stamina_potion',  'weight' => 15, 'count' => 1],
+                    ['item_id' => 'rusty_pipe',      'weight' => 10, 'count' => 1],
+                    ['item_id' => 'scrap_vest',      'weight' => 5,  'count' => 1],
+                ],
+            ],
+        ],
+    ],
 ];

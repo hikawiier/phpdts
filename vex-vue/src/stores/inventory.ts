@@ -29,15 +29,15 @@ import { debugBus } from '@/composables/useDebugBus';
 import { usePlayerStore } from '@/stores/player';
 import type { PlayerInventory, InventoryItem, EquipmentSlot } from '@/types/api';
 
-/** 装备槽位定义（与现有 inventory.js eqSlots 一致） */
+/** 装备槽位定义（key 对齐后端 player.func.php equip_para_keys；label 为中文显示名） */
 export const EQUIPMENT_SLOTS: ReadonlyArray<{ key: string; label: string }> = [
-  { key: 'wep', label: 'WPN' },
-  { key: 'wep2', label: 'SUB' },
-  { key: 'arb', label: 'BOD' },
-  { key: 'arh', label: 'HED' },
-  { key: 'ara', label: 'ACC' },
-  { key: 'arf', label: 'FT' },
-  { key: 'art', label: 'OTH' },
+  { key: 'wep',  label: '主武器' },
+  { key: 'wep2', label: '副武器' },
+  { key: 'db',   label: '护甲' },
+  { key: 'dh',   label: '头部防具' },
+  { key: 'da',   label: '手部防具' },
+  { key: 'df',   label: '足部防具' },
+  { key: 'ac',   label: '饰品' },
 ];
 
 export const useInventoryStore = defineStore('inventory', () => {
@@ -169,6 +169,116 @@ export const useInventoryStore = defineStore('inventory', () => {
   }
 
   /**
+   * 装备道具（item.equip 命令）
+   *
+   * 后端流程：tag_equippable 校验 → 耐久校验 → 自动槽位判定 →
+   * 装备交换（旧装备放入背包空位）→ 重建装备技能 → emit equip.success
+   *
+   * @param slot      背包槽位号（1~maxslots，不接受 itm0=0）
+   * @param equipSlot 可选，显式指定装备槽位（'wep'/'wep2'/...）；不传时由后端按 itmk 自动映射
+   */
+  async function handleEquip(slot: number, equipSlot?: string): Promise<void> {
+    debugBus.emit('action', 'equip:trigger', { slot, equipSlot });
+    try {
+      const result = await commandQueue.execute({
+        command: 'item.equip',
+        payload: { slot: Number(slot), ...(equipSlot ? { equip_slot: equipSlot } : {}) },
+      });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '装备失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('player_info');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'equip:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '装备失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  /**
+   * 卸下装备（item.unequip 命令）
+   *
+   * 后端流程：槽位非空校验 → 背包空位校验 → 装备还原为道具实例放入背包 →
+   * 清空装备字段 → 重建装备技能 → emit unequip.success
+   *
+   * @param equipSlot 装备槽位名（'wep'/'wep2'/'db'/'dh'/'da'/'df'/'ac'）
+   */
+  async function handleUnequip(equipSlot: string): Promise<void> {
+    debugBus.emit('action', 'unequip:trigger', { equipSlot });
+    try {
+      const result = await commandQueue.execute({
+        command: 'item.unequip',
+        payload: { equip_slot: equipSlot },
+      });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '卸下失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('player_info');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'unequip:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '卸下失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  /**
+   * 交换主副武器（item.swap_weapon 命令）
+   *
+   * 后端流程：wep/wep2 均空校验 → 交换 7 个装备字段 → 重建装备技能 → emit swap_weapon.success
+   * 副武器不提供属性加成，交换后 effective_att 自动反映新主武器加成。
+   */
+  async function handleSwapWeapon(): Promise<void> {
+    debugBus.emit('action', 'swap_weapon:trigger', {});
+    try {
+      const result = await commandQueue.execute({
+        command: 'item.swap_weapon',
+        payload: {},
+      });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '交换失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('player_info');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'swap_weapon:error', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '交换失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  /**
    * 堆叠合并（inventory.organize 命令）
    *
    * 后端流程：将 itm0 中的道具尝试与背包内同类堆叠，腾出空槽
@@ -280,6 +390,9 @@ export const useInventoryStore = defineStore('inventory', () => {
     // 命令处理
     handleDiscard,
     handleUseItem,
+    handleEquip,
+    handleUnequip,
+    handleSwapWeapon,
     handleOrganize,
     handleDiscardItm0,
     // 事件监听

@@ -165,6 +165,8 @@ function poiSubLabel(poi: Poi): string {
     return remaining > 0 ? `(冷却: ${remaining} tick)` : '(冷却中)';
   }
   if (state === 'searched') return '(已搜索)';
+  if (state === 'locked') return '(已上锁)';
+  if (state === 'ignited') return '(已点燃)';
   if (state === 'idle') {
     if (poi.searched) return '(已搜索)'; // 兼容旧字段
     if (poi.searchable) return '(可搜索)';

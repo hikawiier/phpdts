@@ -30,12 +30,16 @@ export const COMMAND_REGISTRY: Record<string, CommandSpec> = {
   'map.move':        { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['voluntary_move'] },
   'map.explore':     { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'poi.search':      { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
+  'poi.interact':    { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'world.wait':      { mode: 'explore', advancesTick: true,  itm0Allowed: true,  readOnly: false, requiredCapabilities: ['time_pass'] },
 
   // ── 探索类（advancesTick=false） ──
   'item.pickup':        { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
   'item.discard':       { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
   'item.use':           { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'item.equip':         { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'item.unequip':       { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
+  'item.swap_weapon':   { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
   'inventory.organize': { mode: 'explore', advancesTick: false, itm0Allowed: true,  readOnly: false, requiredCapabilities: ['free_mutation'] },
   'craft.execute':      { mode: 'explore', advancesTick: false, itm0Allowed: false, readOnly: false, requiredCapabilities: ['free_mutation'] },
 

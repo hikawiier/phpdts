@@ -27,6 +27,10 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             }
             obl_search_poi($pdata, $poi, $tool_id, $skill_id);
             break;
+        case 'poi.interact':
+            // F-6 道具交互：复用 obl_lookup_poi_for_search 做位置校验，再调用 poi_interact 主流程
+            obl_command_handler_poi_interact($payload, $pdata);
+            break;
         case 'world.wait':
             global $obl_log;
             if (isset($obl_log) && $obl_log) $obl_log->emit('wait.success', 'world');
@@ -39,6 +43,15 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             break;
         case 'item.use':
             obl_command_handler_item_use($payload, $pdata);
+            break;
+        case 'item.equip':
+            obl_command_handler_item_equip($payload, $pdata);
+            break;
+        case 'item.unequip':
+            obl_command_handler_item_unequip($payload, $pdata);
+            break;
+        case 'item.swap_weapon':
+            obl_command_handler_item_swap_weapon($payload, $pdata);
             break;
         case 'inventory.organize':
             obl_command_handler_inventory_organize($pdata);
@@ -134,6 +147,76 @@ function obl_command_handler_item_use($payload, &$pdata) {
         return;
     }
     item_use($slot, $pdata);
+}
+
+/**
+ * poi.interact 命令 handler
+ *
+ * 流程：
+ *   1. itm0_pending 防御性检查（合约 itm0_allowed=false，bus 已拦截）
+ *   2. 复用 obl_lookup_poi_for_search 做 POI 实例查询 + 位置校验
+ *   3. 调用 poi_interact($slot, $poi, $pdata) 主流程
+ *
+ * @param array $payload {slot, iaid}
+ * @param array &$pdata
+ * @return void
+ */
+function obl_command_handler_poi_interact($payload, &$pdata) {
+    $slot = isset($payload['slot']) ? (int)$payload['slot'] : 0;
+    $iaid = isset($payload['iaid']) ? (int)$payload['iaid'] : 0;
+
+    // itm0_pending 防御性检查（合约 itm0_allowed=false，bus 已在 gate 层拦截）
+    $itm0_pending = obl_command_itm0_pending($pdata);
+    if ($itm0_pending) {
+        global $obl_log;
+        if (isset($obl_log) && $obl_log) $obl_log->emit('system.itm0_pending', 'system');
+        return;
+    }
+
+    // 复用 poi.search 的位置校验：SELECT oblmappoi + pgroup/pls 一致性
+    $poi = obl_lookup_poi_for_search($iaid, $pdata);
+    if ($poi === null) {
+        // lookup 函数已 emit 错误日志（not_found / not_adjacent）
+        return;
+    }
+
+    poi_interact($slot, $poi, $pdata);
+}
+
+function obl_command_handler_item_equip($payload, &$pdata) {
+    $slot = isset($payload['slot']) ? (int)$payload['slot'] : 0;
+    $equip_slot = isset($payload['equip_slot']) ? (string)$payload['equip_slot'] : '';
+    if ($equip_slot === '') $equip_slot = null;
+    // itm0_pending 防御性检查：item.equip 合约 itm0_allowed=false，bus 已在 gate 层拦截，
+    // 此处保留与 item.use 一致的防御性日志，避免任何绕过 gate 的路径静默执行。
+    $itm0_pending = obl_command_itm0_pending($pdata);
+    if ($itm0_pending) {
+        global $obl_log;
+        if (isset($obl_log) && $obl_log) $obl_log->emit('system.itm0_pending', 'system');
+        return;
+    }
+    item_equip($slot, $equip_slot, $pdata);
+}
+
+function obl_command_handler_item_unequip($payload, &$pdata) {
+    $equip_slot = isset($payload['equip_slot']) ? (string)$payload['equip_slot'] : '';
+    if ($equip_slot === '') {
+        global $obl_log;
+        if (isset($obl_log) && $obl_log) $obl_log->emit('unequip.invalid_slot', 'unequip');
+        return;
+    }
+    item_unequip($equip_slot, $pdata);
+}
+
+function obl_command_handler_item_swap_weapon($payload, &$pdata) {
+    // itm0_pending 防御性检查：item.swap_weapon 合约 itm0_allowed=false
+    $itm0_pending = obl_command_itm0_pending($pdata);
+    if ($itm0_pending) {
+        global $obl_log;
+        if (isset($obl_log) && $obl_log) $obl_log->emit('system.itm0_pending', 'system');
+        return;
+    }
+    item_swap_weapon($pdata);
 }
 
 function obl_command_handler_inventory_organize(&$pdata) {

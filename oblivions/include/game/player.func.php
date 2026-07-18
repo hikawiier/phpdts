@@ -157,7 +157,7 @@ function obl_get_pids_in_tile($pgroup, $pls, $exclude_pid = 0): array {
  * - tacpara：策略槽 {"slots": [...]}
  * - skillpara：技能数据 {"skills": [...]}
  * - oblpara：杂项数据 {}
- * - 装备 para 字段（weppara/wep2para/arbpara/arhpara/arapara/arfpara/artpara）：JSON 对象
+ * - 装备 para 字段（weppara/wep2para/dbpara/dhpara/dapara/dfpara/acpara）：JSON 对象
  *
  * @param array &$pdata 引用传递，直接修改
  * @return void
@@ -215,7 +215,7 @@ function obl_format_playerdata(&$pdata) {
 	$pdata['oblpara'] = $oblpara;
 
 	// 装备 para 字段（7 槽）：解码为数组，空值返回空数组
-	$equip_para_keys = array('weppara', 'wep2para', 'arbpara', 'arhpara', 'arapara', 'arfpara', 'artpara');
+	$equip_para_keys = array('weppara', 'wep2para', 'dbpara', 'dhpara', 'dapara', 'dfpara', 'acpara');
 	foreach ($equip_para_keys as $key) {
 		$para = isset($pdata[$key]) ? $pdata[$key] : '';
 		if (empty($para)) {
@@ -251,7 +251,7 @@ function obl_save_player($pdata) {
 		$pdata[$key] = is_array($pdata[$key]) ? json_encode($pdata[$key], JSON_UNESCAPED_UNICODE) : (string)$pdata[$key];
 	}
 	// 装备 para 字段编码
-	$equip_para_keys = array('weppara', 'wep2para', 'arbpara', 'arhpara', 'arapara', 'arfpara', 'artpara');
+	$equip_para_keys = array('weppara', 'wep2para', 'dbpara', 'dhpara', 'dapara', 'dfpara', 'acpara');
 	foreach ($equip_para_keys as $key) {
 		$pdata[$key] = is_array($pdata[$key]) ? json_encode($pdata[$key], JSON_UNESCAPED_UNICODE) : (string)$pdata[$key];
 	}
@@ -266,11 +266,11 @@ function obl_save_player($pdata) {
 		'lvl', 'exp', 'state',
 		'wepid', 'wep', 'wepk', 'wepe', 'weps', 'wepsk', 'weppara',
 		'wep2id', 'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para',
-		'arbid', 'arb', 'arbk', 'arbe', 'arbs', 'arbsk', 'arbpara',
-		'arhid', 'arh', 'arhk', 'arhe', 'arhs', 'arhsk', 'arhpara',
-		'araid', 'ara', 'arak', 'arae', 'aras', 'arask', 'arapara',
-		'arfid', 'arf', 'arfk', 'arfe', 'arfs', 'arfsk', 'arfpara',
-		'artid', 'art', 'artk', 'arte', 'arts', 'artsk', 'artpara',
+		'dbid', 'db', 'dbk', 'dbe', 'dbs', 'dbsk', 'dbpara',
+		'dhid', 'dh', 'dhk', 'dhe', 'dhs', 'dhsk', 'dhpara',
+		'daid', 'da', 'dak', 'dae', 'das', 'dask', 'dapara',
+		'dfid', 'df', 'dfk', 'dfe', 'dfs', 'dfsk', 'dfpara',
+		'acid', 'ac', 'ack', 'ace', 'acs', 'acsk', 'acpara',
 		'itempara', 'itemmaxslots',
 		'tacpara', 'skillpara', 'oblpara', 'discovered',
 	);
@@ -379,41 +379,41 @@ function obl_create_player_record($ndata) {
 		'wep2s'        => isset($ndata['wep2s']) ? $ndata['wep2s'] : '0',
 		'wep2sk'       => isset($ndata['wep2sk']) ? $ndata['wep2sk'] : '',
 		'wep2para'     => isset($ndata['wep2para']) ? $ndata['wep2para'] : '',
-		'arbid'        => isset($ndata['arbid']) ? $ndata['arbid'] : '',
-		'arb'          => isset($ndata['arb']) ? $ndata['arb'] : '',
-		'arbk'         => isset($ndata['arbk']) ? $ndata['arbk'] : '',
-		'arbe'         => isset($ndata['arbe']) ? (int)$ndata['arbe'] : 0,
-		'arbs'         => isset($ndata['arbs']) ? $ndata['arbs'] : '0',
-		'arbsk'        => isset($ndata['arbsk']) ? $ndata['arbsk'] : '',
-		'arbpara'      => isset($ndata['arbpara']) ? $ndata['arbpara'] : '',
-		'arhid'        => isset($ndata['arhid']) ? $ndata['arhid'] : '',
-		'arh'          => isset($ndata['arh']) ? $ndata['arh'] : '',
-		'arhk'         => isset($ndata['arhk']) ? $ndata['arhk'] : '',
-		'arhe'         => isset($ndata['arhe']) ? (int)$ndata['arhe'] : 0,
-		'arhs'         => isset($ndata['arhs']) ? $ndata['arhs'] : '0',
-		'arhsk'        => isset($ndata['arhsk']) ? $ndata['arhsk'] : '',
-		'arhpara'      => isset($ndata['arhpara']) ? $ndata['arhpara'] : '',
-		'araid'        => isset($ndata['araid']) ? $ndata['araid'] : '',
-		'ara'          => isset($ndata['ara']) ? $ndata['ara'] : '',
-		'arak'         => isset($ndata['arak']) ? $ndata['arak'] : '',
-		'arae'         => isset($ndata['arae']) ? (int)$ndata['arae'] : 0,
-		'aras'         => isset($ndata['aras']) ? $ndata['aras'] : '0',
-		'arask'        => isset($ndata['arask']) ? $ndata['arask'] : '',
-		'arapara'      => isset($ndata['arapara']) ? $ndata['arapara'] : '',
-		'arfid'        => isset($ndata['arfid']) ? $ndata['arfid'] : '',
-		'arf'          => isset($ndata['arf']) ? $ndata['arf'] : '',
-		'arfk'         => isset($ndata['arfk']) ? $ndata['arfk'] : '',
-		'arfe'         => isset($ndata['arfe']) ? (int)$ndata['arfe'] : 0,
-		'arfs'         => isset($ndata['arfs']) ? $ndata['arfs'] : '0',
-		'arfsk'        => isset($ndata['arfsk']) ? $ndata['arfsk'] : '',
-		'arfpara'      => isset($ndata['arfpara']) ? $ndata['arfpara'] : '',
-		'artid'        => isset($ndata['artid']) ? $ndata['artid'] : '',
-		'art'          => isset($ndata['art']) ? $ndata['art'] : '',
-		'artk'         => isset($ndata['artk']) ? $ndata['artk'] : '',
-		'arte'         => isset($ndata['arte']) ? (int)$ndata['arte'] : 0,
-		'arts'         => isset($ndata['arts']) ? $ndata['arts'] : '0',
-		'artsk'        => isset($ndata['artsk']) ? $ndata['artsk'] : '',
-		'artpara'      => isset($ndata['artpara']) ? $ndata['artpara'] : '',
+		'dbid'         => isset($ndata['dbid']) ? $ndata['dbid'] : '',
+		'db'           => isset($ndata['db']) ? $ndata['db'] : '',
+		'dbk'          => isset($ndata['dbk']) ? $ndata['dbk'] : '',
+		'dbe'          => isset($ndata['dbe']) ? (int)$ndata['dbe'] : 0,
+		'dbs'          => isset($ndata['dbs']) ? $ndata['dbs'] : '0',
+		'dbsk'         => isset($ndata['dbsk']) ? $ndata['dbsk'] : '',
+		'dbpara'       => isset($ndata['dbpara']) ? $ndata['dbpara'] : '',
+		'dhid'         => isset($ndata['dhid']) ? $ndata['dhid'] : '',
+		'dh'           => isset($ndata['dh']) ? $ndata['dh'] : '',
+		'dhk'          => isset($ndata['dhk']) ? $ndata['dhk'] : '',
+		'dhe'          => isset($ndata['dhe']) ? (int)$ndata['dhe'] : 0,
+		'dhs'          => isset($ndata['dhs']) ? $ndata['dhs'] : '0',
+		'dhsk'         => isset($ndata['dhsk']) ? $ndata['dhsk'] : '',
+		'dhpara'       => isset($ndata['dhpara']) ? $ndata['dhpara'] : '',
+		'daid'         => isset($ndata['daid']) ? $ndata['daid'] : '',
+		'da'           => isset($ndata['da']) ? $ndata['da'] : '',
+		'dak'          => isset($ndata['dak']) ? $ndata['dak'] : '',
+		'dae'          => isset($ndata['dae']) ? (int)$ndata['dae'] : 0,
+		'das'          => isset($ndata['das']) ? $ndata['das'] : '0',
+		'dask'         => isset($ndata['dask']) ? $ndata['dask'] : '',
+		'dapara'       => isset($ndata['dapara']) ? $ndata['dapara'] : '',
+		'dfid'         => isset($ndata['dfid']) ? $ndata['dfid'] : '',
+		'df'           => isset($ndata['df']) ? $ndata['df'] : '',
+		'dfk'          => isset($ndata['dfk']) ? $ndata['dfk'] : '',
+		'dfe'          => isset($ndata['dfe']) ? (int)$ndata['dfe'] : 0,
+		'dfs'          => isset($ndata['dfs']) ? $ndata['dfs'] : '0',
+		'dfsk'         => isset($ndata['dfsk']) ? $ndata['dfsk'] : '',
+		'dfpara'       => isset($ndata['dfpara']) ? $ndata['dfpara'] : '',
+		'acid'         => isset($ndata['acid']) ? $ndata['acid'] : '',
+		'ac'           => isset($ndata['ac']) ? $ndata['ac'] : '',
+		'ack'          => isset($ndata['ack']) ? $ndata['ack'] : '',
+		'ace'          => isset($ndata['ace']) ? (int)$ndata['ace'] : 0,
+		'acs'          => isset($ndata['acs']) ? $ndata['acs'] : '0',
+		'acsk'         => isset($ndata['acsk']) ? $ndata['acsk'] : '',
+		'acpara'       => isset($ndata['acpara']) ? $ndata['acpara'] : '',
 		// Oblivions 专属字段
 		'itempara'     => json_encode($itempara, JSON_UNESCAPED_UNICODE),
 		'itemmaxslots' => 6,

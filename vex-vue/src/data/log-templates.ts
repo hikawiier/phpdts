@@ -462,11 +462,146 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
       return `你使用了<span class="yellow">${escapeHtml(name)}</span>。`;
     },
   },
+  'restore_hp.invalid': {
+    render: (params) => `<span class="grey">[系统] HP 恢复量或上限异常（amount=${params.amount}, mhp=${params.mhp}）。</span>`,
+  },
+  'restore_hp.success': {
+    render: (params) => {
+      const amount = params.amount as number;
+      if (amount <= 0) return `<span class="lime">HP 已满。</span>`;
+      return `<span class="lime">HP 恢复了 ${amount} 点。</span>`;
+    },
+  },
+  'restore_sp.invalid': {
+    render: (params) => `<span class="grey">[系统] SP 恢复量或上限异常（amount=${params.amount}, msp=${params.msp}）。</span>`,
+  },
+  'restore_sp.success': {
+    render: (params) => {
+      const amount = params.amount as number;
+      if (amount <= 0) return `<span class="lime">SP 已满。</span>`;
+      return `<span class="lime">SP 恢复了 ${amount} 点。</span>`;
+    },
+  },
+  'cure_bs.success': {
+    render: (params) => {
+      const cured = params.cured as string[] | undefined;
+      if (!cured || cured.length === 0) return `<span class="lime">身体状态正常，无需清除。</span>`;
+      return `<span class="lime">清除了身体状态：${cured.map(escapeHtml).join('、')}。</span>`;
+    },
+  },
+  'gain_resistance.triggered': {
+    render: () => `<span class="grey">[系统] 抗性跃迁事件已触发（占位，等待被动技能系统订阅）。</span>`,
+  },
+  'open_gift_box.table_missing': {
+    render: () => `<span class="red">[系统] 礼盒战利品表缺失。</span>`,
+  },
+  'open_gift_box.empty': {
+    render: () => `<span class="grey">礼盒是空的。</span>`,
+  },
+  'open_gift_box.bag_full': {
+    render: (params) => {
+      const dropped = (params.dropped as string[] | undefined) ?? [];
+      const names = dropped.map((id) => ITEM_LOCALE[id]?.name ?? id).map(escapeHtml).join('、');
+      return `<span class="red">背包已满，丢失了：${names}。</span>`;
+    },
+  },
+  'open_gift_box.success': {
+    render: (params) => {
+      const count = params.count as number;
+      return `<span class="yellow">礼盒打开了，获得了 ${count} 件物品。</span>`;
+    },
+  },
   'durability.broken': {
     render: (params) => {
       const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
       return `<span class="red">${escapeHtml(name)}已损坏。</span>`;
     },
+  },
+
+  // ─── equip / unequip ───────────────────────────
+  'equip.success': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `你装备了<span class="yellow">${escapeHtml(name)}</span>。`;
+    },
+  },
+  'equip.empty_slot': {
+    text: '该槽位没有道具。',
+  },
+  'equip.not_equippable': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}无法装备。</span>`;
+    },
+  },
+  'equip.broken': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}已损坏，无法装备。</span>`;
+    },
+  },
+  'equip.invalid_kind': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}的类别无法装备。</span>`;
+    },
+  },
+  'equip.invalid_slot': {
+    text: '无效的装备槽位。',
+  },
+  'equip.bag_full': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">背包已满，无法装备${escapeHtml(name)}。</span>`;
+    },
+  },
+  'unequip.success': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `你卸下了<span class="yellow">${escapeHtml(name)}</span>。`;
+    },
+  },
+  'unequip.empty_slot': {
+    text: '该装备槽位是空的。',
+  },
+  'unequip.invalid_slot': {
+    text: '无效的装备槽位。',
+  },
+  'unequip.bag_full': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">背包已满，无法卸下${escapeHtml(name)}。</span>`;
+    },
+  },
+
+  // ─── swap_weapon ───────────────────────────────
+  // 主副武器交换（item.swap_weapon）
+  // params: { wep_item_id, wep2_item_id }（交换后的新主/副武器模板 ID，可能为空）
+  'swap_weapon.success': {
+    render: (params) => {
+      const wepId = params.wep_item_id as string | undefined;
+      const wep2Id = params.wep2_item_id as string | undefined;
+      const wepName = wepId ? (ITEM_LOCALE[wepId]?.name ?? wepId) : '';
+      const wep2Name = wep2Id ? (ITEM_LOCALE[wep2Id]?.name ?? wep2Id) : '';
+      // 主副武器都非空：显示双武器名
+      if (wepName && wep2Name) {
+        return `主副武器已交换：<span class="yellow">${escapeHtml(wepName)}</span> ⇄ <span class="yellow">${escapeHtml(wep2Name)}</span>。`;
+      }
+      // 仅主武器（原副武器为空，副武器被换到主手）
+      if (wepName) {
+        return `将<span class="yellow">${escapeHtml(wepName)}</span>换到了主手。`;
+      }
+      // 仅副武器（原主武器为空，主手为空，副手收到原主武器——实际不会发生，因为字段对调）
+      if (wep2Name) {
+        return `将<span class="yellow">${escapeHtml(wep2Name)}</span>换到了副手。`;
+      }
+      // 双空（理论上已被 both_empty 拦截）
+      return `<span class="grey">主副武器均为空，无需交换。</span>`;
+    },
+  },
+  // 双空：主副武器均为空，无交换发生
+  'swap_weapon.both_empty': {
+    text: '主副武器均为空，无需交换。',
   },
 
   // ─── craft ─────────────────────────────────────
@@ -510,6 +645,56 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
       const name = params.recipe_name as string | undefined;
       return name ? `可合成：${name}。` : '可合成。';
     },
+  },
+
+  // ─── poi.interact / F-6 道具交互 ───────────────
+  'poi.interact.empty_slot': {
+    text: '该槽位没有道具。',
+  },
+  'poi.interact.not_interactive': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}</span>无法与 POI 交互。`;
+    },
+  },
+  'poi.interact.broken': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `<span class="red">${escapeHtml(name)}已损坏，无法用于交互。</span>`;
+    },
+  },
+  'poi.interact.no_interaction': {
+    text: '该道具无法与此 POI 交互。',
+  },
+  'poi.interact.already_unlocked': {
+    text: '此 POI 已被解锁。',
+  },
+  'poi.interact.already_ignited': {
+    text: '此 POI 已被点燃。',
+  },
+  'poi.interact.already_done': {
+    text: '此 POI 已被交互过。',
+  },
+  'poi.interact.concurrent_conflict': {
+    render: () => `<span class="grey">[系统] 操作冲突，请重试。</span>`,
+  },
+  'poi.interact.success': {
+    render: (params) => {
+      const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
+      return `你使用<span class="yellow">${escapeHtml(name)}</span>与 POI 交互。`;
+    },
+  },
+  'unlock_door.unlocked': {
+    text: '门被撬开了。',
+  },
+  'open_container.opened': {
+    render: (params) => {
+      const count = Number(params.item_count) || 0;
+      return count > 0 ? `宝箱被打开，获得了 ${count} 件物品。` : '宝箱被打开，但是空的。';
+    },
+  },
+  'ignite.ignited': {
+    text: '火堆被点燃了。',
   },
 };
 

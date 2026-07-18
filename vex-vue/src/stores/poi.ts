@@ -37,7 +37,7 @@ import { useInventoryStore } from '@/stores/inventory';
 import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
-import type { Poi, GroundItem } from '@/types/api';
+import type { Poi, GroundItem, PoiInteraction } from '@/types/api';
 import type { CommandResult } from '@/api/client';
 
 export type PoiModalMode = 'list' | 'interaction';
@@ -61,6 +61,8 @@ export const usePoiStore = defineStore('poi', () => {
   const lastSearchFeedback = ref<PoiSearchFeedback | null>(null);
   const searchLoading = ref<boolean>(false);
   const pickupLoading = ref<boolean>(false);
+  /** F-6 poi.interact 命令执行中标志 */
+  const interactLoading = ref<boolean>(false);
 
   // ── 派生计算属性 ──
 
@@ -102,6 +104,9 @@ export const usePoiStore = defineStore('poi', () => {
   /** item.pickup 是否可执行（受 K-3 多层门控拦截） */
   const canPickup = computed<boolean>(() => commandQueue.canExecute('item.pickup'));
 
+  /** F-6 poi.interact 是否可执行（受 K-3 多层门控拦截） */
+  const canInteract = computed<boolean>(() => commandQueue.canExecute('poi.interact'));
+
   /** 当前 POI 是否可搜索（结合 POI 自身 state/searchable/searched/repeatable 与 canSearch）
    *
    * 与后端 [poi.search.func.php] 状态机保持一致：
@@ -140,6 +145,9 @@ export const usePoiStore = defineStore('poi', () => {
     }
     return true;
   });
+
+  /** F-6 当前 POI 可用的道具交互列表（从 tile_actions 投影的 interactions 派生） */
+  const currentPoiInteractions = computed<PoiInteraction[]>(() => currentPoi.value?.interactions || []);
 
   // ═══ 模态框操作 ═══
 
@@ -294,6 +302,48 @@ export const usePoiStore = defineStore('poi', () => {
     }
   }
 
+  /**
+   * F-6 提交 poi.interact 命令
+   *
+   * 与 doSearch 同模式：commandQueue.execute + 失效 tile_actions/player_inventory/player_info。
+   * 失败路径广播 ui:toast；成功路径广播 game:action-completed 让 tile_actions 重新拉取，
+   * currentPoi.interactions[] 响应式更新（已解锁 POI 的 interactions 自然清空）。
+   */
+  async function handleInteract(slot: number, iaid: string | number): Promise<void> {
+    if (!canInteract.value) return;
+
+    debugBus.emit('action', 'poi:interact', { slot, iaid });
+    interactLoading.value = true;
+    try {
+      const result = await commandQueue.execute({
+        command: 'poi.interact',
+        payload: { slot: Number(slot), iaid: Number(iaid) },
+      });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '交互失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('player_info');
+      dataManager.invalidate('tile_actions');
+      dataManager.broadcast('game:action-completed');
+    } catch (e) {
+      debugBus.emit('error', 'poi:interactError', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '交互失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    } finally {
+      interactLoading.value = false;
+    }
+  }
+
   // ═══ 事件监听 ═══
 
   let _listenersRegistered = false;
@@ -330,6 +380,7 @@ export const usePoiStore = defineStore('poi', () => {
     lastSearchFeedback,
     searchLoading,
     pickupLoading,
+    interactLoading,
     // 计算属性
     poiList,
     currentPoi,
@@ -338,7 +389,9 @@ export const usePoiStore = defineStore('poi', () => {
     itm0Locked,
     canSearch,
     canPickup,
+    canInteract,
     currentPoiSearchable,
+    currentPoiInteractions,
     // 模态框操作
     openModal,
     closeModal,
@@ -353,6 +406,7 @@ export const usePoiStore = defineStore('poi', () => {
     doSearch,
     pickupItem,
     pickupAllItems,
+    handleInteract,
     // 事件监听
     registerListeners,
   };

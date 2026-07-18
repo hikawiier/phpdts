@@ -43,7 +43,7 @@ function poiDisplayDesc(poi: Poi): string {
 
 /**
  * POI 状态徽章：按 state 字段映射到中文标签
- * idle → 可搜索 / searched → 已搜索 / cooldown → 冷却中 / exhausted → 已搜空
+ * idle → 可搜索 / searched → 已搜索 / cooldown → 冷却中 / exhausted → 已搜空 / locked → 已上锁 / ignited → 已点燃
  * 兼容旧字段 fallback：searchable=false 时显示"地标"
  */
 function poiStateBadge(poi: Poi): string {
@@ -51,6 +51,8 @@ function poiStateBadge(poi: Poi): string {
   if (state === 'exhausted') return '已搜空';
   if (state === 'cooldown') return '冷却中';
   if (state === 'searched') return '已搜索';
+  if (state === 'locked') return '已上锁';
+  if (state === 'ignited') return '已点燃';
   if (state === 'idle') {
     if (!poi.searchable) return '地标';
     return '可搜索';

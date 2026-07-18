@@ -24,6 +24,7 @@ import { useInventoryStore } from '@/stores/inventory';
 import { commandQueue } from '@/stores/command-queue';
 import { getPoiName, getPoiDesc } from '@/data/poi-locale';
 import { getItemName } from '@/data/item-locale';
+import { getTagName } from '@/data/tag-locale';
 import PoiToolSelector from './PoiToolSelector.vue';
 import PoiFeedbackPanel from './PoiFeedbackPanel.vue';
 
@@ -36,6 +37,11 @@ const itm0Locked = computed(() => poiStore.itm0Locked);
 const canSearch = computed(() => poiStore.canSearch);
 const searchLoading = computed(() => poiStore.searchLoading);
 const currentPoiSearchable = computed(() => poiStore.currentPoiSearchable);
+
+// ── F-6 道具交互派生状态 ──
+const currentPoiInteractions = computed(() => poiStore.currentPoiInteractions);
+const canInteract = computed(() => poiStore.canInteract);
+const interactLoading = computed(() => poiStore.interactLoading);
 
 /** 是否为机制型 POI（如生命图腾、技能图腾） */
 const isMechanic = computed<boolean>(() => !!currentPoi.value?.mechanic);
@@ -171,8 +177,14 @@ const probBars = computed<ProbBar[]>(() => {
   ];
 });
 
-/** 是否显示反馈区（PoiFeedbackPanel） */
-const showFeedbackPanel = computed<boolean>(() => !isMechanic.value || !showMechanicResult.value);
+/** 是否显示反馈区（PoiFeedbackPanel）
+ *  - 有物品待拾取时始终显示（mechanic POI 开锁/开箱后掉落物需要拾取入口）
+ *  - 否则按原逻辑：非 mechanic 或未搜索的 mechanic 显示
+ */
+const showFeedbackPanel = computed<boolean>(() => {
+  if (itemCount.value > 0) return true;
+  return !isMechanic.value || !showMechanicResult.value;
+});
 
 // ── 已放入工具/技能（中下部反馈区）──
 
@@ -190,6 +202,11 @@ const selectedToolName = computed<string>(() => {
 
 function onSearch(): void {
   void poiStore.doSearch();
+}
+
+/** F-6 道具 × POI 交互按钮 */
+function onInteract(slot: number, iaid: string | number): void {
+  void poiStore.handleInteract(slot, iaid);
 }
 
 function onOrganize(): void {
@@ -286,6 +303,37 @@ function onBack(): void {
 
           <!-- 反馈区：PoiFeedbackPanel（搜索结果 + 道具列表 + 拾取按钮） -->
           <PoiFeedbackPanel v-if="showFeedbackPanel" />
+        </div>
+
+        <!-- ── F-6 道具交互区（currentPoiInteractions 非空时显示） ── -->
+        <div v-if="currentPoiInteractions.length > 0" class="poi-interact-zone">
+          <div class="ascii-title">
+            <span class="ascii-label">道具交互</span>
+            <span class="ascii-line" style="flex:1"></span>
+          </div>
+          <div class="interact-list">
+            <div
+              v-for="interact in currentPoiInteractions"
+              :key="interact.interaction_id"
+              class="interact-row"
+            >
+              <span class="interact-name">{{ interact.name }}</span>
+              <span class="dim interact-need">需要：{{ getItemName(interact.required_item || '', '') || getTagName(interact.required_tag) }}</span>
+              <div class="interact-slots">
+                <button
+                  v-for="slot in interact.available_slots"
+                  :key="slot"
+                  class="term-btn interact-btn"
+                  :disabled="!canInteract || interactLoading || interact.available_slots.length === 0"
+                  @click="onInteract(slot, currentPoi!.iaid)"
+                >[槽位 {{ slot }}]</button>
+                <span
+                  v-if="interact.available_slots.length === 0"
+                  class="dim interact-no-slot"
+                >(缺少道具)</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ── 中下部：反馈区（已放入的工具/技能 + 搜索按钮） ── -->
@@ -561,6 +609,62 @@ function onBack(): void {
   font-size: 10px;
   padding: 2px 0;
   text-align: right;
+}
+
+/* ── F-6 道具交互区 ── */
+.poi-interact-zone {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(68, 68, 68, 0.4);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.interact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.interact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px;
+  font-size: 11px;
+  border: 1px dashed rgba(68, 68, 68, 0.3);
+}
+
+.interact-name {
+  color: #ddd;
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.interact-need {
+  flex: 1 1 auto;
+  font-size: 10px;
+}
+
+.interact-slots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.interact-btn {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.interact-no-slot {
+  font-size: 10px;
+  font-style: italic;
 }
 
 /* ── 中下部：反馈区（已放入 + 搜索按钮） ── */

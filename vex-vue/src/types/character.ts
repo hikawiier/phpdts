@@ -20,7 +20,7 @@
  * oblplayers 标准标量字段（玩家与 NPC 共用）
  *
  * 数值字段统一为 number 类型（merge* 方法对 API 字符串值做 Number() 转换）。
- * 装备索引字段（wepid/wep2id/arbid/arhid/araid/arfid/artid/itemIds）是轻量级模板 ID，
+ * 装备索引字段（wepid/wep2id/dbid/dhid/daid/dfid/acid/itemIds）是轻量级模板 ID，
  * 不含运行时参数 JSON（wep/wepk/wepe/weps/wepsk/weppara 各槽同理 + itempara 完整结构）。
  */
 import type { ActorCapabilitiesProjection, ActorStatusProjection } from './api';
@@ -64,11 +64,11 @@ export interface Character {
   // ── 装备索引（7 槽模板 ID，轻量级标量，供快速查询角色装备了什么）──
   wepid: string;          // 主武器
   wep2id: string;         // 副武器
-  arbid: string;          // 身体防具
-  arhid: string;          // 头部
-  araid: string;          // 饰品1
-  arfid: string;          // 饰品2
-  artid: string;          // 特殊
+  dbid: string;           // 护甲（Defense Body）
+  dhid: string;           // 头部防具（Defense Head）
+  daid: string;           // 手部防具（Defense Arm）
+  dfid: string;           // 足部防具（Defense Foot）
+  acid: string;           // 饰品（Accessory）
 
   // ── 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）──
   itemIds: string[];

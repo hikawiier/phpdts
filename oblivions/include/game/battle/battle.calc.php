@@ -109,8 +109,12 @@ function obl_calc_damage(&$actor_data,$target_data, $atk_act, $battle_cache)
         return 0;
     }
 
+    // F-5 装备属性加成：读取 effective_att/def（基础值 + 装备 itme）
+    $att = function_exists('player_get_effective_att') ? player_get_effective_att($actor_data) : (int)($actor_data['att'] ?? 0);
+    $def = function_exists('player_get_effective_def') ? player_get_effective_def($target_data) : (int)($target_data['def'] ?? 0);
+
     $damage_factor = isset($config['damage_factor']) ? (float)$config['damage_factor'] : 1.0;
-    $damage = ($actor_data['att'] * $damage_factor) - $target_data['def'];
+    $damage = ($att * $damage_factor) - $def;
     $damage = max(1, $damage); //伤害不能为负数，最小为1
 
     //调试用 伤害最大为25
@@ -136,8 +140,12 @@ function obl_calc_damage_value($actor_data, $target_data, $config): int {
         return 0;
     }
 
+    // F-5 装备属性加成：读取 effective_att/def（基础值 + 装备 itme）
+    $att = function_exists('player_get_effective_att') ? player_get_effective_att($actor_data) : (int)($actor_data['att'] ?? 0);
+    $def = function_exists('player_get_effective_def') ? player_get_effective_def($target_data) : (int)($target_data['def'] ?? 0);
+
     $damage_factor = isset($config['damage_factor']) ? (float)$config['damage_factor'] : 1.0;
-    $damage = ($actor_data['att'] * $damage_factor) - $target_data['def'];
+    $damage = ($att * $damage_factor) - $def;
     $damage = max(1, $damage); //伤害最小为1
 
     //调试用 伤害最大为25

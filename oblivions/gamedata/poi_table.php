@@ -527,4 +527,59 @@ return [
         'prob_mods_source'        => [],
         'loot_table_overrides'    => [],
     ],
+
+    // ================================================================
+    // ─── 道具交互 POI（任务2：mechanic=interact_*，配合 F-6 道具交互系统）─
+    // 设计意图：与 E-10 三档判定并列；POI 实例初始 state 由生成器写入
+    //          （locked_door/locked_chest → 'locked'；campfire_unlit → 'idle'）
+    // 不配置 E-10 概率字段，mechanic 分发由 poi_interact 主流程接管
+    // ================================================================
+
+    'locked_door' => [
+        'name'       => '上锁的门',
+        'desc'       => '一扇紧锁的金属门，看起来需要工具才能打开。',
+        'searchable' => false,
+        'repeatable' => false,
+        'mechanic'   => 'interact_locked_door',
+        // mechanic 型 POI：E-10 概率配置留空，交互后 state='idle' 由 E-10 接管搜刮
+        'base_loot_chance'        => 0.0,
+        'base_good_event_chance'  => 0.0,
+        'base_bad_event_chance'   => 0.0,
+        'loot_table_id'           => 'empty_loot',
+        'event_pool'              => [],
+        'prob_mods_source'        => [],
+        'loot_table_overrides'    => [],
+    ],
+
+    'locked_chest' => [
+        'name'       => '上锁的宝箱',
+        'desc'       => '结实的金属宝箱，锁孔锈迹斑斑，需要合适的工具。',
+        'searchable' => false,
+        'repeatable' => false,
+        'mechanic'   => 'interact_locked_chest',
+        // mechanic 型 POI：unlock_door effect 直接调用 F-4 掷骰物化
+        'base_loot_chance'        => 0.0,
+        'base_good_event_chance'  => 0.0,
+        'base_bad_event_chance'   => 0.0,
+        'loot_table_id'           => 'locked_chest_loot',
+        'event_pool'              => [],
+        'prob_mods_source'        => [],
+        'loot_table_overrides'    => [],
+    ],
+
+    'campfire_unlit' => [
+        'name'            => '熄灭的营火',
+        'desc'            => '一堆未点燃的柴火，看起来可以生火。',
+        'searchable'      => false,
+        'repeatable'      => false,
+        'mechanic'        => 'interact_campfire',
+        // mechanic 型 POI：ignite effect 将 state 改为 'ignited'，emit 事件供未来状态系统订阅
+        'base_loot_chance'        => 0.0,
+        'base_good_event_chance'  => 0.0,
+        'base_bad_event_chance'   => 0.0,
+        'loot_table_id'           => 'empty_loot',
+        'event_pool'              => [],
+        'prob_mods_source'        => [],
+        'loot_table_overrides'    => [],
+    ],
 ];

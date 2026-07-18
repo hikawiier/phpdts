@@ -29,6 +29,12 @@ export interface PlayerInfo {
   msp: string;
   att: string;
   def: string;
+  /**
+   * F-5 装备属性加成：基础值 + 装备 itme 加成（player_get_effective_att/def）
+   * 后端 player_info scope 投影；保留 att/def 作为基础值，effective_* 为战斗系统实际读取值
+   */
+  effective_att: string | number;
+  effective_def: string | number;
   ap: string;
   max_ap: string;
   pgroup: string;
@@ -272,11 +278,11 @@ export interface Enemy {
   // 装备索引（7 槽模板 ID，轻量级标量）
   wepid: string;
   wep2id: string;
-  arbid: string;
-  arhid: string;
-  araid: string;
-  arfid: string;
-  artid: string;
+  dbid: string;
+  dhid: string;
+  daid: string;
+  dfid: string;
+  acid: string;
   // 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）
   itemIds: string[];
   discovered: string | number;
@@ -362,7 +368,33 @@ export interface Poi {
   prob_mods_source?: string[];
   /** L-9 支持掉落表改良的工具 ID 列表（POI 模板 loot_table_overrides 的 keys，不含表 ID） */
   loot_table_overrides?: string[];
+  /** F-6 当前 POI 可用的道具交互列表（后端按玩家背包预匹配 available_slots） */
+  interactions?: PoiInteraction[];
   [key: string]: unknown;
+}
+
+/** F-6 POI 可用交互（tile_actions scope 返回，前端按道具匹配渲染按钮） */
+export interface PoiInteraction {
+  /** 交互 ID（poi_interactions.php 的 key） */
+  interaction_id: string;
+  /** 交互显示名（如"撬开"/"开锁"/"点燃"） */
+  name: string;
+  /** 关联的 POI mechanic（前端调试用） */
+  poi_mechanic: string;
+  /** 触发所需的道具 ID（与 required_tag 二选一） */
+  required_item: string | null;
+  /** 触发所需的 Tag（任一道具带此 Tag 即可） */
+  required_tag: string | null;
+  /** 是否消耗道具 */
+  consume_item: boolean;
+  /** 玩家当前背包内可触发该交互的道具槽位列表（后端预匹配，前端直接渲染） */
+  available_slots: number[];
+}
+
+/** F-6 poi.interact 命令 payload */
+export interface PoiInteractCommandPayload {
+  slot: number;
+  iaid: string | number;
 }
 
 /** 玩家背包（oblivions/api/state.php?scope=player_inventory） */

@@ -288,6 +288,10 @@ function obl_state_handle_player_info($ctx) {
         'msp' => $pdata['msp'],
         'att' => $pdata['att'],
         'def' => $pdata['def'],
+        // F-5 装备属性加成：基础值 + 装备 itme 加成（player_get_effective_att/def）
+        // 保留 att/def 作为基础值，effective_att/def 为战斗系统实际读取值
+        'effective_att' => function_exists('player_get_effective_att') ? player_get_effective_att($pdata) : (int)$pdata['att'],
+        'effective_def' => function_exists('player_get_effective_def') ? player_get_effective_def($pdata) : (int)$pdata['def'],
 
         // AP（Oblivions 专属）/ Action points
         'ap'     => $pdata['ap'],
@@ -333,11 +337,11 @@ function obl_state_handle_player_info($ctx) {
         'equipment' => array(
             'wep'  => obl_state_equipment_slot($pdata, 'wepid',  'wep',  'wepk',  'wepe',  'weps',  'wepsk',  'weppara'),
             'wep2' => obl_state_equipment_slot($pdata, 'wep2id', 'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para'),
-            'arb'  => obl_state_equipment_slot($pdata, 'arbid',  'arb',  'arbk',  'arbe',  'arbs',  'arbsk',  'arbpara'),
-            'arh'  => obl_state_equipment_slot($pdata, 'arhid',  'arh',  'arhk',  'arhe',  'arhs',  'arhsk',  'arhpara'),
-            'ara'  => obl_state_equipment_slot($pdata, 'araid',  'ara',  'arak',  'arae',  'aras',  'arask',  'arapara'),
-            'arf'  => obl_state_equipment_slot($pdata, 'arfid',  'arf',  'arfk',  'arfe',  'arfs',  'arfsk',  'arfpara'),
-            'art'  => obl_state_equipment_slot($pdata, 'artid',  'art',  'artk',  'arte',  'arts',  'artsk',  'artpara'),
+            'db'   => obl_state_equipment_slot($pdata, 'dbid',   'db',   'dbk',   'dbe',   'dbs',   'dbsk',   'dbpara'),
+            'dh'   => obl_state_equipment_slot($pdata, 'dhid',   'dh',   'dhk',   'dhe',   'dhs',   'dhsk',   'dhpara'),
+            'da'   => obl_state_equipment_slot($pdata, 'daid',   'da',   'dak',   'dae',   'das',   'dask',   'dapara'),
+            'df'   => obl_state_equipment_slot($pdata, 'dfid',   'df',   'dfk',   'dfe',   'dfs',   'dfsk',   'dfpara'),
+            'ac'   => obl_state_equipment_slot($pdata, 'acid',   'ac',   'ack',   'ace',   'acs',   'acsk',   'acpara'),
         ),
     ));
 }
@@ -443,6 +447,12 @@ function obl_state_handle_tile_actions($ctx) {
             if (isset($tpl['mechanic_params'])) {
                 $poi_data['mechanic_params'] = $tpl['mechanic_params'];
             }
+        }
+
+        // F-6 道具交互：返回当前 POI 可用的交互列表（后端按玩家背包预匹配 available_slots）
+        // 前端按 available_slots 渲染按钮；空 available_slots 表示玩家无所需道具（按钮禁用占位）
+        if (function_exists('obl_get_available_interactions_for_poi')) {
+            $poi_data['interactions'] = obl_get_available_interactions_for_poi($poi, $pdata);
         }
 
         $pois[] = $poi_data;
@@ -685,11 +695,11 @@ function obl_state_simplify_enemy_data(&$enemy) {
         // 装备索引（7 槽模板 ID，轻量级）
         'wepid'        => $enemy['wepid'],
         'wep2id'       => $enemy['wep2id'],
-        'arbid'        => $enemy['arbid'],
-        'arhid'        => $enemy['arhid'],
-        'araid'        => $enemy['araid'],
-        'arfid'        => $enemy['arfid'],
-        'artid'        => $enemy['artid'],
+        'dbid'         => $enemy['dbid'],
+        'dhid'         => $enemy['dhid'],
+        'daid'         => $enemy['daid'],
+        'dfid'         => $enemy['dfid'],
+        'acid'         => $enemy['acid'],
         // 道具索引（从 itempara 提取 itmid 列表）
         // itempara 是 JSON 数组，下标 0 = itm0 手持缓存槽，1~itemmaxslots = 普通槽
         // array_filter 过滤空槽位（itmid 为空字符串/null），itemIds 含所有有道具的槽位（含 itm0）
@@ -770,10 +780,10 @@ function obl_state_handle_player_inventory($ctx) {
                 'type' => isset($pdata['wepk']) ? $pdata['wepk'] : '',
             ),
             'armor' => array(
-                'item_id' => isset($pdata['arbid']) ? $pdata['arbid'] : '',
-                'itmid' => isset($pdata['arbid']) ? $pdata['arbid'] : '',
-                'name' => isset($pdata['arb']) ? $pdata['arb'] : '',
-                'type' => isset($pdata['arbk']) ? $pdata['arbk'] : '',
+                'item_id' => isset($pdata['dbid']) ? $pdata['dbid'] : '',
+                'itmid' => isset($pdata['dbid']) ? $pdata['dbid'] : '',
+                'name' => isset($pdata['db']) ? $pdata['db'] : '',
+                'type' => isset($pdata['dbk']) ? $pdata['dbk'] : '',
             ),
         )
     ));

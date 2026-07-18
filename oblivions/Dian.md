@@ -74,6 +74,8 @@
     - [F-2：配置驱动的合成系统](#框架-f-2配置驱动的合成系统)
     - [F-3：使用效果分发器](#框架-f-3使用效果分发器)
     - [F-4：战利品表引擎](#框架-f-4战利品表引擎)
+    - [F-5：装备穿卸与属性加成](#框架-f-5装备穿卸与属性加成)
+    - [F-6：POI 道具交互系统](#框架-f-6poi-道具交互系统)
   - 模块 G：技能系统
     - [G-1：配置驱动的技能清单与三种生命周期](#框架-g-1配置驱动的技能清单与三种生命周期)
     - [G-2：模块化技能钩子](#框架-g-2模块化技能钩子)
@@ -732,6 +734,7 @@
 - 机制分发容错——按命名约定 `obl_mechanic_{name}` 查找处理函数，不存在时 emit `search.mechanic_pending` 日志，不崩溃。
 - map.explore 命令路由——`map.explore` 命令（`advances_tick=true`）由命令层 `obl_command_handlers.php` 直接调用 E-7 探索入口，经 B-1/B-2/B-3 命令总线校验后进入 E-7。
 - POI 搜索命令边界——`poi.search` 命令不经过 E-7 探索管道，由命令层先按 `iaid` 查 POI 实例 + 位置校验，再调用 E-10 三档判定；E-7 与 E-10 是命令层之下的并列分支。
+- POI 道具交互命令边界——`poi.interact` 命令同样不经过 E-7 探索管道，与 `poi.search` 在命令层并列，位置校验复用 `obl_lookup_poi_for_search`。E-7 / E-10 / F-6 三者在命令层之下并列。
 - 同一 tick 内不会出现两次探索调用——探索命令推进 tick；移动后钩子只点亮视野内迷雾，玩家需主动发起探索命令才能发现道具/敌人。
 
 #### 框架 E-8：NPC AI 行为系统
@@ -811,12 +814,13 @@
 
 **设计意图：** 一个纯净的注册器模式 —— 框架本身不定义任何具体效果。具体效果函数由所属子系统注册（通过命名约定）。效果从模板查找，不是从实例。
 
-**代码锚点：** `oblivions/include/game/item/item.use.func.php`（use_effect 分发器、耐久消耗、模板查找）
+**代码锚点：** `oblivions/include/game/item/item.use.func.php`（use_effect 分发器、耐久消耗、模板查找）、`oblivions/include/game/item/item.use_effects.func.php`（已注册效果函数集合）
 
 **边界案例：**
 
 - 使用效果不存在的函数不是崩溃而是记录警告。
 - 耐久消耗仅对有限耐久值操作，无限标志不受影响。
+- itms 扣减由框架在 effect 之后统一处理，效果函数内部不自行扣减（与 F-6 同模式）。
 
 #### 框架 F-4：战利品表引擎
 
@@ -831,6 +835,41 @@
 - weight 全 0 时均匀随机选一个（避免除零）；count 区间反向自动交换；count<=0 兜底为 1；模板不存在 emit error 跳过该组；表 ID 不存在或 entries 超限 emit error 返回空数组。
 - 表 ID 即 POI ID——POI 模板与战利品表共用同一命名空间；工具/技能路由通过 loot_table_override 覆盖默认表。
 - 物化策略与物化相关边界（物化失败、背包满、并发搜索、未拾取保留等）均由 E-7 / E-10 设计案承担，不属于 F-4 引擎职责。
+
+#### 框架 F-5：装备穿卸与属性加成
+
+**设计意图：** 装备系统是物品系统的衍生层。基于 F-1 槽位背包协议实现穿上/卸下流程，基于 G-1 装备技能注入机制联动技能刷新。7 个装备槽位采用语义化字段名：wep（主武器）/ wep2（副武器）/ db（护甲）/ dh（头部防具）/ da（手部防具）/ df（足部防具）/ ac（饰品），前端通过 `EQUIPMENT_SLOTS` 常量统一槽位 key 与中文 label。属性加成采用"基础值 + 装备加成"的纯函数计算模型——基础 att/def 持久化不变，effective_att/def 实时计算（主武器 itme 计入 att，副武器不提供加成；db/dh/da/df 计入 def；ac 槽位无加成保留为未来扩展），战斗系统改读 effective 值，API 投影同时返回基础值与 effective 值。穿卸是原子操作，背包满时阻止；穿卸后立即调用 G-1 的 strip+inject 重建装备技能；换装时自动卸下旧装备放入背包空位。副武器是第二武器槽而非辅助攻击来源，可通过 `item.swap_weapon` 命令与主武器整体互换（不推进 tick），双空时静默返回。不引入 buff 系统（buff 由 H-1 独立处理），不持久化 effective 值。
+
+**代码锚点：** `oblivions/include/game/item/item.equip.func.php`（itmk→槽位映射、穿上/卸下流程、属性加成计算、主副武器交换）
+
+**边界案例：**
+
+- 装备交换：穿上时目标槽位已有装备 → 自动卸下放入背包；背包满时阻止，新装备不装入。
+- 装备技能刷新：穿卸后立即 strip+inject 重建装备技能，幂等注入，避免延迟到下次 format。
+- 副武器无属性加成：副武器 itme 不计入 att，但仍可装备、仍参与装备技能注入（如双持武器技能），仅是不提供数值加成。
+- 副武器交换：`item.swap_weapon` 整体互换主副武器（含全部装备字段 + 重建装备技能），不推进 tick，双空时静默返回。
+- `ac` 槽位无属性加成，保留为未来扩展。
+- itmk→槽位映射：WP→wep/wep2、AR→db、AH→dh、AA→da、AF→df，AC 槽位由饰品专用 itmk 触发；itmk 不匹配或显式指定槽位与 itmk 矛盾时阻止穿上。
+- 装备耐久为 0 时阻止穿上；耐久为 `∞` 时正常穿上，effective 计算直接计入 itme。
+- 战斗系统对 NPC 安全：NPC 装备字段全为 0，effective 值 = 基础值。
+
+#### 框架 F-6：POI 道具交互系统
+
+**设计意图：** 让 `tag_poi_interactive`（DESIGN.md §1.8 系统钩子 Tag）真实生效——配置驱动的"道具 × POI"交互映射，与 F-3 use_effect 分发器同构的纯分发器模式。配置表 `poi_interactions.php` 声明 `{poi_mechanic × required_item|required_tag → effect_type + consume_item}`，框架按 (POI.mechanic × 玩家槽位道具) 匹配交互配置，调用命名约定的效果函数。POI 实例 `state` 字段扩展两个值（locked / ignited），与 E-10 状态机原有 4 个值并列。`poi.interact` 命令与 `poi.search` 在命令层并列，位置校验复用 `obl_lookup_poi_for_search`，payload 极简 `{slot, iaid}`——interaction_id 不传，后端按 (POI.mechanic × item) 反查配置，符合"确认函"设计哲学（玩家无需 memorize 配方，系统主动告知可用交互）。tile_actions 投影扩展 `interactions` 字段返回每个 POI 的可用交互列表（含 available_slots 预匹配），前端按字段渲染按钮。效果函数返回 bool 决定是否消耗道具——itms 扣减由框架在 effect 之后统一处理（与 F-3 同模式）。并发安全采用乐观锁（`UPDATE ... WHERE state=旧值`），affected=0 时不物化、不消耗。
+
+**代码锚点：** `oblivions/include/game/poi/poi.interact.func.php`（主流程 + 投影查询 + 状态前置校验）、`oblivions/include/game/poi/poi.interact_effects.func.php`（效果函数集合）、`oblivions/gamedata/poi_interactions.php`（交互配置表）
+
+**边界案例：**
+
+- POI 状态扩展——E-10 状态机原有 4 个值，F-6 新增 locked / ignited 2 个值。locked 表达"被锁住需道具解锁"，ignited 表达"已点燃"语义标记（纯事件订阅入口）。
+- 交互配置 vs POI 模板解耦——同一个 mechanic 可对应多条交互配置（如 locked_door 既可被 crowbar 撬也可被 lockpick 开），poi_interactions.php 是纯数据，新增交互类型只需加配置 + 注册效果函数，框架代码不变。
+- 道具匹配两种模式——required_item 严格匹配 item_id；required_tag 通过 tag 匹配（如 tag_tool_lockpick 同时匹配 lockpick 与 lockpick_set）。两者二选一，不组合；slot 0（itm0）排除；损坏道具跳过。
+- available_slots 投影——后端在 tile_actions 投影中预匹配玩家背包内可触发该交互的槽位列表，前端直接渲染按钮；空列表表示缺少道具，POI state 不匹配所需前置态时整个 interaction 不返回。
+- 状态前置校验 + 乐观锁双层防护——主流程在调用 effect 前先按 effect_type 反查所需 state，不匹配时 emit 清晰错误；effect 函数内部仍用乐观锁防并发抢占，affected=0 时 emit concurrent_conflict。
+- open_container 掷骰与乐观锁顺序——先掷骰（loot 在内存），再乐观锁推进 state='exhausted'；锁成功后才物化到 oblmapitem；锁失败时不物化、不消耗、不需回滚。state='exhausted' 而非 'idle'，确保宝箱一次性开箱语义，不与 poi.search 的 idle 状态重叠。
+- 道具消耗由框架统一处理——effect 返回 true 后，主流程按 consume_item 标志扣减 itms；effect 函数内部不扣 itms（与 F-3 同模式）。consume_item=false 的交互只触发效果不消耗道具（耐久模型，未来可扣耐久）。
+- itm0 锁定态拦截——命令合约 `itm0_allowed=false`，命令总线在 gate 阶段拦截。
+- 已解锁 POI 的 poi.search 衔接——unlock_door 成功后 state='idle'，玩家可继续 poi.search；locked_chest 解锁后 state='exhausted'，不再可搜（一次性开箱语义）。
 
 ***
 
@@ -1159,9 +1198,9 @@
 
 #### 框架 L-9：POI 交互模态框
 
-**设计意图：** POI 搜刮是"高风险高回报的深入挖掘"——与 L-1 的"路过捡破烂"轻量交互互补。模态框采用双态切换（列表态 + 交互态）而非两个独立模态：列表态以纵列卡片展示当前格所有 POI（中文名 + 状态徽章 + 统一入口按钮，徽章按 POI 状态映射对应中文状态名），玩家选中后原地切换到交互态。交互态采用三列四区布局：左列 POI 信息区、中列上部交互区（三档基础概率条 + 反馈/道具列表）、中列下部反馈区（已放入工具/技能 + 搜索按钮 / itm0 锁定按钮组）、右列交互区（常驻可用工具/技能列表）。三档概率条展示 E-10 基础值（base_loot_chance / base_good_event_chance / base_bad_event_chance），按灰阶为基底用三档灰阶区分物资/良性/恶性事件——prob_mods 实时修正尚未实现，附基础概率提示。POI 列表数据由 tile_actions scope 直接提供，无独立缓存层。itm0 锁定态复用库存锁定状态派生，锁定时搜索按钮替换为解锁按钮组。battle:started / map:loaded 事件触发强制关闭，让位战斗场景或失效旧 POI 列表。
+**设计意图：** POI 搜刮是"高风险高回报的深入挖掘"——与 L-1 的"路过捡破烂"轻量交互互补。模态框采用双态切换（列表态 + 交互态）而非两个独立模态：列表态以纵列卡片展示当前格所有 POI（中文名 + 状态徽章 + 统一入口按钮，徽章按 POI 状态映射对应中文状态名），玩家选中后原地切换到交互态。交互态采用三列四区布局：左列 POI 信息区、中列上部交互区（三档基础概率条 + 反馈/道具列表）、中列下部反馈区（已放入工具/技能 + 搜索按钮 / itm0 锁定按钮组）、右列交互区（常驻可用工具/技能列表）。三档概率条展示 E-10 基础值（base_loot_chance / base_good_event_chance / base_bad_event_chance），按灰阶为基底用三档灰阶区分物资/良性/恶性事件——prob_mods 实时修正尚未实现，附基础概率提示。POI 列表数据由 tile_actions scope 直接提供，无独立缓存层。itm0 锁定态复用库存锁定状态派生，锁定时搜索按钮替换为解锁按钮组。battle:started / map:loaded 事件触发强制关闭，让位战斗场景或失效旧 POI 列表。F-6 框架在交互态中列新增"道具交互区"（交互区与反馈区之间）——当 POI 返回 `interactions` 数组非空时渲染交互列表（交互名 + 所需道具 + 槽位按钮组），按钮发送 `poi.interact` 命令；后端预匹配 `available_slots` 决定按钮数量，空时显示"缺少道具"占位。成功后失效 tile_actions 让 `interactions` 响应式更新（已解锁 POI 的 interactions 自然清空）。
 
-**代码锚点：** `vex-vue/src/components/poi/PoiModal.vue`（双态切换根容器）、`vex-vue/src/components/poi/PoiInteraction.vue`（交互态主面板）、`vex-vue/src/components/poi/PoiToolSelector.vue`（工具选择器）、`vex-vue/src/components/poi/PoiFeedbackPanel.vue`（反馈与道具列表）、`vex-vue/src/stores/poi.ts`（状态管理与命令派发）
+**代码锚点：** `vex-vue/src/components/poi/PoiModal.vue`（双态切换根容器）、`vex-vue/src/components/poi/PoiInteraction.vue`（交互态主面板，含 F-6 道具交互区）、`vex-vue/src/components/poi/PoiToolSelector.vue`（工具选择器）、`vex-vue/src/components/poi/PoiFeedbackPanel.vue`（反馈与道具列表）、`vex-vue/src/stores/poi.ts`（状态管理与命令派发，含 F-6 交互态派生状态）
 
 **边界案例：**
 
@@ -1174,6 +1213,8 @@
 - 冷却态展示——POI 冷却中时搜索按钮替换为禁用按钮，显示冷却原因与剩余 tick 数；与可搜索态按钮视觉一致，仅状态/文案不同。
 - 工具白名单过滤——按后端 prob_mods_source 与 loot_table_overrides 并集过滤工具列表，无有效工具时显示空状态文案，避免无效道具污染注意力。
 - 已发现物品计数——列表态卡片与交互态道具列表用完整文案展示数量，避免歧义简写。
+- F-6 道具交互区——当 `currentPoi.interactions` 非空时在中列交互区与反馈区之间渲染交互列表；`poi.interact` 成功后失效 tile_actions 让 `interactions` 响应式更新，已解锁 POI 的 interactions 自然清空，无需前端手动清理。
+- F-6 槽位已空防御——前端 `available_slots` 来自后端投影，玩家在模态框外消耗道具后投影可能过期；`poi.interact` 命令成功后强制 invalidate tile_actions 重新拉取，避免长期不一致。
 
 ***
 

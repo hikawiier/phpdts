@@ -85,10 +85,12 @@ require_once GAME_ROOT . './oblivions/include/game/explore.func.php';
 require_once GAME_ROOT . './oblivions/include/game/enemy_ai.func.php';
 
 // 第 5.5 层：道具系统（依赖 log + player + explore，无循环依赖）
-// 加载顺序：tag（数据加载）→ basic（基础操作）→ use（衍生）→ craft（衍生）
+// 加载顺序：tag（数据加载）→ basic（基础操作）→ use（F-3 框架）→ craft（衍生）→ use_effects（F-3 注册函数）→ equip（F-5 装备穿卸）
 require_once GAME_ROOT . './oblivions/include/game/item/item.basic.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.use.func.php';
 require_once GAME_ROOT . './oblivions/include/game/item/item.craft.func.php';
+require_once GAME_ROOT . './oblivions/include/game/item/item.use_effects.func.php';
+require_once GAME_ROOT . './oblivions/include/game/item/item.equip.func.php';
 
 // 第 5.6 层：F-4 战利品表引擎（依赖 item_table 数据 + log/error_log；被 E-7/E-10 调用）
 require_once GAME_ROOT . './oblivions/include/game/loot/loot.engine.func.php';
@@ -99,6 +101,13 @@ require_once GAME_ROOT . './oblivions/include/game/loot/loot.engine.func.php';
 // poi.event.func.php 后（事件池分发框架与 4 个测试事件，依赖 poi.search.func.php 的辅助函数）
 require_once GAME_ROOT . './oblivions/include/game/poi/poi.search.func.php';
 require_once GAME_ROOT . './oblivions/include/game/poi/poi.event.func.php';
+
+// 第 5.66 层：F-6 POI 道具交互系统（依赖 E-10 的 obl_lookup_poi_for_search/obl_materialize_loot +
+// F-4 的 obl_roll_loot_table + item.tag.func.php 的 item_has_tag）
+// 加载顺序：poi.interact.func.php 先（主流程 + obl_get_available_interactions_for_poi 查询），
+// poi.interact_effects.func.php 后（3 个 effect 函数，被 poi_interact 主流程分发调用）
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.interact.func.php';
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.interact_effects.func.php';
 
 // 第 5.7 层：E-9 野生道具刷新（依赖 move 的 obl_get_map_data；定义 tick post phase 监听器，
 // 由第 6 层 tick.func.php 末尾注册，需在 tick.func.php 之前加载）

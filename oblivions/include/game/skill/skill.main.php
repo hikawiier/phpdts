@@ -51,7 +51,7 @@ function skill_get_all_definitions() {
                     throw new UnexpectedValueException('Invalid equipment grant slots: ' . $skill_id);
                 }
                 foreach ($slots as $slot) {
-                    if (!in_array($slot, array('wep', 'wep2', 'arb', 'arh', 'ara', 'arf', 'art'), true)) {
+                    if (!in_array($slot, array('wep', 'wep2', 'db', 'dh', 'da', 'df', 'ac'), true)) {
                         throw new UnexpectedValueException('Unknown equipment grant slot: ' . $skill_id . ':' . $slot);
                     }
                 }

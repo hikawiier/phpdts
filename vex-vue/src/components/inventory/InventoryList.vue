@@ -44,6 +44,10 @@ function onUse(slot: number): void {
   inventoryStore.handleUseItem(slot);
 }
 
+function onEquip(slot: number): void {
+  inventoryStore.handleEquip(slot);
+}
+
 function slotDisplayName(item: InventoryItem): string {
   return getItemName(item.itmid || item.item_id, item.name);
 }
@@ -83,6 +87,12 @@ function slotMeta(item: InventoryItem): string {
               :disabled="!commandQueue.canExecute('item.use')"
               @click="onUse(s.slot)"
             >[使用]</button>
+            <button
+              v-if="s.tags?.includes('tag_equippable')"
+              class="term-btn"
+              :disabled="!commandQueue.canExecute('item.equip')"
+              @click="onEquip(s.slot)"
+            >[装备]</button>
             <button
               class="term-btn discard"
               :disabled="!commandQueue.canExecute('item.discard')"
