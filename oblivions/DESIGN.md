@@ -8,11 +8,13 @@
 
 > 介绍项目包含的**专有名词**，以下词典中出现的名词具有特定含义，不可按字面意思理解。
 
-### 1.0 tick / 游戏刻
+### 1.0 tick / 刻（游戏刻）
 
 tick 是世界结算的时间单位。1 tick 代表世界上每个角色都能消费 1 时间单位的动作——实际代码语义是 **1 tick 内一个角色不能又战斗又移动**。
 tick 由前端心跳驱动推进，后端 tick 编排器按三阶段分发：监听器注册 → 事件调度 → 状态结算。敌人 AI（巡逻/空闲/攻击）、Body Status 衰减、潮汐事件等都以 tick 为节拍。
 与"回合 (Turn)"的关系：1 回合 = 1 tick。战斗中的回合是 tick 在战斗域内的别名，强调"单人次一次完整行动"。
+
+> 术语约定：UI 文案与设计文档使用中文"刻"指代 tick；代码标识符（变量名、函数名、字段名、日志 ID）保留英文 `tick` 作为索引锚点（详见 2.10 命名约定）。
 
 ### 1.1 区域 (Region) vs 地图格 (Tile)
 
@@ -178,6 +180,18 @@ CharacterHub 与表现场景 store 分离，构成"权威投影 vs 演出投影"
 BattleTurn 是战场级持久状态，不是请求、tick 或 presentation batch 的别名。`oblbattle_state.turn_seq` 在同一 `qid` 内单调递增并组成稳定 `turn_key=qid:turn_seq`；`round_num` 只表达轮次规则和显示，不承担身份。
 
 回合开放与动作执行是两个边界：`AWAITING_INPUT` / `AUTO_PENDING` 表示控制权已经交给玩家或系统，`EXECUTING` 表示该回合已被原子认领。玩家命令必须提交 `expected_turn_seq`；事件通过 `turn_opened` 和同一组 `qid`、`round_num`、`turn_seq`、`turn_key` 陈述领域事实，前端不得从请求次数或数字组合反推回合身份。
+
+### 1.18 天 (day) / 昼夜相位 (phase)
+
+**天**是宏观时间单位，由若干刻组成。1 天 = `day_length_ticks` 刻（默认 120）。天数从 1 开始递增，公式为 `day = floor(tick / day_length_ticks) + 1`。
+
+**昼夜相位**是一天内的时间段标记。1 天分为昼（`day`）与夜（`night`）两个相位，昼占 `day_phase_ticks` 刻（默认 80），夜占剩余刻数（默认 40）。相位判断：`phase = (tick % day_length_ticks) < day_phase_ticks ? 'day' : 'night'`。
+
+**与刻（tick）的关系**：天与相位是 tick 的派生纯函数层，不引入新的时间单位。tick 推进时同步计算相位与天数变化，触发相位切换事件。
+
+**与回合（Turn）的关系**：独立概念，互不耦合。回合是战斗域的 tick 别名，天/相位是世界域的 tick 派生。
+
+**事件钩子**：相位切换时触发 `day_started` / `night_started` 事件；天数递增时触发 `day_changed` 事件。供 POI 耐久衰减、夜间事件、野生道具按天刷新等系统订阅。
 
 
 

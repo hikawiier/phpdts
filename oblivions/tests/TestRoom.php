@@ -60,7 +60,7 @@ final class TestRoom {
             'lvl' => 1, 'exp' => 0, 'state' => 0, 'itempara' => '[]', 'itemmaxslots' => 6,
             'tacpara' => '{"slots":[]}', 'skillpara' => json_encode($skillpara), 'oblpara' => '{}', 'discovered' => 1,
         ], $override);
-        foreach (['wep','wep2','db','dh','da','df','ac'] as $slot) {
+        foreach (['wep','wep2','arb','arh','ara','arf','art'] as $slot) {
             $data[$slot . 'para'] = '{}';
         }
         $db->array_insert("{$this->prefix}oblplayers", $data);

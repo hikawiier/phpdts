@@ -227,7 +227,7 @@ function obl_state_build_combat_context($pdata) {
 }
 
 function obl_state_handle_runtime_status($ctx) {
-    global $cuser;
+    global $cuser, $gamevars;
 
     // runtime status 是纯读探针：只重载内存镜像，不推进 tick，也不创建缺失的 oblgame。
     if (function_exists('obl_gamevars_sync_to_globals')) {
@@ -235,6 +235,9 @@ function obl_state_handle_runtime_status($ctx) {
     }
 
     $status = obl_tick_orchestrator_status($ctx);
+    // 同步天与昼夜相位（E-11 派生层），供前端冷启动快速恢复 UI
+    $status['obl_day']   = isset($gamevars['obl_day']) ? (int)$gamevars['obl_day'] : 1;
+    $status['obl_phase'] = isset($gamevars['obl_phase']) ? (string)$gamevars['obl_phase'] : 'day';
     $player = $cuser ? obl_fetch_playerdata_by_name($cuser) : false;
     if ($player) {
         $qid = isset($player['bid']) ? (int)$player['bid'] : 0;
@@ -321,6 +324,9 @@ function obl_state_handle_player_info($ctx) {
         // 调试用：游戏刻状态 / Debug: tick state
         'obl_tick'     => isset($gamevars['obl_tick']) ? (int)$gamevars['obl_tick'] : 0,
         'obl_pretick'  => isset($gamevars['obl_pretick']) ? (int)$gamevars['obl_pretick'] : 0,
+        // 天与昼夜相位 / Day & day-night phase（E-11 派生层）
+        'obl_day'   => isset($gamevars['obl_day']) ? (int)$gamevars['obl_day'] : 1,
+        'obl_phase' => isset($gamevars['obl_phase']) ? (string)$gamevars['obl_phase'] : 'day',
         // 冷启动只接受当前权威状态，并把 runtime presentation cursor 快进到此 head。
         'presentation_head_seq' => isset($gamevars['obl_presentation_head_seq'])
             ? (int)$gamevars['obl_presentation_head_seq']
@@ -337,11 +343,11 @@ function obl_state_handle_player_info($ctx) {
         'equipment' => array(
             'wep'  => obl_state_equipment_slot($pdata, 'wepid',  'wep',  'wepk',  'wepe',  'weps',  'wepsk',  'weppara'),
             'wep2' => obl_state_equipment_slot($pdata, 'wep2id', 'wep2', 'wep2k', 'wep2e', 'wep2s', 'wep2sk', 'wep2para'),
-            'db'   => obl_state_equipment_slot($pdata, 'dbid',   'db',   'dbk',   'dbe',   'dbs',   'dbsk',   'dbpara'),
-            'dh'   => obl_state_equipment_slot($pdata, 'dhid',   'dh',   'dhk',   'dhe',   'dhs',   'dhsk',   'dhpara'),
-            'da'   => obl_state_equipment_slot($pdata, 'daid',   'da',   'dak',   'dae',   'das',   'dask',   'dapara'),
-            'df'   => obl_state_equipment_slot($pdata, 'dfid',   'df',   'dfk',   'dfe',   'dfs',   'dfsk',   'dfpara'),
-            'ac'   => obl_state_equipment_slot($pdata, 'acid',   'ac',   'ack',   'ace',   'acs',   'acsk',   'acpara'),
+            'arb'  => obl_state_equipment_slot($pdata, 'arbid',  'arb',  'arbk',  'arbe',  'arbs',  'arbsk',  'arbpara'),
+            'arh'  => obl_state_equipment_slot($pdata, 'arhid',  'arh',  'arhk',  'arhe',  'arhs',  'arhsk',  'arhpara'),
+            'ara'  => obl_state_equipment_slot($pdata, 'araid',  'ara',  'arak',  'arae',  'aras',  'arask',  'arapara'),
+            'arf'  => obl_state_equipment_slot($pdata, 'arfid',  'arf',  'arfk',  'arfe',  'arfs',  'arfsk',  'arfpara'),
+            'art'  => obl_state_equipment_slot($pdata, 'artid',  'art',  'artk',  'arte',  'arts',  'artsk',  'artpara'),
         ),
     ));
 }
@@ -429,6 +435,16 @@ function obl_state_handle_tile_actions($ctx) {
             // L-9 工具有效性白名单：prob_mods_source ∪ loot_table_overrides keys（前端据此过滤右侧工具列表）
             'prob_mods_source'         => isset($tpl['prob_mods_source']) && is_array($tpl['prob_mods_source']) ? $tpl['prob_mods_source'] : array(),
             'loot_table_overrides'     => isset($tpl['loot_table_overrides']) && is_array($tpl['loot_table_overrides']) ? array_keys($tpl['loot_table_overrides']) : array(),
+            // E-12 POI 耐久系统字段（placed_by_pid=0 表示世界生成；ttl_days=0 表示永不过期）
+            'placed_by_pid'            => (int)(isset($poi['placed_by_pid']) ? $poi['placed_by_pid'] : 0),
+            'placed_at_day'            => (int)(isset($poi['placed_at_day']) ? $poi['placed_at_day'] : 0),
+            'ttl_days'                 => (int)(isset($poi['ttl_days']) ? $poi['ttl_days'] : 0),
+            // 剩余耐久天数（后端按当前天计算好的差值；ttl_days=0 时为 null 表示永不过期，前端隐藏）
+            'ttl_remaining_days'       => (isset($poi['ttl_days']) && (int)$poi['ttl_days'] > 0)
+                ? max(0, (int)$poi['placed_at_day'] + (int)$poi['ttl_days'] - (function_exists('obl_day_get') ? (int)obl_day_get() : 0))
+                : null,
+            // F-7 dismantle_returns：模板配置的返还材料（前端"拆除"按钮提示文案）
+            'dismantle_returns'        => isset($tpl['dismantle_returns']) && is_array($tpl['dismantle_returns']) ? $tpl['dismantle_returns'] : array(),
             'items'         => array(),
         );
 
@@ -695,11 +711,11 @@ function obl_state_simplify_enemy_data(&$enemy) {
         // 装备索引（7 槽模板 ID，轻量级）
         'wepid'        => $enemy['wepid'],
         'wep2id'       => $enemy['wep2id'],
-        'dbid'         => $enemy['dbid'],
-        'dhid'         => $enemy['dhid'],
-        'daid'         => $enemy['daid'],
-        'dfid'         => $enemy['dfid'],
-        'acid'         => $enemy['acid'],
+        'arbid'        => $enemy['arbid'],
+        'arhid'        => $enemy['arhid'],
+        'araid'        => $enemy['araid'],
+        'arfid'        => $enemy['arfid'],
+        'artid'        => $enemy['artid'],
         // 道具索引（从 itempara 提取 itmid 列表）
         // itempara 是 JSON 数组，下标 0 = itm0 手持缓存槽，1~itemmaxslots = 普通槽
         // array_filter 过滤空槽位（itmid 为空字符串/null），itemIds 含所有有道具的槽位（含 itm0）
@@ -780,10 +796,10 @@ function obl_state_handle_player_inventory($ctx) {
                 'type' => isset($pdata['wepk']) ? $pdata['wepk'] : '',
             ),
             'armor' => array(
-                'item_id' => isset($pdata['dbid']) ? $pdata['dbid'] : '',
-                'itmid' => isset($pdata['dbid']) ? $pdata['dbid'] : '',
-                'name' => isset($pdata['db']) ? $pdata['db'] : '',
-                'type' => isset($pdata['dbk']) ? $pdata['dbk'] : '',
+                'item_id' => isset($pdata['arbid']) ? $pdata['arbid'] : '',
+                'itmid' => isset($pdata['arbid']) ? $pdata['arbid'] : '',
+                'name' => isset($pdata['arb']) ? $pdata['arb'] : '',
+                'type' => isset($pdata['arbk']) ? $pdata['arbk'] : '',
             ),
         )
     ));

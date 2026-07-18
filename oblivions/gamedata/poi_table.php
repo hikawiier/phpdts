@@ -581,5 +581,14 @@ return [
         'event_pool'              => [],
         'prob_mods_source'        => [],
         'loot_table_overrides'    => [],
+        // ── E-12 耐久系统配置 ──
+        // ttl_days=1：玩家放置后持续 1 天，到期由 day_changed 监听器清理
+        // 世界生成路径不写 placed_by_pid/placed_at_day/ttl_days 三字段（默认 0，永不过期）
+        'ttl_days'                => 1,
+        // ── poi.dismantle 命令的返还材料配置 ──
+        // 任意 state 都可拆除；返还 tree_branch × 1（与 craft_firewood 的 2→1 损耗匹配）
+        'dismantle_returns'       => [
+            ['item_id' => 'tree_branch', 'count' => 1],
+        ],
     ],
 ];

@@ -21,6 +21,10 @@ require_once GAME_ROOT . './oblivions/include/game/obl_global.func.php';
 // 第 0.5 层：Oblivions 单局状态仓储与 gamevars 兼容镜像
 require_once GAME_ROOT . './oblivions/include/core/obl_game_repository.php';
 require_once GAME_ROOT . './oblivions/include/core/obl_gamevars.php';
+// 第 0.55 层：运行时表 schema 自愈机制（C-8 框架）
+// 提供 obl_mapstates_schema_ensure / obl_mappoi_schema_ensure / obl_mapitem_schema_ensure
+// 与 obl_runtime_tables_schema_ensure 总入口；调用时机由 obl_runtime_boot 决定
+require_once GAME_ROOT . './oblivions/include/core/obl_schema_ensure.php';
 
 // 第 1 层：独立函数库（依赖第 0 层或无依赖）
 require_once GAME_ROOT . './oblivions/include/game/log.func.php';
@@ -109,11 +113,23 @@ require_once GAME_ROOT . './oblivions/include/game/poi/poi.event.func.php';
 require_once GAME_ROOT . './oblivions/include/game/poi/poi.interact.func.php';
 require_once GAME_ROOT . './oblivions/include/game/poi/poi.interact_effects.func.php';
 
-// 第 5.7 层：E-9 野生道具刷新（依赖 move 的 obl_get_map_data；定义 tick post phase 监听器，
-// 由第 6 层 tick.func.php 末尾注册，需在 tick.func.php 之前加载）
+// 第 5.78 层：E-12 POI 耐久系统（依赖 obl_day_register_listener 由第 6 层注册 + db/tablepre）
+// 提供 obl_poi_durability_cleanup 监听器，被 day_changed 事件触发批量清理过期 POI
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.durability.func.php';
+
+// 第 5.79 层：F-7 poi.dismantle 命令主流程（依赖 obl_lookup_poi_for_search + F-1 itm0/organize +
+// item_table 数据；被命令分发层 obl_command_handlers.php 在 poi.dismantle 命令中调用）
+require_once GAME_ROOT . './oblivions/include/game/poi/poi.dismantle.func.php';
+
+// 第 5.7 层：E-9 野生道具刷新（依赖 move 的 obl_get_map_data；定义 day_changed 监听器，
+// 由第 6 层 tick.func.php 末尾注册到 E-11 day cycle 事件钩子）
 require_once GAME_ROOT . './oblivions/include/game/wild_refresh.func.php';
 
-// 第 6 层：依赖最广，末尾注册 tick 监听器
+// 第 5.75 层：E-11 天与昼夜相位派生层（依赖 obl_config；提供 obl_day_register_listener /
+// obl_day_advance_hook，被第 6 层 tick.func.php 的 obl_tick_advance 调用以触发相位/天数事件）
+require_once GAME_ROOT . './oblivions/include/game/day_cycle.func.php';
+
+// 第 6 层：依赖最广，末尾注册 tick 监听器与 day_changed 监听器
 require_once GAME_ROOT . './oblivions/include/game/tick.func.php';
 skill_effect_register_tick_listener();
 

@@ -31,6 +31,7 @@ export const COMMAND_REGISTRY: Record<string, CommandSpec> = {
   'map.explore':     { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'poi.search':      { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'poi.interact':    { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
+  'poi.dismantle':   { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'world.wait':      { mode: 'explore', advancesTick: true,  itm0Allowed: true,  readOnly: false, requiredCapabilities: ['time_pass'] },
 
   // ── 探索类（advancesTick=false） ──

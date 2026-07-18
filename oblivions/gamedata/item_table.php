@@ -17,7 +17,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // - tool_level：工具等级（仅工作台/工具类道具有效），0=无等级要求；高级兼容低级
 //
 // 数据校验规则（见《道具-系统钩子Tag设计案.md》§6.3）：
-// - itmk ∈ {WP,WK,WG,WD,WF,WC,AR,AH,AF,AA} ⟹ tags 含 tag_equippable
+// - itmk ∈ {WP,WK,WG,WD,WF,WC,DB,DH,DF,DA} ⟹ tags 含 tag_equippable
 // - use_effect 非空 ⟺ tags 含 tag_usable
 // - itmk ∈ {MT,HH,HS,DX} ⟹ tags 不含 tag_equippable
 // ================================================================
@@ -128,7 +128,7 @@ return [
 
     'scrap_vest' => [
         'itm'      => '废铁背心',
-        'itmk'     => 'AR',
+        'itmk'     => 'DB',
         'itme'     => 6,
         'itms'     => 30,
         'itmsk'    => '',
@@ -142,7 +142,7 @@ return [
     ],
     'swamp_cloak' => [
         'itm'      => '沼泽斗篷',
-        'itmk'     => 'AR',
+        'itmk'     => 'DB',
         'itme'     => 10,
         'itms'     => 25,
         'itmsk'    => '',
@@ -156,7 +156,7 @@ return [
     ],
     'rust_circlet' => [
         'itm'      => '锈蚀头环',
-        'itmk'     => 'AH',
+        'itmk'     => 'DH',
         'itme'     => 4,
         'itms'     => 20,
         'itmsk'    => '',
@@ -170,7 +170,7 @@ return [
     ],
     'bone_amulet' => [
         'itm'      => '骨制护符',
-        'itmk'     => 'AA',
+        'itmk'     => 'DA',
         'itme'     => 5,
         'itms'     => 15,
         'itmsk'    => '',
@@ -557,7 +557,7 @@ return [
     // ─── 装备产物（可装备）──────────────────────────────
 
     'thick_shoes' => [
-        'itmk'     => 'AF',
+        'itmk'     => 'DF',
         'itme'     => 3,
         'itms'     => 20,
         'itmsk'    => '',
@@ -855,10 +855,10 @@ return [
         'tool_level' => 0,
     ],
 
-    // ─── 护甲（AR）──────────────────────────────────────────
+    // ─── 护甲（DB）──────────────────────────────────────────
 
     'tactical_vest' => [
-        'itmk'     => 'AR',
+        'itmk'     => 'DB',
         'itme'     => 18,
         'itms'     => 50,
         'itmsk'    => '',
@@ -870,7 +870,7 @@ return [
         'tool_level' => 0,
     ],
     'beast_hide_coat' => [
-        'itmk'     => 'AR',
+        'itmk'     => 'DB',
         'itme'     => 12,
         'itms'     => 40,
         'itmsk'    => '',
@@ -882,7 +882,7 @@ return [
         'tool_level' => 0,
     ],
     'scrap_metal_raincoat' => [
-        'itmk'     => 'AR',
+        'itmk'     => 'DB',
         'itme'     => 8,
         'itms'     => 30,
         'itmsk'    => '',
@@ -894,10 +894,10 @@ return [
         'tool_level' => 0,
     ],
 
-    // ─── 头具（AH）──────────────────────────────────────────
+    // ─── 头具（DH）──────────────────────────────────────────
 
     'tactical_helmet' => [
-        'itmk'     => 'AH',
+        'itmk'     => 'DH',
         'itme'     => 12,
         'itms'     => 40,
         'itmsk'    => '',
@@ -909,7 +909,7 @@ return [
         'tool_level' => 0,
     ],
     'gas_mask' => [
-        'itmk'     => 'AH',
+        'itmk'     => 'DH',
         'itme'     => 8,
         'itms'     => 35,
         'itmsk'    => '',
@@ -921,7 +921,7 @@ return [
         'tool_level' => 0,
     ],
     'assassin_hood' => [
-        'itmk'     => 'AH',
+        'itmk'     => 'DH',
         'itme'     => 4,
         'itms'     => 20,
         'itmsk'    => '',
@@ -933,7 +933,7 @@ return [
         'tool_level' => 0,
     ],
     'night_vision_goggles' => [
-        'itmk'     => 'AH',
+        'itmk'     => 'DH',
         'itme'     => 6,
         'itms'     => 30,
         'itmsk'    => '',
@@ -945,10 +945,10 @@ return [
         'tool_level' => 0,
     ],
 
-    // ─── 足具（AF）──────────────────────────────────────────
+    // ─── 足具（DF）──────────────────────────────────────────
 
     'cloth_shoes' => [
-        'itmk'     => 'AF',
+        'itmk'     => 'DF',
         'itme'     => 2,
         'itms'     => 15,
         'itmsk'    => '',
@@ -960,7 +960,7 @@ return [
         'tool_level' => 0,
     ],
     'sneakers' => [
-        'itmk'     => 'AF',
+        'itmk'     => 'DF',
         'itme'     => 3,
         'itms'     => 25,
         'itmsk'    => '',
@@ -972,7 +972,7 @@ return [
         'tool_level' => 0,
     ],
     'combat_boots' => [
-        'itmk'     => 'AF',
+        'itmk'     => 'DF',
         'itme'     => 5,
         'itms'     => 35,
         'itmsk'    => '',
@@ -984,10 +984,10 @@ return [
         'tool_level' => 0,
     ],
 
-    // ─── 配件（AA）──────────────────────────────────────────
+    // ─── 配件（DA）──────────────────────────────────────────
 
     'bronze_amulet' => [
-        'itmk'     => 'AA',
+        'itmk'     => 'DA',
         'itme'     => 4,
         'itms'     => 20,
         'itmsk'    => '',
@@ -999,7 +999,7 @@ return [
         'tool_level' => 0,
     ],
     'binoculars' => [
-        'itmk'     => 'AA',
+        'itmk'     => 'DA',
         'itme'     => 2,
         'itms'     => 25,
         'itmsk'    => '',
@@ -1011,7 +1011,7 @@ return [
         'tool_level' => 0,
     ],
     'rifle_scope' => [
-        'itmk'     => 'AA',
+        'itmk'     => 'DA',
         'itme'     => 3,
         'itms'     => 30,
         'itmsk'    => '',
@@ -1023,7 +1023,7 @@ return [
         'tool_level' => 0,
     ],
     'tactical_gloves' => [
-        'itmk'     => 'AA',
+        'itmk'     => 'DA',
         'itme'     => 3,
         'itms'     => 25,
         'itmsk'    => '',
@@ -1455,6 +1455,25 @@ return [
         'stack'    => false,
         'tags'     => ['tag_tool'],
         'use_effect' => '',
+        'tool_level' => 0,
+    ],
+
+    // ─── F-7 玩家放置 POI 道具 ──────────────────────────
+    // use_effect=place_poi 分发到 item_use_effect_place_poi()
+    // itmpara 协议：'poi_id:{template_id}'，由 effect 函数正则解析
+    'firewood' => [
+        'itm'      => '木柴',
+        'itmk'     => 'MT',
+        'itme'     => 1,
+        'itms'     => 1,
+        'itmsk'    => '',
+        'itmpara'  => 'poi_id:campfire_unlit',
+        'desc'     => '一捆干柴，可以使用放置未点燃的火堆。',
+        'tier'     => 'common',
+        'stack'    => true,
+        'stack_limit' => 5,
+        'tags'     => ['tag_combustible', 'tag_usable', 'tag_poi_placeable'],
+        'use_effect' => 'place_poi',
         'tool_level' => 0,
     ],
 ];

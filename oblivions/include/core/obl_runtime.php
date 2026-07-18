@@ -97,6 +97,15 @@ function obl_runtime_boot($kind = 'command') {
         // 旧 game 表仍提供房间生命周期，oblgame 提供 tick/gamevars。
         // state.php 是纯读入口，不应在缺表/缺行时产生创建副作用。
         obl_gamevars_sync_to_globals($kind !== 'state', false);
+
+        // C-8 运行时表 schema 自愈：command/heartbeat 路径在每次请求启动时
+        // 检查运行时表字段/索引完整性，缺失则自动 ALTER TABLE 补建。
+        // state 路径保持纯读语义，不触发 schema 修复（参照 obl_gamevars_sync_to_globals
+        // 的 no-create 策略）；纯读路径遇到缺字段会自然返回错误状态，由调用方
+        // 触发 command 路径修复。
+        if ($kind !== 'state' && function_exists('obl_runtime_tables_schema_ensure')) {
+            obl_runtime_tables_schema_ensure();
+        }
     }
 
     if (!isset($obl_log)) $obl_log = new OblivionsLogger();

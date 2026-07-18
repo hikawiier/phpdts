@@ -676,6 +676,13 @@ body::after {
     display: flex;
     align-items: center;
     gap: 12px;
+    transition: background-color 200ms ease, border-color 200ms ease;
+}
+
+/* E-11 夜相位视觉反馈：基底灰阶加深，遵循 DESIGN.md 2.15 灰阶基底原则，不引入彩色信号色 */
+.status-bar.is-night {
+    background-color: rgba(8,8,12,0.85);
+    border-bottom-color: rgba(40,40,40,0.6);
 }
 
 .status-avatar {

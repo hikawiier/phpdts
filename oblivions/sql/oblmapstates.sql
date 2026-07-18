@@ -2,7 +2,7 @@
 -- 表的结构 `bra_oblmapstates`
 -- Oblivions 模式图格状态表
 -- 记录每个图格的实际状态（迷雾、破坏、编辑等）
--- 野生道具刷新状态（last_refresh_turn / refresh_count）由本表统一管理；
+-- 野生道具刷新状态（last_refresh_day / refresh_count）由本表统一管理；
 -- 容量计数采用批量 COUNT 方案，不维护冗余 wild_item_count 字段。
 --
 
@@ -15,8 +15,12 @@ CREATE TABLE bra_oblmapstates (
   flags varchar(255) NOT NULL default '',               -- 扩展状态标记(JSON)（未启用：未来扩展点）
 
   -- 野生道具刷新状态（iaid=0 AND source_iaid=0 的野生道具，容量计数走批量 COUNT 方案）
-  last_refresh_turn int unsigned NOT NULL default '0',  -- 上次该格野生道具刷新的 tick；0=从未刷新
+  -- 刷新判定采用"按天"机制（E-11 day_changed 事件触发），由 last_refresh_day 与当前游戏天比较
+  last_refresh_day int unsigned NOT NULL default '0',  -- 上次该格野生道具刷新的游戏天；0=从未刷新
   refresh_count smallint unsigned NOT NULL default '0', -- 该格累计野生道具刷新次数（统计/调试用）
+
+  -- 已废弃字段（保留以兼容旧数据，新逻辑不再读取）
+  last_refresh_turn int unsigned NOT NULL default '0',  -- [deprecated] 旧 tick 间隔判定机制字段，被 last_refresh_day 替代
 
   PRIMARY KEY (pgroup, pls)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

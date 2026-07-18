@@ -8,43 +8,55 @@ if (!defined('IN_GAME')) {
 }
 
 // ================================================================
-// Oblivions 野生道具时间流逝刷新 / Wild item refresh over time
+// Oblivions 野生道具按天刷新 / Wild item refresh per day
 //
-// 由 tick 调度的 post phase 监听器触发，每 N tick 全局扫描所有
-// "已发现过"的图格（fog=1 OR last_refresh_turn>0），按潮汐倍率
-// 与 scatter_pool['refresh'] 相位 rate 判定是否生成新道具。
+// 由 E-11 天与昼夜相位派生层的 day_changed 事件触发，
+// 每当天数递增时全局扫描所有"已发现过"的图格（fog=1 OR
+// last_refresh_day>0），按潮汐倍率与 scatter_pool['refresh']
+// 相位 rate 判定是否生成新道具。
 //
 // 容量计数采用批量 COUNT 方案（R3 决策）：一次 SQL 查询所有图格
 // 当前野生道具数（WHERE iaid=0 AND source_iaid=0），不维护冗余
 // 计数字段。POI 产出道具（source_iaid>0）被天然过滤，不计入容量。
 //
-// 多 tick 推进时监听器按 delta 循环触发，per-tile 的 last_refresh_turn
-// 检查确保同一格在一次 delta 批处理内最多被刷新一次。
+// per-tile 容量保护：last_refresh_day 字段记录上次刷新的天数，
+// 确保同一格在同一天内最多被刷新一次。
 //
 // 设计文档：oblivions/docs/搜索建筑物与掉落机制重构-模块E-探索与搜刮.md §三 E-9
+// 改造依据：oblivions/docs/天数与昼夜系统-设计案.md §五
 // ================================================================
 
 /**
- * 野生道具时间流逝刷新（全局批量执行）
+ * 野生道具按天刷新（全局批量执行，day_changed 事件监听器）
+ *
+ * 监听器签名：function(array $transition): void
+ *   $transition = [
+ *     'from' => ['day' => N,   'phase' => 'day'|'night'],
+ *     'to'   => ['day' => N+1, 'phase' => 'day'|'night'],
+ *     'tick' => T,
+ *   ]
  *
  * 流程：
- *   1. 读配置（interval/capacity/tide_multiplier）；interval<=0 直接返回
- *   2. 批量 COUNT 查询所有图格当前野生道具数（WHERE iaid=0 AND source_iaid=0）
- *   3. 查询所有"已发现过"的图格（fog=1 OR last_refresh_turn>0）
- *   4. 按 pgroup 加载 tiles 数据，读取每格 tide
- *   5. 遍历每个图格：容量检查 → 间隔检查 → 按 tide × refresh rate 判定 → INSERT
- *   6. 批量 INSERT 新道具（每批 500 条，字段列表与 obl_generate_wild_items 一致）
- *   7. 批量 UPDATE oblmapstates.last_refresh_turn / refresh_count
+ *   1. 解析 $transition['to']['day'] 为当前天数
+ *   2. 读配置（capacity/tide_multiplier）；mode != 'daily' 直接返回
+ *   3. 批量 COUNT 查询所有图格当前野生道具数（WHERE iaid=0 AND source_iaid=0）
+ *   4. 查询所有"已发现过"且 last_refresh_day < 当前天数的图格
+ *   5. 按 pgroup 加载 tiles 数据，读取每格 tide
+ *   6. 遍历每个图格：容量检查 → 按 tide × refresh rate 判定 → INSERT
+ *   7. 批量 INSERT 新道具（每批 500 条，字段列表与 obl_generate_wild_items 一致）
+ *   8. 批量 UPDATE oblmapstates.last_refresh_day / refresh_count
  *
- * @param int $current_turn 本次刷新所对应的 tick（由监听器循环传入历史 tick）
+ * @param array $transition day_changed 事件 transition 结构
  * @return void
  * @global object $db
  * @global string $tablepre
  */
-function obl_refresh_wild_items($current_turn) {
+function obl_refresh_wild_items(array $transition) {
     global $db, $tablepre;
     if (!isset($db) || !$db || !isset($tablepre)) return;
-    $current_turn = (int)$current_turn;
+
+    $current_day = isset($transition['to']['day']) ? (int)$transition['to']['day'] : 0;
+    if ($current_day <= 0) return;
 
     // 静态缓存配置与数据池（同请求内多次调用零开销）
     static $cfg = null, $scatter_pool = null, $item_table = null;
@@ -54,8 +66,9 @@ function obl_refresh_wild_items($current_turn) {
         $item_table   = include GAME_ROOT . './oblivions/gamedata/item_table.php';
     }
 
-    $interval = isset($cfg['wild_item_refresh_interval_ticks']) ? (int)$cfg['wild_item_refresh_interval_ticks'] : 100;
-    if ($interval <= 0) return;  // 0=不刷新
+    // 刷新模式校验：仅 'daily' 模式启用按天刷新
+    $mode = isset($cfg['wild_item_refresh_mode']) ? (string)$cfg['wild_item_refresh_mode'] : 'daily';
+    if ($mode !== 'daily') return;
 
     $capacity  = isset($cfg['wild_item_capacity_per_tile']) ? (int)$cfg['wild_item_capacity_per_tile'] : 5;
     $tide_rate = isset($cfg['wild_item_refresh_rate_by_tide']) && is_array($cfg['wild_item_refresh_rate_by_tide'])
@@ -76,19 +89,20 @@ function obl_refresh_wild_items($current_turn) {
         }
     }
 
-    // 3. 查询所有"已发现过"的图格
-    $result = $db->query("SELECT pgroup, pls, last_refresh_turn
+    // 3. 查询所有"已发现过"且本天未刷新的图格
+    $result = $db->query("SELECT pgroup, pls, last_refresh_day
                           FROM {$tablepre}oblmapstates
-                          WHERE fog=1 OR last_refresh_turn>0");
+                          WHERE (fog=1 OR last_refresh_day>0)
+                            AND last_refresh_day < {$current_day}");
     if (!$result) return;
 
     // 按 pgroup 分组收集图格
-    $tiles_by_pgroup = array();  // pgroup => [['pls'=>..., 'last_refresh_turn'=>...], ...]
+    $tiles_by_pgroup = array();  // pgroup => [['pls'=>..., 'last_refresh_day'=>...], ...]
     while ($row = $db->fetch_array($result)) {
         $pg = (int)$row['pgroup'];
         $pl = (int)$row['pls'];
-        $lrt = (int)$row['last_refresh_turn'];
-        $tiles_by_pgroup[$pg][] = array('pls' => $pl, 'last_refresh_turn' => $lrt);
+        $lrd = (int)$row['last_refresh_day'];
+        $tiles_by_pgroup[$pg][] = array('pls' => $pl, 'last_refresh_day' => $lrd);
     }
     if (empty($tiles_by_pgroup)) return;
 
@@ -106,14 +120,10 @@ function obl_refresh_wild_items($current_turn) {
 
         foreach ($tile_list as $tile_info) {
             $pls = (int)$tile_info['pls'];
-            $last_refresh = (int)$tile_info['last_refresh_turn'];
 
             // 容量检查
-            $cnt = isset($cnt_map[$pgroup][$pls]) ? $cnt_map[$pgroup][$pls] : 0;
+            $cnt = isset($cnt_map[$pgroup][$pls]) ? (int)$cnt_map[$pgroup][$pls] : 0;
             if ($cnt >= $capacity) continue;
-
-            // 刷新间隔检查（per-tile 双重保险，避免 delta 循环内重复刷新）
-            if ($last_refresh > 0 && ($current_turn - $last_refresh) < $interval) continue;
 
             // 读取 tile 的 tide
             if (!isset($tiles[$pls])) continue;  // tile 不存在
@@ -191,55 +201,15 @@ function obl_refresh_wild_items($current_turn) {
         }
     }
 
-    // 7. 批量 UPDATE oblmapstates.last_refresh_turn / refresh_count（按 pgroup 分组，主键前缀扫描）
+    // 7. 批量 UPDATE oblmapstates.last_refresh_day / refresh_count（按 pgroup 分组，主键前缀扫描）
     foreach ($refreshed_by_pgroup as $pgroup => $pls_list) {
         $pgroup = (int)$pgroup;
         if (empty($pls_list)) continue;
         $pls_in = implode(',', array_map('intval', $pls_list));
         $qry = "UPDATE {$tablepre}oblmapstates
-                SET last_refresh_turn = $current_turn,
+                SET last_refresh_day = $current_day,
                     refresh_count = refresh_count + 1
                 WHERE pgroup = $pgroup AND pls IN ($pls_in)";
         $db->query($qry);
-    }
-}
-
-/**
- * tick post phase 监听器：野生道具刷新
- *
- * 按 delta 循环遍历历史 tick，对每个满足 t % interval == 0 的 tick
- * 调用 obl_refresh_wild_items($t)。多 tick 推进时避免跳过刷新。
- *
- * 监听器签名：function(int $delta, array &$ctx): void
- * - $delta：待处理的 tick 差值（obl_tick - obl_pretick 同步前的值）
- * - $ctx：调度上下文（引用传递，本监听器不修改 ctx）
- *
- * delta=1 时退化为单次 current % interval == 0 检查；
- * delta=250、interval=100 时循环触发 tick=100/200 两次（current%100≠0 不触发）。
- *
- * @param int   $delta 待处理的 tick 差值
- * @param array &$ctx  调度上下文（引用传递）
- * @return void
- */
-function obl_tick_phase_refresh_wild_items($delta, &$ctx) {
-    $delta = (int)$delta;
-    if ($delta <= 0) return;
-
-    // 静态缓存 interval 配置
-    static $interval = null;
-    if ($interval === null) {
-        $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
-        $interval = isset($cfg['wild_item_refresh_interval_ticks']) ? (int)$cfg['wild_item_refresh_interval_ticks'] : 100;
-    }
-    if ($interval <= 0) return;  // 0=不刷新
-
-    $current = obl_tick_get();
-    $start = $current - $delta + 1;
-    if ($start < 0) $start = 0;
-
-    for ($t = $start; $t <= $current; $t++) {
-        if ($t % $interval === 0) {
-            obl_refresh_wild_items($t);
-        }
     }
 }

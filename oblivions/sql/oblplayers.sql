@@ -40,14 +40,14 @@ CREATE TABLE bra_oblplayers (
   state        tinyint unsigned NOT NULL default '0',  -- 含义待定，先保留
 
   -- 装备（7 槽 × ID + 6 运行时字段）
-  -- 槽位语义：wep=主武器 / wep2=副武器 / db=护甲(Defense Body) / dh=头部防具(Defense Head) / da=手部防具(Defense Arm) / df=足部防具(Defense Foot) / ac=饰品(Accessory)
+  -- 槽位语义：wep=主武器 / wep2=副武器 / arb=护甲(Armor Body) / arh=头部防具(Armor Head) / ara=手部防具(Armor Arm) / arf=足部防具(Armor Foot) / art=饰品(Accessory)
   wepid varchar(32) NOT NULL default '', wep char(30) NOT NULL default '', wepk char(40) not null default '', wepe int(10) unsigned NOT NULL DEFAULT '0', weps char(10) not null default '0', wepsk char(40) not null default '', weppara text not null,
   wep2id varchar(32) NOT NULL default '', wep2 char(30) NOT NULL default '', wep2k char(40) not null default '', wep2e int(10) unsigned NOT NULL DEFAULT '0', wep2s char(10) not null default '0', wep2sk char(40) not null default '', wep2para text not null,
-  dbid varchar(32) NOT NULL default '', db char(30) NOT NULL default '', dbk char(40) not null default '', dbe int(10) unsigned NOT NULL DEFAULT '0', dbs char(10) not null default '0', dbsk char(40) not null default '', dbpara text not null,
-  dhid varchar(32) NOT NULL default '', dh char(30) NOT NULL default '', dhk char(40) not null default '', dhe int(10) unsigned NOT NULL DEFAULT '0', dhs char(10) not null default '0', dhsk char(40) not null default '', dhpara text not null,
-  daid varchar(32) NOT NULL default '', da char(30) NOT NULL default '', dak char(40) not null default '', dae int(10) unsigned NOT NULL DEFAULT '0', das char(10) not null default '0', dask char(40) not null default '', dapara text not null,
-  dfid varchar(32) NOT NULL default '', df char(30) NOT NULL default '', dfk char(40) not null default '', dfe int(10) unsigned NOT NULL DEFAULT '0', dfs char(10) not null default '0', dfsk char(40) not null default '', dfpara text not null,
-  acid varchar(32) NOT NULL default '', ac char(30) NOT NULL default '', ack char(40) not null default '', ace int(10) unsigned NOT NULL DEFAULT '0', acs char(10) not null default '0', acsk char(40) not null default '', acpara text not null,
+  arbid varchar(32) NOT NULL default '', arb char(30) NOT NULL default '', arbk char(40) not null default '', arbe int(10) unsigned NOT NULL DEFAULT '0', arbs char(10) not null default '0', arbsk char(40) not null default '', arbpara text not null,
+  arhid varchar(32) NOT NULL default '', arh char(30) NOT NULL default '', arhk char(40) not null default '', arhe int(10) unsigned NOT NULL DEFAULT '0', arhs char(10) not null default '0', arhsk char(40) not null default '', arhpara text not null,
+  araid varchar(32) NOT NULL default '', ara char(30) NOT NULL default '', arak char(40) not null default '', arae int(10) unsigned NOT NULL DEFAULT '0', aras char(10) not null default '0', arask char(40) not null default '', arapara text not null,
+  arfid varchar(32) NOT NULL default '', arf char(30) NOT NULL default '', arfk char(40) not null default '', arfe int(10) unsigned NOT NULL DEFAULT '0', arfs char(10) not null default '0', arfsk char(40) not null default '', arfpara text not null,
+  artid varchar(32) NOT NULL default '', art char(30) NOT NULL default '', artk char(40) not null default '', arte int(10) unsigned NOT NULL DEFAULT '0', arts char(10) not null default '0', artsk char(40) not null default '', artpara text not null,
 
   -- 道具栏（JSON 大字段，替代 itm0~itm6；遵循旧字段命名 + itmid）
   itempara     mediumtext NOT NULL,    -- 道具栏数据（JSON 数组）

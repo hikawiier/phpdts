@@ -465,7 +465,7 @@ export function assertCharacterMapRosterFixture(): void {
     action: '', bid: '0', hp: '100', mhp: '100', sp: '100', msp: '100',
     att: '10', def: '0', ap: '10', max_ap: '10', pgroup: '1', pls: String(pls),
     lvl: '1', exp: '0', state: '0', itemmaxslots: '6',
-    wepid: '', wep2id: '', dbid: '', dhid: '', daid: '', dfid: '', acid: '',
+    wepid: '', wep2id: '', arbid: '', arhid: '', araid: '', arfid: '', artid: '',
     itemIds: [], discovered,
   });
 

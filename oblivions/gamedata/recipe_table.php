@@ -498,4 +498,20 @@ return [
             ['item_id' => 'concentrated_soup', 'count' => 1],
         ],
     ],
+
+    // ================================================================
+    // ─── F-7 玩家放置 POI 道具配方（任务2：放置未点燃火堆）─────────
+    // 设计意图：玩家通过合成 firewood 道具，使用后可在当前格放置 campfire_unlit POI
+    // 参考：tree_branch 是基础可燃素材，2 个合成 1 捆 firewood
+    // ================================================================
+
+    'craft_firewood' => [
+        'category'  => 'tool',
+        'materials' => [
+            ['item_id' => 'tree_branch', 'count' => 2, 'consume' => 'all'],
+        ],
+        'results'   => [
+            ['item_id' => 'firewood', 'count' => 1],
+        ],
+    ],
 ];

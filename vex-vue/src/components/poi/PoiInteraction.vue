@@ -43,6 +43,47 @@ const currentPoiInteractions = computed(() => poiStore.currentPoiInteractions);
 const canInteract = computed(() => poiStore.canInteract);
 const interactLoading = computed(() => poiStore.interactLoading);
 
+// ── F-7 拆除派生状态 ──
+const dismantleLoading = computed(() => poiStore.dismantleLoading);
+const canDismantle = computed(() => poiStore.canDismantle);
+
+/**
+ * 当前 POI 是否展示拆除按钮
+ * 仅当 POI 模板配置了 dismantle_returns（非空数组）时显示，
+ * 世界生成的 POI 默认无此字段，不显示拆除入口。
+ */
+const canShowDismantle = computed<boolean>(() => {
+  const poi = currentPoi.value;
+  if (!poi) return false;
+  const returns = poi.dismantle_returns;
+  return Array.isArray(returns) && returns.length > 0;
+});
+
+/** 拆除返还材料文案 */
+const dismantleReturnsLabel = computed<string>(() => {
+  const poi = currentPoi.value;
+  if (!poi) return '';
+  const returns = poi.dismantle_returns;
+  if (!Array.isArray(returns) || returns.length === 0) return '';
+  const parts = returns.map(r => `${getItemName(r.item_id)}×${r.count}`);
+  return '（返还 ' + parts.join('、') + '）';
+});
+
+/**
+ * E-12 POI 剩余耐久文案
+ * ttl_remaining_days === null → POI 无耐久（世界生成），不显示
+ * ttl_remaining_days === 0    → 已过期（理论上已被清理，兜底显示）
+ * ttl_remaining_days > 0      → 剩余 N 天
+ */
+const ttlRemainingLabel = computed<string>(() => {
+  const poi = currentPoi.value;
+  if (!poi) return '';
+  const remaining = poi.ttl_remaining_days;
+  if (remaining === null || remaining === undefined) return '';
+  if (remaining <= 0) return '已过期';
+  return `剩余耐久：${remaining} 天`;
+});
+
 /** 是否为机制型 POI（如生命图腾、技能图腾） */
 const isMechanic = computed<boolean>(() => !!currentPoi.value?.mechanic);
 
@@ -209,6 +250,11 @@ function onInteract(slot: number, iaid: string | number): void {
   void poiStore.handleInteract(slot, iaid);
 }
 
+/** F-7 玩家主动拆除 POI 按钮 */
+function onDismantle(iaid: string | number): void {
+  void poiStore.handleDismantle(iaid);
+}
+
 function onOrganize(): void {
   void inventoryStore.handleOrganize();
 }
@@ -261,6 +307,11 @@ function onBack(): void {
         <div v-if="inCooldown" class="poi-info-row">
           <span class="dim">状态：</span>
           <span>{{ cooldownLabel }}</span>
+        </div>
+        <!-- E-12 POI 耐久信息（仅 ttl_days > 0 的玩家放置 POI 显示） -->
+        <div v-if="ttlRemainingLabel" class="poi-info-row">
+          <span class="dim">耐久：</span>
+          <span>{{ ttlRemainingLabel }}</span>
         </div>
 
         <!-- 机制触发结果（已搜索的机制型 POI） -->
@@ -384,6 +435,15 @@ function onBack(): void {
                 @click="onSearch"
               >{{ searchBtnText }}</button>
             </template>
+          </div>
+
+          <!-- F-7 拆除按钮（POI 模板含 dismantle_returns 时显示） -->
+          <div v-if="canShowDismantle" class="poi-action poi-dismantle-action">
+            <button
+              class="term-btn block poi-dismantle-btn"
+              :disabled="!canDismantle || dismantleLoading || itm0Locked"
+              @click="onDismantle(currentPoi!.iaid)"
+            >[拆除{{ dismantleReturnsLabel }}]</button>
           </div>
         </div>
       </div>
@@ -751,6 +811,22 @@ function onBack(): void {
   color: #0a0a0a;
 }
 
+/* ── F-7 拆除按钮（破坏性动作，用更亮的边框区分） ── */
+.poi-dismantle-action {
+  margin-top: 4px;
+}
+
+.poi-dismantle-btn {
+  border-color: #999;
+  color: #bbb;
+  font-weight: 400;
+}
+
+.poi-dismantle-btn:hover:not(:disabled) {
+  background: #777;
+  color: #fff;
+}
+
 /* ═══ 右列：可用工具/技能区 ═══ */
 .poi-col-right {
   overflow: hidden;
@@ -776,7 +852,8 @@ function onBack(): void {
 /* ── reduced-motion 兜底 ── */
 @media (prefers-reduced-motion: reduce) {
   .prob-bar-fill,
-  .poi-search-btn {
+  .poi-search-btn,
+  .poi-dismantle-btn {
     transition: none;
   }
 }

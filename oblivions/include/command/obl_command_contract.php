@@ -57,6 +57,21 @@ function obl_command_contracts() {
             ),
             'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
+        'poi.dismantle' => array(
+            // F-7 玩家主动拆除 POI：不依赖道具，直接对当前格 POI 操作
+            // advances_tick=true 与 poi.search/poi.interact 一致（玩家主动行动消耗时间）
+            // itm0_allowed=false：dismantle 主流程可能返还材料经 itm0，禁止 itm0_pending 干扰
+            'legacy' => 'obl_poi_dismantle',
+            'ui_mode' => 'explore',
+            'allowed_actions' => array('', null),
+            'advances_tick' => true,
+            'itm0_allowed' => false,
+            'required_capabilities' => array('time_pass'),
+            'payload_schema' => array(
+                'iaid' => array('type' => 'int', 'required' => true, 'min' => 1),
+            ),
+            'refresh' => array('player_info', 'tile_actions', 'player_inventory', 'obl_log'),
+        ),
         'item.pickup' => array(
             'legacy' => 'obl_pickup',
             'ui_mode' => 'explore',

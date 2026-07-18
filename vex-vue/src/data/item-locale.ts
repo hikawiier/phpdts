@@ -153,6 +153,11 @@ export const ITEM_LOCALE: Record<string, ItemLocaleEntry> = {
   lockpick_set: { name: '撬锁器', desc: '专业撬锁工具，比简易开锁器更耐用。' },
   torch_unlit: { name: '未点燃火把', desc: '粗制火把，可点燃后照明，也可燃。' },
   water_tester: { name: '水质检测器', desc: '检测水源污染程度的便携工具。' },
+
+  // ─── F-7 玩家放置 POI 道具 ──────────────────────────
+  // 木柴：use_effect=place_poi，itmpara='poi_id:campfire_unlit'
+  // 通过合成 craft_firewood（tree_branch × 2 → firewood × 1）获得
+  firewood: { name: '木柴', desc: '一捆干柴，可以使用放置未点燃的火堆。' },
 };
 
 export function getItemName(itemId: string | number | undefined, customName?: string): string {

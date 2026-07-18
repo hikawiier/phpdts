@@ -63,6 +63,8 @@ export const usePoiStore = defineStore('poi', () => {
   const pickupLoading = ref<boolean>(false);
   /** F-6 poi.interact 命令执行中标志 */
   const interactLoading = ref<boolean>(false);
+  /** F-7 poi.dismantle 命令执行中标志 */
+  const dismantleLoading = ref<boolean>(false);
 
   // ── 派生计算属性 ──
 
@@ -106,6 +108,9 @@ export const usePoiStore = defineStore('poi', () => {
 
   /** F-6 poi.interact 是否可执行（受 K-3 多层门控拦截） */
   const canInteract = computed<boolean>(() => commandQueue.canExecute('poi.interact'));
+
+  /** F-7 poi.dismantle 是否可执行（受 K-3 多层门控拦截） */
+  const canDismantle = computed<boolean>(() => commandQueue.canExecute('poi.dismantle'));
 
   /** 当前 POI 是否可搜索（结合 POI 自身 state/searchable/searched/repeatable 与 canSearch）
    *
@@ -344,6 +349,63 @@ export const usePoiStore = defineStore('poi', () => {
     }
   }
 
+  /**
+   * F-7 提交 poi.dismantle 命令（玩家主动拆除 POI）
+   *
+   * 与 handleInteract 同模式：commandQueue.execute + 失效 tile_actions/player_inventory/player_info。
+   * 成功路径广播 game:action-completed 让 tile_actions 重新拉取，
+   * currentPoi 被移除后前端自然从列表消失。
+   * 失败路径广播 ui:toast 让玩家了解原因（如 POI 不存在/位置不匹配）。
+   *
+   * 与 poi.interact 的差异：
+   *   - 不需要 slot 参数（dismantle 不依赖道具，是玩家直接动作）
+   *   - 主流程在 POI 实例层 DELETE，前端无需追踪 POI 状态变化
+   *   - 返还材料经 itm0 → organize 写入背包，故仍需失效 player_inventory
+   *
+   * 与 inventory.handleOrganize 同模式：broadcast 后显式 await loadInventory()，
+   * 确保 dismantle 返还材料后背包立即刷新（slot 从 empty 变非空时 UI 即时呈现）。
+   * 仅依赖 game:action-completed → loadInventory 的 fire-and-forget 监听器不可靠：
+   * 监听器同步返回，loadInventory 异步执行，若与并发的 player_info 刷新产生 _pending
+   * 竞态，旧 fetch result 可能后完成覆盖新数据。显式 await 确保 dismantle 完成后
+   * inventoryData.value 已更新为新数据，UI 立即正确显示返还物品。
+   */
+  async function handleDismantle(iaid: string | number): Promise<void> {
+    if (!canDismantle.value) return;
+
+    debugBus.emit('action', 'poi:dismantle', { iaid });
+    dismantleLoading.value = true;
+    try {
+      const result = await commandQueue.execute({
+        command: 'poi.dismantle',
+        payload: { iaid: Number(iaid) },
+      });
+      if (!result.success) {
+        dataManager.broadcast('ui:toast', {
+          type: 'error',
+          msg: result.message || result.error || '拆除失败',
+          isHtml: !!result.messageIsHtml,
+        });
+        return;
+      }
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('player_info');
+      dataManager.invalidate('tile_actions');
+      dataManager.broadcast('game:action-completed');
+      // 显式 await loadInventory：确保拆除返还材料后背包立即刷新
+      await useInventoryStore().loadInventory();
+    } catch (e) {
+      debugBus.emit('error', 'poi:dismantleError', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      dataManager.broadcast('ui:toast', {
+        type: 'error',
+        msg: '拆除失败：' + (e instanceof Error ? e.message : String(e)),
+      });
+    } finally {
+      dismantleLoading.value = false;
+    }
+  }
+
   // ═══ 事件监听 ═══
 
   let _listenersRegistered = false;
@@ -381,6 +443,7 @@ export const usePoiStore = defineStore('poi', () => {
     searchLoading,
     pickupLoading,
     interactLoading,
+    dismantleLoading,
     // 计算属性
     poiList,
     currentPoi,
@@ -390,6 +453,7 @@ export const usePoiStore = defineStore('poi', () => {
     canSearch,
     canPickup,
     canInteract,
+    canDismantle,
     currentPoiSearchable,
     currentPoiInteractions,
     // 模态框操作
@@ -407,6 +471,7 @@ export const usePoiStore = defineStore('poi', () => {
     pickupItem,
     pickupAllItems,
     handleInteract,
+    handleDismantle,
     // 事件监听
     registerListeners,
   };

@@ -33,17 +33,24 @@ import type { PlayerInventory, InventoryItem, EquipmentSlot } from '@/types/api'
 export const EQUIPMENT_SLOTS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'wep',  label: '主武器' },
   { key: 'wep2', label: '副武器' },
-  { key: 'db',   label: '护甲' },
-  { key: 'dh',   label: '头部防具' },
-  { key: 'da',   label: '手部防具' },
-  { key: 'df',   label: '足部防具' },
-  { key: 'ac',   label: '饰品' },
+  { key: 'arb',  label: '护甲' },
+  { key: 'arh',  label: '头部防具' },
+  { key: 'ara',  label: '手部防具' },
+  { key: 'arf',  label: '足部防具' },
+  { key: 'art',  label: '饰品' },
 ];
 
 export const useInventoryStore = defineStore('inventory', () => {
   // ── 状态 ──
   const inventoryData = ref<PlayerInventory | null>(null);
   const loading = ref<boolean>(false);
+
+  // ── loadInventory 版本号 ──
+  // 防止过时的 fetch 结果覆盖新数据：
+  // dataManager.fetch(forceRefresh=true) 跳过 _pending 去重，旧 promise 仍会 resolve
+  // 并把旧 result 交给旧调用方。若旧 promise 后完成，会覆盖新 loadInventory 的更新。
+  // 版本号检查确保只有最新一次 loadInventory 的 result 才能写入 inventoryData.value。
+  let _loadVersion = 0;
 
   // ── 计算属性 ──
   const slots = computed<InventoryItem[]>(() => inventoryData.value?.slots || []);
@@ -77,24 +84,36 @@ export const useInventoryStore = defineStore('inventory', () => {
    * 迁移自现有 vex/js/inventory.js loadInventory()：
    *   - 经 dataManager.fetch（去重 + 白名单缓存）
    *   - 装备数据复用 playerStore（player_info.equipment）
+   *
+   * 版本号机制：每次调用递增 _loadVersion，await fetch 后检查版本号。
+   * 若期间有新的 loadInventory 调用进入（版本号不匹配），当前调用丢弃 result，
+   * 避免过时的 fetch 结果覆盖新数据（dataManager.fetch forceRefresh=true 跳过去重，
+   * 旧 promise 仍会 resolve 并把旧 result 交给旧调用方，可能后完成覆盖新数据）。
    */
   async function loadInventory(): Promise<void> {
+    const version = ++_loadVersion;
     loading.value = true;
     debugBus.emit('api', 'loadInventory:start', { action: 'player_inventory' });
     try {
       const result = await dataManager.fetch('player_inventory', true);
+      // 版本号检查：过时的请求丢弃，不覆盖新数据
+      if (version !== _loadVersion) return;
       if (result.status === 'success' && result.data) {
         inventoryData.value = result.data as PlayerInventory;
       } else {
         inventoryData.value = null;
       }
     } catch (e) {
+      if (version !== _loadVersion) return;
       debugBus.emit('error', 'loadInventory:error', {
         error: e instanceof Error ? e.message : String(e),
       });
       inventoryData.value = null;
     } finally {
-      loading.value = false;
+      // 只有最新一次调用才能清 loading 状态
+      if (version === _loadVersion) {
+        loading.value = false;
+      }
     }
   }
 
@@ -212,7 +231,7 @@ export const useInventoryStore = defineStore('inventory', () => {
    * 后端流程：槽位非空校验 → 背包空位校验 → 装备还原为道具实例放入背包 →
    * 清空装备字段 → 重建装备技能 → emit unequip.success
    *
-   * @param equipSlot 装备槽位名（'wep'/'wep2'/'db'/'dh'/'da'/'df'/'ac'）
+   * @param equipSlot 装备槽位名（'wep'/'wep2'/'arb'/'arh'/'ara'/'arf'/'art'）
    */
   async function handleUnequip(equipSlot: string): Promise<void> {
     debugBus.emit('action', 'unequip:trigger', { equipSlot });

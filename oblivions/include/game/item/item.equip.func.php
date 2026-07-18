@@ -32,16 +32,17 @@ if (!defined('IN_GAME')) {
  *
  * 设计案 §2.2：
  * - WP/WK/WG/WD/WF/WC → wep（主武器）
- * - AR → db（护甲）
- * - AH → dh（头部防具）
- * - AA → da（手部防具）
- * - AF → df（足部防具）
+ * - DB → arb（身体防具）
+ * - DH → arh（头部防具）
+ * - DA → ara（手部防具）
+ * - DF → arf（足部防具）
+ * - AC → art（饰品）
  * - 其他 → null（不可装备，需通过 tag_equippable 在调用层拦截）
  *
  * 注意：wep2（副武器）默认不通过 itmk 自动映射——副武器需要显式指定 $equip_slot='wep2'。
  *
  * @param string $itmk 道具类型
- * @return string|null 装备槽位名（wep/db/dh/da/df）或 null
+ * @return string|null 装备槽位名（wep/arb/arh/ara/arf/art）或 null
  */
 function item_equip_get_slot_for_itmk($itmk) {
     $itmk = (string)$itmk;
@@ -53,14 +54,16 @@ function item_equip_get_slot_for_itmk($itmk) {
         case 'WF':
         case 'WC':
             return 'wep';
-        case 'AR':
-            return 'db';
-        case 'AH':
-            return 'dh';
-        case 'AA':
-            return 'da';
-        case 'AF':
-            return 'df';
+        case 'DB':
+            return 'arb';
+        case 'DH':
+            return 'arh';
+        case 'DA':
+            return 'ara';
+        case 'DF':
+            return 'arf';
+        case 'AC':
+            return 'art';
         default:
             return null;
     }
@@ -71,14 +74,14 @@ function item_equip_get_slot_for_itmk($itmk) {
  *
  * 设计案 §2.2：
  * - wep / wep2：接受 WP/WK/WG/WD/WF/WC
- * - db：接受 AR
- * - dh：接受 AH
- * - da：接受 AA
- * - df：接受 AF
- * - ac：接受任意 itmk（保留槽位，无属性加成）
+ * - arb：接受 DB
+ * - arh：接受 DH
+ * - ara：接受 DA
+ * - arf：接受 DF
+ * - art：接受 AC（饰品只接受 AC itmk）
  *
  * @param string $itmk       道具类型
- * @param string $equip_slot 装备槽位名（wep/wep2/db/dh/da/df/ac）
+ * @param string $equip_slot 装备槽位名（wep/wep2/arb/arh/ara/arf/art）
  * @return bool true=槽位接受该 itmk
  */
 function item_equip_validate_slot($itmk, $equip_slot) {
@@ -90,16 +93,16 @@ function item_equip_validate_slot($itmk, $equip_slot) {
         case 'wep':
         case 'wep2':
             return in_array($itmk, $weapon_kinds, true);
-        case 'db':
-            return $itmk === 'AR';
-        case 'dh':
-            return $itmk === 'AH';
-        case 'da':
-            return $itmk === 'AA';
-        case 'df':
-            return $itmk === 'AF';
-        case 'ac':
-            return true; // 保留槽位，接受任意 itmk
+        case 'arb':
+            return $itmk === 'DB';
+        case 'arh':
+            return $itmk === 'DH';
+        case 'ara':
+            return $itmk === 'DA';
+        case 'arf':
+            return $itmk === 'DF';
+        case 'art':
+            return $itmk === 'AC';
         default:
             return false;
     }
@@ -109,7 +112,7 @@ function item_equip_validate_slot($itmk, $equip_slot) {
  * 装备槽位 → 字段名映射
  *
  * 返回该槽位在 $pdata 中使用的 7 个字段名（id/name/kind/effect/durability/sk/para）。
- * 字段顺序对齐 player.func.php 装备字段约定（wep / wep2 / db / dh / da / df / ac）。
+ * 字段顺序对齐 player.func.php 装备字段约定（wep / wep2 / arb / arh / ara / arf / art）。
  *
  * @param string $equip_slot 装备槽位名
  * @return array|null 字段名映射数组，未知槽位返回 null
@@ -119,11 +122,11 @@ function item_equip_slot_to_fields($equip_slot) {
     $map = array(
         'wep'  => array('id' => 'wepid',  'name' => 'wep',  'kind' => 'wepk',  'effect' => 'wepe',  'durability' => 'weps',  'sk' => 'wepsk',  'para' => 'weppara'),
         'wep2' => array('id' => 'wep2id', 'name' => 'wep2', 'kind' => 'wep2k', 'effect' => 'wep2e', 'durability' => 'wep2s', 'sk' => 'wep2sk', 'para' => 'wep2para'),
-        'db'   => array('id' => 'dbid',   'name' => 'db',   'kind' => 'dbk',   'effect' => 'dbe',   'durability' => 'dbs',   'sk' => 'dbsk',   'para' => 'dbpara'),
-        'dh'   => array('id' => 'dhid',   'name' => 'dh',   'kind' => 'dhk',   'effect' => 'dhe',   'durability' => 'dhs',   'sk' => 'dhsk',   'para' => 'dhpara'),
-        'da'   => array('id' => 'daid',   'name' => 'da',   'kind' => 'dak',   'effect' => 'dae',   'durability' => 'das',   'sk' => 'dask',   'para' => 'dapara'),
-        'df'   => array('id' => 'dfid',   'name' => 'df',   'kind' => 'dfk',   'effect' => 'dfe',   'durability' => 'dfs',   'sk' => 'dfsk',   'para' => 'dfpara'),
-        'ac'   => array('id' => 'acid',   'name' => 'ac',   'kind' => 'ack',   'effect' => 'ace',   'durability' => 'acs',   'sk' => 'acsk',   'para' => 'acpara'),
+        'arb'  => array('id' => 'arbid',  'name' => 'arb',  'kind' => 'arbk',  'effect' => 'arbe',  'durability' => 'arbs',  'sk' => 'arbsk',  'para' => 'arbpara'),
+        'arh'  => array('id' => 'arhid',  'name' => 'arh',  'kind' => 'arhk',  'effect' => 'arhe',  'durability' => 'arhs',  'sk' => 'arhsk',  'para' => 'arhpara'),
+        'ara'  => array('id' => 'araid',  'name' => 'ara',  'kind' => 'arak',  'effect' => 'arae',  'durability' => 'aras',  'sk' => 'arask',  'para' => 'arapara'),
+        'arf'  => array('id' => 'arfid',  'name' => 'arf',  'kind' => 'arfk',  'effect' => 'arfe',  'durability' => 'arfs',  'sk' => 'arfsk',  'para' => 'arfpara'),
+        'art'  => array('id' => 'artid',  'name' => 'art',  'kind' => 'artk',  'effect' => 'arte',  'durability' => 'arts',  'sk' => 'artsk',  'para' => 'artpara'),
     );
     return isset($map[$equip_slot]) ? $map[$equip_slot] : null;
 }
@@ -281,7 +284,7 @@ function item_equip($slot, $equip_slot, &$pdata) {
  *   7. 立即重建装备技能：先 skill_strip_temporary + 再 skill_inject_equipment
  *   8. emit unequip.success（传 item_id、equip_slot）
  *
- * @param string $equip_slot 装备槽位名（wep/wep2/db/dh/da/df/ac）
+ * @param string $equip_slot 装备槽位名（wep/wep2/arb/arh/ara/arf/art）
  * @param array  &$pdata     玩家数据
  * @return void
  */
@@ -445,17 +448,17 @@ function player_get_effective_att($pdata): int {
 /**
  * 计算含装备加成的防御力
  *
- * 设计案 §2.4：基础值 + db + dh + da + df
- * 注意：ac（饰品槽位）无属性加成（设计案 §2.2）。
+ * 设计案 §2.4：基础值 + arb + arh + ara + arf
+ * 注意：art（饰品槽位）无属性加成（设计案 §2.2）。
  *
  * @param array $pdata 玩家数据
  * @return int
  */
 function player_get_effective_def($pdata): int {
     $base = (int)($pdata['def'] ?? 0);
-    $db = (int)($pdata['dbe'] ?? 0);
-    $dh = (int)($pdata['dhe'] ?? 0);
-    $da = (int)($pdata['dae'] ?? 0);
-    $df = (int)($pdata['dfe'] ?? 0);
-    return $base + $db + $dh + $da + $df;
+    $arb = (int)($pdata['arbe'] ?? 0);
+    $arh = (int)($pdata['arhe'] ?? 0);
+    $ara = (int)($pdata['arae'] ?? 0);
+    $arf = (int)($pdata['arfe'] ?? 0);
+    return $base + $arb + $arh + $ara + $arf;
 }

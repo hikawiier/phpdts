@@ -42,8 +42,21 @@ CREATE TABLE bra_oblmappoi (
   -- 兼容字段（保留以便平滑迁移；新代码应使用 state）
   searched tinyint(1) unsigned NOT NULL default '0',       -- 0=未搜索 1=已搜索（与 state in ('searched','cooldown','exhausted') 等价）
 
+  -- ── E-12 POI 耐久系统字段（玩家放置 POI 与到期清理）──
+  -- placed_by_pid：放置者玩家 pid；0=世界生成（永不过期），>0=玩家放置
+  -- placed_at_day：放置时的游戏天（obl_day），用于计算到期
+  -- ttl_days：生存期天数；0=永不过期，>0=放置天后第 N 天到期被清理
+  -- 世界生成路径不写此三字段（取默认值 0），保留永久存在
+  placed_by_pid mediumint unsigned NOT NULL default '0',
+  placed_at_day int unsigned NOT NULL default '0',
+  ttl_days smallint unsigned NOT NULL default '0',
+
   PRIMARY KEY (iaid),
   INDEX idx_pgroup_pls (pgroup, pls),
-  INDEX idx_state (state)
-    -- 支持按状态批量查询（如 tick 末尾批量检查 cooldown 到期）
+  INDEX idx_state (state),
+    -- 支撑按状态批量查询（如 tick 末尾批量检查 cooldown 到期）
+  INDEX idx_ttl_expiry (ttl_days, placed_at_day)
+    -- E-12 POI 耐久系统：支撑 day_changed 监听器批量扫描过期 POI
+    -- WHERE ttl_days > 0 AND placed_at_day + ttl_days <= current_day
+    -- 索引前缀 ttl_days > 0 等值过滤，后缀 placed_at_day 范围扫描
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

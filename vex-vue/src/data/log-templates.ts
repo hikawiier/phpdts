@@ -12,6 +12,7 @@
 import { generateTerrainDesc } from './terrain-desc';
 import { escapeHtml } from '@/utils/format';
 import { ITEM_LOCALE } from './item-locale';
+import { getPoiName } from './poi-locale';
 import type { LogEntry } from '@/types/api';
 
 /** 日志参数类型 */
@@ -682,6 +683,52 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
     render: (params) => {
       const name = ITEM_LOCALE[params.item_id as string]?.name ?? params.item_id;
       return `你使用<span class="yellow">${escapeHtml(name)}</span>与 POI 交互。`;
+    },
+  },
+  // ─── place_poi / F-7 玩家放置 POI ───────────────
+  // params: {item_id, poi_id, iaid, placed_by_pid, placed_at_day, ttl_days}
+  'place_poi.success': {
+    render: (params) => {
+      const itemName = ITEM_LOCALE[params.item_id as string]?.name ?? (params.item_id as string);
+      const poiName = getPoiName(params.poi_id as string);
+      const ttlDays = Number(params.ttl_days) || 0;
+      const ttlSuffix = ttlDays > 0
+        ? `（<span class="grey">${ttlDays} 天后到期</span>）`
+        : '';
+      return `你使用<span class="yellow">${escapeHtml(itemName)}</span>放置了<span class="yellow">${escapeHtml(poiName)}</span>${ttlSuffix}。`;
+    },
+  },
+  // ─── poi.durability / E-12 POI 耐久清理（系统级，day_changed 触发）──
+  // params: {day, cleaned_count, iaid_list}
+  'poi.durability.cleanup': {
+    render: (params) => {
+      const day = Number(params.day) || 0;
+      const count = Number(params.cleaned_count) || 0;
+      if (count <= 0) return '';
+      const dayPrefix = day > 0 ? `第 ${day} 天清晨，` : '清晨，';
+      return `<span class="grey">${dayPrefix}${count} 个放置物到期消逝。</span>`;
+    },
+  },
+  // ─── poi.dismantle / F-7 玩家拆除 POI ───────────
+  // params: {iaid, poi_id, returned_ids, dropped_ids}
+  'poi.dismantle.success': {
+    render: (params) => {
+      const poiName = getPoiName(params.poi_id as string);
+      const returnedIds = (params.returned_ids as string[] | undefined) ?? [];
+      const droppedIds = (params.dropped_ids as string[] | undefined) ?? [];
+
+      const parts: string[] = [`你拆除了<span class="yellow">${escapeHtml(poiName)}</span>`];
+      if (returnedIds.length > 0) {
+        const names = returnedIds
+          .map((id) => ITEM_LOCALE[id]?.name ?? id)
+          .map(escapeHtml)
+          .join('、');
+        parts.push(`获得<span class="yellow">${names}</span>`);
+      }
+      if (droppedIds.length > 0) {
+        parts.push(`<span class="grey">${droppedIds.length} 件掉到地上</span>`);
+      }
+      return parts.join('，') + '。';
     },
   },
   'unlock_door.unlocked': {

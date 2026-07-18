@@ -52,6 +52,13 @@ export interface PlayerInfo {
   oblpara: Oblpara;
   obl_tick: number; // 当前 tick（数字类型，非字符串）
   obl_pretick: number; // 上一次 tick（数字类型）
+  /**
+   * E-11 天与昼夜相位派生层
+   * - obl_day：当前游戏天，从 1 开始递增
+   * - obl_phase：昼夜相位，'day'（昼）/ 'night'（夜）
+   */
+  obl_day: number;
+  obl_phase: 'day' | 'night';
   /** 当前已提交的实时演出批次水位；冷启动时直接从此处开始。 */
   presentation_head_seq: number;
   /**
@@ -278,11 +285,11 @@ export interface Enemy {
   // 装备索引（7 槽模板 ID，轻量级标量）
   wepid: string;
   wep2id: string;
-  dbid: string;
-  dhid: string;
-  daid: string;
-  dfid: string;
-  acid: string;
+  arbid: string;
+  arhid: string;
+  araid: string;
+  arfid: string;
+  artid: string;
   // 道具索引（从 itempara[].itmid 提取的模板 ID 列表，含 itm0 手持缓存槽）
   itemIds: string[];
   discovered: string | number;
@@ -370,6 +377,22 @@ export interface Poi {
   loot_table_overrides?: string[];
   /** F-6 当前 POI 可用的道具交互列表（后端按玩家背包预匹配 available_slots） */
   interactions?: PoiInteraction[];
+  /**
+   * E-12 POI 耐久系统字段
+   * - placed_by_pid：放置者玩家 pid（0=世界生成，>0=玩家放置）
+   * - placed_at_day：放置时的游戏天（obl_day）
+   * - ttl_days：生存期天数（0=永不过期，>0=放置后 N 天到期清理）
+   * - ttl_remaining_days：剩余耐久天数（null=永不过期，前端隐藏；number=剩余天数）
+   */
+  placed_by_pid?: number;
+  placed_at_day?: number;
+  ttl_days?: number;
+  ttl_remaining_days?: number | null;
+  /**
+   * F-7 poi.dismantle 命令的返还材料配置（POI 模板 dismantle_returns 字段直投）
+   * 前端"拆除"按钮 tooltip 文案数据源；为空数组表示拆除无返还但仍可执行
+   */
+  dismantle_returns?: Array<{ item_id: string; count: number }>;
   [key: string]: unknown;
 }
 

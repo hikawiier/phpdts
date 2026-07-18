@@ -31,6 +31,10 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             // F-6 道具交互：复用 obl_lookup_poi_for_search 做位置校验，再调用 poi_interact 主流程
             obl_command_handler_poi_interact($payload, $pdata);
             break;
+        case 'poi.dismantle':
+            // F-7 玩家主动拆除 POI：复用 obl_lookup_poi_for_search 做位置校验，再调用 poi_dismantle 主流程
+            obl_command_handler_poi_dismantle($payload, $pdata);
+            break;
         case 'world.wait':
             global $obl_log;
             if (isset($obl_log) && $obl_log) $obl_log->emit('wait.success', 'world');
@@ -181,6 +185,31 @@ function obl_command_handler_poi_interact($payload, &$pdata) {
     }
 
     poi_interact($slot, $poi, $pdata);
+}
+
+/**
+ * poi.dismantle 命令 handler（F-7）
+ *
+ * 流程：
+ *   1. itm0_pending 防御性检查（合约 itm0_allowed=false，bus 已拦截）
+ *   2. 调用 poi_dismantle($iaid, $pdata) 主流程（内部复用 obl_lookup_poi_for_search 做位置校验）
+ *
+ * @param array $payload {iaid}
+ * @param array &$pdata
+ * @return void
+ */
+function obl_command_handler_poi_dismantle($payload, &$pdata) {
+    $iaid = isset($payload['iaid']) ? (int)$payload['iaid'] : 0;
+
+    // itm0_pending 防御性检查（合约 itm0_allowed=false，bus 已在 gate 层拦截）
+    $itm0_pending = obl_command_itm0_pending($pdata);
+    if ($itm0_pending) {
+        global $obl_log;
+        if (isset($obl_log) && $obl_log) $obl_log->emit('system.itm0_pending', 'system');
+        return;
+    }
+
+    poi_dismantle($iaid, $pdata);
 }
 
 function obl_command_handler_item_equip($payload, &$pdata) {

@@ -11,13 +11,13 @@ if (!defined('IN_GAME')) {
 // Oblivions 游戏刻（Tick）核心模块
 //
 // 职责：
-// - tick 存储与推进（obl_tick / obl_pretick）
+// - 刻存储与推进（obl_tick / obl_pretick）
 // - 标记管理（请求推进 / 消费推进）
 // - 监听器注册与调度（三阶段：battle_npc / idle_npc / post）
 // - 命令推进判定（白名单）
 //
 // 设计原则：
-// - tick 是时间驱动层，与玩家数据层（player.func.php）正交
+// - 刻是时间驱动层，与玩家数据层（player.func.php）正交
 // - 推进策略（何时推进）与推进机制（如何推进）分离
 // - 监听器机制：业务系统注册监听器，tick 模块不硬编码业务分支
 // - 持久化统一由调用方负责（Command API / Heartbeat Tick Orchestrator 显式调用）
@@ -86,6 +86,10 @@ function obl_tick_advance() {
     global $gamevars, $ginfochange;
     if (!isset($gamevars['obl_tick'])) $gamevars['obl_tick'] = 0;
     $gamevars['obl_tick']++;
+    // 天与昼夜相位派生层钩子：检测相位/天数变化并触发事件（day_started/night_started/day_changed）
+    if (function_exists('obl_day_advance_hook')) {
+        obl_day_advance_hook();
+    }
     $ginfochange = true;  // 通知调用方需要持久化 tick/gamevars
 }
 
@@ -722,7 +726,15 @@ obl_tick_register_listener('idle_npc',   'obl_tick_phase_idle_npc');
 if (function_exists('skill_effect_register_tick_listener')) {
     skill_effect_register_tick_listener();
 }
-// E-9 野生道具时间流逝刷新（wild_refresh.func.php 由 obl_bootstrap.php 在本文件之前加载）
-if (function_exists('obl_tick_phase_refresh_wild_items')) {
-    obl_tick_register_listener('post', 'obl_tick_phase_refresh_wild_items');
+// E-9 野生道具按天刷新（wild_refresh.func.php 由 obl_bootstrap.php 在本文件之前加载；
+// day_cycle.func.php 同样在 5.75 层先于本文件加载，提供 obl_day_register_listener）
+// 订阅 day_changed 事件：每当 tick 推进跨过天数边界时触发全局刷新
+if (function_exists('obl_refresh_wild_items') && function_exists('obl_day_register_listener')) {
+    obl_day_register_listener('day_changed', 'obl_refresh_wild_items');
+}
+// E-12 POI 耐久系统清理（poi.durability.func.php 由 obl_bootstrap.php 在 5.78 层加载）
+// 订阅 day_changed 事件：批量清理 placed_at_day + ttl_days <= 当前天的过期 POI 实例
+// 与 E-9 wild_refresh 同模式注册，复用 E-11 day_changed 事件钩子
+if (function_exists('obl_poi_durability_cleanup') && function_exists('obl_day_register_listener')) {
+    obl_day_register_listener('day_changed', 'obl_poi_durability_cleanup');
 }

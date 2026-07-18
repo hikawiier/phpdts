@@ -84,12 +84,17 @@ const hpDanger = computed(() => {
   return (player?.hp ?? 0) / mhp < 0.3;
 });
 
-// ── tick 调试 ──
+// ── 天与昼夜相位（E-11）+ tick 调试 ──
+// 显示格式：D3 昼 · T:245/240
+//   - D3 昼：玩家日常感知游戏世界时间（天 + 相位中文化）
+//   - T:245/240：调试场景保留 tick 调试能力（obl_tick / obl_pretick）
 const tickText = computed(() => {
-  return `T: ${playerStore.oblTick}/${playerStore.oblPretick}`;
+  const phaseLabel = playerStore.isNight ? '夜' : '昼';
+  return `D${playerStore.oblDay} ${phaseLabel} · T:${playerStore.oblTick}/${playerStore.oblPretick}`;
 });
 
 const tickPending = computed(() => playerStore.oblTick > playerStore.oblPretick);
+const isNight = computed(() => playerStore.isNight);
 
 // ── 战斗状态机调试显示 ──
 const battleStateText = computed(() => {
@@ -152,7 +157,7 @@ function onAvatarError(): void {
 </script>
 
 <template>
-  <div class="status-bar flex-none">
+  <div class="status-bar flex-none" :class="{ 'is-night': isNight }">
     <!-- 左侧：位置 + 按钮 -->
     <div class="status-left">
       <!-- 第一行：区域 + tick + HP -->

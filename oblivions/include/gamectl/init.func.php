@@ -326,11 +326,11 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
         // 装备字段（7 槽 × ID + 6 运行时字段，初始全空）
         'wepid' => '', 'wep' => '', 'wepk' => '', 'wepe' => 0, 'weps' => '0', 'wepsk' => '', 'weppara' => '',
         'wep2id' => '', 'wep2' => '', 'wep2k' => '', 'wep2e' => 0, 'wep2s' => '0', 'wep2sk' => '', 'wep2para' => '',
-        'dbid' => '', 'db' => '', 'dbk' => '', 'dbe' => 0, 'dbs' => '0', 'dbsk' => '', 'dbpara' => '',
-        'dhid' => '', 'dh' => '', 'dhk' => '', 'dhe' => 0, 'dhs' => '0', 'dhsk' => '', 'dhpara' => '',
-        'daid' => '', 'da' => '', 'dak' => '', 'dae' => 0, 'das' => '0', 'dask' => '', 'dapara' => '',
-        'dfid' => '', 'df' => '', 'dfk' => '', 'dfe' => 0, 'dfs' => '0', 'dfsk' => '', 'dfpara' => '',
-        'acid' => '', 'ac' => '', 'ack' => '', 'ace' => 0, 'acs' => '0', 'acsk' => '', 'acpara' => '',
+        'arbid' => '', 'arb' => '', 'arbk' => '', 'arbe' => 0, 'arbs' => '0', 'arbsk' => '', 'arbpara' => '',
+        'arhid' => '', 'arh' => '', 'arhk' => '', 'arhe' => 0, 'arhs' => '0', 'arhsk' => '', 'arhpara' => '',
+        'araid' => '', 'ara' => '', 'arak' => '', 'arae' => 0, 'aras' => '0', 'arask' => '', 'arapara' => '',
+        'arfid' => '', 'arf' => '', 'arfk' => '', 'arfe' => 0, 'arfs' => '0', 'arfsk' => '', 'arfpara' => '',
+        'artid' => '', 'art' => '', 'artk' => '', 'arte' => 0, 'arts' => '0', 'artsk' => '', 'artpara' => '',
         // 道具栏
         'itempara'     => json_encode($empty_itempara, JSON_UNESCAPED_UNICODE),
         'itemmaxslots' => $itemmaxslots,

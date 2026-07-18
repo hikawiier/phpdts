@@ -46,12 +46,20 @@ return [
     'craft_advances_tick'    => false,
 
     // ─── 野生道具刷新 / Wild Item Refresh ──────────────────
-    // 时间流逝刷新由 tick post phase 监听器触发，每 N tick 全局扫描所有"已发现过"的图格
-    'wild_item_refresh_interval_ticks' => 100,   // 刷新间隔 tick 数；0=不刷新
-    'wild_item_capacity_per_tile'      => 5,     // 单格野生道具容量上限（应用层校验，不在 DB 硬约束）
-    'wild_item_refresh_rate_by_tide'   => [      // 潮汐倍率表：越危险越丰沛（作用于 refresh 相位的 rate）
+    // 时间流逝刷新由 tick post phase 监听器触发，订阅 day_changed 事件按天刷新
+    'wild_item_refresh_mode'           => 'daily',  // 'daily'=按天刷新（订阅 day_changed 事件，每日昼开始时刷新）；'tick_interval'=旧机制（按 wild_item_refresh_interval_ticks 间隔）
+    'wild_item_refresh_interval_ticks' => 100,      // [deprecated] 旧 tick 间隔刷新配置；mode='tick_interval' 时生效；mode='daily' 时忽略
+    'wild_item_capacity_per_tile'      => 5,        // 单格野生道具容量上限（应用层校验，不在 DB 硬约束）
+    'wild_item_refresh_rate_by_tide'   => [         // 潮汐倍率表：越危险越丰沛（作用于 refresh 相位的 rate）
         'shallow' => 0.5,
         'deep'    => 1.0,
         'abyss'   => 1.5,
     ],
+
+    // ─── 天与昼夜 / Day & Day-Night Cycle ──────────────────
+    // E-11 天与昼夜相位派生层：在刻（tick）之上建立宏观时间语义
+    // 1 天 = day_length_ticks 刻；昼相位 = day_phase_ticks 刻；夜相位 = day_length - day_phase 刻
+    // phase = (tick % day_length) < day_phase ? 'day' : 'night'
+    'day_length_ticks'  => 120,  // 1 天 = 120 刻
+    'day_phase_ticks'   => 80,   // 昼相位刻数（夜 = day_length - day_phase = 40 刻）
 ];

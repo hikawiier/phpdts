@@ -35,11 +35,11 @@ import type { CombatViewModel, Enemy, PlayerInfo } from '@/types/api';
 const EQUIPMENT_SLOT_TO_KEY: Record<string, keyof Character> = {
   wep:  'wepid',
   wep2: 'wep2id',
-  db:   'dbid',
-  dh:   'dhid',
-  da:   'daid',
-  df:   'dfid',
-  ac:   'acid',
+  arb:  'arbid',
+  arh:  'arhid',
+  ara:  'araid',
+  arf:  'arfid',
+  art:  'artid',
 };
 
 /** 数值字段统一转 number（API 字符串值 → number） */
@@ -79,11 +79,11 @@ function normalizeEnemy(enemy: Enemy, replaceStatusProjection = false): Partial<
     itemmaxslots: num(enemy.itemmaxslots),
     wepid: str(enemy.wepid),
     wep2id: str(enemy.wep2id),
-    dbid: str(enemy.dbid),
-    dhid: str(enemy.dhid),
-    daid: str(enemy.daid),
-    dfid: str(enemy.dfid),
-    acid: str(enemy.acid),
+    arbid: str(enemy.arbid),
+    arhid: str(enemy.arhid),
+    araid: str(enemy.araid),
+    arfid: str(enemy.arfid),
+    artid: str(enemy.artid),
     itemIds: Array.isArray(enemy.itemIds) ? enemy.itemIds.map(str) : [],
     discovered: num(enemy.discovered) === 1,
   };

@@ -2,18 +2,20 @@
 /**
  * @module F 物品系统
  * @framework F-3 使用效果分发器
+ * @framework F-7 玩家放置 POI 框架
  */
 if (!defined('IN_GAME')) { exit('Access Denied'); }
 
 // ================================================================
 // Oblivions 道具使用效果函数集 / Oblivions item use_effect functions
 //
-// 在 F-3 分发器（item.use.func.php）下注册 5 个 use_effect 函数：
+// 在 F-3 分发器（item.use.func.php）下注册 6 个 use_effect 函数：
 //   - restore_hp        恢复 HP（基于 itme，不超过 mhp）
 //   - restore_sp        恢复 SP（基于 itme，不超过 msp）
 //   - cure_bs           清除 oblpara.body_status（简化版，未来健康系统可订阅替换）
 //   - gain_resistance   emit 事件占位（未来被动技能系统订阅）
 //   - open_gift_box     调用 F-4 掷骰原语生成物品 → itm0 → organize
+//   - place_poi         F-7 玩家放置 POI（itmpara='poi_id:{template_id}' 协议）
 //
 // 函数签名约定（与 F-3 分发器 item.use.func.php:110 调用一致）：
 //   function item_use_effect_{name}($item, &$pdata)
@@ -259,4 +261,113 @@ function item_use_effect_open_gift_box($item, &$pdata) {
         'item_id' => $item_id,
         'count'   => count($items) - count($dropped),
     ]);
+}
+
+/**
+ * use_effect: 放置 POI（F-7 玩家放置 POI 框架）
+ *
+ * 解析 item.itmpara 的 'poi_id:{template_id}' 协议，在玩家当前格放置
+ * 对应模板的 POI 实例，写入 placed_by_pid / placed_at_day / ttl_days 三字段
+ * 供 E-12 耐久系统跟踪。itms 扣减由 F-3 框架统一处理（与 open_gift_box 同模式：
+ * 校验失败时仍扣 itms，"赌博语义"）。
+ *
+ * itmpara 协议：'poi_id:campfire_unlit'，由正则 /^poi_id:([a-z0-9_]+)$/ 严格解析
+ *
+ * 流程：
+ *   1. 正则解析 itmpara 取 poi_id；格式错误 → emit place_poi.bad_protocol，return
+ *   2. 加载 poi_table，校验模板存在；不存在 → emit place_poi.no_template，return
+ *   3. 校验同格同模板 POI 实例数 < 上限（软约束 1，避免堆叠）
+ *   4. INSERT bra_oblmappoi（pgroup/pls/poi_id/state='idle'/searched=0/
+ *      placed_by_pid=pdata.pid/placed_at_day=obl_day_get()/ttl_days=template.ttl_days）
+ *   5. emit place_poi.success（含 iaid / poi_id / placed_at_day / ttl_days）
+ *
+ * 适用道具：firewood（itmpara='poi_id:campfire_unlit'）
+ *
+ * @param array $item   道具实例（itmpara 含 poi_id 协议）
+ * @param array &$pdata 玩家数据
+ * @return void
+ */
+function item_use_effect_place_poi($item, &$pdata) {
+    global $db, $tablepre, $obl_log;
+
+    if (!isset($db) || !$db || !isset($tablepre)) return;
+
+    $item_id = isset($item['itmid']) ? (string)$item['itmid'] : '';
+    $itmpara = isset($item['itmpara']) ? (string)$item['itmpara'] : '';
+
+    // 1. 正则解析 itmpara 协议
+    if (!preg_match('/^poi_id:([a-z0-9_]+)$/', $itmpara, $m)) {
+        if (isset($obl_log) && $obl_log) {
+            $obl_log->emit('place_poi.bad_protocol', 'system', [
+                'item_id'  => $item_id,
+                'itmpara'  => $itmpara,
+            ]);
+        }
+        return;
+    }
+    $poi_id = $m[1];
+
+    // 2. 加载 POI 模板，校验存在性
+    $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
+    if (!isset($poi_table[$poi_id])) {
+        if (isset($obl_log) && $obl_log) {
+            $obl_log->emit('place_poi.no_template', 'system', [
+                'item_id' => $item_id,
+                'poi_id'  => $poi_id,
+            ]);
+        }
+        return;
+    }
+    $template = $poi_table[$poi_id];
+
+    // 3. 同格同模板上限校验（软约束 1：避免玩家堆叠放置）
+    $pgroup = (int)$pdata['pgroup'];
+    $pls = (int)$pdata['pls'];
+    $poi_id_esc = $db->escape_string($poi_id);
+    $cnt_result = $db->query("SELECT COUNT(*) AS cnt FROM {$tablepre}oblmappoi
+                              WHERE pgroup='{$pgroup}' AND pls='{$pls}' AND poi_id='{$poi_id_esc}'");
+    $cnt = 0;
+    if ($cnt_result) {
+        $row = $db->fetch_array($cnt_result);
+        $cnt = (int)$row['cnt'];
+    }
+    if ($cnt >= 1) {
+        if (isset($obl_log) && $obl_log) {
+            $obl_log->emit('place_poi.tile_limit', 'system', [
+                'item_id' => $item_id,
+                'poi_id'  => $poi_id,
+                'pgroup'  => $pgroup,
+                'pls'     => $pls,
+            ]);
+        }
+        return;
+    }
+
+    // 4. INSERT 新 POI 实例
+    $placed_by_pid = (int)$pdata['pid'];
+    $placed_at_day = function_exists('obl_day_get') ? (int)obl_day_get() : 0;
+    $ttl_days = isset($template['ttl_days']) ? (int)$template['ttl_days'] : 0;
+
+    $db->query("INSERT INTO {$tablepre}oblmappoi
+                (pgroup, pls, poi_id, state, search_count, search_count_remaining,
+                 last_search_turn, cooldown_until_turn, searched,
+                 placed_by_pid, placed_at_day, ttl_days)
+                VALUES
+                ({$pgroup}, {$pls}, '{$poi_id_esc}', 'idle', 0, -1,
+                 0, 0, 0,
+                 {$placed_by_pid}, {$placed_at_day}, {$ttl_days})");
+
+    $new_iaid = (int)$db->insert_id();
+
+    // 5. emit 成功事件
+    if (isset($obl_log) && $obl_log) {
+        $obl_log->emit('place_poi.success', 'system', [
+            'item_id'       => $item_id,
+            'poi_id'        => $poi_id,
+            'iaid'          => $new_iaid,
+            'placed_by_pid' => $placed_by_pid,
+            'placed_at_day' => $placed_at_day,
+            'ttl_days'      => $ttl_days,
+        ]);
+    }
 }

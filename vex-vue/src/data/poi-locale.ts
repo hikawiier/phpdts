@@ -31,10 +31,14 @@ export const POI_LOCALE: Record<string, PoiLocaleEntry> = {
   abandoned_library: { name: '废弃图书馆', desc: '倒塌的书架散落着泛黄的纸张，知识在此长眠。' },
   mechanic_workshop: { name: '机械间', desc: '满是油污的车间，机械残骸堆积如山。' },
   pharmacy: { name: '药房', desc: '药品柜倾倒在地，散落着各色药瓶，空气中弥漫着消毒水味。' },
-  hunter_cache: { name: '猎人储藏', desc: '藏在岩缝中的猎人物资，用油布仔细包裹着。' },
+  'hunter_cache': { name: '猎人储藏', desc: '藏在岩缝中的猎人物资，用油布仔细包裹着。' },
 
   // ─── 内容扩充（任务3）── 深渊区 POI
-  mystic_shrine: { name: '神秘祭坛', desc: '石砌祭坛上凝结着古老的血迹，周围散发着令人不安的气息。' },
+  'mystic_shrine': { name: '神秘祭坛', desc: '石砌祭坛上凝结着古老的血迹，周围散发着令人不安的气息。' },
+
+  // ─── F-7 玩家可放置 POI ──────────────────────────
+  // 由 firewood 道具 use_effect=place_poi 生成的 POI 实例（state='idle' 待点燃）
+  'campfire_unlit': { name: '熄灭的营火', desc: '一捆干柴堆成的未点燃火堆，可以用打火机点燃。' },
 
   // ─── 内容扩充（任务4）── 浅水区新增 POI
   abandoned_house: { name: '废弃住宅', desc: '坍塌了一半的木屋，里面散落着家居杂物和旧衣物。' },

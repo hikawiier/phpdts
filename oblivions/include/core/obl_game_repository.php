@@ -45,8 +45,11 @@ function obl_game_json_decode($json) {
 function obl_gamevars_without_tick_keys($vars) {
     if (!is_array($vars)) return array();
     $copy = $vars;
+    // E-11：obl_day/obl_phase 已迁移到 bra_oblgame.day/phase 列，不写入 vars_json
     if (isset($copy['obl_tick'])) unset($copy['obl_tick']);
     if (isset($copy['obl_pretick'])) unset($copy['obl_pretick']);
+    if (isset($copy['obl_day'])) unset($copy['obl_day']);
+    if (isset($copy['obl_phase'])) unset($copy['obl_phase']);
     return $copy;
 }
 
@@ -88,10 +91,11 @@ function obl_game_schema_ensure() {
         `id` tinyint unsigned NOT NULL DEFAULT '1',
         `run_id` varchar(64) NOT NULL DEFAULT '',
         `state` varchar(32) NOT NULL DEFAULT 'INIT',
-        `phase` varchar(32) NOT NULL DEFAULT '',
+        `phase` varchar(16) NOT NULL DEFAULT 'day',
         `tick` int unsigned NOT NULL DEFAULT '0',
         `processed_tick` int unsigned NOT NULL DEFAULT '0',
         `tick_version` int unsigned NOT NULL DEFAULT '0',
+        `day` int unsigned NOT NULL DEFAULT '1',
         `vars_json` mediumtext NOT NULL,
         `map_seed` varchar(64) NOT NULL DEFAULT '',
         `map_version` int unsigned NOT NULL DEFAULT '1',
@@ -105,8 +109,26 @@ function obl_game_schema_ensure() {
         `end_reason` varchar(64) NOT NULL DEFAULT '',
         PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-
     $db->query($sql);
+
+    // 旧表升级：若已存在的表缺少 day 列则补建；phase 旧定义为 gamestate phase，重新定义为昼夜相位
+    $columns_known = array();
+    $col_result = $db->query("SHOW COLUMNS FROM `{$table}`");
+    if ($col_result) {
+        while ($col_row = $db->fetch_array($col_result)) {
+            $columns_known[$col_row['Field']] = true;
+        }
+    }
+    if (!isset($columns_known['day'])) {
+        $db->query("ALTER TABLE `{$table}` ADD COLUMN `day` int unsigned NOT NULL DEFAULT '1' AFTER `tick_version`");
+    }
+    if (!isset($columns_known['phase'])) {
+        $db->query("ALTER TABLE `{$table}` ADD COLUMN `phase` varchar(16) NOT NULL DEFAULT 'day' AFTER `state`");
+    } else {
+        // 旧 phase 为 varchar(32) 且语义为 gamestate phase，统一收窄为 varchar(16) 并重置默认值为昼夜相位
+        $db->query("ALTER TABLE `{$table}` MODIFY `phase` varchar(16) NOT NULL DEFAULT 'day'");
+    }
+
     $ensured[$table] = true;
 }
 
@@ -145,14 +167,19 @@ function obl_game_default_row($defaults = array()) {
         $started_at = (int)$starttime;
     }
 
+    // E-11 天与昼夜相位派生：从 tick 推导 day 与 phase（默认值；运行期由 day_cycle.func.php 维护）
+    $day = isset($defaults['day']) ? (int)$defaults['day'] : (isset($vars['obl_day']) ? (int)$vars['obl_day'] : 1);
+    $phase = isset($defaults['phase']) ? (string)$defaults['phase'] : (isset($vars['obl_phase']) ? (string)$vars['obl_phase'] : 'day');
+
     $row = array(
         'id' => 1,
         'run_id' => isset($defaults['run_id']) ? (string)$defaults['run_id'] : obl_game_generate_run_id(),
         'state' => $state,
-        'phase' => isset($defaults['phase']) ? (string)$defaults['phase'] : '',
+        'phase' => $phase,
         'tick' => $tick,
         'processed_tick' => $processed_tick,
         'tick_version' => isset($defaults['tick_version']) ? (int)$defaults['tick_version'] : 0,
+        'day' => $day,
         'vars_json' => isset($defaults['vars_json']) ? (string)$defaults['vars_json'] : obl_game_encode_vars($vars),
         'map_seed' => isset($defaults['map_seed']) ? (string)$defaults['map_seed'] : '',
         'map_version' => isset($defaults['map_version']) ? (int)$defaults['map_version'] : 1,
@@ -222,6 +249,7 @@ function obl_game_save($data) {
         'tick' => true,
         'processed_tick' => true,
         'tick_version' => true,
+        'day' => true,
         'vars_json' => true,
         'map_seed' => true,
         'map_version' => true,

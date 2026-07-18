@@ -35,6 +35,10 @@ export const usePlayerStore = defineStore('player', () => {
   const isInBattle = computed(() => action.value === 'battle');
   const oblTick = computed(() => playerInfo.value?.obl_tick ?? 0);
   const oblPretick = computed(() => playerInfo.value?.obl_pretick ?? 0);
+  // E-11 天与昼夜相位派生层
+  const oblDay = computed(() => playerInfo.value?.obl_day ?? 1);
+  const oblPhase = computed<'day' | 'night'>(() => playerInfo.value?.obl_phase ?? 'day');
+  const isNight = computed(() => oblPhase.value === 'night');
   const combatContext = computed<CombatViewModel | null>(() => playerInfo.value?.combat_context ?? null);
   const statuses = computed<ActorStatusProjection[]>(() => playerInfo.value?.statuses ?? []);
   const capabilities = computed(() => playerInfo.value?.capabilities ?? {});
@@ -131,6 +135,9 @@ export const usePlayerStore = defineStore('player', () => {
     isInBattle,
     oblTick,
     oblPretick,
+    oblDay,
+    oblPhase,
+    isNight,
     combatContext,
     statuses,
     capabilities,

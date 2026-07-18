@@ -40,6 +40,7 @@
     - [C-5：Tick 编排器](#框架-c-5tick-编排器)
     - [C-6：游戏仓库（游戏状态表）](#框架-c-6游戏仓库游戏状态表)
     - [C-7：旧版游戏变量兼容镜像](#框架-c-7旧版游戏变量兼容镜像)
+    - [C-8：运行时表 schema 自愈机制](#框架-c-8运行时表-schema-自愈机制)
   - 模块 D：战斗系统（Combat）
     - [D-1：动作生命周期编排](#框架-d-1动作生命周期编排)
     - [D-2：四层预览/预演系统](#框架-d-2四层预览预演系统)
@@ -69,6 +70,8 @@
     - [E-8：NPC AI 行为系统](#框架-e-8npc-ai-行为系统)
     - [E-9：静态世界生成系统](#框架-e-9静态世界生成系统)
     - [E-10：POI 搜刮三档判定系统](#框架-e-10poi-搜刮三档判定系统)
+    - [E-11：天与昼夜相位派生层](#框架-e-11天与昼夜相位派生层)
+    - [E-12：POI 耐久系统](#框架-e-12poi-耐久系统)
   - 模块 F：物品系统
     - [F-1：槽位背包与 itm0 暂存槽协议](#框架-f-1槽位背包与-itm0-暂存槽协议)
     - [F-2：配置驱动的合成系统](#框架-f-2配置驱动的合成系统)
@@ -76,6 +79,7 @@
     - [F-4：战利品表引擎](#框架-f-4战利品表引擎)
     - [F-5：装备穿卸与属性加成](#框架-f-5装备穿卸与属性加成)
     - [F-6：POI 道具交互系统](#框架-f-6poi-道具交互系统)
+    - [F-7：玩家放置 POI 框架](#框架-f-7玩家放置-poi-框架)
   - 模块 G：技能系统
     - [G-1：配置驱动的技能清单与三种生命周期](#框架-g-1配置驱动的技能清单与三种生命周期)
     - [G-2：模块化技能钩子](#框架-g-2模块化技能钩子)
@@ -426,6 +430,18 @@
 - 虚拟行路径（不自动从旧版迁移且数据库无行）经过兼容层时，从旧版游戏变量中的当前刻/已处理刻字段提取 tick 值填充虚拟行，而非从数据库 —— 让无锁读路径在不写库的前提下仍能返回有意义的 tick。
 - 注释警告生命周期同步会破坏房间重启 —— 所以默认不开启生命周期同步。
 
+#### 框架 C-8：运行时表 schema 自愈机制
+
+**设计意图：** `oblivions/sql/*.sql` 中的 `DROP IF EXISTS + CREATE TABLE` 只在新开局时执行，运行中的表不会因字段新增（如 E-9 `last_refresh_day`、E-12 `placed_by_pid/placed_at_day/ttl_days`）而自动升级，导致 `day_changed` 事件触发的监听器报 `Unknown column`。该框架为运行时表（`oblmapstates` / `oblmappoi` / `oblmapitem`）提供幂等 schema 自愈：缺表则建表、缺字段则补字段、缺索引则补索引，每子函数内防重入。写入口（command / heartbeat）在运行时启动时调用总入口触发自愈；纯读入口 `state.php` 不触发 schema 副作用（参照 C-7 的 no-create 策略）。
+
+**代码锚点：** `oblivions/include/core/obl_schema_ensure.php`（schema 自愈实现与总入口）
+
+**边界案例：**
+
+- `state.php` 是纯读入口，缺字段时自然返回错误状态，由调用方触发 command 路径修复，不在读路径上产生 ALTER 副作用。
+- 各 schema_ensure 子函数使用防重入标志，同请求多次调用零开销；总入口同时调用 C-6 的 `obl_game_schema_ensure` 保持单点入口。
+- `oblplayers` / `oblqueue` / `oblbattle_state` 暂未纳入（无最近字段变更）；后续若引入新字段，按本框架风格新增对应子函数并注册到总入口即可。
+
 ***
 
 ### 模块 D：战斗系统（Combat）
@@ -752,16 +768,16 @@
 
 #### 框架 E-9：静态世界生成系统
 
-**设计意图：** 每个区域独立的资源生成。以潮汐区为桶分组，每个桶独立应用 POI 池和散落道具池配置。POI 放置去重（每格一个 POI），道具散落按格概率判定。时间流逝刷新由 tick post phase 监听器全局触发，scatter_pool 分 initial/refresh 双相位，容量计数采用批量 COUNT 方案（不维护冗余字段），潮汐倍率作用于刷新概率（越危险越丰沛）。
+**设计意图：** 每个区域独立的资源生成。以潮汐区为桶分组，每个桶独立应用 POI 池和散落道具池配置。POI 放置去重（每格一个 POI），道具散落按格概率判定。时间流逝刷新由 E-11 day_changed 事件监听器全局触发——每当天数递增时刷新一次，scatter_pool 分 initial/refresh 双相位，容量计数采用批量 COUNT 方案（不维护冗余字段），潮汐倍率作用于刷新概率（越危险越丰沛）。
 
-**代码锚点：** `oblivions/include/game/generate.func.php`（区域初始化生成）、`oblivions/include/game/wild_refresh.func.php`（时间流逝刷新 + tick 监听器）
+**代码锚点：** `oblivions/include/game/generate.func.php`（区域初始化生成）、`oblivions/include/game/wild_refresh.func.php`（按天刷新 + day_changed 事件监听器）
 
 **边界案例：**
 
 - 可用瓦片数可能少于请求的 POI 数量，自动调整。
 - 配置驱动 —— 池或表为空时跳过（无硬依赖）。
-- 全局扫描所有"已发现过"的图格（`fog=1 OR last_refresh_turn>0`）刷新，不限当前玩家区域 —— 野生道具刷新是世界行为。
-- 多 tick 推进时监听器按 delta 循环触发，per-tile 的 `last_refresh_turn` 检查确保同格一次批处理最多刷新一次。
+- 全局扫描所有"已发现过"的图格（`fog=1 OR last_refresh_day>0`）且 `last_refresh_day < 当前天` 的图格刷新，不限当前玩家区域 —— 野生道具刷新是世界行为。
+- per-tile 的 `last_refresh_day` 检查确保同格同天最多刷新一次；多 tick 推进跨多天时由 E-11 day_changed 事件触发多次刷新。
 - POI 产出道具（`source_iaid>0`）被批量 COUNT 天然过滤，不计入野生容量。
 
 #### 框架 E-10：POI 搜刮三档判定系统
@@ -780,6 +796,35 @@
 - structure_collapse 事件——恶性事件可触发 state_change='exhausted' + delete_loot=true，事件函数返回结构携带 state_change/delete_loot 字段由主流程统一执行（事件函数本身不直接操作状态机）。
 - pity_timer 内存与 DB 同步——写 DB 后调用方需同时更新内存中的 pity_timer 缓存以保持本轮后续读一致。
 - oblpara NULL/空字符串兜底——oblplayers 表的 oblpara 列可能为 NULL 或空字符串，写入前用兜底表达式转为合法 JSON 对象。
+
+#### 框架 E-11：天与昼夜相位派生层
+
+**设计意图：** 在刻（tick）之上建立宏观时间语义层。天与昼夜相位都是从 tick 派生的纯函数——天数由 tick 与每日刻数的比值推导，相位由 tick 在每日周期中的位置与昼相位阈值比较推导。tick 推进后立即检测相位/天数变化，同步触发相位切换事件。监听器机制提供三类事件：昼开始（`day_started`）、夜开始（`night_started`）、天数递增（`day_changed`）——供 POI 耐久衰减、夜间事件、野生道具按天刷新等业务系统订阅。事件在 tick 推进调用栈内同步触发，不引入异步队列。$gamevars 兼容镜像同步 `obl_day` / `obl_phase` 字段，与 `obl_tick` / `obl_pretick` 同模式由 `bra_oblgame` 表持久化。
+
+**代码锚点：** `oblivions/include/game/day_cycle.func.php`（天与相位派生、事件钩子、监听器注册）；tick 推进钩子接入点位于 oblivions/include/game/tick.func.php（归 E-1，本框架仅引用其调用约定）
+
+**边界案例：**
+
+- 刻推进与相位切换是同步原子事件——同一 tick 推进内若同时跨过相位边界和天数边界，两个事件按 day_started → day_changed 顺序触发（夜→昼切换意味着新一天开始）。
+- 配置项 `day_length_ticks` 与 `day_phase_ticks` 必须满足 `day_phase_ticks < day_length_ticks`，否则校验失败回退默认值。
+- 天数从 1 开始而非 0——游戏开局即处于第 1 天昼相位。
+- 战斗域 tick 推进同样触发相位检测——战斗中也可能发生昼夜切换，但不影响战斗流程。
+- 监听器异常被捕获防扩散——day_changed 监听器抛异常时记录日志，不阻塞其他监听器或 tick 推进调用栈。
+
+#### 框架 E-12：POI 耐久系统
+
+**设计意图：** POI 实例层通用耐久属性——任何 POI 模板声明 `ttl_days>0` 即纳入到期清理流程，与世界生成 POI 兼容（默认 0=永不过期）。三字段持久化于 `bra_oblmappoi` 实例表：`placed_by_pid`（0=世界生成，>0=玩家放置）、`placed_at_day`（放置时的游戏天）、`ttl_days`（生存期天数）。到期清理由 E-11 `day_changed` 事件监听器批量执行——扫描到期 POI，级联清理其已物化但未拾取的战利品，单次事务完成。E-9 wild_refresh 与 E-12 在 day_changed 监听器层并列，互不依赖。tile_actions 投影扩展耐久字段与 `dismantle_returns`（F-7 拆除返还材料，POI 模板直投）。耐久作为 POI 实例层的通用属性，不耦合于具体模板，任何未来需要"过期自动消失"的 POI 类型（如临时陷阱、召唤物）只需声明 ttl_days 即可。
+
+**代码锚点：** `oblivions/include/game/poi/poi.durability.func.php`（day_changed 事件监听器）；表结构位于 oblivions/sql/oblmappoi.sql（SQL schema 文件不参与 @framework 校验）
+
+**边界案例：**
+
+- 世界生成 POI 默认 ttl_days=0——不参与到期清理；玩家放置 POI（F-7）从模板读 ttl_days 写入实例，参与到期清理。同一模板的两种来源在实例层通过 `placed_by_pid` 区分。
+- ttl_days 配置由 POI 模板声明——世界生成器读模板时不复制 ttl_days 到实例（保留默认 0）；F-7 place_poi effect 读模板 ttl_days 写入实例。这是配置层的"读取时机差异"，避免世界生成 POI 被错误标记为短暂存在。
+- 到期清理与玩家在线/离线无关——监听器在 day_changed 事件触发时执行，无论放置者是否在线。
+- ttl_remaining_days 为派生字段——后端 tile_actions 投影时实时计算，不持久化；null 表示永不过期（ttl_days=0），前端隐藏耐久信息行。
+- 监听器异常隔离——抛异常时由 E-11 监听器机制捕获，不阻塞其他监听器或 tick 推进；已删除的 POI 不可恢复。
+- 跨天批量推进——多 tick 推进触发多次 day_changed 事件，每次事件独立扫描到期 POI，确保所有到期 POI 都被清理。
 
 ***
 
@@ -838,7 +883,7 @@
 
 #### 框架 F-5：装备穿卸与属性加成
 
-**设计意图：** 装备系统是物品系统的衍生层。基于 F-1 槽位背包协议实现穿上/卸下流程，基于 G-1 装备技能注入机制联动技能刷新。7 个装备槽位采用语义化字段名：wep（主武器）/ wep2（副武器）/ db（护甲）/ dh（头部防具）/ da（手部防具）/ df（足部防具）/ ac（饰品），前端通过 `EQUIPMENT_SLOTS` 常量统一槽位 key 与中文 label。属性加成采用"基础值 + 装备加成"的纯函数计算模型——基础 att/def 持久化不变，effective_att/def 实时计算（主武器 itme 计入 att，副武器不提供加成；db/dh/da/df 计入 def；ac 槽位无加成保留为未来扩展），战斗系统改读 effective 值，API 投影同时返回基础值与 effective 值。穿卸是原子操作，背包满时阻止；穿卸后立即调用 G-1 的 strip+inject 重建装备技能；换装时自动卸下旧装备放入背包空位。副武器是第二武器槽而非辅助攻击来源，可通过 `item.swap_weapon` 命令与主武器整体互换（不推进 tick），双空时静默返回。不引入 buff 系统（buff 由 H-1 独立处理），不持久化 effective 值。
+**设计意图：** 装备系统是物品系统的衍生层。基于 F-1 槽位背包协议实现穿上/卸下流程，基于 G-1 装备技能注入机制联动技能刷新。7 个装备槽位采用语义化字段名：wep（主武器）/ wep2（副武器）/ arb（护甲）/ arh（头部防具）/ ara（手部防具）/ arf（足部防具）/ art（饰品），前端通过 `EQUIPMENT_SLOTS` 常量统一槽位 key 与中文 label。属性加成采用"基础值 + 装备加成"的纯函数计算模型——基础 att/def 持久化不变，effective_att/def 实时计算（主武器 itme 计入 att，副武器不提供加成；arb/arh/ara/arf 计入 def；art 槽位无加成保留为未来扩展），战斗系统改读 effective 值，API 投影同时返回基础值与 effective 值。穿卸是原子操作，背包满时阻止；穿卸后立即调用 G-1 的 strip+inject 重建装备技能；换装时自动卸下旧装备放入背包空位。副武器是第二武器槽而非辅助攻击来源，可通过 `item.swap_weapon` 命令与主武器整体互换（不推进 tick），双空时静默返回。不引入 buff 系统（buff 由 H-1 独立处理），不持久化 effective 值。
 
 **代码锚点：** `oblivions/include/game/item/item.equip.func.php`（itmk→槽位映射、穿上/卸下流程、属性加成计算、主副武器交换）
 
@@ -848,8 +893,8 @@
 - 装备技能刷新：穿卸后立即 strip+inject 重建装备技能，幂等注入，避免延迟到下次 format。
 - 副武器无属性加成：副武器 itme 不计入 att，但仍可装备、仍参与装备技能注入（如双持武器技能），仅是不提供数值加成。
 - 副武器交换：`item.swap_weapon` 整体互换主副武器（含全部装备字段 + 重建装备技能），不推进 tick，双空时静默返回。
-- `ac` 槽位无属性加成，保留为未来扩展。
-- itmk→槽位映射：WP→wep/wep2、AR→db、AH→dh、AA→da、AF→df，AC 槽位由饰品专用 itmk 触发；itmk 不匹配或显式指定槽位与 itmk 矛盾时阻止穿上。
+- `art` 槽位无属性加成，保留为未来扩展。
+- itmk→槽位映射：WP→wep/wep2、DB→arb、DH→arh、DA→ara、DF→arf、AC→art；itmk 不匹配或显式指定槽位与 itmk 矛盾时阻止穿上。
 - 装备耐久为 0 时阻止穿上；耐久为 `∞` 时正常穿上，effective 计算直接计入 itme。
 - 战斗系统对 NPC 安全：NPC 装备字段全为 0，effective 值 = 基础值。
 
@@ -870,6 +915,20 @@
 - 道具消耗由框架统一处理——effect 返回 true 后，主流程按 consume_item 标志扣减 itms；effect 函数内部不扣 itms（与 F-3 同模式）。consume_item=false 的交互只触发效果不消耗道具（耐久模型，未来可扣耐久）。
 - itm0 锁定态拦截——命令合约 `itm0_allowed=false`，命令总线在 gate 阶段拦截。
 - 已解锁 POI 的 poi.search 衔接——unlock_door 成功后 state='idle'，玩家可继续 poi.search；locked_chest 解锁后 state='exhausted'，不再可搜（一次性开箱语义）。
+
+#### 框架 F-7：玩家放置 POI 框架
+
+**设计意图：** 让 `tag_poi_placeable`（DESIGN.md §1.8 系统钩子 Tag）真实生效——玩家可通过使用道具主动放置 POI 实例到当前格，复用 F-3 use_effect 分发器作为入口（新增 `place_poi` effect），无需新命令。道具的 itmpara 携带目标 POI 模板 ID，格式错误时按 F-3 "赌博语义"处理（effect 失败仍扣 itms，无回滚机制）。同格同模板上限软约束（默认 1）防止刷屏放置——校验与插入之间接受 TOCTOU 竞态（并发抢占概率低，不引入 UNIQUE INDEX）。POI 模板可声明 `dismantle_returns` 配置（道具 ID × count 数组），由 `poi.dismantle` 命令消费——玩家主动拆除 POI，乐观锁删除 POI 实例并级联清理战利品，按 dismantle_returns 生成返还道具实例物化到玩家背包（背包满则掉到地面兜底）。E-12 耐久系统作为 POI 实例层通用属性自动作用于玩家放置 POI，无需 F-7 显式调用。
+
+**代码锚点：** `oblivions/include/game/item/item.use_effects.func.php`（place_poi effect，F-3 分发器调用，本文件同时归属 F-3）；`oblivions/include/game/poi/poi.dismantle.func.php`（poi.dismantle 主流程）；命令合约位于 oblivions/include/command/obl_command_contract.php（poi.dismantle 合约，归 B-1/B-2 命令系统）；前端 store 位于 vex-vue/src/stores/poi.ts（归 L-9 POI 交互模态框）
+
+**边界案例：**
+
+- itmpara 协议解析严格——格式错误时 emit bad_protocol 并扣 itms；itmpara 为空时跳过 effect 不扣 itms（与 F-3 "无 use_effect 静默跳过"语义一致）。
+- 同格同模板软上限——超上限时 emit tile_limit 不放置；校验与插入之间存在 TOCTOU 竞态，接受此竞态不引入 UNIQUE INDEX（同模板 POI 数量少，影响可忽略）。
+- 玩家放置 POI 写入耐久三字段——E-12 监听器据此到期清理；世界生成 POI 不写这三字段（取表默认 0），不参与清理。
+- 拆除乐观锁——POI 已被其他玩家/系统删除（如 E-12 刚清理）时 emit concurrent_conflict，不返还材料。
+- 拆除与 E-12 到期清理并存——玩家放置 POI 在 ttl_days 到期前可主动拆除（返还材料），到期后由 E-12 监听器自动清理（不返还材料，直接级联删除）；两路径互斥，已删除的 POI 不会被另一路径重复处理。
 
 ***
 

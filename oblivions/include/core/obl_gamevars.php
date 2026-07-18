@@ -28,6 +28,9 @@ function obl_gamevars_from_row($row) {
     }
     $vars['obl_tick'] = (is_array($row) && isset($row['tick'])) ? (int)$row['tick'] : 0;
     $vars['obl_pretick'] = (is_array($row) && isset($row['processed_tick'])) ? (int)$row['processed_tick'] : 0;
+    // E-11 天与昼夜相位派生：从 bra_oblgame.day/phase 同步到 $gamevars 兼容镜像
+    $vars['obl_day'] = (is_array($row) && isset($row['day'])) ? (int)$row['day'] : 1;
+    $vars['obl_phase'] = (is_array($row) && isset($row['phase'])) ? (string)$row['phase'] : 'day';
     return $vars;
 }
 
@@ -87,6 +90,9 @@ function obl_gamevars_sync_from_globals($extra = array()) {
         'state' => $state,
         'tick' => isset($vars['obl_tick']) ? (int)$vars['obl_tick'] : 0,
         'processed_tick' => isset($vars['obl_pretick']) ? (int)$vars['obl_pretick'] : 0,
+        // E-11 天与昼夜相位派生：把 $gamevars 中的镜像写回 bra_oblgame.day/phase
+        'day' => isset($vars['obl_day']) ? (int)$vars['obl_day'] : 1,
+        'phase' => isset($vars['obl_phase']) ? (string)$vars['obl_phase'] : 'day',
         'vars' => $vars,
         'winner_name' => isset($winner) ? (string)$winner : '',
         'end_reason' => isset($winmode) ? (string)$winmode : '',

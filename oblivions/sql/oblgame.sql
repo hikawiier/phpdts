@@ -9,11 +9,12 @@ CREATE TABLE bra_oblgame (
   id              tinyint unsigned NOT NULL DEFAULT '1',
   run_id          varchar(64) NOT NULL DEFAULT '',
   state           varchar(32) NOT NULL DEFAULT 'INIT',
-  phase           varchar(32) NOT NULL DEFAULT '',
+  phase           varchar(16) NOT NULL DEFAULT 'day',
 
   tick            int unsigned NOT NULL DEFAULT '0',
   processed_tick  int unsigned NOT NULL DEFAULT '0',
   tick_version    int unsigned NOT NULL DEFAULT '0',
+  day             int unsigned NOT NULL DEFAULT '1',
 
   vars_json       mediumtext NOT NULL,
 
