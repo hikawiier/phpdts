@@ -25,6 +25,7 @@
     - [A-2：最小依赖引导链](#框架-a-2最小依赖引导链)
     - [A-3：状态查询范围分发](#框架-a-3状态查询范围分发)
     - [A-4：结构化视图投影函数集](#框架-a-4结构化视图投影函数集)
+    - [A-5：调试工具框架](#框架-a-5调试工具框架)
   - 模块 B：命令系统
     - [B-1：声明式命令合约](#框架-b-1声明式命令合约)
     - [B-2：双层负载校验管道](#框架-b-2双层负载校验管道)
@@ -255,6 +256,18 @@
 **边界案例：**
 
 - 投影函数通过函数存在性检查来判断某些库是否已加载（如标签查询函数），优雅降级而非硬性依赖。
+
+#### 框架 A-5：调试工具框架
+
+**设计意图：** 一套与游戏框架正交的调试能力，用于实际游玩验证场景（如 Chrome DevTools MCP 自动化测试）。提供两类入口：调试命令（`debug.*` 命名空间）快捷变更游戏状态，调试状态查询（`debug_*` scope）完整查看 POI 全图、玩家数据、gamevars 派生时间字段。所有入口都由统一的 `?debug=all` 守卫保护——正常模式下调用直接返回调试模式缺失错误，对生产环境零影响。调试命令在合约中标记专用调试标识，命令总线据此跳过能力校验，但仍复用标准负载校验、文件锁、事务与持久化路径，避免绕过领域规则。
+
+**代码锚点：** `oblivions/include/core/obl_debug.php`（守卫 + 合约注册 + 命令/状态分发路由 + 各调试命令实现）、`oblivions/include/api/obl_state_handlers.php`（调试状态查询投影）、`oblivions/include/command/obl_command_contract.php`（调试命令合约声明）、`oblivions/include/command/obl_command_handlers.php`（走标准命令管道的调试命令处理程序）、`oblivions/include/core/obl_bootstrap.php`（调试模块加载注册）
+
+**边界案例：**
+
+- 守卫机制与前端调试覆盖层解析逻辑对齐——后端查询 `debug` 参数含 `all` 标识即视为启用，前端解析同一参数控制 AI/actor/labels 等调试覆盖层。
+- 持久化路径差异——`debug.advance_tick` / `debug.trigger_day_changed` 不推进标准 tick dispatch，handler 内即时持久化 gamevars；`debug.give_item` / `debug.reset_position` 走标准命令管道，由总线统一保存玩家数据。
+- 调试自动登录凭据文件 `debug_autologin.php` 已在 `.gitignore` 中忽略，仅本地开发环境使用。
 
 ***
 
@@ -1163,9 +1176,9 @@
 
 #### 框架 L-1：统一交互列表模式
 
-**设计意图：** 用 `v-for` + `v-if` 替代旧的 `innerHTML` 命令式 DOM 内容操作。`TileActionBar` 是核心实现，包含模态状态的分支渲染树（机制结果 vs. 搜索按钮 vs. 物品列表 vs. 空状态）。
+**设计意图：** 用 `v-for` + `v-if` 替代旧的 `innerHTML` 命令式 DOM 内容操作。`TileActionBar` 是核心实现，包含模态状态的分支渲染树（机制结果 vs. 搜索按钮 vs. 物品列表 vs. 空状态）。POI 入口收敛为单按钮——图格存在 POI 时在"脚边道具"右侧并列显示单按钮入口，点击后委托 L-9 PoiModal 承载列表态。
 
-**代码锚点：** `vex-vue/src/components/actions/TileActionBar.vue`（统一交互列表、模态状态分支渲染树），`vex-vue/src/components/actions/ExploreButton.vue`（合并主操作按钮：探索可用时显示"探索周围"，不可用时退化为"等待"虚线态）
+**代码锚点：** `vex-vue/src/components/actions/TileActionBar.vue`（统一交互列表、模态状态分支渲染树、POI 单按钮入口），`vex-vue/src/components/actions/ExploreButton.vue`（合并主操作按钮：探索可用时显示"探索周围"，不可用时退化为"等待"虚线态）
 
 **边界案例：**
 
@@ -1257,23 +1270,15 @@
 
 #### 框架 L-9：POI 交互模态框
 
-**设计意图：** POI 搜刮是"高风险高回报的深入挖掘"——与 L-1 的"路过捡破烂"轻量交互互补。模态框采用双态切换（列表态 + 交互态）而非两个独立模态：列表态以纵列卡片展示当前格所有 POI（中文名 + 状态徽章 + 统一入口按钮，徽章按 POI 状态映射对应中文状态名），玩家选中后原地切换到交互态。交互态采用三列四区布局：左列 POI 信息区、中列上部交互区（三档基础概率条 + 反馈/道具列表）、中列下部反馈区（已放入工具/技能 + 搜索按钮 / itm0 锁定按钮组）、右列交互区（常驻可用工具/技能列表）。三档概率条展示 E-10 基础值（base_loot_chance / base_good_event_chance / base_bad_event_chance），按灰阶为基底用三档灰阶区分物资/良性/恶性事件——prob_mods 实时修正尚未实现，附基础概率提示。POI 列表数据由 tile_actions scope 直接提供，无独立缓存层。itm0 锁定态复用库存锁定状态派生，锁定时搜索按钮替换为解锁按钮组。battle:started / map:loaded 事件触发强制关闭，让位战斗场景或失效旧 POI 列表。F-6 框架在交互态中列新增"道具交互区"（交互区与反馈区之间）——当 POI 返回 `interactions` 数组非空时渲染交互列表（交互名 + 所需道具 + 槽位按钮组），按钮发送 `poi.interact` 命令；后端预匹配 `available_slots` 决定按钮数量，空时显示"缺少道具"占位。成功后失效 tile_actions 让 `interactions` 响应式更新（已解锁 POI 的 interactions 自然清空）。
+**设计意图：** POI 搜刮是"高风险高回报的深入挖掘"——与 L-1 的"路过捡破烂"轻量交互互补。模态框采用双态切换（列表态 + 交互态）而非两个独立模态：列表态以纵列卡片展示当前格所有 POI（类型标签 + 状态徽章 + 操作按钮），玩家选中后原地切换到交互态。交互态以三列四区布局承载搜刮操作（基础概率展示 + 工具选择 + 反馈）与 F-6 道具交互（POI 自带道具交互入口，与搜刮工具选择语义区分——前者是搜索修饰符，后者是动作主体）。POI 列表数据由 tile_actions scope 直接投影，无独立缓存层；itm0 锁定态复用库存派生。战斗/地图切换事件强制关闭模态框，让位场景或失效旧 POI 列表。
 
 **代码锚点：** `vex-vue/src/components/poi/PoiModal.vue`（双态切换根容器）、`vex-vue/src/components/poi/PoiInteraction.vue`（交互态主面板，含 F-6 道具交互区）、`vex-vue/src/components/poi/PoiToolSelector.vue`（工具选择器）、`vex-vue/src/components/poi/PoiFeedbackPanel.vue`（反馈与道具列表）、`vex-vue/src/stores/poi.ts`（状态管理与命令派发，含 F-6 交互态派生状态）
 
 **边界案例：**
 
-- itm0 锁定时搜索按钮区替换为堆叠合并 / 丢到地上 解锁按钮组，与合成模态框 itm0 锁定态一致。
 - 工具选择器监听库存变化，选中的工具被消耗时自动清空选中状态，避免向后端提交已不存在的 tool_id。
-- battle:started / map:loaded 事件强制关闭 POI 模态框——已物化到 oblmapitem 但未拾取的掉落物保留，玩家战后重新打开模态框可取回。
-- 机制型 POI（mechanic 字段，如 life_totem/skill_totem）已搜索时显示机制结果区，隐藏道具列表与工具选择器。
-- 三档概率条展示 E-10 基础值（base_loot_chance / base_good_event_chance / base_bad_event_chance）——prob_mods 实时修正尚未实现，前端按灰阶基底用三档灰阶区分物资/良性/恶性，附基础概率提示。机制型 POI 与不可搜索 POI 隐藏概率条区。
-- 技能选择暂未实现——前端无技能 store，后端 skill_list scope 由战斗 UI 消费。
-- 冷却态展示——POI 冷却中时搜索按钮替换为禁用按钮，显示冷却原因与剩余 tick 数；与可搜索态按钮视觉一致，仅状态/文案不同。
-- 工具白名单过滤——按后端 prob_mods_source 与 loot_table_overrides 并集过滤工具列表，无有效工具时显示空状态文案，避免无效道具污染注意力。
-- 已发现物品计数——列表态卡片与交互态道具列表用完整文案展示数量，避免歧义简写。
-- F-6 道具交互区——当 `currentPoi.interactions` 非空时在中列交互区与反馈区之间渲染交互列表；`poi.interact` 成功后失效 tile_actions 让 `interactions` 响应式更新，已解锁 POI 的 interactions 自然清空，无需前端手动清理。
-- F-6 槽位已空防御——前端 `available_slots` 来自后端投影，玩家在模态框外消耗道具后投影可能过期；`poi.interact` 命令成功后强制 invalidate tile_actions 重新拉取，避免长期不一致。
+- F-6 槽位已空防御——前端 available_slots 来自后端投影，玩家在模态框外消耗道具后投影可能过期；poi.interact 命令成功后强制 invalidate tile_actions 重新拉取，避免长期不一致。
+- 战斗/地图切换事件强制关闭后，已物化到 oblmapitem 但未拾取的掉落物保留，玩家战后重新打开模态框可取回。
 
 ***
 

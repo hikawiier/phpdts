@@ -380,6 +380,10 @@ export const usePoiStore = defineStore('poi', () => {
         payload: { iaid: Number(iaid) },
       });
       if (!result.success) {
+        // 失效 tile_actions 让 POI 列表刷新（POI 可能已被 E-12 清理 / 其他玩家拆除）
+        dataManager.invalidate('tile_actions');
+        // 关闭模态框：currentPoi 已不在列表中，交互态会渲染空白，主动关闭让玩家回到探索界面
+        closeModal();
         dataManager.broadcast('ui:toast', {
           type: 'error',
           msg: result.message || result.error || '拆除失败',
@@ -391,6 +395,8 @@ export const usePoiStore = defineStore('poi', () => {
       dataManager.invalidate('player_info');
       dataManager.invalidate('tile_actions');
       dataManager.broadcast('game:action-completed');
+      // 拆除成功后 POI 已被 DELETE，currentPoi 必然变 null，关闭模态框避免空白态
+      closeModal();
       // 显式 await loadInventory：确保拆除返还材料后背包立即刷新
       await useInventoryStore().loadInventory();
     } catch (e) {

@@ -18,7 +18,7 @@
 // 相关文档：oblivions/docs/搜索建筑物与掉落机制重构-模块L-POI交互界面.md §2.3
 // ══════════════════════════════════════════════════
 
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { usePoiStore } from '@/stores/poi';
 import { getPoiName, getPoiDesc } from '@/data/poi-locale';
 import type { Poi } from '@/types/api';
@@ -30,6 +30,20 @@ const poiStore = usePoiStore();
 const modalOpen = computed(() => poiStore.modalOpen);
 const modalMode = computed(() => poiStore.modalMode);
 const poiList = computed(() => poiStore.poiList);
+const currentPoi = computed(() => poiStore.currentPoi);
+
+// ── 问题4 方案2：交互态下 currentPoi 变 null 时自动关闭模态框 ──
+// 场景：玩家点击拆除时 POI 已被 E-12 异步清理 / 其他玩家拆除 / 跨命令并发删除，
+// 命令返回后 tile_actions 刷新使 currentPoi 自然变 null，交互态会渲染空白。
+// 此时模态框已无内容可显示，自动关闭让玩家返回列表态/探索界面。
+watch(
+  () => currentPoi.value,
+  (poi) => {
+    if (modalOpen.value && modalMode.value === 'interaction' && poi === null) {
+      poiStore.closeModal();
+    }
+  },
+);
 
 // ── 列表态卡片辅助渲染 ──
 
@@ -43,8 +57,15 @@ function poiDisplayDesc(poi: Poi): string {
 
 /**
  * POI 状态徽章：按 state 字段映射到中文标签
- * idle → 可搜索 / searched → 已搜索 / cooldown → 冷却中 / exhausted → 已搜空 / locked → 已上锁 / ignited → 已点燃
+ * idle → 按 POI 类型派生（交互型/搜刮型/机制型/地标型）
+ * searched → 已搜索 / cooldown → 冷却中 / exhausted → 已搜空 / locked → 已上锁 / ignited → 已点燃
  * 兼容旧字段 fallback：searchable=false 时显示"地标"
+ *
+ * 类型判定优先级（与 poiActionButtonText 一致）：
+ *   1. F-6 交互型（mechanic 以 interact_ 开头）→ "交互型"
+ *   2. 搜刮型（searchable=true 且无 mechanic）→ "可搜索"
+ *   3. 机制型（mechanic 非空且不以 interact_ 开头）→ "机制型"
+ *   4. 地标型（其他）→ "地标"
  */
 function poiStateBadge(poi: Poi): string {
   const state = poi.state;
@@ -54,8 +75,7 @@ function poiStateBadge(poi: Poi): string {
   if (state === 'locked') return '已上锁';
   if (state === 'ignited') return '已点燃';
   if (state === 'idle') {
-    if (!poi.searchable) return '地标';
-    return '可搜索';
+    return poiTypeLabel(poi);
   }
   // state 缺失时 fallback 到旧字段
   if (poi.searched) return '已搜索';
@@ -63,9 +83,45 @@ function poiStateBadge(poi: Poi): string {
   return '地标';
 }
 
-/** 状态徽章附加信息（搜索次数 / 冷却剩余 / 未拾取道具计数） */
+/**
+ * POI 类型标签（idle 态下用作徽章文案）
+ * 与 poiActionButtonText 的判定基准一致，确保列表态徽章与操作按钮语义对齐
+ */
+function poiTypeLabel(poi: Poi): string {
+  const mechanic = poi.mechanic;
+  if (mechanic) {
+    if (mechanic.startsWith('interact_')) return '交互型';
+    return '机制型';
+  }
+  if (poi.searchable) return '可搜索';
+  return '地标';
+}
+
+/**
+ * POI 卡片操作按钮文案：按 POI 类型动态化（设计案 §3.2.2）
+ * - 搜刮型（searchable=true 且无 mechanic）→ [搜刮]
+ * - F-6 交互型（mechanic 以 interact_ 前缀开头）→ [交互]
+ * - 机制型（mechanic 非空且不以 interact_ 开头，如 max_hp_up/learn_skill/craft_source）→ [触碰]
+ * - 地标型（!searchable 且 !mechanic）→ [检查]
+ */
+function poiActionButtonText(poi: Poi): string {
+  const mechanic = poi.mechanic;
+  if (mechanic) {
+    if (mechanic.startsWith('interact_')) return '[交互]';
+    return '[触碰]';
+  }
+  if (poi.searchable) return '[搜刮]';
+  return '[检查]';
+}
+
+/** 状态徽章附加信息（耐久剩余 / 搜索次数 / 冷却剩余 / 未拾取道具计数） */
 function poiBadgeMeta(poi: Poi): string {
   const parts: string[] = [];
+  // E-12 耐久剩余（仅 ttl_days > 0 的玩家放置 POI 显示）
+  const ttlRemaining = poi.ttl_remaining_days;
+  if (ttlRemaining !== null && ttlRemaining !== undefined && ttlRemaining > 0) {
+    parts.push(`剩 ${ttlRemaining} 天`);
+  }
   if (poi.repeatable) {
     const limit = Number(poi.repeat_limit) || 0;
     const count = Number(poi.search_count) || 0;
@@ -111,7 +167,7 @@ function onEnterInteraction(iaid: string | number): void {
         </div>
 
         <div class="modal-body">
-          <!-- ── 列表态：POI 卡片列表（纵列布局，每张卡片含名称+徽章+[检查] 按钮） ── -->
+          <!-- ── 列表态：POI 卡片列表（纵列布局，每张卡片含名称+徽章+操作按钮） ── -->
           <div v-if="modalMode === 'list'" class="poi-list">
             <div v-if="poiList.length === 0" class="tile-empty">
               此处无可交互建筑物
@@ -134,7 +190,7 @@ function onEnterInteraction(iaid: string | number): void {
               <button
                 class="term-btn poi-check-btn"
                 @click="onEnterInteraction(poi.iaid)"
-              >[检查]</button>
+              >{{ poiActionButtonText(poi) }}</button>
             </div>
           </div>
 

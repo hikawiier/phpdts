@@ -3,13 +3,14 @@
  * @module B 命令系统
  * @framework B-1 声明式命令合约
  * @framework B-2 双层负载校验管道
+ * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
 }
 
 function obl_command_contracts() {
-    return array(
+    $contracts = array(
         'map.move' => array(
             'legacy' => 'move',
             'ui_mode' => 'explore',
@@ -258,6 +259,14 @@ function obl_command_contracts() {
             'refresh' => array(),
         ),
     );
+
+    // A-5 调试工具框架：合并 debug.* 命令合约（守卫由 bus 分发层检查）
+    // debug 命令标记 debug_only=true，跳过 required_capabilities 校验
+    if (function_exists('obl_debug_command_contracts')) {
+        $contracts = array_merge($contracts, obl_debug_command_contracts());
+    }
+
+    return $contracts;
 }
 
 function obl_command_contract($command) {

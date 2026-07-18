@@ -3,6 +3,7 @@
  * @module A API 层
  * @framework A-3 状态查询范围分发
  * @framework A-4 结构化视图投影函数集
+ * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -25,6 +26,16 @@ function obl_state_actor_effect_projection(array &$actor): array {
 
 function obl_state_dispatch($scope, $ctx) {
     $scope = trim((string)$scope);
+
+    // A-5 调试工具框架：debug_* scope 分发（需通过 ?debug=all 守卫）
+    // 守卫在前：未启用调试模式时直接抛 DEBUG_MODE_REQUIRED，零生产环境影响
+    if (strpos($scope, 'debug_') === 0) {
+        if (!function_exists('obl_debug_enabled') || !obl_debug_enabled()) {
+            obl_state_throw('DEBUG_MODE_REQUIRED', '调试模式未启用');
+        }
+        return obl_debug_state_dispatch($scope, $ctx);
+    }
+
     switch ($scope) {
         case '':
         case 'runtime':
@@ -470,6 +481,14 @@ function obl_state_handle_tile_actions($ctx) {
         if (function_exists('obl_get_available_interactions_for_poi')) {
             $poi_data['interactions'] = obl_get_available_interactions_for_poi($poi, $pdata);
         }
+
+        // POI 产出预览：投影 F-4 战利品表结构（物品组 + 互斥选项 + 概率 + 数量范围），
+        // 让前端在搜索前看到"可能搜刮出的道具列表"（原始方案 §4.2）。
+        // 设计案：oblivions/docs/POI产出预览-设计案-2026-07-19.md
+        // 不可搜索/已耗尽/表缺失/空表 → null，前端隐藏产出预览区
+        $poi_data['loot_preview'] = function_exists('obl_build_loot_preview_for_poi')
+            ? obl_build_loot_preview_for_poi($poi, $tpl)
+            : null;
 
         $pois[] = $poi_data;
     }

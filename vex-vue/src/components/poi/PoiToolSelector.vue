@@ -129,7 +129,7 @@ function onClearTool(): void {
 <template>
   <div class="poi-tool-selector">
     <div class="ascii-title">
-      <span class="ascii-label">可用工具/技能</span>
+      <span class="ascii-label">可用工具（搜刮辅助）</span>
       <span class="ascii-line" style="flex:1"></span>
     </div>
 

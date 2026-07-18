@@ -11,9 +11,8 @@
 // 布局（与现有 index.html #tileActionBar 一致）：
 //   ┌─ 常驻按钮区 ──────────────────
 //   [E] 探索周围  [区域切换]（条件显示）
-//   ┌─ 统一交互列表（2列网格） ─────
-//   [G] 脚边道具 ×N    [S] POI 名称
-//   ...
+//   ┌─ 行动入口区 ─────────────────
+//   [脚边道具 ×N]   [POI 交互 ×N]   ← 单按钮入口，与脚边道具并列
 //
 // 模态框（仅脚边道具，POI 交互由 L-9 PoiModal 接管）：
 //   - ground：道具列表 + [全部拾取]
@@ -22,6 +21,8 @@
 // 承载列表态 + 交互态双态切换。tileActionStore 的 POI 模态框逻辑保留但不再使用。
 //
 // 渲染策略（M4）：v-for + v-if 响应式渲染，无 innerHTML 依赖。
+//
+// 设计案：oblivions/docs/POI入口收敛与交互列表合并研判-设计案-2026-07-19.md §3.2
 // ══════════════════════════════════════════════════
 
 import { computed } from 'vue';
@@ -30,10 +31,9 @@ import { usePoiStore } from '@/stores/poi';
 import { useMapStore } from '@/stores/map';
 import { useCraftStore } from '@/stores/craft';
 import { commandQueue } from '@/stores/command-queue';
-import type { GroundItem, Poi } from '@/types/api';
+import type { GroundItem } from '@/types/api';
 import { getItemName, isInfinite } from '@/data/item-locale';
 import { getItmkName } from '@/data/itmk-locale';
-import { getPoiName } from '@/data/poi-locale';
 import { UI_TEXT } from '@/data/ui-locale';
 import ExploreButton from './ExploreButton.vue';
 
@@ -71,10 +71,10 @@ const switchRegionText = computed<string>(() => {
 });
 
 // ── 列表数据 ──
-const pois = computed<Poi[]>(() => tileActionStore.pois);
+const poiCount = computed<number>(() => tileActionStore.pois.length);
 const groundItems = computed<GroundItem[]>(() => tileActionStore.groundItems);
 const hasGround = computed<boolean>(() => groundItems.value.length > 0);
-const hasPois = computed<boolean>(() => pois.value.length > 0);
+const hasPois = computed<boolean>(() => poiCount.value > 0);
 const isEmpty = computed<boolean>(() => !hasGround.value && !hasPois.value);
 
 // ── 模态框数据（仅 ground 模态框；POI 模态框由 PoiModal.vue L-9 接管） ──
@@ -103,7 +103,7 @@ function onCheckGround(): void {
 }
 
 /** 点击 POI 入口 → 委托 poiStore 打开 L-9 PoiModal（双态切换由 PoiModal 内部承载） */
-function onCheckPoi(_iaid: string | number): void {
+function onCheckPoi(): void {
   poiStore.openModal();
 }
 
@@ -138,10 +138,6 @@ function itemDisplayName(item: GroundItem): string {
   return getItemName(item.item_id) || item.name || '';
 }
 
-function poiDisplayName(poi: Poi): string {
-  return getPoiName(poi.poi_id, poi.name);
-}
-
 /** 道具是否显示 meta（discovered!==2 时显示 itmk + itme） */
 function showItemMeta(item: GroundItem): boolean {
   return item.discovered !== 2;
@@ -153,38 +149,6 @@ function itemMeta(item: GroundItem): string {
   const rawDur = String(item.itms ?? '');
   const dur = (isInfinite(rawDur)) ? '∞' : rawDur;
   return `${eff}/${dur}`;
-}
-
-/** POI 行的副标签（按 state 优先判定，缺失时 fallback 到旧字段） */
-function poiSubLabel(poi: Poi): string {
-  const state = poi.state;
-  // P1-3 新增的 state 字段优先
-  if (state === 'exhausted') return '(已搜空)';
-  if (state === 'cooldown') {
-    const remaining = Number(poi.cooldown_remaining_turn) || 0;
-    return remaining > 0 ? `(冷却: ${remaining} tick)` : '(冷却中)';
-  }
-  if (state === 'searched') return '(已搜索)';
-  if (state === 'locked') return '(已上锁)';
-  if (state === 'ignited') return '(已点燃)';
-  if (state === 'idle') {
-    if (poi.searched) return '(已搜索)'; // 兼容旧字段
-    if (poi.searchable) return '(可搜索)';
-    return '';
-  }
-  // state 缺失时 fallback 到旧字段
-  if (poi.searched) return '(已搜索)';
-  if (poi.searchable) return '(可搜索)';
-  return '';
-}
-
-/** POI 行的搜索次数标签 */
-function poiCountLabel(poi: Poi): string {
-  if (!poi.repeatable) return '';
-  const limit = Number(poi.repeat_limit) || 0;
-  if (limit <= 0) return '';
-  const count = Number(poi.search_count) || 0;
-  return count + '/' + limit;
 }
 </script>
 
@@ -212,33 +176,21 @@ function poiCountLabel(poi: Poi): string {
         >[{{ switchRegionText }}]</button>
       </div>
 
-      <!-- ── 统一交互列表 ── -->
+      <!-- ── 行动入口区（脚边道具 + POI 交互单按钮入口） ── -->
       <div v-if="isEmpty" class="tile-empty">此处无可交互对象</div>
-      <div v-else class="poi-grid">
+      <div v-else class="action-entries">
         <!-- 脚边道具 -->
-        <div
+        <button
           v-if="hasGround"
-          class="tile-row is-action"
+          class="term-btn block action-entry"
           @click="onCheckGround"
-        >
-          <span class="tile-name">
-            脚边道具
-            <span class="dim">×{{ groundItems.length }}</span>
-          </span>
-        </div>
-        <!-- POI 条目 -->
-        <div
-          v-for="poi in pois"
-          :key="poi.iaid"
-          class="tile-row is-action"
-          @click="onCheckPoi(poi.iaid)"
-        >
-          <span class="tile-name">
-            {{ poiDisplayName(poi) }}
-            <span v-if="poiSubLabel(poi)" class="dim">{{ poiSubLabel(poi) }}</span>
-            <span v-if="poiCountLabel(poi)" class="dim">{{ poiCountLabel(poi) }}</span>
-          </span>
-        </div>
+        >[脚边道具 ×{{ groundItems.length }}]</button>
+        <!-- POI 交互单按钮入口（仅当图格有 POI 时显示，按原始方案 §3.1 §4.1 设计） -->
+        <button
+          v-if="hasPois"
+          class="term-btn block action-entry"
+          @click="onCheckPoi"
+        >[POI 交互 ×{{ poiCount }}]</button>
       </div>
     </template>
 
@@ -285,3 +237,21 @@ function poiCountLabel(poi: Poi): string {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* ── 行动入口区：脚边道具 + POI 交互 单按钮入口并列 ──
+ * 替代原 .poi-grid 2 列网格（POI 列表收敛到 PoiModal 列表态卡片，参见设计案 §3.2.1）
+ */
+.action-entries {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.action-entry {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+</style>

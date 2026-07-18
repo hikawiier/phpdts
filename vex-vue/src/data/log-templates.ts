@@ -743,6 +743,77 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
   'ignite.ignited': {
     text: '火堆被点燃了。',
   },
+
+  // ─── place_poi 错误分支 ──────────────────────────
+  // 同格同模板软上限触发：params={item_id, poi_id, pgroup, pls}
+  'place_poi.tile_limit': {
+    render: (params) => {
+      const itemName = ITEM_LOCALE[params.item_id as string]?.name ?? (params.item_id as string);
+      const poiName = getPoiName(params.poi_id as string);
+      return `<span class="red">这个格子里已经有一个${escapeHtml(poiName)}了，无法再放置${escapeHtml(itemName)}。</span>`;
+    },
+  },
+
+  // ─── debug.* 调试日志（A-5 调试工具框架）─────────
+  // params={before_tick, after_tick, before_day, after_day, before_phase, after_phase, ticks}
+  'debug.advance_tick': {
+    render: (params) => {
+      const ticks = Number(params.ticks) || 0;
+      const beforeTick = Number(params.before_tick) ?? 0;
+      const afterTick = Number(params.after_tick) ?? 0;
+      const beforeDay = Number(params.before_day) ?? 1;
+      const afterDay = Number(params.after_day) ?? 1;
+      const beforePhase = String(params.before_phase ?? 'day');
+      const afterPhase = String(params.after_phase ?? 'day');
+      return `<span class="grey">[调试] 推进了 ${ticks} tick：tick ${beforeTick}→${afterTick}，D${beforeDay}→D${afterDay}，${escapeHtml(beforePhase)}→${escapeHtml(afterPhase)}。</span>`;
+    },
+  },
+  // params={from_day, to_day}
+  'debug.trigger_day_changed': {
+    render: (params) => {
+      const fromDay = Number(params.from_day) ?? 1;
+      const toDay = Number(params.to_day) ?? 1;
+      return `<span class="grey">[调试] 触发 day_changed 事件：D${fromDay} → D${toDay}。</span>`;
+    },
+  },
+  // params={item_id, requested, stored_count, dropped_count}
+  'debug.give_item': {
+    render: (params) => {
+      const itemId = String(params.item_id ?? '');
+      const itemName = ITEM_LOCALE[itemId]?.name ?? itemId;
+      const requested = Number(params.requested) ?? 0;
+      const stored = Number(params.stored_count) ?? 0;
+      const dropped = Number(params.dropped_count) ?? 0;
+      const parts: string[] = [`给予 <span class="yellow">${escapeHtml(itemName)}</span> ×${requested}`];
+      if (stored > 0) parts.push(`入背包 ${stored}`);
+      if (dropped > 0) parts.push(`掉地上 ${dropped}`);
+      return `<span class="grey">[调试] ${parts.join('，')}。</span>`;
+    },
+  },
+  // params={target, before_tick, after_tick, before_day, after_day, before_phase, after_phase, delta}
+  'debug.advance_to_phase': {
+    render: (params) => {
+      const target = String(params.target ?? '');
+      const beforeTick = Number(params.before_tick) ?? 0;
+      const afterTick = Number(params.after_tick) ?? 0;
+      const beforeDay = Number(params.before_day) ?? 1;
+      const afterDay = Number(params.after_day) ?? 1;
+      const beforePhase = String(params.before_phase ?? 'day');
+      const afterPhase = String(params.after_phase ?? 'day');
+      const delta = Number(params.delta) ?? 0;
+      return `<span class="grey">[调试] 推进到相位 ${escapeHtml(target)}（${delta} tick）：tick ${beforeTick}→${afterTick}，D${beforeDay}→D${afterDay}，${escapeHtml(beforePhase)}→${escapeHtml(afterPhase)}。</span>`;
+    },
+  },
+  // params={from:{pgroup,pls}, to:{pgroup,pls}}
+  'debug.reset_position': {
+    render: (params) => {
+      const from = params.from as Record<string, number> | undefined;
+      const to = params.to as Record<string, number> | undefined;
+      const fromStr = from ? `(${from.pgroup},${from.pls})` : '?';
+      const toStr = to ? `(${to.pgroup},${to.pls})` : '?';
+      return `<span class="grey">[调试] 重置位置：${fromStr} → ${toStr}。</span>`;
+    },
+  },
 };
 
 /**

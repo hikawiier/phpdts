@@ -2,6 +2,7 @@
 /**
  * @module C 核心运行时
  * @framework C-1 拓扑引导加载
+ * @framework A-5 调试工具框架
  */
 // ================================================================
 // Oblivions 子系统统一引导文件
@@ -141,4 +142,8 @@ require_once GAME_ROOT . './oblivions/include/gamectl/init.func.php';
 
 // 第 8 层：游戏状态机（依赖 init.func.php；当前主要由旧 Room/Lifecycle 入口调用）
 require_once GAME_ROOT . './oblivions/include/gamectl/state.func.php';
+
+// 第 9 层：A-5 调试工具框架（最后加载，正交于游戏框架；提供 debug.* 命令合约与 debug_* state scope）
+// 守卫机制：所有调试入口要求 ?debug=all 才生效，正常模式零影响
+require_once GAME_ROOT . './oblivions/include/core/obl_debug.php';
 

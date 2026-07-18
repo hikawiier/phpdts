@@ -878,3 +878,160 @@ function obl_get_tile_for_poi($poi) {
     $tiles = isset($map['tiles'][$pgroup]) ? $map['tiles'][$pgroup] : array();
     return isset($tiles[$pls]) ? $tiles[$pls] : array();
 }
+
+// ----------------------------------------------------------------
+// 战利品表预览投影（tile_actions scope 用）
+// ----------------------------------------------------------------
+
+/**
+ * 构建 POI 战利品表预览（tile_actions scope 投影专用）
+ *
+ * 设计案：oblivions/docs/POI产出预览简化-设计案-2026-07-19.md
+ *
+ * 投影 POI 模板关联的 F-4 战利品表为前端三档分级预览数据，
+ * 让玩家在搜索前看到"可能搜刮出的道具列表"（原始方案 §4.2）。
+ *
+ * 投影规则（按 DESIGN.md §3.4「少即是多」原则，从详细结构简化为三档分级）：
+ *   1. 四级过滤链：searchable=false / state='exhausted' / loot_table_id 缺失 / 表不存在 / groups 为空 → null
+ *   2. 每个 entry 整体出现概率 = group_chance × entry_probability
+ *      - entry_probability = weight / Σweight（与 F-4 引擎 obl_weighted_pick 一致）
+ *      - weight 全 0 时按均匀分布（1/count），与 obl_weighted_pick 兜底一致
+ *   3. 多组同 item_id 去重：独立事件联合概率 1 - ∏(1 - p_i)
+ *      （假设各组掷骰独立，与 F-4 引擎语义一致；同组内 entries 互斥，无需联合）
+ *   4. 按整体出现概率分三档（硬编码阈值，不引入配置）：
+ *      - certain（绝对会有）：p >= 0.95
+ *      - likely（大概率会有）：0.5 <= p < 0.95
+ *      - maybe（也许会有）：0 < p < 0.5
+ *   5. 各档内 item_id 按 p 降序排序；三档全空 → 返回 null
+ *
+ * 信息安全：loot_table 配置仅含普通掉落物品，不含 event_pool 的陷阱/恶性事件 ID。
+ * 陷阱类信息通过 base_bad_event_chance 概率值暴露，不暴露具体 item_id。
+ *
+ * 不应用 loot_table_overrides 路由——tile_actions scope 调用时机早于玩家选工具，
+ * 仅投影默认 loot_table_id 的结构。前端在 loot_table_overrides 非空时显示提示文案。
+ *
+ * @param array $poi      POI 实例行（含 state）
+ * @param array $template POI 模板（含 searchable / loot_table_id）
+ * @return array|null 三档分级预览结构或 null
+ *   返回结构：
+ *     [
+ *       'table_name' => string,           // 索引锚点（调试用）
+ *       'certain' => ['item_id', ...],    // 已按 p 降序
+ *       'likely'  => ['item_id', ...],
+ *       'maybe'   => ['item_id', ...],
+ *     ]
+ */
+function obl_build_loot_preview_for_poi($poi, $template) {
+    // 1. 四级过滤链
+    if (empty($template['searchable'])) return null;
+
+    $state = isset($poi['state']) ? (string)$poi['state'] : 'idle';
+    if ($state === 'exhausted') return null;
+
+    $table_id = isset($template['loot_table_id']) ? (string)$template['loot_table_id'] : '';
+    if ($table_id === '') return null;
+
+    // 2. 加载表配置
+    $tables = include GAME_ROOT . './oblivions/gamedata/loot_tables.php';
+    if (!isset($tables[$table_id])) {
+        // 防御性：模板 loot_table_id 配置错误，emit error 日志
+        global $obl_error_log;
+        if (isset($obl_error_log) && $obl_error_log) {
+            $obl_error_log->emit('loot.preview_table_missing', array(
+                'table_id' => $table_id,
+            ), 'api');
+        }
+        return null;
+    }
+    $table = $tables[$table_id];
+
+    $groups = isset($table['groups']) && is_array($table['groups']) ? $table['groups'] : array();
+    if (empty($groups)) return null;  // 空表（如 empty_loot）
+
+    // 3. 收集每个 item_id 在各组中的出现概率列表
+    // 同组内 entries 互斥（按 weight 选一），一个 item 在同一组内只贡献一次概率；
+    // 多组同 item_id 视为独立事件，后续用联合概率合并。
+    $item_prob_map = array();  // item_id => [p1, p2, ...]
+
+    foreach ($groups as $group) {
+        $chance = isset($group['chance']) ? (float)$group['chance'] : 1.0;
+        // 钳位到 [0, 1]（与 obl_clamp_prob 同语义）
+        if ($chance < 0.0) $chance = 0.0;
+        if ($chance > 1.0) $chance = 1.0;
+        if ($chance <= 0.0) continue;  // 组级 chance=0 → 该组物品不可能出现
+
+        $entries = isset($group['entries']) && is_array($group['entries']) ? $group['entries'] : array();
+        if (empty($entries)) continue;
+
+        // 计算 weight 总和（与 obl_weighted_pick 一致；weight 缺省按 1.0 计）
+        $total_weight = 0.0;
+        foreach ($entries as $e) {
+            $total_weight += isset($e['weight']) ? (float)$e['weight'] : 1.0;
+        }
+
+        $entry_count = count($entries);
+        foreach ($entries as $e) {
+            $w = isset($e['weight']) ? (float)$e['weight'] : 1.0;
+            // weight 全 0 时按均匀分布（1/count），与 obl_weighted_pick 兜底一致
+            $entry_prob = $total_weight > 0
+                ? ($w / $total_weight)
+                : (1.0 / $entry_count);
+
+            $overall = $chance * $entry_prob;
+            if ($overall <= 0.0) continue;
+
+            $item_id = (string)(isset($e['item_id']) ? $e['item_id'] : '');
+            if ($item_id === '') continue;
+
+            if (!isset($item_prob_map[$item_id])) {
+                $item_prob_map[$item_id] = array();
+            }
+            $item_prob_map[$item_id][] = $overall;
+        }
+    }
+
+    // 4. 计算每个 item 的联合概率，分档
+    $certain = array();
+    $likely  = array();
+    $maybe   = array();
+
+    $item_final = array();
+    foreach ($item_prob_map as $item_id => $probs) {
+        // 独立事件联合概率：1 - ∏(1 - p_i)
+        $combined = 1.0;
+        foreach ($probs as $p) {
+            $combined *= (1.0 - $p);
+        }
+        $p_final = 1.0 - $combined;
+
+        $item_final[] = array('item_id' => $item_id, 'p' => $p_final);
+    }
+
+    // 按 p 降序排序（同概率稳定排序：usort 不稳定，但 item_id 顺序对前端不重要）
+    usort($item_final, function($a, $b) {
+        if ($a['p'] === $b['p']) return 0;
+        return $a['p'] < $b['p'] ? 1 : -1;
+    });
+
+    foreach ($item_final as $item) {
+        $p = $item['p'];
+        if ($p >= 0.95) {
+            $certain[] = $item['item_id'];
+        } elseif ($p >= 0.5) {
+            $likely[] = $item['item_id'];
+        } elseif ($p > 0.0) {
+            $maybe[] = $item['item_id'];
+        }
+        // p <= 0 不入档（防御性，理论不发生）
+    }
+
+    // 5. 三档全空 → 返回 null（前端隐藏整个区域）
+    if (empty($certain) && empty($likely) && empty($maybe)) return null;
+
+    return array(
+        'table_name' => isset($table['name']) ? (string)$table['name'] : $table_id,
+        'certain'    => $certain,
+        'likely'     => $likely,
+        'maybe'      => $maybe,
+    );
+}

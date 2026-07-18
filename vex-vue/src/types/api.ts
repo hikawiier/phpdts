@@ -344,6 +344,33 @@ export interface GroundItem {
   [key: string]: unknown;
 }
 
+/**
+ * L-9 POI 产出预览（tile_actions scope loot_preview 字段）
+ *
+ * 设计案：oblivions/docs/POI产出预览简化-设计案-2026-07-19.md
+ * 投影源：oblivions/gamedata/loot_tables.php（F-4 战利品表配置）
+ * 投影函数：obl_build_loot_preview_for_poi()（oblivions/include/game/poi/poi.search.func.php）
+ *
+ * 按"少即是多"原则从详细 groups/entries 结构简化为三档分级：
+ *   - certain（绝对会有）：物品整体出现概率 p >= 0.95
+ *   - likely（大概率会有）：0.5 <= p < 0.95
+ *   - maybe（也许会有）：0 < p < 0.5
+ *
+ * 物品整体出现概率 = group_chance × entry_probability；
+ * 多组同 item_id 用独立事件联合概率 1 - ∏(1 - p_i) 合并。
+ *
+ * 安全说明：loot_table 配置只含普通掉落物品，不含 event_pool 的陷阱/恶性事件 ID。
+ */
+export interface PoiLootPreview {
+  table_name: string;
+  /** 绝对会有（p >= 0.95），按 p 降序 */
+  certain: string[];
+  /** 大概率会有（0.5 <= p < 0.95），按 p 降序 */
+  likely: string[];
+  /** 也许会有（0 < p < 0.5），按 p 降序 */
+  maybe: string[];
+}
+
 export interface Poi {
   iaid: string | number;
   poi_id: string;
@@ -393,6 +420,13 @@ export interface Poi {
    * 前端"拆除"按钮 tooltip 文案数据源；为空数组表示拆除无返还但仍可执行
    */
   dismantle_returns?: Array<{ item_id: string; count: number }>;
+  /**
+   * L-9 POI 产出预览（原始方案 §4.2"可能搜刮出的道具列表"）
+   * - null：不可搜索/已耗尽/表缺失/空表/三档全空 → 前端隐藏产出预览区
+   * - 对象：三档分级（certain / likely / maybe），每档为 item_id 数组
+   * 投影默认 loot_table_id（非 loot_table_overrides），工具选择后表切换由前端提示文案承载
+   */
+  loot_preview?: PoiLootPreview | null;
   [key: string]: unknown;
 }
 

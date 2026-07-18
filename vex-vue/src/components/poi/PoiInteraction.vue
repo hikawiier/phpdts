@@ -18,13 +18,14 @@
 // 相关文档：oblivions/docs/搜索建筑物与掉落机制重构-模块L-POI交互界面.md §2.3 §2.8 §2.9
 // ══════════════════════════════════════════════════
 
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { usePoiStore } from '@/stores/poi';
 import { useInventoryStore } from '@/stores/inventory';
 import { commandQueue } from '@/stores/command-queue';
 import { getPoiName, getPoiDesc } from '@/data/poi-locale';
 import { getItemName } from '@/data/item-locale';
 import { getTagName } from '@/data/tag-locale';
+import type { PoiLootPreview } from '@/types/api';
 import PoiToolSelector from './PoiToolSelector.vue';
 import PoiFeedbackPanel from './PoiFeedbackPanel.vue';
 
@@ -84,8 +85,49 @@ const ttlRemainingLabel = computed<string>(() => {
   return `剩余耐久：${remaining} 天`;
 });
 
-/** 是否为机制型 POI（如生命图腾、技能图腾） */
-const isMechanic = computed<boolean>(() => !!currentPoi.value?.mechanic);
+/** 是否为机制型 POI（mechanic 非空且不以 interact_ 开头，如生命图腾/技能图腾/工作台） */
+const isMechanic = computed<boolean>(() => {
+  const m = currentPoi.value?.mechanic;
+  return !!m && !m.startsWith('interact_');
+});
+
+/** 是否为 F-6 交互型 POI（mechanic 以 interact_ 开头，或有 interactions 配置） */
+const isInteractPoi = computed<boolean>(() => {
+  const poi = currentPoi.value;
+  if (!poi) return false;
+  const m = poi.mechanic;
+  if (m && m.startsWith('interact_')) return true;
+  return Array.isArray(poi.interactions) && poi.interactions.length > 0;
+});
+
+/** 是否为地标型 POI（无 mechanic、无 interactions、searchable=false） */
+const isLandmarkPoi = computed<boolean>(() => {
+  const poi = currentPoi.value;
+  if (!poi) return false;
+  if (poi.mechanic) return false;
+  if (Array.isArray(poi.interactions) && poi.interactions.length > 0) return false;
+  return !poi.searchable;
+});
+
+/**
+ * 右列工具区空状态文案（showToolSelector=false 时显示）
+ * 按优先级：机制型 → F-6 交互型 → 地标型 → 兜底
+ * 搜刮型 POI 在 showToolSelector=true 路径中由 PoiToolSelector 渲染，不走此分支
+ */
+const toolsEmptyLabel = computed<string>(() => {
+  if (isMechanic.value) return '触碰即可触发效果，无需工具';
+  if (isInteractPoi.value) return '使用上方道具入口操作';
+  if (isLandmarkPoi.value) return '无可用工具';
+  return '当前不可搜索';
+});
+
+/** 右列工具区标题文案（与 toolsEmptyLabel 配套，按 POI 类型区分） */
+const toolsEmptyTitle = computed<string>(() => {
+  if (isMechanic.value) return '机制型 POI';
+  if (isInteractPoi.value) return '道具交互';
+  if (isLandmarkPoi.value) return '可用工具';
+  return '可用工具（搜刮辅助）';
+});
 
 /** 是否显示机制触发结果（已搜索的机制型 POI） */
 const showMechanicResult = computed<boolean>(() => {
@@ -179,6 +221,56 @@ const showProbabilityBars = computed<boolean>(() => {
   if (poi.mechanic) return false;
   return true;
 });
+
+// ── L-9 POI 产出预览（原始方案 §4.2「可能搜刮出的道具列表」）──
+
+/**
+ * F-4 战利品表三档分级投影（tile_actions scope loot_preview 字段）。
+ * 后端 obl_build_loot_preview_for_poi() 把默认 loot_table_id 的 groups/entries
+ * 折算为三档分级（certain / likely / maybe），让玩家在搜索前预览"可能产出"。
+ * 设计案：oblivions/docs/POI产出预览简化-设计案-2026-07-19.md §3
+ */
+const lootPreview = computed<PoiLootPreview | null>(() => {
+  return currentPoi.value?.loot_preview ?? null;
+});
+
+/** 是否显示产出预览区（与 showProbabilityBars 同条件 + loot_preview 非空） */
+const showLootPreview = computed<boolean>(() => {
+  if (!showProbabilityBars.value) return false;
+  return lootPreview.value !== null;
+});
+
+/** 是否显示"选择工具可改良掉落表"提示（POI 模板配置了 loot_table_overrides） */
+const hasLootOverride = computed<boolean>(() => {
+  const overrides = currentPoi.value?.loot_table_overrides;
+  return Array.isArray(overrides) && overrides.length > 0;
+});
+
+/** 产出预览折叠态（默认折叠，按"少即是多"原则不抢占玩家注意力） */
+const lootPreviewExpanded = ref(false);
+
+/**
+ * 三档分级文案：把每档 item_id 列表映射为逗号分隔的物品名串。
+ * 后端已按概率降序排序，前端按数组顺序直接 join。
+ */
+const lootPreviewText = computed<{
+  certain: string;
+  likely: string;
+  maybe: string;
+} | null>(() => {
+  const lp = lootPreview.value;
+  if (!lp) return null;
+  return {
+    certain: lp.certain.map(id => getItemName(id)).join('、'),
+    likely: lp.likely.map(id => getItemName(id)).join('、'),
+    maybe: lp.maybe.map(id => getItemName(id)).join('、'),
+  };
+});
+
+/** 切换折叠/展开 */
+function toggleLootPreview(): void {
+  lootPreviewExpanded.value = !lootPreviewExpanded.value;
+}
 
 // ── 概率条数据 ──
 
@@ -352,6 +444,33 @@ function onBack(): void {
             <div class="dim prob-hint">基础概率（未应用工具/技能修正）</div>
           </div>
 
+          <!-- L-9 可能产出预览区（原始方案 §4.2「可能搜刮出的道具列表」）
+               后端把 F-4 战利品表折算为三档分级（certain / likely / maybe）。
+               不可搜索/已耗尽/表缺失/空表/三档全空 → 后端返回 null → 此区隐藏。
+               默认折叠，玩家主动展开后看到三句话分级文案（按"少即是多"原则）。
+               设计案：oblivions/docs/POI产出预览简化-设计案-2026-07-19.md §3.4 -->
+          <div v-if="showLootPreview && lootPreview" class="loot-preview-section">
+            <button
+              type="button"
+              class="term-btn loot-preview-toggle"
+              @click="toggleLootPreview"
+            >
+              {{ lootPreviewExpanded ? '▲ 收起产出' : '▼ 可能的产出' }}
+            </button>
+            <div v-if="lootPreviewExpanded && lootPreviewText" class="loot-preview-content">
+              <div v-if="lootPreviewText.certain" class="loot-preview-line">
+                <span class="yellow">绝对会有：{{ lootPreviewText.certain }}……</span>
+              </div>
+              <div v-if="lootPreviewText.likely" class="loot-preview-line">
+                大概率会有：{{ lootPreviewText.likely }}……
+              </div>
+              <div v-if="lootPreviewText.maybe" class="loot-preview-line">
+                <span class="dim">也许会有：{{ lootPreviewText.maybe }}。</span>
+              </div>
+              <div v-if="hasLootOverride" class="dim loot-preview-hint">（选择工具可改良掉落表）</div>
+            </div>
+          </div>
+
           <!-- 反馈区：PoiFeedbackPanel（搜索结果 + 道具列表 + 拾取按钮） -->
           <PoiFeedbackPanel v-if="showFeedbackPanel" />
         </div>
@@ -359,7 +478,7 @@ function onBack(): void {
         <!-- ── F-6 道具交互区（currentPoiInteractions 非空时显示） ── -->
         <div v-if="currentPoiInteractions.length > 0" class="poi-interact-zone">
           <div class="ascii-title">
-            <span class="ascii-label">道具交互</span>
+            <span class="ascii-label">道具操作（直接触发）</span>
             <span class="ascii-line" style="flex:1"></span>
           </div>
           <div class="interact-list">
@@ -453,11 +572,11 @@ function onBack(): void {
         <PoiToolSelector v-if="showToolSelector" />
         <div v-else class="dim poi-tools-empty">
           <div class="ascii-title">
-            <span class="ascii-label">可用工具/技能</span>
+            <span class="ascii-label">{{ toolsEmptyTitle }}</span>
             <span class="ascii-line" style="flex:1"></span>
           </div>
           <div class="dim" style="padding:8px;text-align:center;font-size:10px;">
-            {{ isMechanic ? '机制型 POI 不需要工具' : '当前不可搜索' }}
+            {{ toolsEmptyLabel }}
           </div>
         </div>
       </div>
@@ -669,6 +788,46 @@ function onBack(): void {
   font-size: 10px;
   padding: 2px 0;
   text-align: right;
+}
+
+/* ── L-9 可能产出预览区（设计案 §3.4）── */
+/* 默认折叠，玩家主动展开后看到三句话分级文案。
+   灰阶色阶复用现有 .yellow / 默认色 / .dim 调色板，不新增颜色（DESIGN.md §3.4 少即是多） */
+.loot-preview-section {
+  flex: 0 0 auto;
+  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.loot-preview-toggle {
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-size: 10px;
+  border-color: #555;
+  color: #888;
+  letter-spacing: 0.05em;
+}
+
+.loot-preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px;
+}
+
+.loot-preview-line {
+  font-size: 11px;
+  margin: 2px 0;
+  text-align: left;
+  word-break: break-all;
+}
+
+.loot-preview-hint {
+  font-size: 10px;
+  text-align: right;
+  margin-top: 2px;
 }
 
 /* ── F-6 道具交互区 ── */

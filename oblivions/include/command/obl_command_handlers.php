@@ -2,6 +2,7 @@
 /**
  * @module B 命令系统
  * @framework B-3 命令总线执行管道
+ * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -136,7 +137,16 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             $result = combat_preview_chain($pdata, $actions, $battle_cache);
             return array('ok' => true, 'data' => $result);
 
+        // A-5 调试工具框架：debug.* 命令分发（需通过 ?debug=all 守卫）
+        // debug 命令合约标记 debug_only=true，bus 跳过 required_capabilities 校验
+        // 守卫在前：未启用调试模式时直接返回 DEBUG_MODE_REQUIRED，零生产环境影响
         default:
+            if (strpos($command, 'debug.') === 0) {
+                if (!function_exists('obl_debug_enabled') || !obl_debug_enabled()) {
+                    return array('ok' => false, 'code' => 'DEBUG_MODE_REQUIRED');
+                }
+                return obl_debug_command_dispatch($command, $payload, $pdata);
+            }
             return array('ok' => false, 'code' => 'UNKNOWN_COMMAND');
     }
     return array('ok' => true);
