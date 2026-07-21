@@ -3,7 +3,6 @@
  * @module B 命令系统
  * @framework B-3 命令总线执行管道
  * @framework A-5 调试工具框架
- * @framework O-4 编辑器守卫与后端对接
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -147,15 +146,6 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
                     return array('ok' => false, 'code' => 'DEBUG_MODE_REQUIRED');
                 }
                 return obl_debug_command_dispatch($command, $payload, $pdata);
-            }
-            // O-4 编辑器守卫：editor.* 命令分发（需通过 ?editor=1 + Bearer token 双重守卫）
-            // editor 命令合约标记 editor_only=true，bus 跳过 required_capabilities 校验与玩家认证
-            // 守卫在前：未通过守卫时直接返回 EDITOR_ACCESS_DENIED，零生产环境影响
-            if (strpos($command, 'editor.') === 0) {
-                if (!function_exists('obl_editor_enabled') || !obl_editor_enabled()) {
-                    return array('ok' => false, 'code' => 'EDITOR_ACCESS_DENIED');
-                }
-                return obl_editor_command_dispatch($command, $payload, $pdata);
             }
             return array('ok' => false, 'code' => 'UNKNOWN_COMMAND');
     }

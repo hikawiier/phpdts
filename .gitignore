@@ -39,10 +39,6 @@ bot/bot_enable.bat
 # DTS Cache Files
 gamedata/bak/
 gamedata/templates/
-oblivions/cache/locks/
-oblivions/cache/logs/
-oblivions/cache/battles/
-oblivions/cache/debug/
 templates/default/lastgb.htm
 templates/default/lastnews.htm
 bot/lock/
@@ -120,17 +116,18 @@ gamedata/adminlog.php
 /gamedata/cache/rate_limit
 gamedata/cache/compress_queue.php
 gamedata/cache/roomlist.php
-/.mimocode
-gamedata/cache/roomlist.php
+
+# Node
+node_modules/
+/.trae
+
+#obl
 debug_autologin.php
-
-# 地图编辑器
+oblivions/cache/
 /oblivions/gamedata/backup
-/oblivions/editor-next
-/oblivions/editor
-
-# O-4 编辑器守卫 token 文件（含敏感凭据，禁止提交）
-oblivions/editor/editor_token.php
+/vex-vue/public/img/temp
+codebase-memory-mcp.json
+/.codebase-memory
 
 # Oblivions editor-next 构建产物与缓存
 oblivions/editor-next/dist/
@@ -143,10 +140,4 @@ oblivions/editor-next/storybook-static/
 oblivions/**/node_modules/
 oblivions/pnpm-debug.log*
 
-# Node
-node_modules/
-/.trae
-/vex-vue/public/img/temp
-codebase-memory-mcp.json
-/.codebase-memory
-/oblivions/shared
+oblivions/editor-next/editor.config.json

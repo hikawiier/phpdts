@@ -31,20 +31,9 @@ register_shutdown_function(function () {
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     header('Access-Control-Allow-Methods: GET, OPTIONS');
-    // O-4 编辑器守卫：?editor=1 时附加 Authorization 头与通配 origin，便于编辑器跨域调用
-    if (isset($_GET['editor']) && $_GET['editor'] === '1') {
-        header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Authorization, Content-Type, X-CSRF-Token');
-    } else {
-        header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token');
-    }
+    header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token');
     http_response_code(200);
     exit;
-}
-
-// O-4 编辑器守卫：?editor=1 时附加 CORS 头（编辑器使用 token 认证，不发 cookie，可安全使用 *）
-if (isset($_GET['editor']) && $_GET['editor'] === '1') {
-    header('Access-Control-Allow-Origin: *');
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {

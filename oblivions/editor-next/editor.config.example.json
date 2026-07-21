@@ -1,0 +1,4 @@
+{
+  "gamedataPath": "/path/to/your/phpdts/oblivions/gamedata",
+  "backupPath": "/path/to/your/phpdts/oblivions/gamedata/backup"
+}

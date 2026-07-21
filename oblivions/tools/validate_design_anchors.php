@@ -332,9 +332,6 @@ class DesignAnchorValidator {
     private function scanSourceFiles() {
         $roots = array(
             array('path' => 'oblivions', 'extensions' => array('php')),
-            array('path' => 'oblivions/editor/src', 'extensions' => array('js')),
-            array('path' => 'oblivions/shared/src', 'extensions' => array('ts', 'vue')),
-            array('path' => 'oblivions/editor-next/src', 'extensions' => array('ts', 'vue')),
             array('path' => 'vex-vue/src', 'extensions' => array('ts', 'vue')),
         );
 
@@ -388,27 +385,11 @@ class DesignAnchorValidator {
             'oblivions/tools/',
             'oblivions/docs/',
             'oblivions/cache/',
-            'oblivions/shared/node_modules/',
-            'oblivions/shared/dist/',
-            'oblivions/editor-next/node_modules/',
-            'oblivions/editor-next/dist/',
-            'oblivions/editor-next/tests/',
-            'oblivions/editor-next/.storybook/',
             'vex-vue/node_modules/',
             'vex-vue/dist/',
         );
         foreach ($excludedPrefixes as $prefix) {
             if (design_anchor_starts_with($normalized, $prefix)) {
-                return true;
-            }
-        }
-        $excludedFiles = array(
-            // Vite 自动生成的环境声明文件，不属于业务模块
-            'oblivions/editor-next/src/vite-env.d.ts',
-            'oblivions/shared/src/vite-env.d.ts',
-        );
-        foreach ($excludedFiles as $file) {
-            if ($normalized === $file) {
                 return true;
             }
         }
@@ -589,15 +570,6 @@ class DesignAnchorValidator {
 
     private function isSupportedAnchorExtension($path) {
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-        if (design_anchor_starts_with($path, 'oblivions/editor/')) {
-            return in_array($extension, array('js', 'ts'), true) && !$this->isExcludedPath($path);
-        }
-        if (design_anchor_starts_with($path, 'oblivions/editor-next/src/')) {
-            return in_array($extension, array('ts', 'vue'), true) && !$this->isExcludedPath($path);
-        }
-        if (design_anchor_starts_with($path, 'oblivions/shared/src/')) {
-            return in_array($extension, array('ts'), true) && !$this->isExcludedPath($path);
-        }
         if (design_anchor_starts_with($path, 'oblivions/')) {
             return $extension === 'php' && !$this->isExcludedPath($path);
         }

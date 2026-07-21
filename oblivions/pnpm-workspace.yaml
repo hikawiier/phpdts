@@ -1,9 +1,0 @@
-# Oblivions 前端 monorepo
-# 包含 @oblivions/shared（编辑器与 vex-vue 共享类型/算法/常量）与 @oblivions/editor-next（新编辑器）
-# vex-vue 暂不纳入 workspace（避免本次任务波及面过大），后续迁移时再追加
-packages:
-  - 'shared'
-  - 'editor-next'
-allowBuilds:
-  esbuild: true
-  vue-demi: true

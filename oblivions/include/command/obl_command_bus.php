@@ -5,7 +5,6 @@
  * @framework B-4 日志即反馈
  * @framework B-5 乐观并发控制
  * @framework B-6 基于文件的玩家锁
- * @framework O-4 编辑器守卫与后端对接
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -35,48 +34,6 @@ function obl_command_api_handle($envelope) {
         );
     }
     $payload = $payload_check['payload'];
-
-    // O-4 编辑器守卫：editor.* 命令使用 token 认证 + 合成 pdata（pid=0）
-    // 跳过玩家认证/锁/gate/save_and_tick，使用独立的最小管道
-    // 设计意图：编辑器操作不依赖玩家会话，不需要房间锁与 tick 推进
-    if (!empty($contract['editor_only'])) {
-        if (!function_exists('obl_editor_enabled') || !obl_editor_enabled()) {
-            return obl_command_response_error('EDITOR_ACCESS_DENIED', '', null, $request_id);
-        }
-        // 合成 pdata：pid=0 标识非玩家会话；hp=1 防御 (hp<=0) 拦截；itempara=空数组避免 itm0 检查误判
-        $pdata = array(
-            'pid' => 0,
-            'action' => '',
-            'bid' => 0,
-            'hp' => 1,
-            'itempara' => array(),
-        );
-        $dispatch = obl_command_handler_dispatch($command, $payload, $pdata);
-        if (!$dispatch['ok']) {
-            return obl_command_response_error(
-                $dispatch['code'],
-                isset($dispatch['message']) ? $dispatch['message'] : '',
-                isset($dispatch['details']) ? $dispatch['details'] : null,
-                $request_id
-            );
-        }
-        $response_data = array(
-            'command' => $command,
-            'tick_advanced' => false,
-            'refresh' => isset($contract['refresh']) ? $contract['refresh'] : array(),
-            'changed_scopes' => array(),
-            'server_state' => array(
-                'pid' => 0,
-                'action' => '',
-                'bid' => 0,
-                'battle_state' => 'IDLE',
-            ),
-        );
-        if (isset($dispatch['data']) && is_array($dispatch['data'])) {
-            $response_data = array_merge($response_data, $dispatch['data']);
-        }
-        return obl_command_response_success($request_id, $response_data, 'OK');
-    }
 
     $auth = obl_command_authenticate_player();
     if (!$auth['ok']) {

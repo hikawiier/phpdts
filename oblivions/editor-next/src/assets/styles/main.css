@@ -1,0 +1,177 @@
+/* Tailwind v4 入口（对齐 vex-vue 视觉语言：灰阶基底 + 唯一强调色 token） */
+
+@import 'tailwindcss';
+
+/* Tailwind v4 配置（替代 v3 的 tailwind.config.ts 显式配置） */
+@theme {
+  /* 灰阶基底（9 阶） */
+  --color-gray-50: #f5f5f5;
+  --color-gray-100: #eeeeee;
+  --color-gray-200: #e5e5e5;
+  --color-gray-300: #cccccc;
+  --color-gray-400: #aaaaaa;
+  --color-gray-500: #888888;
+  --color-gray-600: #666666;
+  --color-gray-700: #444444;
+  --color-gray-800: #222222;
+  --color-gray-900: #111111;
+
+  /* 唯一强调色 token（仅 error，对齐 DESIGN.md 2.15；绿色路径线已下线为灰阶虚线） */
+  --color-accent-error: #ff5555;
+
+  /* Tide 三档灰阶亮度（OverlayTideHeatmap，对齐 2.15 + C-10 增强可见性） */
+  --color-tide-shallow: #cccccc;
+  --color-tide-deep: #888888;
+  --color-tide-abyss: #222222;
+
+  /* 等宽字体 */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 全局基础样式 */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 灰阶滚动条（避免彩色滚动条抢夺注意力，对齐 2.15） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gray-600) var(--color-gray-900);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-gray-900);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-600);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-500);
+}
+
+/* 焦点可见性（可访问性，对齐 2.14） */
+:focus-visible {
+  outline: 2px solid var(--color-gray-400);
+  outline-offset: 2px;
+}
+
+/* 路径线虚线动画已下线（C-6：路径线改为灰阶虚线 dasharray 6 3，对齐 2.15 唯一强调色仅剩 error 红） */
+
+/* ─── 叠层渲染基础样式（对齐 2.15：灰阶基底 + 唯一强调色） ───
+ * 叠层组件（OverlayFog / Vision / Reachability / TideHeatmap）的 SVG 渲染基础类。
+ * 各叠层组件保留 scoped 样式细化视觉，此处仅提供共享 token 与基础类。
+ */
+
+/* SVG 叠层基础类（pointer-events 由父组件 GridOverlay 控制） */
+.overlay-layer {
+  pointer-events: none;
+}
+
+/* 叠层等宽字体文本（坐标标签等） */
+.overlay-mono-text {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 路径线容器（灰阶白虚线，对齐 2.15 唯一强调色仅剩 error 红） */
+.overlay-path-line {
+  stroke: var(--color-gray-100, #eeeeee);
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* 玩家位置标记点（灰阶白，对齐 2.15） */
+.overlay-player-dot {
+  fill: var(--color-gray-100, #f5f5f5);
+  pointer-events: none;
+}
+
+/* 错误闪烁（ValidatePanel error 级，唯一强调色红，对齐 2.15） */
+.error-flash {
+  animation: error-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes error-pulse {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--color-accent-error) 18%, transparent);
+  }
+}
+
+/* GridCell 视觉态（对齐 DESIGN.md 2.15：灰阶形状纹理，不引入彩色） */
+.floor-water {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(136, 136, 136, 0.2) 4px, rgba(136, 136, 136, 0.2) 5px);
+}
+.floor-vegetation {
+  background-image: radial-gradient(circle, rgba(170, 170, 170, 0.3) 1px, transparent 1px);
+  background-size: 6px 6px;
+}
+.floor-metal {
+  border-style: dashed;
+}
+.floor-magic {
+  border-style: double;
+}
+
+.tide-deep {
+  background-color: rgba(136, 136, 136, 0.35);
+}
+.tide-abyss {
+  background-color: rgba(34, 34, 34, 0.8);
+}
+
+/* 不可通行格斜线纹理（C-8：替代 ✕ 文字标记，对齐 2.15 形状编码不引入彩色） */
+.cell-blocked-texture {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(136, 136, 136, 0.3) 4px,
+    rgba(136, 136, 136, 0.3) 5px
+  );
+}
+
+/* preset_safe 标记：右上角小三角（灰阶形状编码） */
+.cell-safe::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 6px 6px 0;
+  border-color: transparent var(--color-gray-300) transparent transparent;
+}

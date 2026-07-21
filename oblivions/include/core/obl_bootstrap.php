@@ -3,7 +3,6 @@
  * @module C 核心运行时
  * @framework C-1 拓扑引导加载
  * @framework A-5 调试工具框架
- * @framework O-4 编辑器守卫与后端对接
  */
 // ================================================================
 // Oblivions 子系统统一引导文件
@@ -147,12 +146,4 @@ require_once GAME_ROOT . './oblivions/include/gamectl/state.func.php';
 // 第 9 层：A-5 调试工具框架（最后加载，正交于游戏框架；提供 debug.* 命令合约与 debug_* state scope）
 // 守卫机制：所有调试入口要求 ?debug=all 才生效，正常模式零影响
 require_once GAME_ROOT . './oblivions/include/core/obl_debug.php';
-
-// 第 10 层：O-4 编辑器守卫与后端对接（正交于游戏框架，最后加载）
-// 提供 editor.* 命令合约与 editor_* state scope，复用 A-1 三层入口
-// 守卫机制：所有编辑器入口要求 ?editor=1 + Bearer token 双重守卫才生效，正常模式零影响
-// 加载顺序：guard 先（守卫+合约注册+分发入口）→ state_handlers（只读查询）→ command_handlers（写入操作）
-require_once GAME_ROOT . './oblivions/include/api/obl_editor_guard.php';
-require_once GAME_ROOT . './oblivions/include/api/obl_editor_state_handlers.php';
-require_once GAME_ROOT . './oblivions/include/api/obl_editor_command_handlers.php';
 

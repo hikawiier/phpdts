@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.vite/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Storybook
+storybook-static/
+
+# Local config（包含本地绝对路径，每个开发者环境不同，不入库）
+# 模板见 editor.config.example.json，复制为 editor.config.json 后填入本地路径
+editor.config.json
+*.local
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# Misc
+.cache/
+.temp/
+.turbo/
