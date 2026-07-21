@@ -1,12 +1,37 @@
 // ══════════════════════════════════════════════════
 // 应用入口 / Application entry point
 // ══════════════════════════════════════════════════
+// @module O
+// @framework O-4 编辑器守卫与后端对接
+// @framework O-6 开局分布预览 overlay 守卫（updateOverlayToggleDisabled）
 
-import state, { loadFromStorage, loadProject } from './state.js';
+import state, {
+  loadFromStorage,
+  loadProject,
+  setSimMode,
+  setSimParams,
+  setOverlayFlag,
+} from './state.js';
 import { initToolShortcuts, initBrushPresetPanel } from './tools.js';
+import {
+  performSimulateVision,
+  performSimulateExplore,
+  resetSimulation,
+} from './tools/sim-tools.js';
 import { initRegionPanel, renderRegionPanel } from './render/region-panel.js';
 import { renderGrid } from './render/grid.js';
 import { renderTilePanel } from './render/tile-panel.js';
+import { initConfigPanel, rerenderConfigPanel } from './render/config-panel.js';
+import { initValidatePanel, rerenderValidatePanel } from './render/validate-panel.js';
+import { initBackendPanel, rerenderBackendPanel, handleImportFromBackend } from './render/backend-panel.js';
+import { initGeneratorTools } from './tools/generator-tools.js';
+// 阶段6 新增：注册示例生成器（任务3 子代理实现具体主题生成器时也会调用 registerGenerator）
+import { registerSampleGenerator } from './generators/sample-generator.js';
+// 任务3 新增：注册具体主题生成器（O-5 框架扩展实现）
+import { registerArchipelagoGenerator } from './generators/archipelago-generator.js';
+import { registerLabyrinthGenerator } from './generators/labyrinth-generator.js';
+import { registerWetlandGenerator } from './generators/wetland-generator.js';
+import { registerRuinsGenerator } from './generators/ruins-generator.js';
 import { parseMapPhp, parseRegionPhp, extractPgroupFromFilename } from './lib/php-array-parser.js';
 import { generateMapPhp, generateRegionPhp } from './lib/php-codegen.js';
 import { exportZip } from './lib/export-zip.js';
@@ -22,7 +47,20 @@ function init() {
   initExportButton();
   initQuickExport();
   initDragDrop();
+  initSimTools();          // 阶段2 新增：模拟工具/叠层/参数面板事件绑定
+  initRightTabs();         // 阶段3 新增：右栏 Tab 切换（地图格 / 配置 / 验证 / 后端）
+  initConfigPanel();       // 阶段3 新增：配置文件编辑面板
+  initValidatePanel();     // 阶段4 新增：验证工具面板
+  initBackendPanel();      // 阶段5 新增：后端对接面板（baseUrl 恢复 + 事件绑定）
+  registerSampleGenerator(); // 阶段6 新增：注册示例生成器（任务3 在此基础上扩展）
+  registerArchipelagoGenerator(); // 任务3 新增：群岛链生成器（多区域 + 距离场）
+  registerLabyrinthGenerator();   // 任务3 新增：迷宫生成器（递归回溯）
+  registerWetlandGenerator();     // 任务3 新增：潮汐湿地生成器（渐变场 + 安全岛）
+  registerRuinsGenerator();       // 任务3 新增：废墟城市生成器（簇状 + height 分层）
+  initGeneratorTools();    // 阶段6 新增：随机生成工具（生成器选择 + 参数 schema UI）
   updateQuickExportVisibility();
+  updateExportButtons();   // AI 约束：根据 backend.connected 状态初始化导出/快速导出按钮
+  updateOverlayToggleDisabled();  // 任务3 O-6：根据 backend.connected 同步 wilditem/poi overlay disabled
 
   renderRegionPanel();
   renderGrid();
@@ -30,11 +68,188 @@ function init() {
 }
 
 // ══════════════════════════════════════════════════
-// 目录导入
+// 阶段3 新增：右栏 Tab 切换（地图格 / 配置 / 验证）
 // ══════════════════════════════════════════════════
+
+function initRightTabs() {
+  document.querySelectorAll('.right-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.rtab;
+      if (!tab) return;
+      // 切换按钮 active
+      document.querySelectorAll('.right-tab-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+      });
+      // 切换内容显示
+      document.querySelectorAll('.right-tab-content').forEach(c => {
+        const isActive = c.id === `rtab-${tab}`;
+        c.style.display = isActive ? 'flex' : 'none';
+      });
+      // 切换到 config / validate / backend 时重渲染（保证状态最新）
+      if (tab === 'config') rerenderConfigPanel();
+      if (tab === 'validate') rerenderValidatePanel();
+      if (tab === 'backend') rerenderBackendPanel();
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════
+// 阶段2 新增：模拟工具/叠层/参数面板事件绑定
+// UPGRADE_DESIGN.md §2.4-2.7
+// ══════════════════════════════════════════════════
+
+function initSimTools() {
+  initModeSwitch();
+  initSimActionButtons();
+  initSimParamSliders();
+  initOverlayToggles();
+}
+
+/**
+ * 模式开关：Simulate ↔ Live
+ * Live 模式需先在后端面板配置并连接成功（UPGRADE_DESIGN.md §2.4.3）
+ */
+function initModeSwitch() {
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      const mode = btn.dataset.mode;
+      if (mode !== 'simulate' && mode !== 'live') return;
+      // Live 模式需先连接后端（连接入口在右栏"后端"Tab）
+      if (mode === 'live' && !state.backend.connected) {
+        alert('Live 模式需先在右栏"后端"Tab 配置并连接后端');
+        // 自动切到后端面板，引导用户连接
+        const backendTab = document.querySelector('.right-tab-btn[data-rtab="backend"]');
+        if (backendTab) backendTab.click();
+        return;
+      }
+      setSimMode(mode);
+      // 更新按钮状态
+      document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+      });
+      // 切换模式 → 重渲染（叠层数据源变化）
+      renderGrid();
+    });
+  });
+}
+
+/**
+ * 模拟操作按钮：视野 BFS / 模拟探索 / 重置
+ */
+function initSimActionButtons() {
+  document.getElementById('btnSimVision')?.addEventListener('click', () => {
+    const playerPos = state.simState.playerPos;
+    if (playerPos.pgroup === null || playerPos.pls === null) {
+      alert('请先使用"玩家"工具点击地图格设置玩家位置');
+      return;
+    }
+    performSimulateVision();
+    renderGrid();
+  });
+
+  document.getElementById('btnSimExplore')?.addEventListener('click', () => {
+    const playerPos = state.simState.playerPos;
+    if (playerPos.pgroup === null || playerPos.pls === null) {
+      alert('请先使用"玩家"工具点击地图格设置玩家位置');
+      return;
+    }
+    const result = performSimulateExplore();
+    renderGrid();
+    if (result.discovered.length === 0) {
+      const items = state.liveState.wildItems[playerPos.pgroup];
+      if (!items || Object.keys(items).length === 0) {
+        alert('当前区域无道具实例可发现（请在右栏"后端"Tab 切换 Live 模式并加载 Live 数据）');
+      } else {
+        alert('视野范围内无可发现道具');
+      }
+    } else {
+      const summary = result.discovered
+        .map(d => `#${d.pls}: discovered=${d.discovered}`)
+        .join('\n');
+      alert(`本次发现 ${result.discovered.length} 个道具：\n${summary}`);
+    }
+  });
+
+  document.getElementById('btnSimReset')?.addEventListener('click', () => {
+    if (state.simState.playerPos.pgroup === null) return;
+    if (!confirm('清空所有模拟缓存（玩家位置/迷雾/视野/发现）？')) return;
+    resetSimulation();
+    renderGrid();
+  });
+}
+
+/**
+ * 模拟参数滑块：视野/移动力/发现数
+ * 调整时实时更新 state.simState + 重算 BFS（如适用）
+ */
+function initSimParamSliders() {
+  const sliders = [
+    { id: 'simVisionRange', valId: 'simVisionRangeVal', key: 'visionRange', recompute: 'vision' },
+    { id: 'simMovePower', valId: 'simMovePowerVal', key: 'movePower', recompute: 'reachability' },
+    { id: 'simDiscoverLimit', valId: 'simDiscoverLimitVal', key: 'discoverLimit', recompute: null },
+  ];
+
+  for (const s of sliders) {
+    const slider = document.getElementById(s.id);
+    const valEl = document.getElementById(s.valId);
+    if (!slider || !valEl) continue;
+
+    // 同步初始值
+    slider.value = state.simState[s.key];
+    valEl.textContent = state.simState[s.key];
+
+    slider.addEventListener('input', () => {
+      const value = parseInt(slider.value);
+      setSimParams({ [s.key]: value });
+      valEl.textContent = value;
+
+      // 若已设置玩家位置 → 实时重算
+      const playerPos = state.simState.playerPos;
+      if (playerPos.pgroup !== null && playerPos.pls !== null) {
+        if (s.recompute === 'vision') {
+          performSimulateVision();
+        }
+        // reachability overlay 在下次 renderGrid 时自动重算
+      }
+      renderGrid();
+    });
+  }
+}
+
+/**
+ * 叠层开关：fog/vision/reachability/tideHeatmap
+ * 切换时实时重渲染画布
+ */
+function initOverlayToggles() {
+  document.querySelectorAll('.overlay-toggle input[type="checkbox"]').forEach(cb => {
+    const overlayKey = cb.dataset.overlay;
+    if (!overlayKey) return;
+
+    // 同步初始状态
+    cb.checked = !!state.overlayFlags[overlayKey];
+
+    cb.addEventListener('change', () => {
+      setOverlayFlag(overlayKey, cb.checked);
+      renderGrid();
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════
+// 目录导入 / 后端导入
+// ══════════════════════════════════════════════════
+// AI 约束：connected 状态下"导入目录"按钮切换为"从后端导入"——
+// 调用 backend-panel.js 的 handleImportFromBackend() 拉取完整后端数据填入 state。
+// 未连接时保留原目录导入逻辑。
 
 function initImportDir() {
   document.getElementById('btnImportDir')?.addEventListener('click', async () => {
+    // connected 状态下切换为"从后端导入"（替代手动目录导入）
+    if (state.backend.connected) {
+      await handleImportFromBackend();
+      return;
+    }
     if (window.showDirectoryPicker) {
       try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -182,9 +397,16 @@ function finishImport(project) {
 // ══════════════════════════════════════════════════
 // 快速导出：直接写回源目录，旧文件打包备份
 // ══════════════════════════════════════════════════
+// AI 约束：未连接后端时禁用快速导出（与 exportZip 共用守卫策略）；
+// 已连接后端时仍允许（用户已通过 token 认证，视为受信操作）。
 
 function initQuickExport() {
   document.getElementById('btnQuickExport')?.addEventListener('click', async () => {
+    // AI 约束守卫：未连接后端禁止快速导出
+    if (!state.backend.connected) {
+      alert('快速导出需先连接后端（AI 约束）');
+      return;
+    }
     if (!state.dirHandle) {
       alert('快速导出仅在选择目录导入后可用');
       return;
@@ -279,10 +501,8 @@ async function writeTextFile(dirHandle, name, content) {
 }
 
 function updateQuickExportVisibility() {
-  const btn = document.getElementById('btnQuickExport');
-  if (btn) {
-    btn.style.display = state.dirHandle ? '' : 'none';
-  }
+  // 委托给 updateExportButtons()：AI 约束状态 + dirHandle 可见性统一刷新
+  updateExportButtons();
 }
 
 // ══════════════════════════════════════════════════
@@ -343,9 +563,18 @@ function initImportModal() {
 // ══════════════════════════════════════════════════
 // ZIP 导出
 // ══════════════════════════════════════════════════
+// AI 约束：禁止 AI 使用导出 ZIP 功能操作编辑器，只允许在连接后端的情况下备份、导出到后端。
+//   - 未连接后端时按钮 disabled，hover 显示"需先连接后端（AI 约束）"
+//   - 已连接后端时按钮可用，但 exportZip() 入口仍守卫（防绕过）
+//   - 例外：备份功能（backend-panel.js 的 handleBackendBackup）使用独立的 backupBackendZip() 路径
 
 function initExportButton() {
   document.getElementById('btnExport')?.addEventListener('click', async () => {
+    // AI 约束守卫：未连接后端禁止导出 ZIP（与 exportZip 入口守卫双重保险）
+    if (!state.backend.connected) {
+      alert('导出 ZIP 需先连接后端（AI 约束）');
+      return;
+    }
     if (Object.keys(state.project.regions).length === 0) {
       alert('没有可导出的数据');
       return;
@@ -357,6 +586,76 @@ function initExportButton() {
       alert('导出失败: ' + e.message);
     }
   });
+}
+
+/**
+ * AI 约束：根据 state.backend.connected 同步导出/快速导出按钮的 disabled 状态
+ * 在 init() 启动时调用一次；在 backend connect/disconnect 后调用刷新
+ */
+export function updateExportButtons() {
+  const connected = !!state.backend.connected;
+  const btnExport = document.getElementById('btnExport');
+  const btnQuickExport = document.getElementById('btnQuickExport');
+  const btnImportDir = document.getElementById('btnImportDir');
+
+  if (btnExport) {
+    btnExport.disabled = !connected;
+    btnExport.title = connected
+      ? '导出 ZIP（已连接后端）'
+      : '导出ZIP（需先连接后端，AI 约束）';
+  }
+  if (btnQuickExport) {
+    // 快速导出仅在 dirHandle 存在时显示，AI 约束叠加在 dirHandle 之上
+    const visible = !!state.dirHandle;
+    btnQuickExport.style.display = visible ? '' : 'none';
+    if (visible) {
+      btnQuickExport.disabled = !connected;
+      btnQuickExport.title = connected
+        ? '直接写回源目录，旧文件打包备份（已连接后端）'
+        : '快速导出（需先连接后端，AI 约束）';
+    }
+  }
+  if (btnImportDir) {
+    // connected 状态下文案切换为"从后端导入"（点击行为在 initImportDir 中分流）
+    btnImportDir.textContent = connected ? '从后端导入' : '导入目录';
+    btnImportDir.title = connected
+      ? '从已连接的后端拉取完整地图 + 配置 + DB 实例'
+      : '选择 gamedata 目录自动导入';
+  }
+}
+
+/**
+ * 任务3 O-6：根据 state.backend.connected 同步 wilditem / poi overlay 开关的 disabled 状态
+ *
+ * 设计意图（UPGRADE_DESIGN.md §10.4 / §10.5）：
+ *   - 道具分布 / POI 分布 overlay 数据源为 liveState.wildItems / liveState.poiInstances，
+ *     该数据仅在 backend.connected === true 时由 handleLoadLiveData 拉取填充。
+ *   - 未连接时强制禁用两个 overlay 开关，避免用户开启后看到空白画布产生"功能失效"误解。
+ *   - 与 updateExportButtons() 同位调用（init 启动 + connect/disconnect 后）。
+ *   - 断开连接时同时清空 overlayFlags.wilditem / poi，避免下次连接后旧开关状态意外激活。
+ *
+ * 同位调用点：init() / backend-panel.js handleBackendConnect 成功后 / handleBackendDisconnect 后
+ */
+export function updateOverlayToggleDisabled() {
+  const connected = !!state.backend.connected;
+  const overlayKeys = ['wilditem', 'poi'];
+  for (const key of overlayKeys) {
+    const cb = document.querySelector(`.overlay-toggle input[data-overlay="${key}"]`);
+    if (!cb) continue;
+    cb.disabled = !connected;
+    const label = cb.closest('.overlay-toggle');
+    if (label) {
+      label.classList.toggle('is-disabled', !connected);
+      label.title = connected
+      ? '开局分布预览（观察者视角，需先在"后端"Tab 加载 Live 数据）'
+      : '需先连接后端并加载 Live 数据（开局分布预览）';
+    }
+    // 断开连接时强制清空开关状态（避免下次连接后旧状态意外激活）
+    if (!connected && state.overlayFlags[key]) {
+      setOverlayFlag(key, false);
+      cb.checked = false;
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════

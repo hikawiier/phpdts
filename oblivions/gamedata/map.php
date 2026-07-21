@@ -21,10 +21,14 @@ return [
         'next_region' => 2,
         'prev_region' => null,
         'exit_links' => [
-            2
+            [
+                'from_pls' => null,
+                'to_pgroup' => 2,
+                'to_pls' => null,
+            ],
         ],
         'cols' => 11,
-        'rows' => 11
+        'rows' => 11,
     ],
     '2' => [
         'name' => '腐烂沼泽',
@@ -35,17 +39,25 @@ return [
         'prev_region' => 1,
         'exit_links' => [],
         'cols' => 11,
-        'rows' => 11
-    ]
-],
-    'grids' => [
-    '1' => [
-        'cols' => 11,
-        'rows' => 11
+        'rows' => 11,
     ],
-    '2' => [
-        'cols' => 11,
-        'rows' => 11
-    ]
-],
+    '3' => [
+        'pgroup' => 3,
+        'name' => '岛屿 #3',
+        'cols' => 10,
+        'rows' => 8,
+        'entrance_pls' => 35,
+        'exit_pls' => 39,
+        'next_region' => null,
+        'prev_region' => null,
+        'next_pls' => 39,
+        'prev_pls' => 35,
+        'exit_links' => [],
+    ],
+    ],
+    'grids' => [
+        '1' => ['cols' => 11, 'rows' => 11],
+        '2' => ['cols' => 11, 'rows' => 11],
+        '3' => ['cols' => 10, 'rows' => 8],
+    ],
 ];

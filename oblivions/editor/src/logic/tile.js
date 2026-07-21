@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // 地图格 CRUD 逻辑 / Tile CRUD logic
 // ══════════════════════════════════════════════════
+// @module O
 
 import state, { nextPls, saveToStorage } from '../state.js';
 import { autoConnect, disconnectAll } from './connectivity.js';
@@ -10,7 +11,7 @@ import { autoConnect, disconnectAll } from './connectivity.js';
  * @param {number} pgroup - 区域ID
  * @param {number} x - 网格X坐标
  * @param {number} y - 网格Y坐标
- * @param {object} [preset] - 画笔预设 { floor, tide, passable }
+ * @param {object} [preset] - 画笔预设 { floor, tide, passable, height, destructible }
  */
 export function createTile(pgroup, x, y, preset) {
   const tiles = state.project.tiles[pgroup];
@@ -22,14 +23,19 @@ export function createTile(pgroup, x, y, preset) {
   }
 
   const pls = nextPls(pgroup);
+  // pls 范围校验（DESIGN.md 1.1：pls 1-254）
+  if (pls === null) {
+    alert('已达地图格数量上限（254），无法继续创建。');
+    return null;
+  }
   tiles[pls] = {
     name: '',
     desc: '',
     floor: preset?.floor || 'standard',
     tide: preset?.tide || 'shallow',
-    height: 0,
+    height: preset?.height ?? 0,
     passable: preset?.passable !== undefined ? preset.passable : true,
-    destructible: false,
+    destructible: preset?.destructible ?? false,
     neighbors: [],
     x: x,
     y: y,

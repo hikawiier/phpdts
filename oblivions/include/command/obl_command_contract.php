@@ -4,6 +4,7 @@
  * @framework B-1 声明式命令合约
  * @framework B-2 双层负载校验管道
  * @framework A-5 调试工具框架
+ * @framework O-4 编辑器守卫与后端对接
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -261,9 +262,15 @@ function obl_command_contracts() {
     );
 
     // A-5 调试工具框架：合并 debug.* 命令合约（守卫由 bus 分发层检查）
-    // debug 命令标记 debug_only=true，跳过 required_capabilities 校验
+    // debug 命令标记 debug_only=true，bus 跳过 required_capabilities 校验
     if (function_exists('obl_debug_command_contracts')) {
         $contracts = array_merge($contracts, obl_debug_command_contracts());
+    }
+
+    // O-4 编辑器守卫：合并 editor.* 命令合约（守卫由 bus 分发层检查）
+    // editor 命令标记 editor_only=true，bus 跳过 required_capabilities 校验与玩家认证
+    if (function_exists('obl_editor_command_contracts')) {
+        $contracts = array_merge($contracts, obl_editor_command_contracts());
     }
 
     return $contracts;

@@ -1,3 +1,7 @@
 node_modules
 dist
 .vite
+
+# O-4 编辑器守卫 token 文件（含敏感凭据，禁止提交）
+# 由 oblivions/include/api/obl_editor_guard.php 读取作为 Bearer token 比对源
+editor_token.php

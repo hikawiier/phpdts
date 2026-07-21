@@ -1,14 +1,29 @@
 // ══════════════════════════════════════════════════
 // CSS Grid 画布渲染 / Grid canvas renderer
 // ══════════════════════════════════════════════════
+// @module O
+// @framework O-6 开局分布预览 overlay 调度入口（applyOverlays 集成 wilditem / poi 调用）
+//
+// 阶段2 整合（UPGRADE_DESIGN.md §2.4-2.7）：
+//   - 渲染完基础格后调用 applyOverlays() 应用叠层（fog/vision/reachability/tide-heatmap + 任务3 O-6 wilditem/poi）
+//   - handleCellClick 路由 sim-tools 工具（sim-set-player）到 handleSimToolClick
+//   - 鼠标 hover 触发 reachability overlay 的路径预览
 
 import state, { currentTiles, currentGrid, currentRegion, saveToStorage } from '../state.js';
 import { createTile, deleteTile, updateTile, moveTile } from '../logic/tile.js';
 import { breakConnection, restoreConnection, getBrokenNeighbors } from '../logic/connectivity.js';
-import { setTool, getBrushPreset } from '../tools.js';
+import { setTool, getBrushPreset, isSimTool, handleSimToolClick } from '../tools.js';
 import { renderConnections } from './connections.js';
 import { renderTilePanel } from './tile-panel.js';
 import { renderRegionPanel } from './region-panel.js';
+// 阶段2 叠层模块
+import { applyFogOverlay } from './overlay-fog.js';
+import { applyVisionOverlay } from './overlay-vision.js';
+import { applyReachabilityOverlay, setHoverTarget, clearPathLine } from './overlay-reachability.js';
+import { applyTideHeatmapOverlay } from './overlay-tide-heatmap.js';
+// 任务3 O-6 新增：开局分布预览 overlay（wildItems / POI 实例）
+import { applyWildItemOverlay } from './overlay-wilditem.js';
+import { applyPoiOverlay } from './overlay-poi.js';
 
 const CELL_W = 52;
 const CELL_H = 44;
@@ -129,6 +144,10 @@ export function renderGrid() {
 
         // 拖拽事件（选择工具下）
         cell.addEventListener('mousedown', (e) => handleDragStart(e, pls));
+
+        // 阶段2：hover 事件用于路径预览（reachability overlay 启用时）
+        cell.addEventListener('mouseenter', () => handleCellHover(pls));
+        cell.addEventListener('mouseleave', () => handleCellLeave());
       }
 
       // 空白格点击（绘制工具）
@@ -147,9 +166,32 @@ export function renderGrid() {
   // 渲染连接线
   renderConnections();
 
+  // 阶段2 + 任务3：应用叠层（fog/vision/reachability/tide-heatmap/wilditem/poi）
+  applyOverlays(state.currentRegion, tiles);
+
   // 更新信息栏
   const tileCount = Object.keys(tiles).length;
   if (info) info.textContent = `${region.name} | ${cols}×${rows} | ${tileCount} 个地图格`;
+}
+
+/**
+ * 应用所有叠层（fog/vision/reachability/tide-heatmap + 任务3 O-6 wilditem/poi）
+ *
+ * 由 renderGrid 调用：基础格渲染完毕后立即应用叠层 CSS 类。
+ * 各叠层通过 state.overlayFlags 自判是否启用，互不干扰。
+ *
+ * @param {number} pgroup 当前区域
+ * @param {Object} tiles  当前区域 tiles
+ */
+function applyOverlays(pgroup, tiles) {
+  if (pgroup === null) return;
+  applyFogOverlay(pgroup, tiles);
+  applyVisionOverlay(pgroup, tiles);
+  applyReachabilityOverlay(pgroup, tiles);
+  applyTideHeatmapOverlay(pgroup, tiles);
+  // 任务3 O-6 新增：开局分布预览 overlay（仅 state.backend.connected 时由 main.js 允许启用）
+  applyWildItemOverlay(pgroup, tiles);
+  applyPoiOverlay(pgroup, tiles);
 }
 
 /**
@@ -161,6 +203,16 @@ function handleCellClick(pls) {
 
   const tool = state.currentTool;
   const pgroup = state.currentRegion;
+
+  // 阶段2：sim-tools 工具路由（sim-set-player）
+  if (isSimTool(tool)) {
+    if (handleSimToolClick(pgroup, pls)) {
+      // 玩家位置变化 → 重渲染画布以应用叠层
+      renderGrid();
+      renderTilePanel();
+    }
+    return;
+  }
 
   switch (tool) {
     case 'select':
@@ -374,6 +426,30 @@ function handleDragEnter(x, y) {
 function handleDragLeave(x, y) {
   if (!dragState || !dragState.moved) return;
   // 高亮由 handleDragMove 统一处理
+}
+
+// ══════════════════════════════════════════════════
+// 阶段2：hover 事件（路径预览，reachability overlay 启用时）
+// ══════════════════════════════════════════════════
+
+/**
+ * 格 hover 进入：reachability overlay 启用时设置目标格 → 重绘路径线
+ */
+function handleCellHover(pls) {
+  if (!state.overlayFlags.reachability) return;
+  if (dragState && dragState.moved) return;  // 拖拽中不处理 hover
+  setHoverTarget(pls);
+  // 重画叠层（路径线变化）
+  applyReachabilityOverlay(state.currentRegion, currentTiles());
+}
+
+/**
+ * 格 hover 离开：清除路径线
+ */
+function handleCellLeave() {
+  if (!state.overlayFlags.reachability) return;
+  setHoverTarget(null);
+  clearPathLine();
 }
 
 function escHtml(str) {

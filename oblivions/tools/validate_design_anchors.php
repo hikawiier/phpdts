@@ -87,10 +87,10 @@ function design_anchor_parse_cli($argv) {
         );
     }
 
-    if ($options['module'] !== null && !preg_match('/^[A-N]$/', $options['module'])) {
+    if ($options['module'] !== null && !preg_match('/^[A-Z]$/', $options['module'])) {
         return array(
             'options' => $options,
-            'issue' => design_anchor_issue('SYS003', 'module must be one letter from A to N'),
+            'issue' => design_anchor_issue('SYS003', 'module must be one uppercase letter from A to Z'),
         );
     }
     if (!in_array($options['format'], array('text', 'json'), true)) {
@@ -225,7 +225,7 @@ class DesignAnchorValidator {
             }
 
             if (design_anchor_starts_with($line, '### 模块 ')) {
-                if (!preg_match('/^### 模块 ([A-N])：(.+?)\s*$/u', $line, $matches)) {
+                if (!preg_match('/^### 模块 ([A-Z])：(.+?)\s*$/u', $line, $matches)) {
                     $this->addIssue('DIA001', 'invalid module heading', array(
                         'file' => 'oblivions/Dian.md',
                         'line' => $lineNumber,
@@ -257,7 +257,7 @@ class DesignAnchorValidator {
             }
 
             if (design_anchor_starts_with($line, '#### 框架 ')) {
-                if (!preg_match('/^#### 框架 ([A-N]-[1-9][0-9]*)：(.+?)\s*$/u', $line, $matches)) {
+                if (!preg_match('/^#### 框架 ([A-Z]-[0-9]+)：(.+?)\s*$/u', $line, $matches)) {
                     $this->addIssue('DIA002', 'invalid framework heading', array(
                         'module' => $currentModule,
                         'file' => 'oblivions/Dian.md',
@@ -332,6 +332,9 @@ class DesignAnchorValidator {
     private function scanSourceFiles() {
         $roots = array(
             array('path' => 'oblivions', 'extensions' => array('php')),
+            array('path' => 'oblivions/editor/src', 'extensions' => array('js')),
+            array('path' => 'oblivions/shared/src', 'extensions' => array('ts', 'vue')),
+            array('path' => 'oblivions/editor-next/src', 'extensions' => array('ts', 'vue')),
             array('path' => 'vex-vue/src', 'extensions' => array('ts', 'vue')),
         );
 
@@ -385,11 +388,27 @@ class DesignAnchorValidator {
             'oblivions/tools/',
             'oblivions/docs/',
             'oblivions/cache/',
+            'oblivions/shared/node_modules/',
+            'oblivions/shared/dist/',
+            'oblivions/editor-next/node_modules/',
+            'oblivions/editor-next/dist/',
+            'oblivions/editor-next/tests/',
+            'oblivions/editor-next/.storybook/',
             'vex-vue/node_modules/',
             'vex-vue/dist/',
         );
         foreach ($excludedPrefixes as $prefix) {
             if (design_anchor_starts_with($normalized, $prefix)) {
+                return true;
+            }
+        }
+        $excludedFiles = array(
+            // Vite 自动生成的环境声明文件，不属于业务模块
+            'oblivions/editor-next/src/vite-env.d.ts',
+            'oblivions/shared/src/vite-env.d.ts',
+        );
+        foreach ($excludedFiles as $file) {
+            if ($normalized === $file) {
                 return true;
             }
         }
@@ -448,7 +467,7 @@ class DesignAnchorValidator {
             ));
             return;
         }
-        if (!preg_match('/^([A-N])(?:\s+.+)?$/u', $payload, $payloadMatches)) {
+        if (!preg_match('/^([A-Z])(?:\s+.+)?$/u', $payload, $payloadMatches)) {
             $tags['invalidModuleEntries'][] = array('payload' => $payload, 'line' => $lineNumber);
             $this->addIssue('TAG003', 'invalid @module tag: ' . $payload, array(
                 'file' => $relativePath,
@@ -472,7 +491,7 @@ class DesignAnchorValidator {
             return;
         }
 
-        preg_match_all('/[A-N]-[1-9][0-9]*/', $payload, $idMatches);
+        preg_match_all('/[A-Z]-[0-9]+/', $payload, $idMatches);
         if (count($idMatches[0]) !== 1) {
             $tags['invalidFrameworkEntries'][] = array('payload' => $payload, 'line' => $lineNumber);
             $this->addIssue('TAG005', '@framework must contain exactly one framework id: ' . $payload, array(
@@ -481,7 +500,7 @@ class DesignAnchorValidator {
             ));
             return;
         }
-        if (!preg_match('/^([A-N]-[1-9][0-9]*)(?:\s+.+)?$/u', $payload, $payloadMatches)) {
+        if (!preg_match('/^([A-Z]-[0-9]+)(?:\s+.+)?$/u', $payload, $payloadMatches)) {
             $tags['invalidFrameworkEntries'][] = array('payload' => $payload, 'line' => $lineNumber);
             $this->addIssue('TAG006', 'invalid @framework tag: ' . $payload, array(
                 'file' => $relativePath,
@@ -570,6 +589,15 @@ class DesignAnchorValidator {
 
     private function isSupportedAnchorExtension($path) {
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (design_anchor_starts_with($path, 'oblivions/editor/')) {
+            return in_array($extension, array('js', 'ts'), true) && !$this->isExcludedPath($path);
+        }
+        if (design_anchor_starts_with($path, 'oblivions/editor-next/src/')) {
+            return in_array($extension, array('ts', 'vue'), true) && !$this->isExcludedPath($path);
+        }
+        if (design_anchor_starts_with($path, 'oblivions/shared/src/')) {
+            return in_array($extension, array('ts'), true) && !$this->isExcludedPath($path);
+        }
         if (design_anchor_starts_with($path, 'oblivions/')) {
             return $extension === 'php' && !$this->isExcludedPath($path);
         }

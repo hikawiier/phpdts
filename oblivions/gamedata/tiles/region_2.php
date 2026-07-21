@@ -17,10 +17,12 @@ return [
         'tide' => 'deep',
         'passable' => true,
         'neighbors' => [
-            2
+            2,
         ],
         'x' => 8,
-        'y' => 1
+        'y' => 1,
+        'height' => 0,
+        'destructible' => false,
     ],
     '2' => [
         'name' => '泥泞小径',
@@ -31,10 +33,12 @@ return [
         'neighbors' => [
             1,
             3,
-            5
+            5,
         ],
         'x' => 7,
-        'y' => 2
+        'y' => 2,
+        'height' => 0,
+        'destructible' => false,
     ],
     '3' => [
         'name' => '枯萎的树丛',
@@ -47,10 +51,12 @@ return [
             5,
             16,
             17,
-            21
+            21,
         ],
         'x' => 6,
-        'y' => 3
+        'y' => 3,
+        'height' => 0,
+        'destructible' => false,
     ],
     '4' => [
         'name' => '沼泽深处',
@@ -59,10 +65,12 @@ return [
         'tide' => 'abyss',
         'passable' => true,
         'neighbors' => [
-            15
+            15,
         ],
         'x' => 2,
-        'y' => 8
+        'y' => 8,
+        'height' => 0,
+        'destructible' => false,
     ],
     '5' => [
         'name' => '',
@@ -75,11 +83,11 @@ return [
         'neighbors' => [
             2,
             3,
-            6
+            6,
         ],
         'x' => 7,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '6' => [
         'name' => '',
@@ -91,11 +99,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             5,
-            7
+            7,
         ],
         'x' => 8,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '7' => [
         'name' => '',
@@ -107,11 +115,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             6,
-            8
+            8,
         ],
         'x' => 9,
         'y' => 5,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '8' => [
         'name' => '',
@@ -123,11 +131,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             7,
-            9
+            9,
         ],
         'x' => 9,
         'y' => 6,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '9' => [
         'name' => '',
@@ -140,11 +148,11 @@ return [
         'neighbors' => [
             8,
             10,
-            11
+            11,
         ],
         'x' => 8,
         'y' => 7,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '10' => [
         'name' => '',
@@ -156,11 +164,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             9,
-            11
+            11,
         ],
         'x' => 8,
         'y' => 8,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '11' => [
         'name' => '',
@@ -173,11 +181,11 @@ return [
         'neighbors' => [
             9,
             10,
-            12
+            12,
         ],
         'x' => 7,
         'y' => 8,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '12' => [
         'name' => '',
@@ -189,11 +197,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             11,
-            13
+            13,
         ],
         'x' => 6,
         'y' => 9,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '13' => [
         'name' => '',
@@ -205,11 +213,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             12,
-            14
+            14,
         ],
         'x' => 5,
         'y' => 9,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '14' => [
         'name' => '',
@@ -221,11 +229,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             13,
-            15
+            15,
         ],
         'x' => 4,
         'y' => 9,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '15' => [
         'name' => '',
@@ -237,11 +245,11 @@ return [
         'destructible' => false,
         'neighbors' => [
             4,
-            14
+            14,
         ],
         'x' => 3,
         'y' => 9,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '16' => [
         'name' => '',
@@ -257,11 +265,11 @@ return [
             18,
             19,
             20,
-            21
+            21,
         ],
         'x' => 5,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '17' => [
         'name' => '',
@@ -277,11 +285,11 @@ return [
             18,
             19,
             28,
-            29
+            29,
         ],
         'x' => 5,
         'y' => 2,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '18' => [
         'name' => '',
@@ -299,11 +307,11 @@ return [
             27,
             28,
             29,
-            30
+            30,
         ],
         'x' => 4,
         'y' => 2,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '19' => [
         'name' => '',
@@ -321,11 +329,11 @@ return [
             21,
             25,
             26,
-            27
+            27,
         ],
         'x' => 4,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '20' => [
         'name' => '',
@@ -343,11 +351,11 @@ return [
             23,
             24,
             25,
-            26
+            26,
         ],
         'x' => 4,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '21' => [
         'name' => '',
@@ -363,11 +371,11 @@ return [
             3,
             20,
             22,
-            23
+            23,
         ],
         'x' => 5,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '22' => [
         'name' => '',
@@ -380,11 +388,11 @@ return [
         'neighbors' => [
             20,
             21,
-            23
+            23,
         ],
         'x' => 5,
         'y' => 5,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '23' => [
         'name' => '',
@@ -399,11 +407,11 @@ return [
             21,
             22,
             24,
-            25
+            25,
         ],
         'x' => 4,
         'y' => 5,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '24' => [
         'name' => '',
@@ -418,11 +426,11 @@ return [
             23,
             25,
             33,
-            38
+            38,
         ],
         'x' => 3,
         'y' => 5,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '25' => [
         'name' => '',
@@ -440,11 +448,11 @@ return [
             26,
             32,
             33,
-            38
+            38,
         ],
         'x' => 3,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '26' => [
         'name' => '',
@@ -462,11 +470,11 @@ return [
             27,
             31,
             32,
-            33
+            33,
         ],
         'x' => 3,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '27' => [
         'name' => '',
@@ -484,11 +492,11 @@ return [
             30,
             31,
             32,
-            37
+            37,
         ],
         'x' => 3,
         'y' => 2,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '28' => [
         'name' => '',
@@ -501,11 +509,11 @@ return [
         'neighbors' => [
             18,
             17,
-            29
+            29,
         ],
         'x' => 5,
         'y' => 1,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '29' => [
         'name' => '',
@@ -520,11 +528,11 @@ return [
             27,
             18,
             17,
-            30
+            30,
         ],
         'x' => 4,
         'y' => 1,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '30' => [
         'name' => '',
@@ -539,11 +547,11 @@ return [
             27,
             18,
             31,
-            37
+            37,
         ],
         'x' => 3,
         'y' => 1,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '31' => [
         'name' => '',
@@ -560,11 +568,11 @@ return [
             32,
             35,
             36,
-            37
+            37,
         ],
         'x' => 2,
         'y' => 2,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '32' => [
         'name' => '',
@@ -582,11 +590,11 @@ return [
             33,
             34,
             35,
-            36
+            36,
         ],
         'x' => 2,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '33' => [
         'name' => '',
@@ -603,11 +611,11 @@ return [
             24,
             34,
             35,
-            38
+            38,
         ],
         'x' => 2,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '34' => [
         'name' => '',
@@ -622,11 +630,11 @@ return [
             33,
             35,
             38,
-            39
+            39,
         ],
         'x' => 1,
         'y' => 4,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '35' => [
         'name' => '',
@@ -642,11 +650,11 @@ return [
             34,
             33,
             36,
-            39
+            39,
         ],
         'x' => 1,
         'y' => 3,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '36' => [
         'name' => '',
@@ -661,11 +669,11 @@ return [
             35,
             32,
             37,
-            39
+            39,
         ],
         'x' => 1,
         'y' => 2,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '37' => [
         'name' => '',
@@ -679,11 +687,11 @@ return [
             30,
             36,
             31,
-            27
+            27,
         ],
         'x' => 2,
         'y' => 1,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '38' => [
         'name' => '',
@@ -697,11 +705,11 @@ return [
             34,
             33,
             25,
-            24
+            24,
         ],
         'x' => 2,
         'y' => 5,
-        'preset_safe' => false
+        'preset_safe' => false,
     ],
     '39' => [
         'name' => '',
@@ -714,10 +722,10 @@ return [
         'neighbors' => [
             36,
             35,
-            34
+            34,
         ],
         'x' => 0,
         'y' => 3,
-        'preset_safe' => false
-    ]
+        'preset_safe' => false,
+    ],
 ];

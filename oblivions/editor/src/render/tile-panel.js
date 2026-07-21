@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // 右栏：地图格属性面板 / Tile properties panel
 // ══════════════════════════════════════════════════
+// @module O
 
 import state, { selectedTileData, currentGrid } from '../state.js';
 import { updateTile, deleteTile } from '../logic/tile.js';
@@ -20,8 +21,8 @@ const TIDE_OPTIONS = [
   { value: 'shallow', label: '浅滩 (shallow)' },
   { value: 'deep', label: '深水 (deep)' },
   { value: 'abyss', label: '深海 (abyss)' },
-  { value: 'safe', label: '安全 (safe)' },
 ];
+// 注：`safe` 不是 tide 取值（DESIGN.md 1.3），安全区由独立字段 `preset_safe` 标记
 
 /**
  * 渲染地图格属性面板
@@ -109,6 +110,14 @@ export function renderTilePanel() {
       <label>安全区</label>
       <input type="checkbox" id="tpSafe" ${tile.preset_safe ? 'checked' : ''}>
     </div>
+    <div class="prop-row">
+      <label>高度</label>
+      <input type="number" id="tpHeight" value="${tile.height ?? 0}" min="0" max="100" style="width:60px">
+    </div>
+    <div class="prop-row">
+      <label>可破坏</label>
+      <input type="checkbox" id="tpDestructible" ${tile.destructible ? 'checked' : ''}>
+    </div>
     <div class="prop-section">
       <h3>连通关系</h3>
       ${neighborList || '<p class="hint">无连通</p>'}
@@ -138,6 +147,8 @@ export function renderTilePanel() {
   bindInput('tpTide', 'tide');
   bindInput('tpPassable', 'passable', el => el.checked);
   bindInput('tpSafe', 'preset_safe', el => el.checked);
+  bindInput('tpHeight', 'height', el => parseInt(el.value) || 0);
+  bindInput('tpDestructible', 'destructible', el => el.checked);
 
   // 坐标输入：带校验
   const tpX = document.getElementById('tpX');

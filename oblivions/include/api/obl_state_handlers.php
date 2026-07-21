@@ -4,6 +4,7 @@
  * @framework A-3 状态查询范围分发
  * @framework A-4 结构化视图投影函数集
  * @framework A-5 调试工具框架
+ * @framework O-4 编辑器守卫与后端对接
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -34,6 +35,15 @@ function obl_state_dispatch($scope, $ctx) {
             obl_state_throw('DEBUG_MODE_REQUIRED', '调试模式未启用');
         }
         return obl_debug_state_dispatch($scope, $ctx);
+    }
+
+    // O-4 编辑器守卫：editor_* scope 分发（需通过 ?editor=1 + Bearer token 双重守卫）
+    // 守卫在前：未通过守卫时直接抛 EDITOR_ACCESS_DENIED，零生产环境影响
+    if (strpos($scope, 'editor_') === 0) {
+        if (!function_exists('obl_editor_enabled') || !obl_editor_enabled()) {
+            obl_state_throw('EDITOR_ACCESS_DENIED', '编辑器访问被拒绝');
+        }
+        return obl_editor_state_dispatch($scope, $ctx);
     }
 
     switch ($scope) {

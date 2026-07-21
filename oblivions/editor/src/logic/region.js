@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // 区域 CRUD 逻辑 / Region CRUD logic
 // ══════════════════════════════════════════════════
+// @module O
 
 import state, { nextPgroup, saveToStorage } from '../state.js';
 
@@ -9,6 +10,11 @@ import state, { nextPgroup, saveToStorage } from '../state.js';
  */
 export function createRegion(name, cols, rows) {
   const pgroup = nextPgroup();
+  // pgroup 范围校验（DESIGN.md 1.1：pgroup 1-255）
+  if (pgroup === null) {
+    alert('已达区域数量上限（255），无法继续创建。');
+    return null;
+  }
   state.project.regions[pgroup] = {
     name: name || '新区域',
     desc: '',
@@ -33,7 +39,14 @@ export function deleteRegion(pgroup) {
     const r = state.project.regions[pg];
     if (r.next_region === pgroup) r.next_region = null;
     if (r.prev_region === pgroup) r.prev_region = null;
-    r.exit_links = (r.exit_links || []).filter(l => l !== pgroup);
+    // 清理 exit_links 中指向该区域的链接（新对象格式 { from_pls, to_pgroup, to_pls }）
+    if (Array.isArray(r.exit_links)) {
+      r.exit_links = r.exit_links.filter(l => {
+        // 兼容旧格式（裸 pgroup 数字）与新格式（对象）
+        if (typeof l === 'number') return l !== pgroup;
+        return l && l.to_pgroup !== pgroup;
+      });
+    }
   }
 
   delete state.project.regions[pgroup];
@@ -83,4 +96,46 @@ export function getRegionList() {
     .map(Number)
     .sort((a, b) => a - b)
     .map(pg => ({ pgroup: pg, ...state.project.regions[pg] }));
+}
+
+// ─────────────────────────────────────────────────
+// exit_links CRUD（额外出口映射，UPGRADE_DESIGN.md §2.1.3）
+// 格式：{ from_pls: number|null, to_pgroup: number, to_pls: number|null }
+// ─────────────────────────────────────────────────
+
+/**
+ * 添加一条 exit_links 条目
+ */
+export function addExitLink(pgroup, link) {
+  const region = state.project.regions[pgroup];
+  if (!region) return;
+  if (!Array.isArray(region.exit_links)) region.exit_links = [];
+  region.exit_links.push({
+    from_pls: link?.from_pls ?? null,
+    to_pgroup: link?.to_pgroup ?? null,
+    to_pls: link?.to_pls ?? null,
+  });
+  saveToStorage();
+}
+
+/**
+ * 更新指定索引的 exit_links 条目
+ */
+export function updateExitLink(pgroup, index, patch) {
+  const region = state.project.regions[pgroup];
+  if (!region || !Array.isArray(region.exit_links)) return;
+  const link = region.exit_links[index];
+  if (!link) return;
+  Object.assign(link, patch);
+  saveToStorage();
+}
+
+/**
+ * 删除指定索引的 exit_links 条目
+ */
+export function removeExitLink(pgroup, index) {
+  const region = state.project.regions[pgroup];
+  if (!region || !Array.isArray(region.exit_links)) return;
+  region.exit_links.splice(index, 1);
+  saveToStorage();
 }

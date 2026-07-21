@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // SVG 连接线渲染 / SVG connection lines renderer
 // ══════════════════════════════════════════════════
+// @module O
 
 import state, { currentTiles, currentGrid } from '../state.js';
 

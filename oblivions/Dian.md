@@ -1365,6 +1365,153 @@
 
 ***
 
+### 模块 O：地图编辑器（oblivions/editor-next + oblivions/shared）
+
+> 新编辑器从零基于 Vue 3 + Vite 6 + TypeScript 5.7 + Pinia 2.3 + Tailwind v4 + pnpm workspace 重构（目录 `oblivions/editor-next/` + 共享包 `oblivions/shared/`），与 vex-vue 同属前端层且技术栈对齐。所有后端算法（BFS 视野/可达性/探索/连通性）以纯函数形式移植至 `@oblivions/shared/algorithms/`，前后端算法语义对齐但实现独立，符合 4.3 复用清单"算法可移植，组件不可移植"原则。旧 Vanilla JS 项目 `oblivions/editor/` 仍作为历史参考保留，Dian.md 暂同时保留两套代码锚点。模块 O 由 O-0 至 O-7 共 8 个框架组成（O-0 基础升格 / O-1~O-6 沿用原编号 / O-7 AI 约束升格）。
+
+#### 框架 O-0：基础架构（项目脚手架 + 设计系统 + 共享类型库 + 工具库）
+
+**设计意图：** 新编辑器从零基于 Vue 3 + Vite 6 + TypeScript 5.7 + Pinia 2.3 + Tailwind v4 + pnpm workspace 重构。O-0 承载所有跨框架共享的基础架构：①项目脚手架（main.ts / App.vue / router / 布局组件 TopBar / SideNav / StatusBar）；②设计系统（i18n 中英文文案、useEditorKeyboard 统一键盘快捷键对齐 2.14、useToolActions 工具操作封装）；③共享类型库（@oblivions/shared 内的 types/map.ts 与 PHP 序列化器 php-array-parser.ts / php-codegen.ts / strip-editor-fields.ts）；④工具库（services/file-io.ts / worker-bridge.ts / zip-bundle.ts / workers/php-parser.worker.ts）；⑤Pinia store 基础（historyStore 撤销/重做、projectStore 项目状态、toolStore 工具状态、uiStore UI 状态）。O-0 由任务3-M1 一次性搭建完成，是 M2-M11 的依赖前置。本框架原"未编号，基础框架"现显式升格为 O-0 以满足双向锚点契约的唯一性要求。
+
+**代码锚点：** `oblivions/editor-next/src/main.ts`（应用入口：createApp + Pinia + Router + i18n）、`oblivions/editor-next/src/App.vue`（根组件布局壳：TopBar + SideNav + RouterView + StatusBar）、`oblivions/editor-next/src/router/index.ts`（路由表 6 视图）、`oblivions/editor-next/src/components/layout/TopBar.vue`（顶部导航栏）、`oblivions/editor-next/src/components/layout/SideNav.vue`（左侧导航）、`oblivions/editor-next/src/components/layout/StatusBar.vue`（底部状态栏）、`oblivions/editor-next/src/components/modals/ImportModal.vue`（导入模态框：4 路径 Tab + 进度条 + 拖拽事件，M3 实现）、`oblivions/editor-next/src/components/common/BaseButton.vue`（通用按钮：variant=default/primary/danger/ghost）、`oblivions/editor-next/src/components/common/BaseCheckbox.vue`（通用复选框）、`oblivions/editor-next/src/components/common/BaseInput.vue`（通用输入框：text/number/password）、`oblivions/editor-next/src/components/common/BaseModal.vue`（通用模态框 + modal 优先级对齐 2.14）、`oblivions/editor-next/src/components/common/BaseSelect.vue`（通用下拉选择）、`oblivions/editor-next/src/components/common/BaseToast.vue`（通用 Toast 容器，订阅 uiStore.toasts）、`oblivions/editor-next/src/components/grid/GridCanvas.vue`（CSS Grid 画布主容器 + v-for + GridCell，对齐 2.13）、`oblivions/editor-next/src/components/grid/GridCell.vue`（单元格：响应式 :class 驱动所有视觉态，禁止命令式 DOM）、`oblivions/editor-next/src/components/grid/GridConnections.vue`（SVG 连通线渲染：基于 tiles.neighbors 双向连通）、`oblivions/editor-next/src/components/panels/BrushPresetPanel.vue`（画笔预设面板：floor/tide/passable/height/destructible/preset_safe）、`oblivions/editor-next/src/components/panels/RegionPanel.vue`（区域列表 + 区域属性编辑：name/desc/cols/rows/entrance_pls/exit_links）、`oblivions/editor-next/src/components/panels/TilePanel.vue`（格属性编辑：name/desc/floor/tide/height/destructible/preset_safe/passable/x/y/neighbors 只读）、`oblivions/editor-next/src/components/panels/ToolPanel.vue`（工具栏：7 个编辑工具按钮 + 快捷键提示）、`oblivions/editor-next/src/composables/useEditorKeyboard.ts`（统一键盘快捷键，对齐 2.14）、`oblivions/editor-next/src/composables/useToolActions.ts`（工具操作封装）、`oblivions/editor-next/src/composables/useImportExport.ts`（导入导出分流，同时归属 O-7）、`oblivions/editor-next/src/i18n/index.ts`（i18n 框架入口 vue-i18n）、`oblivions/editor-next/src/i18n/zh-CN.ts`（中文文案默认语言）、`oblivions/editor-next/src/i18n/en-US.ts`（英文文案备用）、`oblivions/editor-next/src/services/file-io.ts`（文件 IO 封装：File System Access API + webkitdirectory 回退）、`oblivions/editor-next/src/services/worker-bridge.ts`（Worker 通信桥）、`oblivions/editor-next/src/services/zip-bundle.ts`（ZIP 打包导出 + backupBackendZip 独立备份路径，同时归属 O-7）、`oblivions/editor-next/src/stores/historyStore.ts`（撤销/重做栈）、`oblivions/editor-next/src/stores/projectStore.ts`（项目状态：regions/grids/tiles）、`oblivions/editor-next/src/stores/toolStore.ts`（工具状态）、`oblivions/editor-next/src/stores/uiStore.ts`（UI 状态：当前视图/模态框/Toast）、`oblivions/editor-next/src/views/MapEditorView.vue`（地图编辑主视图）、`oblivions/editor-next/src/workers/php-parser.worker.ts`（PHP 解析 Web Worker，大地图后台解析）、`oblivions/shared/src/types/map.ts`（地图类型定义：Region/Grid/Tile）、`oblivions/shared/src/serializer/php-array-parser.ts`（PHP return 数组字符串 → JS 对象，支持注释/单双引号/true/false/null/数字）、`oblivions/shared/src/serializer/php-codegen.ts`（JS 对象 → PHP 数组代码，4 空格缩进单引号格式）、`oblivions/shared/src/serializer/strip-editor-fields.ts`（剥离 _breaks 等编辑器专用字段）、`oblivions/shared/src/algorithms/connectivity.ts`（连通图算法：autoConnect/breakConnection/restoreConnection/disconnectAll/getBrokenNeighbors，8 方向自动连通 + _breaks 字段编辑；同时归属 O-3 detectIslands 孤岛检测）
+
+**边界案例：**
+
+- 大地图（255 区域 × 254 格 = ~65k 格）PHP 解析可能卡顿，PHP 解析放入 Web Worker 避免阻塞主线程（对齐 2.13 v-for 管理子树）。
+- localStorage 容量限制 5-10MB，大地图无法保存，提供 ZIP 导出回退（backupBackendZip 路径）。
+- 旧 oblivions/editor/ Vanilla JS 项目仍存在作为历史参考，新 editor-next/ 是 Vue 3 重构版本；两套实现并存期间，Dian.md 同时保留两套代码锚点。
+
+***
+
+#### 框架 O-1：Simulate 模式 dry-run 镜像与叠层渲染
+
+**设计意图：** 编辑器需要在不写 DB 的前提下可视化游戏运行时状态（迷雾点亮、视野范围、移动可达性、探索发现）。对齐 2.8 dry-run 契约：所有 BFS 计算结果存入 `simState` 本地内存，叠层渲染器通过 `state.overlayFlags` 开关读取状态后向网格 DOM 单元添加 CSS 类，无 SVG/Canvas 重画开销。状态与渲染单向流：工具触发算法 → simState 更新 → 重渲染 → overlay 读取 state 应用 CSS 类。Simulate 模式绝不写 DB；Live 模式通过切换数据源（liveState 替代 simState 本地缓存）实现相同渲染管线复用。BFS 算法从后端移植为纯函数，无 DB / 文件依赖。视觉遵循 2.15 灰阶基底 + 唯一强调色，tide 三档灰阶亮度区分，玩家位置与路径线用不同强调色避免视觉冲突。
+
+**代码锚点：** `oblivions/editor/src/sim/vision-bfs.js`（视野 BFS，移植 E-6）、`oblivions/editor/src/sim/reachability-bfs.js`（可达性 BFS，移植 E-3）、`oblivions/editor/src/sim/pathfind.js`（最短路径 BFS + 前驱回溯）、`oblivions/editor/src/sim/explore-sim.js`（探索发现模拟，移植 E-7）、`oblivions/editor/src/render/overlay-fog.js`（迷雾叠层渲染器）、`oblivions/editor/src/render/overlay-vision.js`（视野范围叠层渲染器）、`oblivions/editor/src/render/overlay-reachability.js`（可达性热图 + 路径线叠层渲染器）、`oblivions/editor/src/render/overlay-tide-heatmap.js`（潮汐热图叠层渲染器）、`oblivions/editor/src/tools/sim-tools.js`（模拟工具入口）、`oblivions/editor/src/state.js`（simState / overlayFlags 数据模型；同时归属 O-4 / O-6）、`oblivions/editor-next/src/stores/simStore.ts`（simState / overlayFlags 数据模型 + 模式切换）、`oblivions/editor-next/src/views/SimulateView.vue`（模拟视图：OverlayFog / Vision / Reachability / TideHeatmap 四叠层）、`oblivions/editor-next/src/components/grid/GridOverlay.vue`（叠层容器：组合 4 个 SVG 叠层组件 + activeOverlays 调度）、`oblivions/editor-next/src/components/overlays/OverlayFog.vue`（迷雾叠层：fog=0 渲染 ░░░ 字符 + 灰阶 rect）、`oblivions/editor-next/src/components/overlays/OverlayVision.vue`（视野叠层：vision-player/near/edge/sense 四 kind class + 玩家中心点 circle）、`oblivions/editor-next/src/components/overlays/OverlayReachability.vue`（可达性叠层：reach-reachable/unreachable kind + 路径线 polyline 唯一强调色绿 #88ff88）、`oblivions/editor-next/src/components/overlays/OverlayTideHeatmap.vue`（潮汐热图叠层：tide-shallow/deep/abyss 三档灰阶亮度 + 全幅背景覆盖）、`oblivions/editor-next/src/composables/useOverlayRenderer.ts`（叠层渲染统一入口，CSS 类调度 + RAF 分片）、`oblivions/editor-next/src/stores/overlayStore.ts`（叠层开关状态：fog/vision/reachability/tideHeatmap；同时归属 O-6）、`oblivions/shared/src/algorithms/vision-range.ts`（视野 BFS 移植 E-6，纯函数无 DB 依赖）、`oblivions/shared/src/algorithms/reachability.ts`（可达性 BFS 移植 E-3，纯函数）、`oblivions/shared/src/algorithms/shortest-path.ts`（最短路径 BFS + 前驱回溯，纯函数）
+
+**边界案例：**
+
+- Live 模式按 `simState.mode` 切换数据源（liveState 替代 simState 本地缓存），同一渲染管线无需修改。
+- 模式切换与玩家位置是独立维度：模式切换只切数据源不重置玩家位置，玩家位置重置需显式触发。
+- BFS 算法移植保留后端语义：不可通行格在视野 BFS 中可见但不再扩展；可达性 BFS 只走 passable=true；探索发现按距离分档 discovered=1/2。
+
+***
+
+#### 框架 O-2：配置文件编辑（scatter_pool / poi_table / poi_pool）
+
+**设计意图：** 编辑器需要离线编辑 gamedata 配置文件而不写 DB。对齐 2.6 配置驱动：编辑器只编辑"基础 rate/count"，运行时倍率由后端在运行时应用，编辑器不做折算。配置数据流单向：解析 PHP → state.configCache → 反向生成 PHP 代码。POI 模板字段复杂（基本 + E10 + mechanic + 耐久 + 子列表 event_pool / loot_table_overrides / dismantle_returns），采用 schema 驱动的 list+inline 编辑模式。配置缓存与地图数据隔离，保存配置不触发地图重渲染。视觉遵循 2.15：错误用唯一强调色，正常态全用灰阶。导入/导出复用统一 PHP 解析路径，不引入新解析器。
+
+**代码锚点：** `oblivions/editor/src/logic/scatter-pool.js`（scatter_pool 数据模型 + PHP 解析/生成）、`oblivions/editor/src/logic/poi-table.js`（poi_table 数据模型 + 子列表操作 + schema 常量）、`oblivions/editor/src/logic/poi-pool.js`（poi_pool 数据模型 + PHP 解析/生成）、`oblivions/editor/src/render/config-panel.js`（配置面板：三子 Tab + 初始化/重渲染）、`oblivions/editor-next/src/stores/configStore.ts`（configCache 状态：内存缓存不持久化 + loadFromPhpStrings / CRUD / toPhpFiles / loadAll / setScatterPool 等 API）、`oblivions/editor-next/src/views/ConfigView.vue`（配置编辑视图：加载模态 + 导出 ZIP + 重置 + dirty 指示 + ConfigPanel）、`oblivions/editor-next/src/components/panels/ConfigPanel.vue`（配置面板：三子 Tab + obl_config 只读展示）、`oblivions/editor-next/src/components/config-editors/ScatterPoolEditor.vue`（scatter_pool 编辑器：6 列表共享同一 schema + vuedraggable 拖拽排序）、`oblivions/editor-next/src/components/config-editors/PoiTableEditor.vue`（poi_table 编辑器：左模板列表 + 右字段分组编辑 + 新增/重命名/删除）、`oblivions/editor-next/src/components/config-editors/PoiPoolEditor.vue`（poi_pool 编辑器：poi_id 联动下拉 + per_region + vuedraggable）、`oblivions/editor-next/src/components/config-editors/SchemaField.vue`（按 schema 渲染单个字段的通用控件，9 种类型：text/number/boolean/select/json/count-range/string-list/kv-list/entry-list）、`oblivions/shared/src/types/config.ts`（scatter_pool / poi_table / poi_pool / obl_config 类型定义）、`oblivions/shared/src/constants/schema.ts`（配置 schema 接口定义：FieldSchema + EntrySchema + TIDE_SCHEMA_OPTIONS + SCATTER_PHASE_OPTIONS）、`oblivions/shared/src/constants/scatter-schema.ts`（scatter_pool 字段 schema：item_id + count + rate + SCATTER_POOL_TIDES + SCATTER_POOL_PHASES）、`oblivions/shared/src/constants/poi-table-schema.ts`（poi_table 字段 schema：17 字段 4 分组 + POI_TABLE_FIELD_GROUPS）、`oblivions/shared/src/constants/poi-pool-schema.ts`（poi_pool 字段 schema：poi_id 联动 + per_region + POI_POOL_TIDES）、`oblivions/shared/src/constants/floor.ts`（floor 5 类常量：standard/water/vegetation/metal/magic）、`oblivions/shared/src/constants/tide.ts`（tide 3 档常量：shallow/deep/abyss，不含 safe）
+
+**边界案例：**
+
+- scatter_pool 的 rate 是"基础率"，不与运行时倍率预先折算——倍率由后端应用，编辑器保留原始值便于跨配置迁移。
+- poi_table 的 mechanic_params 是 JSON 字符串字段，编辑器以文本框 + JSON.parse 校验方式编辑，不强行结构化（mechanic 类型由后端注册集决定）。
+- 外部引用字段（loot_table_id / event_id / item_id）只做格式校验，存在性校验由 O-3 验证工具负责（需外部提供引用表）。
+- 配置缓存仅保存在内存，不持久化到 localStorage——配置变更必须显式保存到后端或导出才能持久化。
+- obl_config 当前阶段无生成器（避免覆盖后端现存配置），仅 scatter_pool / poi_table / poi_pool 支持保存；toPhpFiles() 不导出 obl_config.php。
+- scatter count 字段支持 number 与 [min, max] 范围数组两种形态；min === max 时简化为单值 number，反序列化保留两种形态的 round-trip 一致性。
+- poi_table 模板字段大部分可选——landmark / forge_anvil_poi 等仅含部分字段；toPhpFiles 仅输出已设置的字段，未设置字段不写入导出，保持 round-trip 形状一致。
+- renamePoiTemplate 保留插入顺序：重建对象时按原 key 顺序遍历，仅替换 oldId → newId，其余 key 顺序不变。
+- vuedraggable 拖拽排序使用 :list 绑定（in-place mutate store 数组）+ @end 设置 isDirty，避免双重 splice；Pinia state 可写 ref 允许组件直接 config.isDirty = true。
+
+***
+
+#### 框架 O-3：验证工具集（连通性 BFS + 引用完整性）
+
+**设计意图：** 编辑器需要在编辑过程中实时发现地图结构问题（pls 范围越界、tide/floor 非法值、占用冲突、邻居不对称、exit_links 悬空、连通性孤岛、配置交叉引用）。对齐 2.8 dry-run 契约：验证是纯函数集，不修改 state，只返回 issues 数组。两级验证分级：Light 实时触发（跳过 BFS，O(格数)），Full 按需触发（含连通性 BFS，O(格数+边数)）。RULE 常量集用于 i18n 国际化与单元测试锚点。每个 issue 携带 location 锚点便于点击跳转，hint 提供修复建议。严重级别对齐 2.15：error / warning 两档，无 info 级（避免非阻塞提示噪声）。生成器（O-5）写入 state.project 后自动调用 Full 验证，形成"生成 → 验证 → 修复"闭环。
+
+**代码锚点：** `oblivions/editor/src/logic/validate.js`（RULE 常量集 + Light/Full 验证入口 + 规则函数）、`oblivions/editor/src/render/validate-panel.js`（验证面板：issue 列表 + 点击跳转 + 过滤器）、`oblivions/editor-next/src/stores/validateStore.ts`（validate 状态：issues 数组 / Light 实时触发器 / Full 按需触发器）、`oblivions/editor-next/src/services/validate-rules.ts`（验证规则函数集：runLightValidation / runFullValidation / runValidation / validateTile / validateRegion / summarize，纯函数集不修改 state）、`oblivions/editor-next/src/views/ValidateView.vue`（验证面板视图：issue 列表 + 点击跳转 location 锚点 + Light/Full 触发按钮 + includeConfig 开关）、`oblivions/editor-next/src/components/panels/ValidatePanel.vue`（验证面板组件：issue 列表渲染 + 严重级别过滤 + 点击跳转 location）、`oblivions/shared/src/algorithms/connectivity.ts`（连通性 BFS 移植，检测孤岛）、`oblivions/shared/src/constants/validate-rules.ts`（RULE 常量集 + i18n 国际化锚点 + 单元测试锚点）、`oblivions/shared/src/types/validate.ts`（ValidationIssue 类型 + location 锚点 + hint 字段）
+
+**边界案例：**
+
+- 连通性 BFS 跳过未设置 entrance_pls 的区域（已在其他规则报 warning，避免重复告警）。
+- 邻居不对称规则去重：每对 pls A→B 与 B→A 按排序键去重只报一次。
+- 配置交叉引用校验需外部提供 lootTableIds / itemTableIds（编辑器本地无完整引用表），includeConfig=false 时跳过此类规则；生成器调用 validate 时强制 includeConfig=false。
+- validate.js 与生成器解耦：生成器自身不调用 validate.js，由调用方在写入 state.project 后调用，保持生成器纯函数性。
+
+***
+
+#### 框架 O-4：后端对接（editor.* API + 双重守卫 + Simulate/Live 双模式）
+
+**设计意图：** 编辑器需要在线读写后端 gamedata（地图 / Live 数据 / 配置文件）而不新建独立入口。复用 A-1 三层入口隔离架构：读操作走 state.php 新增 `editor_*` scope（只读，不创建缺失表），写操作走 command.php 新增 `editor.*` 命名空间命令。双重守卫防止未授权访问：URL 参数 `?editor=1` 触发后端守卫，Authorization Bearer token 与 editor_token.php 比对。Simulate/Live 双模式切换数据源（对齐 2.8 dry-run 契约）：Simulate 读本地缓存，Live 读后端实时数据，同一渲染管线复用。后端写入采用"先备份 ZIP 再覆盖"模式，保留旧文件回滚能力。状态隔离：editor_* scope 走单独的处理器子集，不污染玩家命令管道（玩家命令处理器复用部分投影函数但通过 @framework 标注跨模块桥接）。
+
+任务1 升级新增三条能力：①备份 scope 一次性返回 gamedata 文件原始内容 + DB 实例，配合前端打包为 ZIP 下载；②连接后端状态下"导入目录"切换为"从后端导入"，完整拉取地图 + 配置 + 所有 pgroup 的 Live 数据；③AI 使用约束——exportZip 入口强制检查 backend.connected，未连接抛错，工具栏按钮 disabled 同步，备份功能与保存到后端走独立路径不受约束。
+
+**代码锚点：** `oblivions/editor/src/state.js`（state 数据模型：project / simState / liveState / configCache / backend；同时归属 O-1 / O-6）、`oblivions/editor/src/backend/client.js`（HTTP 封装 + BackendError 错误类型）、`oblivions/editor/src/backend/map-api.js`（地图加载/保存）、`oblivions/editor/src/backend/wilditem-api.js`（道具实例 CRUD）、`oblivions/editor/src/backend/poi-api.js`（POI 实例 CRUD）、`oblivions/editor/src/backend/fog-api.js`（迷雾读写）、`oblivions/editor/src/backend/config-api.js`（配置文件加载/批量保存）、`oblivions/editor/src/backend/backup-api.js`（后端备份 dump）、`oblivions/editor/src/lib/export-zip.js`（exportZip AI 约束守卫 + backupBackendZip 独立备份路径）、`oblivions/editor/src/render/backend-panel.js`（后端面板：连接表单 + 数据加载/保存 + 备份 + 从后端导入；同时归属 O-6）、`oblivions/editor/src/main.js`（AI 约束守卫 + 按钮状态同步 + 导入分流；同时归属 O-6）、`oblivions/include/api/obl_editor_guard.php`（编辑器守卫 + token 校验）、`oblivions/include/api/obl_editor_state_handlers.php`（editor_* scope 处理器）、`oblivions/include/api/obl_editor_command_handlers.php`（editor.* 命令处理器）、`oblivions/include/api/obl_state_handlers.php`（玩家状态处理器 + 编辑器守卫桥接；跨模块同时归属 A-3/A-4/A-5/O-4）、`oblivions/include/command/obl_command_bus.php`（命令总线：editor.* 复用 B-3 管道；跨模块同时归属 B-3/B-4/B-5/B-6/O-4）、`oblivions/include/command/obl_command_contract.php`（命令合约：editor.* 注册；跨模块同时归属 B-1/B-2/A-5/O-4）、`oblivions/include/command/obl_command_handlers.php`（命令分发：editor.* 到编辑器处理器；跨模块同时归属 B-3/A-5/O-4）、`oblivions/include/core/obl_bootstrap.php`（引导加载：编辑器守卫与命令合约注册；跨模块同时归属 C-1/A-5/O-4）、`oblivions/editor-next/src/composables/useBackendConnection.ts`（连接表单 + Simulate/Live 模式切换 + 守卫触发）、`oblivions/editor-next/src/services/backend-client.ts`（HTTP 封装 + BackendError 错误类型 + Bearer token 注入）、`oblivions/editor-next/src/services/backend-map-api.ts`（地图加载/保存：editor.map.save 命令 + editor_map_load scope）、`oblivions/editor-next/src/services/backend-wilditem-api.ts`（道具实例 CRUD：editor.wilditem.upsert / editor.wilditem.delete）、`oblivions/editor-next/src/services/backend-poi-api.ts`（POI 实例 CRUD：editor.poi.upsert / editor.poi.delete）、`oblivions/editor-next/src/services/backend-fog-api.ts`（迷雾读写：editor.fog.set + editor_fog_list）、`oblivions/editor-next/src/services/backend-config-api.ts`（配置文件加载/批量保存：editor.config.save + editor_config_load；同时归属 O-7 AI 预置保存配置路径）、`oblivions/editor-next/src/services/backend-backup-api.ts`（后端备份 dump：editor_backup_dump scope；同时归属 O-7 AI 预置备份路径）、`oblivions/editor-next/src/services/backend-import-api.ts`（从后端完整导入：importFromBackend 容错链；同时归属 O-7 AI 预置从后端导入路径）、`oblivions/editor-next/src/stores/backendStore.ts`（backend state：baseUrl/authToken/connected + 按钮守卫计算属性；同时归属 O-7）、`oblivions/editor-next/src/stores/liveStore.ts`（liveState 数据模型 + Live 数据加载容错；同时归属 O-6）、`oblivions/editor-next/src/views/BackendView.vue`（后端面板视图：连接表单 + 数据加载/保存 + 备份 + 从后端导入；同时归属 O-6 disconnect 触发 overlayStore 清空）、`oblivions/editor-next/src/components/panels/BackendPanel.vue`（后端面板组件：连接 / 加载 / 保存 / 备份 / 完整导入 / Simulate-Live 切换；同时归属 O-6 disconnect 触发 overlayStore.clearBackendOverlays）、`oblivions/shared/src/types/api.ts`（editor_* scope 与 editor.* 命令契约类型定义）、`oblivions/shared/src/types/poi.ts`（POI 实例类型；同时归属 O-6）、`oblivions/shared/src/types/wilditem.ts`（WildItem 实例类型；同时归属 O-6）
+
+**边界案例：**
+
+- authToken 不持久化到 localStorage（安全考虑），仅 session 内存；baseUrl 持久化以便下次自动填充。
+- Live 模式必须先连接后端；未连接时点击 Live 按钮 alert + 自动切到后端 Tab 引导连接；断开连接时自动回退到 Simulate 模式避免读取空 liveState。
+- 后端写入操作先备份旧文件为 ZIP 再覆盖——失败时旧文件已备份可手动恢复。
+- editor.* 命令不进入玩家命令管道（不经过玩家锁 / 房间锁），但保留事务保护（避免半写入状态）。
+- AI 约束的三条路径边界：exportZip 入口守卫禁止未连接时导出；backupBackendZip 是 AI 约束例外（仅用于后端备份，要求 connected）；saveAllConfigs 走 command.php 不经 ZIP 路径不受约束。三条路径互不干扰。
+- handleImportFromBackend 完整导入流程的容错：地图加载失败立即终止；配置加载失败不阻塞 Live 数据；单 pgroup Live 数据加载失败不阻塞其他 pgroup；任何阶段失败均写入 messageLog 但保留已成功加载的部分。
+- editor_backup_dump scope 返回的 PHP 文件是原始字符串（file_get_contents），非 include 后的数据——前端打包的 ZIP 可直接还原 gamedata 目录结构。
+
+***
+
+#### 框架 O-5：随机生成扩展点（Generator 接口 + 注册表 + Schema 驱动 UI + 单区域模式）
+
+**设计意图：** 编辑器需要可扩展的地图随机生成能力。采用模式5 注册表架构：Generator 实现统一接口（构造器 + 参数 schema + 全项目生成 + 单区域生成），通过注册函数注册到全局 Map，工具栏自动发现——新生成器无需修改 UI 代码。Schema 驱动 UI（对齐 2.6）：参数字段描述含 type/options/hideInRegionMode 等元数据，工具栏按 type 自动渲染控件，无硬编码字段。种子化伪随机确保可复现性。生成函数为纯函数，仅产出数据结构，不写 DB；写入 state 后由调用方运行 Full 验证形成"生成 → 验证 → 修复"闭环。Generator 与后端 generate.func.php 职责分离：编辑器生成空间结构，后端生成 wild item / POI 实例。视觉遵循 2.15：模态框复用现有样式，参数表单全用灰阶。
+
+任务2 单区域模式扩展：在已有项目上"+ 新建区域"弹出二选一 modal（空白区域 / 随机生成器）。单区域生成走 addRegion 追加而非 loadProject 覆盖，pgroup 自动分配；Generator 接口新增 generateRegion 默认实现（取首区域 + remap pgroup + 清空区域链），多区域生成器需重写为单区域算法。Schema 新增 hideInRegionMode 标记单区域模式下应隐藏的字段。模态框关闭后焦点恢复到触发按钮，符合可访问性。addRegion 不自动建立 exit_links——保持 API 单一职责，跨区域链接由用户手动编辑。
+
+**代码锚点：** `oblivions/editor/src/generators/registry.js`（Map-based 注册表）、`oblivions/editor/src/generators/base-generator.js`（BaseGenerator 基类 + 种子化 PRNG + generateRegion 默认实现）、`oblivions/editor/src/generators/sample-generator.js`（SampleGenerator 参考实现）、`oblivions/editor/src/generators/archipelago-generator.js`（群岛链生成器，唯一多区域）、`oblivions/editor/src/generators/labyrinth-generator.js`（迷宫生成器）、`oblivions/editor/src/generators/wetland-generator.js`（潮汐湿地生成器）、`oblivions/editor/src/generators/ruins-generator.js`（废墟城市生成器）、`oblivions/editor/src/tools/generator-tools.js`（工具栏 + 双模式模态框 + schema 驱动表单 + 生成后验证闭环）、`oblivions/editor/src/render/region-panel.js`（#btnAddRegion 改为二选一 modal）、`oblivions/editor/src/state.js`（loadProject 全项目覆盖 + addRegion 单区域追加 API）、`oblivions/editor-next/src/services/generators/registry.ts`（editor-next 注册表）、`oblivions/editor-next/src/services/generators/base-generator.ts`（editor-next BaseGenerator 基类）、`oblivions/editor-next/src/services/generators/sample-generator.ts`（editor-next SampleGenerator）、`oblivions/editor-next/src/services/generators/archipelago-generator.ts`（editor-next 群岛链生成器）、`oblivions/editor-next/src/services/generators/labyrinth-generator.ts`（editor-next 迷宫生成器）、`oblivions/editor-next/src/services/generators/wetland-generator.ts`（editor-next 潮汐湿地生成器）、`oblivions/editor-next/src/services/generators/ruins-generator.ts`（editor-next 废墟城市生成器）、`oblivions/editor-next/src/views/GeneratorsView.vue`（生成器视图：全项目模态 + 单区域模态 + schema 驱动表单 + 5 主题生成器入口）、`oblivions/editor-next/src/components/modals/GeneratorModal.vue`（生成器双模式模态框：schema 驱动 UI + 焦点恢复 + 全项目 confirm + 单区域追加 + 生成后调用 runFull({ includeConfig: false })）、`oblivions/editor-next/src/stores/uiStore.ts`（generatorModalState 支持 GeneratorModal 双模式：mode/returnFocusEl，对齐 §3.7.6 焦点恢复；同时归属 O-0）、`oblivions/editor-next/src/stores/projectStore.ts`（addGeneratedRegion 单区域追加 API：生成器调用入口；同时归属 O-0）、`oblivions/editor-next/src/main.ts`（应用入口：启动时注册 5 个主题生成器到 registry；同时归属 O-0）、`oblivions/shared/src/algorithms/seed-random.ts`（种子化 PRNG：seed=0 随机种子，正整数可复现）、`oblivions/shared/src/types/generator.ts`（Generator 接口 + 参数 schema + generateRegion 默认实现类型）
+
+**实现的主题生成器清单：**
+
+| 生成器 ID | 主题 | 算法核心 | 差异化点 | 单区域模式行为 |
+|---|---|---|---|---|
+| `archipelago` | 群岛链 | 距离场（中心欧氏 + 噪声） | 唯一多区域生成器，环形 exit_links；land/reef/water 三态 | 重写为单岛屿算法 + 隐藏 regionCount + 命名"岛屿 #X" |
+| `labyrinth` | 迷宫 | 递归回溯 4 方向挖通 | cols/rows 强制奇数；extraOpenings 制造环线 | 复用默认实现 |
+| `wetland` | 潮汐湿地 | 渐变场 + 噪声扰动 | 唯一同区域用 shallow/deep/abyss 三档 tide；preset_safe 安全岛 | 复用默认实现 |
+| `ruins` | 废墟城市 | 簇状距离场 | 唯一用 height 分层（0/1/2）；唯一用 destructible 标记可破坏废墟 | 复用默认实现 |
+
+**边界案例：**
+
+- 首尾格强制 passable=true，保证 entrance/exit 可达，避免生成不可解地图。
+- cols × rows 上限 254（对齐 pls 范围），超出抛错由工具栏捕获显示。
+- seed=0 视为"使用随机种子"，正整数视为可复现种子——避免用户输入 0 被当作固定种子。
+- 全项目模式弹 confirm 提示备份（覆盖风险）；单区域模式不弹（追加无数据丢失）。
+- 多区域生成器扩展路径：新增此类生成器需参照 archipelago 重写 generateRegion（多区域算法降级为单区域）；单区域生成器直接复用默认实现。
+
+***
+
+#### 框架 O-6：开局分布预览 overlay（wildItems / POI 实例可视化）
+
+**设计意图：** 编辑器需要在连通后端的情况下可视化预览开局时可能出现的道具、POI 分布。该需求与 O-1 的 dry-run 模拟层语义截然不同：O-1 的叠层均依赖玩家位置 + BFS 计算，而开局分布预览是观察者视角——不依赖玩家位置、不依赖 BFS、不依赖 simState.mode，数据源直接来自 liveState。引入独立框架而非扩展 O-1 的判断依据 3.2 概念引入成本-收益：①承载与 O-1 截然不同的语义层（观察者视角 vs 玩家视角），若强行塞入 O-1 会导致设计意图文档膨胀且概念混叠；②数据流路径独立（不经过 simState / BFS），与 O-1 的管线无共享代码；③未来扩展只影响 O-6 而不污染 O-1。视觉遵循 2.15 灰阶基底 + 唯一强调色：道具/POI 分布用形状字符 + 内嵌边框，trap 与 expired 用灰阶角标（非红，避免与 error 级强调色冲突）；边框厚度刻意薄于 reachability overlay，确保两叠层同时启用时视觉分层不冲突。触发条件严格守卫：仅当 backend.connected 时启用两个开关，断开连接时强制清空 overlayFlags 并重渲染清除画面残留徽章。
+
+**代码锚点：** `oblivions/editor/src/state.js`（overlayFlags 新增 wilditem / poi 开关 + liveState 索引辅助函数；同时归属 O-1 / O-4）、`oblivions/editor/src/render/overlay-wilditem.js`（道具徽章渲染）、`oblivions/editor/src/render/overlay-poi.js`（POI 徽章渲染）、`oblivions/editor/src/render/grid.js`（applyOverlays 调度入口）、`oblivions/editor/src/main.js`（updateOverlayToggleDisabled 守卫函数；同时归属 O-4）、`oblivions/editor/src/render/backend-panel.js`（connect/disconnect 后触发守卫；同时归属 O-4）、`oblivions/editor-next/src/stores/liveStore.ts`（liveState 索引辅助函数 + Live 数据加载；同时归属 O-4）、`oblivions/editor-next/src/stores/overlayStore.ts`（overlayFlags wilditem/poi 开关 + 断开连接时强制清空；同时归属 O-1）、`oblivions/editor-next/src/composables/useOverlayRenderer.ts`（editor-next 叠层渲染调度；同时归属 O-1）、`oblivions/editor-next/src/components/grid/GridOverlay.vue`（editor-next 叠层渲染容器；同时归属 O-1）、`oblivions/editor-next/src/components/overlays/OverlayWildItem.vue`（editor-next 道具徽章渲染）、`oblivions/editor-next/src/components/overlays/OverlayPoi.vue`（editor-next POI 徽章渲染）、`oblivions/editor-next/src/views/BackendView.vue`（视图入口：disconnect 触发 overlayStore 清空；同时归属 O-4）、`oblivions/editor-next/src/components/panels/BackendPanel.vue`（面板组件：disconnect 触发 overlayStore.clearBackendOverlays 清空 wilditem/poi 开关；同时归属 O-4）、`oblivions/editor-next/src/views/SimulateView.vue`（叠层开关 UI：wilditem/poi checkbox 开关 + backend.connected 守卫；同时归属 O-1）、`oblivions/shared/src/types/poi.ts`（POI 类型：searchable/mechanic/exhausted/expired；同时归属 O-4）、`oblivions/shared/src/types/wilditem.ts`（WildItem 类型：discovered 三态/is_trap；同时归属 O-4）
+
+**边界案例：**
+
+- 数据源严格依赖 backend.connected：未连接时开关 disabled + 强制清空 overlayFlags，避免用户开启后看到空白画布产生"功能失效"误解。
+- 数据填充依赖 handleLoadLiveData：连接后端但未加载 Live 数据时 liveState 仍为空，开关可启用但渲染无徽章（开关启用是必要条件，加载 Live 数据是充分条件）。
+- 观察者视角与玩家位置无关：与 fog / vision / reachability 叠层正交，可同时启用；不依赖 simState.mode。
+- 同格多类型 POI 主图标优先级 mechanic > searchable > other；discovered / exhausted / expired 等状态标记取并集。
+- trap 角标用灰阶字符而非红色：避免与 error 级强调色冲突；trap 在开局视角下属于"未来可能触发"信息，不应抢眼。
+- 断开连接时的清理顺序：清空 liveState → 清空 overlayFlags + 取消勾选 → 重渲染清除画面残留徽章；三步顺序确保 UI 不出现"开关已清空但徽章仍在"的瞬态。
+
+***
+
+#### 框架 O-7：AI 使用约束守卫（三层守卫 + AI 预置操作路径）
+
+**设计意图：** ZIP 导出是给人使用的功能；AI 在导出 ZIP 后可能通过 pwsh 等方式复制、粘贴进行地图替换，这会危害系统内其他资源的安全。正确理解是：编辑器提供给 AI 的操作路径都是内置固定的（备份后端 / 保存配置 / 保存地图 / 从后端导入），AI 通过这些预置操作路径自动完成备份、导入、导出，不需要自己手动操作文件替换。约束字面是"禁止 AI 使用导出 ZIP"，真实意图是"防止 AI 绕过编辑器预置路径、通过 pwsh 等外部手段操作文件而危害其他系统资源安全"。通过三层守卫拦截 ZIP 导出路径 + 显式提供 AI 预置操作路径，让约束字面与意图一致。本框架原"AI 使用约束守卫（跨框架，部分归属 O-4）"现显式升格为独立框架 O-7 以承载三层守卫 + AI 预置操作路径的完整语义，对齐 3.3 约束是意图的近似——约束字面与真实意图通过对三层守卫 + 四条预置路径的明确划分而统一。
+
+**代码锚点：** `oblivions/editor-next/src/services/ai-guard.ts`（入口守卫 assertBackendConnected 函数，未连接抛 AI_GUARD_EXPORT_REQUIRES_BACKEND）、`oblivions/editor-next/src/components/modals/ExportModal.vue`（导出模态框：三层守卫 UI 落地 + 字段过滤提示 + 快速写回按钮，M3 实现）、`oblivions/editor-next/src/components/modals/BackupModal.vue`（AI 预置备份路径 UI 入口：dumpBackend + backupBackendZip，不经 exportZip 三层守卫）、`oblivions/editor-next/src/composables/useImportExport.ts`（导出 ZIP 入口守卫调用 + AI 预置路径分流：备份 / 保存配置 / 保存地图 / 从后端导入；同时归属 O-0）、`oblivions/editor-next/src/stores/backendStore.ts`（backend.connected 状态源 + 按钮守卫计算属性 canExport；同时归属 O-4）、`oblivions/editor-next/src/services/zip-bundle.ts`（exportZip 受三层守卫约束 + backupBackendZip 独立备份路径不受约束；同时归属 O-0）、`oblivions/editor-next/src/services/backend-backup-api.ts`（dumpBackend AI 预置备份路径：editor_backup_dump scope；同时归属 O-4）、`oblivions/editor-next/src/services/backend-config-api.ts`（saveAllConfigs AI 预置保存配置路径：editor.config.save 命令；同时归属 O-4）、`oblivions/editor-next/src/services/backend-import-api.ts`（importFromBackend AI 预置从后端导入路径：editor_* scope；同时归属 O-4）、`oblivions/editor-next/src/components/panels/BackendPanel.vue`（按钮文案切换 + 备份按钮触发 BackupModal；同时归属 O-4 + O-6）、`oblivions/editor-next/src/views/BackendView.vue`（挂载 BackupModal；同时归属 O-4 + O-6）
+
+**边界案例：**
+
+- 三层守卫冗余设计：入口守卫（ai-guard.ts assertBackendConnected）+ 按钮守卫（ExportModal canExport computed + click 提示）+ HTML 初始守卫（`<button :disabled="!backendStore.connected">`），任一层失效其他层仍能拦截。
+- AI 预置操作路径四条独立通道均走后端受控 API，不经 ZIP 文件流：①备份后端打包（state.php editor_backup_dump scope）+ 前端 zip-bundle.ts backupBackendZip 打包下载；②保存配置（command.php editor.config.save 命令）；③保存地图（command.php editor.map.save 命令）；④从后端导入（state.php editor_map_load / editor_config_load / editor_*_list scope）。
+- 按钮文案随连接状态切换：未连接"导入目录" + "导出 ZIP（disabled）"；已连接"从后端导入" + "导出 ZIP（enabled）" + "备份后端"。
+- 约束代码注释统一格式：所有相关函数入口添加 `// AI 约束：ZIP 导出仅供人类使用；AI 应使用预置路径（备份后端 / 保存配置 / 保存地图 / 从后端导入）完成操作，禁止通过 pwsh 等方式手动操作文件替换以避免危害系统其他资源安全`。
+- 备份功能本身要求 connected，用途是 AI 数据安全备份而非编辑器导出；走独立 API 路径（editor_backup_dump）不经导出 ZIP 入口，不受三层守卫约束。
+
+***
+
 ## 第四部分：跨模块关键模式
 
 ### 模式 1：读写隔离阶梯

@@ -1,0 +1,17 @@
+{
+  "name": "@oblivions/workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Oblivions 前端 monorepo 根（@oblivions/shared + @oblivions/editor-next）",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @oblivions/editor-next dev"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
