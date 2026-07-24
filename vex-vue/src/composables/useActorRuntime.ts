@@ -34,6 +34,7 @@ import type {
 } from '@/types/actor-runtime';
 import type { SceneAnchor, ScenePoint } from '@/types/scene';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
+import { task3Debug } from '@/utils/task3-debug';
 
 const OWNER_PRIORITY: Record<PresentationOwner, number> = {
   ambient: 0,
@@ -43,6 +44,24 @@ const OWNER_PRIORITY: Record<PresentationOwner, number> = {
 };
 
 let nextGeneration = 1;
+
+// ── K-12-F：动画播放速度同步（speed → gsap timeScale） ──
+// 设计意图：speed（倍速）应该让动画本身的播放速度变快，
+// 而不是只缩短 move-director 的超时兜底。
+// 否则 speed=4 时 jump 动画仍需 1400ms，但 timeout 仅 375ms，
+// 动画未完成就被超时打断 → cancel → 下一步从中间位置开始 → 落点错位。
+// 解决：move-director.setSpeed 调用 setPlaybackSpeed，
+// play() 创建 animation 后立即 animation.timeScale(playbackSpeed)。
+let playbackSpeed = 1;
+
+/** K-12-F：由 move-director.setSpeed 调用，同步 speed 到动画层 */
+export function setPlaybackSpeed(speed: number): void {
+  const prev = playbackSpeed;
+  playbackSpeed = speed;
+  if (prev !== speed) {
+    task3Debug.log('actor-runtime.setPlaybackSpeed', { prevSpeed: prev, newSpeed: speed });
+  }
+}
 
 function skippedHandle(reason: string): AnimationHandle {
   return {
@@ -171,7 +190,16 @@ class ActorRuntimeImpl implements ActorRuntime {
   }
 
   acquire(request: LeaseRequest): PresentationLease | null {
-    if (this.disposed) return null;
+    if (this.disposed) {
+      task3Debug.log('actor-runtime.acquire.failed', {
+        actorId: this.id,
+        reason: 'runtime disposed',
+        owner: request.owner,
+        channels: request.channels,
+        sessionId: request.sessionId ?? null,
+      });
+      return null;
+    }
     const sessionId = request.sessionId ?? null;
     const sameLease = [...this.leases].find(lease =>
       !lease.released && lease.owner === request.owner && lease.sessionId === sessionId);
@@ -186,7 +214,20 @@ class ActorRuntimeImpl implements ActorRuntime {
       const canReplaceEqual = request.replaceEqualOwner === true
         && conflict.owner === request.owner;
       if (conflictPriority > requestPriority
-        || (conflictPriority === requestPriority && !canReplaceEqual)) return null;
+        || (conflictPriority === requestPriority && !canReplaceEqual)) {
+        task3Debug.log('actor-runtime.acquire.failed', {
+          actorId: this.id,
+          reason: 'priority conflict',
+          owner: request.owner,
+          channels: request.channels,
+          sessionId,
+          conflictOwner: conflict.owner,
+          conflictPriority,
+          requestPriority,
+          canReplaceEqual,
+        });
+        return null;
+      }
     }
     for (const conflict of conflicts) conflict.forceRelease(false, 'preempted');
 
@@ -194,6 +235,14 @@ class ActorRuntimeImpl implements ActorRuntime {
     lease.addChannels(request.channels);
     this.leases.add(lease);
     for (const channel of request.channels) this.channelOwners.set(channel, lease);
+    task3Debug.log('actor-runtime.acquire.success', {
+      actorId: this.id,
+      owner: request.owner,
+      channels: [...request.channels],
+      sessionId,
+      generation: this.generation,
+      reusedSameLease: sameLease === lease,
+    });
     return lease;
   }
 
@@ -201,13 +250,11 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (this.disposed) return;
     if (this.channelOwners.has('spatial')) {
       this.pendingAnchor = anchor;
-      console.log('[P4_DBG] projectAnchor queued-pending ' + JSON.stringify({ id: this.id, anchorX: anchor.point.x, anchorY: anchor.point.y }));
       return;
     }
     this.currentAnchor = anchor;
     this.pendingAnchor = null;
     this.writeAnchor(anchor);
-    console.log('[P4_DBG] projectAnchor wrote-dom ' + JSON.stringify({ id: this.id, anchorX: anchor.point.x, anchorY: anchor.point.y }));
   }
 
   getProjectedAnchor(): SceneAnchor | null {
@@ -293,25 +340,30 @@ class ActorRuntimeImpl implements ActorRuntime {
   play(lease: RuntimeLease, command: ActorCommand): AnimationHandle {
     const elements = this.elements;
     if (!elements) {
+      task3Debug.log('actor-runtime.play.skipped', {
+        actorId: this.id,
+        commandKind: command.kind,
+        reason: 'actor_dom_missing',
+        generation: this.generation,
+      });
       this.traceAnimation(command.kind, 'skipped', 'actor_dom_missing');
-      console.log('[P4_DBG] play skip dom-missing', { id: this.id, kind: command.kind });
       return skippedHandle('actor_dom_missing');
     }
     const required = requiredChannels(command);
-    const channelStatus = required.map(channel => ({
-      channel,
-      leaseHas: lease.channels.has(channel),
-      ownerIsLease: this.channelOwners.get(channel) === lease,
-      owner: this.channelOwners.get(channel)?.sessionId ?? null,
-    }));
     if (required.some(channel => !lease.channels.has(channel) || this.channelOwners.get(channel) !== lease)) {
+      task3Debug.log('actor-runtime.play.skipped', {
+        actorId: this.id,
+        commandKind: command.kind,
+        reason: 'lease_channel_missing',
+        requiredChannels: required,
+        leaseChannels: [...lease.channels],
+        generation: this.generation,
+      });
       this.traceAnimation(command.kind, 'skipped', 'lease_channel_missing');
-      console.log('[P4_DBG] play skip channel-missing', { id: this.id, kind: command.kind, channelStatus });
       return skippedHandle('lease_channel_missing');
     }
     this.cancelChannels(required, 'replaced');
     this.traceAnimation(command.kind, 'start');
-    console.log('[P4_DBG] play dispatch', { id: this.id, kind: command.kind, tier: command.kind === 'move' ? command.tier : null, sessionId: lease.sessionId });
 
     let animation: gsap.core.Animation;
     let impactAt: number | null = null;
@@ -360,6 +412,16 @@ class ActorRuntimeImpl implements ActorRuntime {
             direction,
           );
         }
+        task3Debug.log('actor-runtime.play.move-tween-start', {
+          actorId: this.id,
+          tier: command.tier,
+          fromPoint: from,
+          targetPoint: { x: target.x, y: target.y },
+          cellWidth: command.target.cellWidth,
+          cellHeight: command.target.cellHeight,
+          direction,
+          generation: this.generation,
+        });
         onCompleted = () => { this.currentAnchor = command.target; };
         break;
       }
@@ -389,9 +451,35 @@ class ActorRuntimeImpl implements ActorRuntime {
         break;
     }
 
+    // K-12-F：应用倍速——让动画本身的播放速度变快（timeScale），
+    // 而不是只缩短 move-director 的超时兜底。
+    // 这样 jump 动画在 speed=4 时只需 1400/4 = 350ms，与 timeout 475ms 匹配。
+    if (playbackSpeed !== 1) {
+      animation.timeScale(playbackSpeed);
+    }
+    task3Debug.log('actor-runtime.play.timeScale-applied', {
+      actorId: this.id,
+      commandKind: command.kind,
+      playbackSpeed,
+      note: playbackSpeed !== 1 ? 'animation.timeScale(speed) applied' : 'speed=1, no timeScale needed',
+    });
+
     let handle!: TimelineHandle;
     handle = new TimelineHandle(animation, impactAt, result => {
       if (result.status === 'completed') onCompleted?.();
+      task3Debug.log('actor-runtime.tween-settled', {
+        actorId: this.id,
+        commandKind: command.kind,
+        status: result.status,
+        reason: result.reason ?? null,
+        generation: this.generation,
+        playbackSpeed,
+        note: result.status === 'completed'
+          ? 'gsap tween onComplete'
+          : result.status === 'cancelled'
+            ? 'gsap tween killed (onInterrupt/onKill)'
+            : 'skipped',
+      });
       this.traceAnimation(command.kind, result.status, result.reason);
       this.removeHandle(handle);
       this.debugCommands.delete(handle);
@@ -410,6 +498,16 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (lease.released) return;
     lease.released = true;
     const channels = [...lease.channels].filter(channel => this.channelOwners.get(channel) === lease);
+    task3Debug.log('actor-runtime.releaseLease', {
+      actorId: this.id,
+      owner: lease.owner,
+      sessionId: lease.sessionId,
+      channels,
+      reconcile,
+      reason,
+      generation: this.generation,
+      hasPendingAnchor: !!this.pendingAnchor,
+    });
     this.cancelChannels(channels, reason);
     for (const channel of channels) this.channelOwners.delete(channel);
     this.leases.delete(lease);

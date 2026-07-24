@@ -34,6 +34,7 @@ import { useInventoryStore } from '@/stores/inventory';
 import { COMMAND_REGISTRY } from '@/stores/command-registry';
 import { ingestPresentationResponse } from '@/stores/presentation-inbox';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import { task3Debug } from '@/utils/task3-debug';
 import type { ActorCapability, CapabilityDecision } from '@/types/api';
 import { getCapabilityLabel, getStatusLocale } from '@/data/status-locale';
 import { ref, type Ref } from 'vue';
@@ -128,10 +129,29 @@ export class CommandQueue {
     // （startNavigation 已有 isPlaying 兜底防重复；UI 层 inputLocked 禁用移动按钮）
     // 加速/跳过/查看面板不通过命令队列，始终可用（B6.10/B6.11）
     if (this._navigationPlaying && spec.mode === 'explore' && spec.advancesTick && command !== 'map.navigate') {
+      task3Debug.log('command-queue.layer-4.5.blocked', {
+        command,
+        navigationPlaying: this._navigationPlaying,
+        specMode: spec.mode,
+        specAdvancesTick: spec.advancesTick,
+        decision: 'BLOCKED',
+        code: 'NAVIGATION_PLAYING',
+      });
       return {
         code: 'NAVIGATION_PLAYING',
         message: '移动导演播放中，请等待演出结束或加速/跳过。',
       };
+    }
+    // 仅在导航播放期间记录通过 4.5 层门控的命令（避免非播放期日志爆炸）
+    if (this._navigationPlaying) {
+      task3Debug.log('command-queue.layer-4.5.passed', {
+        command,
+        navigationPlaying: this._navigationPlaying,
+        specMode: spec.mode,
+        specAdvancesTick: spec.advancesTick,
+        decision: 'PASSED',
+        note: command === 'map.navigate' ? 'map.navigate 自身排除在 4.5 门控之外' : undefined,
+      });
     }
 
     for (const capability of spec.requiredCapabilities) {

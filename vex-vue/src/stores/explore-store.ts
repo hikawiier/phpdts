@@ -106,6 +106,35 @@ export const useExploreStore = defineStore('explore', () => {
     }
   }
 
+  /**
+   * 从后端 links.explored[pgroup] 重建已探索 Set（设计案 §4.4 + §9.4，Q5-2 修复）。
+   *
+   * mapStore.loadMap 在提交投影后调用本方法，从权威源一次性同步当前区域的已探索图格。
+   * 跨区域切换时，旧区域的键保留在 Set 中（不影响 isExplored 仅查询当前区域），
+   * 新区域的键由本次同步写入；玩家所在格始终视为已探索（isExplored 即时判定，无需写入）。
+   *
+   * 不变量：会话内增量（markExplored）与刷新后全量（syncExploredFromLinks）共享同一 Set，
+   * 不存在两套真值。增量写入在新一次 loadMap 时被权威全量覆盖。
+   */
+  function syncExploredFromLinks(
+    links: { explored?: Record<string, Record<string, number>> } | null | undefined,
+    pgroup: number | null,
+  ): void {
+    if (!links || !links.explored || pgroup === null) return;
+    const regionMap = links.explored[String(pgroup)];
+    if (!regionMap) return;
+    const next = new Set(exploredTiles.value);
+    const prefix = `${pgroup}:`;
+    // 清除该区域的旧键（避免持久化的过期探索状态残留）
+    for (const key of next) {
+      if (key.startsWith(prefix)) next.delete(key);
+    }
+    for (const pls of Object.keys(regionMap)) {
+      next.add(`${pgroup}:${pls}`);
+    }
+    exploredTiles.value = next;
+  }
+
   // ── 抽屉桥接（复用 uiStore，避免双源真值） ──
   const playerDrawerOpen = computed(() => uiStore.playerDrawerOpen);
   const inventoryDrawerOpen = computed(() => uiStore.inventoryDrawerOpen);
@@ -246,5 +275,6 @@ export const useExploreStore = defineStore('explore', () => {
     setMobileTab,
     // 已探索
     markExplored,
+    syncExploredFromLinks,
   };
 });

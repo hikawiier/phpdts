@@ -75,7 +75,7 @@ const statusText = computed<string>(() => {
   return '';
 });
 
-const progressPct = computed<number>(() => Math.round(nav.progress * 100));
+const progressStep = computed<number>(() => Math.max(0, nav.currentStepIndex + 1));
 
 // ── 紧凑发现摘要（徽章） ──
 const enemyCount = computed(() => nav.enemyDiscoveries.length);
@@ -91,9 +91,9 @@ const hasDiscoveries = computed(
 
 // ── 速度控制（B6.4/B6.5） ──
 const speedOptions: Array<{ id: 1 | 2 | 4; label: string }> = [
-  { id: 1, label: '1x' },
-  { id: 2, label: '2x' },
-  { id: 4, label: '4x' },
+  { id: 1, label: '1×' },
+  { id: 2, label: '2×' },
+  { id: 4, label: '4×' },
 ];
 
 function onPickSpeed(s: 1 | 2 | 4): void {
@@ -130,11 +130,11 @@ onUnmounted(() => {
     <!-- ═══ 顶部进度条 + 速度/跳过控制（播放中显示，B6.10 始终可用） ═══ -->
     <Transition name="md-slide">
       <div v-if="nav.isPlaying" class="md-progress-wrap">
-        <div class="md-progress-track">
-          <div class="md-progress-fill" :style="{ width: progressPct + '%' }"></div>
-        </div>
-        <div class="md-progress-meta">
-          <span class="md-status">{{ statusText }}</span>
+        <div class="md-progress-head">
+          <span class="md-status">
+            <span class="md-kicker">NAV</span>
+            <span class="md-status-text">{{ statusText }}</span>
+          </span>
           <span class="md-controls">
             <button
               v-for="opt in speedOptions"
@@ -143,13 +143,29 @@ onUnmounted(() => {
               :class="{ 'is-active': nav.speed === opt.id }"
               :title="`切换为 ${opt.label} 速度播放（B6.4）`"
               @click="onPickSpeed(opt.id)"
-            >[{{ opt.label }}]</button>
+            >{{ opt.label }}</button>
             <button
               class="term-btn md-skip-btn"
               title="跳过全部剩余演出，立即同步到最终权威状态（B6.3）"
+              aria-label="跳过移动演出"
               @click="onSkip"
-            >[跳过]</button>
+            >»</button>
           </span>
+        </div>
+        <div
+          class="md-progress-track"
+          :style="{ gridTemplateColumns: `repeat(${Math.max(nav.totalSteps, 1)}, minmax(2px, 1fr))` }"
+          role="progressbar"
+          :aria-valuemin="0"
+          :aria-valuemax="nav.totalSteps"
+          :aria-valuenow="progressStep"
+        >
+          <span
+            v-for="step in nav.totalSteps"
+            :key="step"
+            class="md-progress-segment"
+            :class="{ 'is-complete': step <= progressStep, 'is-current': step === progressStep }"
+          ></span>
         </div>
       </div>
     </Transition>
@@ -199,36 +215,59 @@ onUnmounted(() => {
 .md-progress-wrap {
   pointer-events: none;
   position: absolute;
-  top: 6px;
-  left: 8px;
-  right: 8px;
+  top: 8px;
+  left: 50%;
+  width: min(720px, calc(100% - 24px));
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
+  padding: 7px 8px 8px 10px;
+  background: rgba(5, 5, 5, 0.92);
+  border: 1px solid rgba(112, 112, 112, 0.55);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
 }
 .md-progress-track {
-  height: 3px;
-  background: rgba(68, 68, 68, 0.35);
-  border: 1px solid rgba(68, 68, 68, 0.4);
+  display: grid;
+  gap: 2px;
+  height: 4px;
   overflow: hidden;
 }
-.md-progress-fill {
+.md-progress-segment {
   height: 100%;
-  background: rgba(255, 255, 255, 0.7);
-  transition: width 0.18s linear;
+  background: rgba(88, 88, 88, 0.42);
+  transition: background 0.16s ease, opacity 0.16s ease;
 }
-.md-progress-meta {
+.md-progress-segment.is-complete {
+  background: rgba(224, 224, 224, 0.68);
+}
+.md-progress-segment.is-current {
+  background: #fff;
+}
+.md-progress-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 10px;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   color: #bbb;
-  gap: 6px;
+  gap: 10px;
 }
 .md-status {
-  color: #ddd;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1 1 auto;
+  min-width: 0;
+}
+.md-kicker {
+  color: #5f5f5f;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  flex: 0 0 auto;
+}
+.md-status-text {
+  color: #e0e0e0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -241,12 +280,15 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 .md-speed-btn {
-  padding: 1px 5px;
+  width: 28px;
+  height: 23px;
+  padding: 0;
   font-size: 9px;
   border-color: rgba(68, 68, 68, 0.5);
   color: #888;
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1;
+  letter-spacing: 0;
 }
 .md-speed-btn.is-active {
   border-color: #fff;
@@ -254,12 +296,15 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.08);
 }
 .md-skip-btn {
-  padding: 1px 6px;
-  font-size: 9px;
+  width: 28px;
+  height: 23px;
+  padding: 0;
+  font-size: 14px;
   border-color: rgba(136, 136, 136, 0.6);
   color: #ddd;
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1;
+  letter-spacing: 0;
   margin-left: 2px;
 }
 .md-skip-btn:hover {
@@ -292,7 +337,8 @@ onUnmounted(() => {
   color: #fff;
 }
 .md-toast.is-fail {
-  border-color: rgba(204, 136, 136, 0.55);
+  border-style: dashed;
+  border-color: rgba(180, 180, 180, 0.58);
 }
 .md-toast.is-interrupt {
   border-color: rgba(255, 255, 255, 0.65);
@@ -348,7 +394,7 @@ onUnmounted(() => {
 .md-slide-enter-from,
 .md-slide-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translate(-50%, -5px);
 }
 .md-fade-enter-active,
 .md-fade-leave-active {
@@ -357,5 +403,22 @@ onUnmounted(() => {
 .md-fade-enter-from,
 .md-fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 900px) {
+  .md-progress-wrap {
+    top: 5px;
+    width: calc(100% - 14px);
+    padding: 5px 6px 6px 8px;
+    gap: 4px;
+  }
+  .md-kicker {
+    display: none;
+  }
+  .md-speed-btn,
+  .md-skip-btn {
+    width: 25px;
+    height: 21px;
+  }
 }
 </style>

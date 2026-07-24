@@ -392,6 +392,55 @@ function obl_state_handle_game_map($ctx) {
     }
     $data['links']['fog'] = array($cur_pgroup => $fog_data);
 
+    // 已探索数据（设计案 §4.4 + §9.4）：查询当前区域已探索（explored=1）的格子，稀疏表示 {pls: 1}。
+    // 与 fog 同模式，确保前端 exploredTiles 刷新后能从权威源重建（Q5-2 修复）。
+    $explored_data = array();
+    $explored_result = $db->query("SELECT pls FROM {$tablepre}oblmapstates
+                                    WHERE pgroup='" . (int)$cur_pgroup . "' AND explored=1");
+    while ($row = $db->fetch_array($explored_result)) {
+        $explored_data[(int)$row['pls']] = 1;
+    }
+    $data['links']['explored'] = array($cur_pgroup => $explored_data);
+
+    // 区域级发现数据（K-Q5-C Q5-9：完整地图 POI/道具显示）
+    // 设计案 §7.5 "显示已经发现的 POI 和普通地面道具" + §9.1 "后端权威"
+    // 一次性查询当前区域 discovered=1 的 POI 与 discovered>0 的道具，
+    // 稀疏 pls → {poi_name, item_name} 映射，供前端 atlas-projection 派生填充
+    $region_discoveries = array();
+
+    // 已发现 POI（discovered=1）→ poi_name
+    $poi_table = include GAME_ROOT . './oblivions/gamedata/poi_table.php';
+    $poi_result = $db->query("SELECT pls, poi_id FROM {$tablepre}oblmappoi
+                               WHERE pgroup='" . (int)$cur_pgroup . "' AND discovered=1");
+    while ($row = $db->fetch_array($poi_result)) {
+        $pls = (int)$row['pls'];
+        $poi_id = $row['poi_id'];
+        $tpl = isset($poi_table[$poi_id]) ? $poi_table[$poi_id] : null;
+        $poi_name = $tpl && isset($tpl['name']) ? $tpl['name'] : '';
+        if (!isset($region_discoveries[$pls])) {
+            $region_discoveries[$pls] = array();
+        }
+        $region_discoveries[$pls]['poi_name'] = $poi_name;
+    }
+
+    // 已发现道具（discovered>0）→ item_name（取该格首个道具名）
+    $item_result = $db->query("SELECT pls, itm FROM {$tablepre}oblmapitem
+                                WHERE pgroup='" . (int)$cur_pgroup . "' AND discovered>0
+                                ORDER BY iid");
+    while ($row = $db->fetch_array($item_result)) {
+        $pls = (int)$row['pls'];
+        $item_name = isset($row['itm']) ? (string)$row['itm'] : '';
+        if (!isset($region_discoveries[$pls])) {
+            $region_discoveries[$pls] = array();
+        }
+        // 同一格多个道具只取首个（ORDER BY iid），避免覆盖 POI 名
+        if (!isset($region_discoveries[$pls]['item_name'])) {
+            $region_discoveries[$pls]['item_name'] = $item_name;
+        }
+    }
+
+    $data['links']['region_discoveries'] = array($cur_pgroup => $region_discoveries);
+
     return obl_state_response_success($data);
 }
 

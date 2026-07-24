@@ -1,15 +1,15 @@
 <script setup lang="ts">
 /**
  * @module K 状态管理层
+ * @framework K-11 三场景所有权
  */
 // ══════════════════════════════════════════════════
 // 状态栏 / Status Bar — 单一顶栏所有者（F-K1-Scenes §三不变量 3 / B5.41）
 //
 // 替代现有 vex/index.html 的 .status-bar + vex/js/player.js 的 applyStatusBar()。
 //
-// 三场景顶栏切换（v-if/v-else-if/v-else 强制单一顶栏，不重复）：
-//   - 探索场景：区域 + 位置 + HP/SP + tick + 全局入口（属性/战斗/背包/完整地图）
-//   - 完整地图场景：返回 + 区域 + 地图工具 + 当前目标（3.3 详细实现，本子任务留骨架）
+// 顶栏按中央场景切换：
+//   - 探索/完整地图覆盖：区域 + 位置 + HP/SP + tick + 全局入口
 //   - 战斗场景：战斗状态 + HP/SP + 禁用导航（3.5 详细实现 phase/actor/AP）
 //
 // 右侧头像三场景共享。
@@ -25,7 +25,6 @@ import { useMapStore } from '@/stores/map';
 import { useUiStore } from '@/stores/ui';
 import { useBattleStore } from '@/stores/battle';
 import { useSceneStore } from '@/stores/scene-store';
-import { useAtlasStore } from '@/stores/atlas-store';
 import { dataManager } from '@/stores/data-manager';
 import { commandQueue } from '@/stores/command-queue';
 import { getPlaceName } from '@/utils/format';
@@ -39,7 +38,6 @@ const mapStore = useMapStore();
 const uiStore = useUiStore();
 const battleStore = useBattleStore();
 const sceneStore = useSceneStore();
-const atlasStore = useAtlasStore();
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
 
@@ -183,15 +181,6 @@ function statusTitle(statusId: string): string {
   return getStatusLocale(statusId).description;
 }
 
-// ── 完整地图顶栏：当前目标显示 + 缩放百分比（B5.39） ──
-const atlasTargetLabel = computed<string>(() => {
-  const t = atlasStore.target;
-  if (t.kind === 'none') return '无';
-  if (t.kind === 'paused') return `暂停：${t.name}`;
-  return t.name;
-});
-const atlasZoomPct = computed<number>(() => Math.round(atlasStore.zoom * 100));
-
 // ── 战斗按钮点击处理 ──
 // normal 态：startBattle(0)（无指定敌人，进入战斗模式）
 // battle 态：退出预战斗 UI（常态战斗态由 disabled 阻止）
@@ -215,7 +204,7 @@ function onAvatarError(): void {
 <template>
   <div class="status-bar flex-none" :class="{ 'is-night': isNight }">
     <!-- ═══ 探索场景顶栏：位置 + HP/SP + tick + 全局入口（B5.38） ═══ -->
-    <div v-if="sceneStore.isExplore" class="status-left">
+    <div v-if="sceneStore.isExplore || sceneStore.isAtlas" class="status-left">
       <!-- 第一行：区域 + tick + HP -->
       <div class="status-bar-row">
         <span class="status-location">{{ regionName }}</span>
@@ -285,56 +274,9 @@ function onAvatarError(): void {
         >背包</button>
         <button
           class="status-nav-btn"
+          :disabled="sceneStore.isAtlas"
           @click="sceneStore.openAtlas"
         >完整地图</button>
-      </div>
-    </div>
-
-    <!-- ═══ 完整地图场景顶栏：返回 + 区域 + 地图工具 + 当前目标（3.3 详细实现 / B5.39） ═══ -->
-    <div v-else-if="sceneStore.isAtlas" class="status-left">
-      <div class="status-bar-row">
-        <button
-          class="status-nav-btn is-active"
-          @click="sceneStore.closeAtlas"
-        >返回</button>
-        <span class="status-location">{{ regionName }}</span>
-        <span class="atlas-target-display">
-          <span class="atlas-muted">目标：</span>
-          <span :class="atlasStore.target.kind === 'none' ? 'atlas-muted' : 'atlas-target-name'">{{ atlasTargetLabel }}</span>
-        </span>
-        <span
-          class="status-tick-debug"
-          :class="{ pending: tickPending }"
-          title="obl_tick / obl_pretick — 两者相等时NPC AI不触发 | obl_battle_state"
-        >{{ tickText }} | {{ battleStateText }}</span>
-      </div>
-      <div class="status-bar-row status-nav-row atlas-tools-row">
-        <div class="atlas-tools">
-          <button class="status-nav-btn atlas-tool-btn" @click="atlasStore.zoomOut" title="缩小">[−]</button>
-          <span class="atlas-zoom-pct">{{ atlasZoomPct }}%</span>
-          <button class="status-nav-btn atlas-tool-btn" @click="atlasStore.zoomIn" title="放大">[+]</button>
-          <button class="status-nav-btn atlas-tool-btn" @click="atlasStore.focusPlayer" title="定位玩家">[玩家]</button>
-          <button
-            class="status-nav-btn atlas-tool-btn"
-            :disabled="!atlasStore.hasTarget"
-            @click="atlasStore.focusTarget"
-            title="定位临时目标"
-          >[目标]</button>
-          <button class="status-nav-btn atlas-tool-btn" @click="atlasStore.resetView" title="恢复初始适配">[适配]</button>
-          <button
-            class="status-nav-btn atlas-tool-btn"
-            :class="{ 'is-active': atlasStore.routeVisible }"
-            @click="atlasStore.toggleRoute"
-            title="当前路线显示开关"
-          >[路线]</button>
-          <button
-            class="status-nav-btn atlas-tool-btn"
-            :class="{ 'is-active': atlasStore.historyVisible }"
-            @click="atlasStore.toggleHistory"
-            title="历史路线图层开关"
-          >[历史]</button>
-        </div>
-        <span class="atlas-muted">{{ atlasStore.gridW }}×{{ atlasStore.gridH }} 区域</span>
       </div>
     </div>
 
@@ -418,51 +360,6 @@ function onAvatarError(): void {
 </template>
 
 <style scoped>
-/* ═══ 完整地图顶栏：地图工具 + 目标显示（B5.39） ═══ */
-.atlas-target-display {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #888;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
-.atlas-muted {
-  color: #555;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
-.atlas-target-name {
-  color: #ddd;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
-.atlas-tools-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.atlas-tools {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.atlas-tool-btn {
-  padding: 2px 6px;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-}
-.atlas-zoom-pct {
-  color: #888;
-  font-size: 10px;
-  min-width: 32px;
-  text-align: center;
-  letter-spacing: 0.05em;
-}
-
 /* ═══ 战斗场景顶栏：行动者 + AP（3.5 补全 / B5.40） ═══ */
 /* 行动者标签：灰阶区分玩家/敌方回合（§3.4 少即是多，不为不同等级增加彩色信号色） */
 .status-actor {

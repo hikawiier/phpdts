@@ -30,6 +30,7 @@ import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import { computeReachableMap } from '@/composables/useMapReachability';
 import { perf } from '@/utils/perf';
+import { task3Debug } from '@/utils/task3-debug';
 import { useCharacterStore } from '@/stores/character';
 import type { GameMap, Enemy } from '@/types/api';
 import type { TileRef } from '@/types/scene';
@@ -63,6 +64,20 @@ export const useMapStore = defineStore('map', () => {
   const links = computed(() => projection.value.links);
   const enemies = computed(() => projection.value.enemies);
 
+  // ── 视觉中心冻结（K-12 移动导演逐格演出支持） ──
+  // 导航逐格播放期间冻结视野中心，防止 visionBounds 跟随 curLoc 即时重居中
+  // 导致玩家格始终位于网格中心 → from/anchor 场景坐标相同 → playWorldMove 跳过动画。
+  // 冻结后网格固定在起点，玩家实体在固定网格内逐格移动，动画驱动链正常工作。
+  // 导航结束（抵达/中断/跳过）后清除冻结，网格重新跟随 curLoc 居中。
+  const visualCenter = ref<number | null>(null);
+
+  // ── K-12-E：跳跃目标扩展（jump tier 视野网格扩展） ──
+  // efficient 倾向下多格跳跃（jump tier）的目标格常在 5x5 视野网格外。
+  // 设置 jumpTargetPls 后，visionBounds 扩展为包含起点和目标的包围盒，
+  // 让目标格进入渲染范围，resolveTile 才能找到目标 cell → 动画正常播放。
+  // 动画完成后由 recenterVisionGridAfterStep 清除，网格恢复 5x5。
+  const jumpTargetPls = ref<number | null>(null);
+
   // ── 加载状态 ──
   const loading = ref<boolean>(false);
   const error = ref<string>('');
@@ -94,15 +109,58 @@ export const useMapStore = defineStore('map', () => {
     const pls = patch.curLoc !== undefined
       ? normalizeLocation(patch.curLoc)
       : previous.currentTile?.pls ?? null;
-    console.log('[P4_DBG] updateMapData ' + JSON.stringify({
-      prevPls: previous.currentTile?.pls, newPls: pls,
-      prevRev: previous.revision,
-      hasLinks: !!patch.links, hasEnemies: !!patch.enemies,
-    }));
+    const hadCurLocChange = patch.curLoc !== undefined;
+    const prevPls = previous.currentTile?.pls ?? null;
     commitProjection({
       currentTile: pgroup !== null && pls !== null ? { pgroup, pls } : null,
       links: patch.links !== undefined ? patch.links : previous.links,
       enemies: patch.enemies !== undefined ? patch.enemies : previous.enemies,
+    });
+    if (hadCurLocChange) {
+      task3Debug.log('map-store.updateMapData.curLoc', {
+        prevPls,
+        newPls: pls,
+        prevPgroup: previous.currentTile?.pgroup ?? null,
+        newPgroup: pgroup,
+        projectionRevisionAfter: projection.value.revision,
+        visualCenter: visualCenter.value,
+      });
+    }
+  }
+
+  /** 冻结视觉中心到指定 pls（移动导演逐格播放期间调用） */
+  function setVisualCenter(pls: number | null): void {
+    const prev = visualCenter.value;
+    visualCenter.value = pls;
+    task3Debug.log('map-store.setVisualCenter', {
+      prevVisualCenter: prev,
+      newVisualCenter: pls,
+      curLoc: curLoc.value,
+    });
+  }
+
+  /** 清除视觉中心冻结，恢复跟随 curLoc */
+  function clearVisualCenter(): void {
+    const prev = visualCenter.value;
+    visualCenter.value = null;
+    // K-12-E：同时清除跳跃目标扩展，避免遗留状态影响下次导航
+    const prevJumpTarget = jumpTargetPls.value;
+    jumpTargetPls.value = null;
+    task3Debug.log('map-store.clearVisualCenter', {
+      prevVisualCenter: prev,
+      curLoc: curLoc.value,
+      prevJumpTarget,
+    });
+  }
+
+  /** K-12-E：设置跳跃目标，触发 visionBounds 扩展包含目标格 */
+  function setJumpTarget(pls: number | null): void {
+    const prev = jumpTargetPls.value;
+    jumpTargetPls.value = pls;
+    task3Debug.log('map-store.setJumpTarget', {
+      prevJumpTarget: prev,
+      newJumpTarget: pls,
+      visualCenter: visualCenter.value,
     });
   }
 
@@ -172,6 +230,11 @@ export const useMapStore = defineStore('map', () => {
         enemies: nextEnemies,
       });
 
+      // 同步已探索图格集合（设计案 §4.4 + §9.4，Q5-2 修复）：
+      // 从后端 links.explored[pgroup] 重建权威 Set，避免会话内增量与刷新后全量两套真值。
+      // 惰性导入 explore-store 避免循环依赖。
+      syncExploredTilesFromLinks(d.links, pgroup);
+
       // 刷新可达性缓存（BFS 从当前格出发，move_range 内）
       // 在广播 map:loaded 之前完成，确保 cells computed 读取的是最新可达性
       perf.mark('→ computeReachableMap', 'store');
@@ -207,6 +270,27 @@ export const useMapStore = defineStore('map', () => {
     error.value = '';
   }
 
+  /**
+   * 从 links.explored[pgroup] 同步已探索图格到 exploreStore（Q5-2 修复）。
+   *
+   * 惰性导入 explore-store 避免与 explore-store 顶部的 useMapStore() 形成循环依赖：
+   * explore-store 在 setup 顶层调用 useMapStore()（强引用 mapStore），
+   * mapStore 若在 setup 顶层调用 useExploreStore() 会形成循环；
+   * 函数体内惰性调用在 Pinia store 已注册后安全。
+   */
+  function syncExploredTilesFromLinks(
+    links: unknown,
+    pgroup: number | null,
+  ): void {
+    if (!links || typeof links !== 'object' || pgroup === null) return;
+    const exploredMap = (links as { explored?: Record<string, Record<string, number>> }).explored;
+    if (!exploredMap) return;
+    // 惰性导入：避免顶层循环依赖
+    void import('./explore-store').then(({ useExploreStore }) => {
+      useExploreStore().syncExploredFromLinks({ explored: exploredMap }, pgroup);
+    });
+  }
+
   return {
     // 状态
     projection,
@@ -218,9 +302,14 @@ export const useMapStore = defineStore('map', () => {
     enemies,
     loading,
     error,
+    visualCenter,
+    jumpTargetPls,
     // actions
     commitProjection,
     updateMapData,
+    setVisualCenter,
+    clearVisualCenter,
+    setJumpTarget,
     loadMap,
     reset,
   };

@@ -22,6 +22,20 @@ if (!defined('IN_GAME')) {
 // - 监听器机制：业务系统注册监听器，tick 模块不硬编码业务分支
 // - 持久化统一由调用方负责（Command API / Heartbeat Tick Orchestrator 显式调用）
 //   tick 模块只修改内存中的 $gamevars，通过 $ginfochange 标记通知调用方
+//
+// 监听器契约（B-Q5-A Q5-11，DESIGN.md §9.2 时间调度器所有权）：
+// 监听器可读可改的玩家字段：
+//   - action / bid / hp / state / sp（战斗结果、状态变化等）
+//   - 技能 CD / buff / body status（post phase 业务扩展）
+// 监听器不得修改的玩家字段（强约束，违反视为契约破裂）：
+//   - pls / pgroup（玩家位置由移动 handler 的 perform_move_core 唯一控制）
+// 理由：DESIGN.md §9.2 "移动模块只声明移动意图和执行结果，不能自行规定玩家移动、
+//   敌人行动、地图坍塌、拦截和其他事件的绝对顺序"。若监听器能越权修改位置，
+//   时间调度器的权威顺序将被破坏（玩家可能被传送到未探索区域、跳过敌人拦截等）。
+// 检测机制：tick 编排器在 tick 结算后比对 pls/pgroup 快照，发现漂移时记录
+//   CRITICAL 级别 error_log（[NAV_DEBUG] tick_drift_detected 前缀）。
+// 未来扩展：若需支持"陷阱传送、强制位移"等位置修改场景，需在监听器契约层面
+//   显式声明"位置修改"能力，并在 handler 检测到漂移时同步 pls/pgroup。
 // ================================================================
 // 依赖：player.func.php + enemy_ai.func.php（由 obl_bootstrap.php 统一加载）
 

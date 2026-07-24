@@ -119,11 +119,11 @@ onUnmounted(() => {
               <span>┐</span>
             </div>
             <div class="flex-1 overflow-y-auto min-h-0 flex flex-col gap-2">
-              <!-- 当前格情境操作区（日志下方、主操作区上方） -->
-              <TileContextBar />
-              <!-- 主操作区：移动/探索/倾向/目标（始终显示） -->
-              <div class="action-subtitle">主操作 · 始终显示</div>
+              <!-- 主操作区：始终存在的决策先于当前位置情境入口 -->
+              <div class="action-subtitle">导航与探索</div>
               <MainActionBar variant="desktop" />
+              <!-- 当前格情境操作 + 独立功能 -->
+              <TileContextBar />
             </div>
           </div>
         </div>

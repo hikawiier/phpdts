@@ -42,6 +42,7 @@ import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePlayerStore } from '@/stores/player';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
+import { commandQueue } from '@/stores/command-queue';
 import { useEntitiesStore } from '@/stores/entities';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
@@ -310,7 +311,17 @@ export const useBattleStore = defineStore('battle', () => {
             if (generation !== authorityRefreshGeneration) continue;
             publishAuthoritativePlayerInfo(result.data as PlayerInfo);
           }
-          if (scopes.includes('game_map')) {
+          // K-12-D：移动导演播放期间跳过 game_map/enemies 权威刷新。
+          // command-queue 在 map.navigate await 期间广播 'game:command-committed'，
+          // 触发本方法。若此时 loadMap() 将 curLoc 直接更新到最终位置，会导致：
+          //   - entities watch 在 move-director phase='idle' 时触发 playWorldMove
+          //   - playWorldMove 误判"已在锚点"→ 跳过动画（K-12 早期退出路径3）
+          //   - 完成信号被 move-director 过滤（phase !== 'playing'）→ 1s 超时兜底
+          // move-director 通过 applyStep 逐格更新 curLoc，终态（finishArrived/
+          // handleInterrupt/skip）统一调用 loadMap() 拉取权威数据，不丢失领域事实。
+          if (commandQueue.navigationPlaying) {
+            // 跳过 game_map/enemies 刷新，仅处理 player_info/combat_targets
+          } else if (scopes.includes('game_map')) {
             await useMapStore().loadMap();
           } else if (scopes.includes('enemies')) {
             await refreshMapEnemies(generation);

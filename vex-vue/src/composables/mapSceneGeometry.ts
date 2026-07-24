@@ -38,7 +38,14 @@ export function createMapSceneGeometry(
     const grid = gridRef.value;
     if (!grid || !sameRegion(toValue(currentRegion), tile.pgroup)) return null;
 
-    const cell = grid.querySelector<HTMLElement>(`[data-pls="${tile.pls}"]`);
+    // K-12-B：仅查询网格 cell，排除实体元素（玩家头像/敌人等也带 data-pls）。
+    // 否则当目标格在视野网格外（cell 未渲染）时，querySelector 会错误匹配
+    // 玩家头像元素（applyStep 更新 curLoc 后头像 data-pls 变为目标 pls），
+    // 返回头像的 offsetLeft/offsetTop（CSS 定位 0,0 + GSAP transform 不影响），
+    // 导致 anchor 永远是网格左上角 (cellWidth/2, cellHeight)，跳跃落点全部错误。
+    const cell = grid.querySelector<HTMLElement>(
+      `[data-pls="${tile.pls}"]:not(.entity)`,
+    );
     if (!cell) return null;
 
     let offsetX = 0;

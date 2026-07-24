@@ -34,7 +34,7 @@
 //   - 打开 atlas 不推进游戏刻（B5.1）：本 store 不调用 explore.moveTo
 //   - 提交目标后立即清除预览路线，不残留（B5.16）
 //   - 历史路线与当前目标路线视觉区分（B5.17）
-//   - 完整地图是只读视图 + 玩家点击触发导航命令，本身不需要原子写入语义
+//   - 完整地图浏览与图格选择只改视图状态；详情区确认后才触发导航命令
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
@@ -51,6 +51,7 @@ export type AtlasFocusKind = 'player' | 'target' | 'fit';
 export interface PreviewRoute {
   from: { x: number; y: number };
   to: { x: number; y: number };
+  points: Array<{ x: number; y: number }>;
   /** true = 已知精确路线（实线）；false = 迷雾方向路线（虚线，B5.13） */
   known: boolean;
 }
@@ -127,23 +128,46 @@ export const useAtlasStore = defineStore('atlas', () => {
   const target = computed(() => explore.target);
   const hasTarget = computed(() => explore.target.kind !== 'none');
 
-  // ── 预览路线：从玩家到选中图格（B5.13/B5.14） ──
+  // ── 预览路线：悬浮图格优先，移出后回退到选中图格（B5.13/B5.14） ──
   // known = 已知精确路线（实线）；!known = 迷雾方向路线（虚线）
-  // 用 findPath 计算真实路径：可达且非迷雾 → known；否则 → 迷雾方向
+  // 用 findPath 计算真实路径；整条路径均已揭示时才显示精确折线，避免泄露迷雾信息。
   const previewRoute = computed<PreviewRoute | null>(() => {
-    const sel = selectedTile.value;
-    if (!sel || sel.current || !sel.pls) return null;
+    const candidate = hoverTile.value || selectedTile.value;
+    if (!candidate || candidate.current || !candidate.pls) return null;
     const curPls = mapStore.curLoc;
-    let known = false;
-    if (curPls !== null && sel.state !== 'fogged') {
-      // findPath 返回 pls 数组（BFS 最短路径）；可达且路径存在 → 已知精确路线
-      const path = findPath(curPls, sel.pls);
-      known = !!path && path.length > 0;
+    const fallbackPoints = [
+      { x: playerX.value, y: playerY.value },
+      { x: candidate.x, y: candidate.y },
+    ];
+    if (curPls !== null && candidate.state !== 'fogged') {
+      const path = findPath(curPls, candidate.pls);
+      if (path && path.length > 0) {
+        const pathTiles = path.map((pls) => {
+          const key = String(pls);
+          for (const row of tiles.value) {
+            const tile = row.find((item) => item.pls === key);
+            if (tile) return tile;
+          }
+          return null;
+        });
+        const pathIsKnown = pathTiles.every(
+          (tile) => tile !== null && tile.state !== 'fogged' && tile.state !== 'non_existent',
+        );
+        if (pathIsKnown) {
+          return {
+            from: fallbackPoints[0],
+            to: fallbackPoints[1],
+            points: pathTiles.map((tile) => ({ x: tile!.x, y: tile!.y })),
+            known: true,
+          };
+        }
+      }
     }
     return {
-      from: { x: playerX.value, y: playerY.value },
-      to: { x: sel.x, y: sel.y },
-      known,
+      from: fallbackPoints[0],
+      to: fallbackPoints[1],
+      points: fallbackPoints,
+      known: false,
     };
   });
 
@@ -228,8 +252,11 @@ export const useAtlasStore = defineStore('atlas', () => {
   // 将选中图格同步到 explore.target（正式签名 setTarget(pls, name)），
   // 将预览路线推入 historyRoutes（模拟导航完成，B5.17；3.4 移动导演完成后可重新推入实际路线），
   // 清除选中（同时清除预览路线，B5.16），关闭 atlas 回到 explore，
-  // 立即触发移动导演开始自动导航（F-K3-Atlas：点击目标后切回主页面并开始自动移动）
+  // 详情区确认目标后，切回主页面并开始自动移动。
   function commitTarget(t: AtlasTile): void {
+    // K-Q5-D Q5-18：演出期间拒绝提交目标（inputLocked 统一包含探索锁与导航锁）
+    // 兜底在 startNavigation 内也有 isPlaying 检查，此处作为主要门控提前阻断
+    if (explore.inputLocked) return;
     if (t.current || !t.pls) return;
     const name = t.name || `位置${t.pls}`;
     // 同步到 explore.target（atlas-projection 共享底层认知状态，pls 与 K-6 一致）

@@ -175,6 +175,22 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
     return map;
   });
 
+  // ── 区域级发现索引（K-Q5-C Q5-9：POI/道具显示） ──
+  // 从 links.region_discoveries[curRegion][pls] 派生稀疏 pls → {poi_name, item_name}
+  // 后端 obl_state_handle_game_map 一次性查询 discovered=1 的 POI 与 discovered>0 的道具
+  // 供 tiles computed 在已揭示/已探索格上填充 poi/item 字段（§7.5 显示已发现的 POI 和道具）
+  const discoveriesByPls = computed<Record<string, { poi_name?: string; item_name?: string }>>(() => {
+    if (!mapStore.links || mapStore.curRegion === null) return {};
+    const regionDiscoveries = (mapStore.links as unknown as {
+      region_discoveries?: Record<string, Record<string, { poi_name?: string; item_name?: string }>>;
+    }).region_discoveries;
+    if (!regionDiscoveries) return {};
+    const regionMap = regionDiscoveries[String(mapStore.curRegion)];
+    if (!regionMap) return {};
+    // 归一化 pls 为字符串键（后端返回的 pls 为数字 key，JS 对象 key 自动转字符串）
+    return regionMap;
+  });
+
   // ── 完整区域图格矩阵（AtlasTile[][]，y 行 x 列） ──
   // 从 links.tiles[curRegion] + fog + enemies + exploredTiles 派生
   // 缺失的格子（coordIndex 无对应 tile）渲染为迷雾空格
@@ -188,6 +204,7 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
     const fogData = mapStore.links?.fog as FogProjection;
     const idx = coordIndex.value;
     const enemies = enemiesByPls.value;
+    const discoveries = discoveriesByPls.value;
     const grid: AtlasTile[][] = [];
 
     for (let r = 0; r < rows; r++) {
@@ -233,7 +250,15 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
           // discovered=1 的敌人在非迷雾格显示（B5.24）
           const enemy = enemies[pls];
           if (enemy) atlasTile.enemy = enemy;
-          // POI/Item 占位：区域级数据源待后端提供（3.3 阶段留空）
+          // K-Q5-C Q5-9：POI/Item 区域级数据源填充（§7.5 显示已发现的 POI 和普通地面道具）
+          // 后端 obl_state_handle_game_map 一次性查询 discovered=1 的 POI 与 discovered>0 的道具，
+          // 通过 links.region_discoveries[curRegion][pls] 下发稀疏 pls → {poi_name, item_name}
+          // 已揭示/已探索格均显示（迷雾格已在 state !== 'fogged' 之外过滤）
+          const discovery = discoveries[pls];
+          if (discovery) {
+            if (discovery.poi_name) atlasTile.poi = { name: discovery.poi_name };
+            if (discovery.item_name) atlasTile.item = { name: discovery.item_name };
+          }
         }
 
         row.push(atlasTile);
@@ -256,5 +281,6 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
     tiles,
     // 索引
     enemiesByPls,
+    discoveriesByPls,
   };
 });

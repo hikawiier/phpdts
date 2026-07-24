@@ -31,6 +31,7 @@ import { useMapStore } from '@/stores/map';
 import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
+import { useDiscoveryStore } from '@/stores/discovery-store';
 import type { TileActions, Poi, GroundItem } from '@/types/api';
 import type { CommandResult } from '@/api/client';
 import { getPoiName } from '@/data/poi-locale';
@@ -152,8 +153,11 @@ export const useTileActionStore = defineStore('tileAction', () => {
           msg: '扫描完成，未发现新内容',
           duration: 1800,
         });
+      } else if (outcome === 'normal') {
+        // §6.2 + §7.8 + §13.2.4：正常探索有发现，按 info_result 分类派发反馈层
+        // 复用移动导演 applyStep 内同一套 dispatchAttention 接口，避免探索路径新建第二套反馈链路
+        dispatchExploreDiscoveries(result.gamedata?.info_result);
       }
-      // normal：正常探索有发现，依赖后端 presentation 事件驱动发现模态框，不额外 toast
       dataManager.invalidate('tile_actions');
       dataManager.invalidate('player_inventory');
       dataManager.invalidate('game_map');
@@ -165,6 +169,50 @@ export const useTileActionStore = defineStore('tileAction', () => {
         error: e instanceof Error ? e.message : String(e),
       });
       dataManager.broadcast('ui:toast', { type: 'error', msg: '探索失败：' + (e instanceof Error ? e.message : String(e)) });
+    }
+  }
+
+  /**
+   * 派发探索发现给 3.5 反馈层（设计案 §6.2 / §7.8 / §4.12）。
+   *
+   * 后端 info_result 携带三类发现：
+   *   - enemies_discovered：[{pid, name, pls}] → important 级别，弹合并模态
+   *   - pois_discovered：[{iaid, pls, poi_id}] → important 级别，弹合并模态
+   *   - items_discovered：[{iid, pls, distance_tier}] → item 级别，Toast
+   *
+   * 复用 discovery-store 的 dispatchAttention 接口（与移动导演 applyStep 同一入口），
+   * 避免为探索路径新建第二套反馈链路。探索是单次行动，不注册 playbackController，
+   * discovery-store 在 important 级别调用 _playbackController?.pausePlayback() 时为安全空操作。
+   */
+  function dispatchExploreDiscoveries(infoResult: unknown): void {
+    if (!infoResult || typeof infoResult !== 'object') return;
+    const r = infoResult as {
+      enemies_discovered?: Array<{ pid: number; name: string; pls: number }>;
+      pois_discovered?: Array<{ iaid: number; pls: number; poi_id: string }>;
+      items_discovered?: Array<{ iid: number; pls: number; distance_tier: number }>;
+    };
+    const enemies = r.enemies_discovered || [];
+    const pois = r.pois_discovered || [];
+    const items = r.items_discovered || [];
+
+    const discovery = useDiscoveryStore();
+
+    // 重要发现（敌人/POI）→ 弹合并模态（§7.8 不变量 6/9/10）
+    const important: Array<{ kind: string; name: string; pls: number; pid?: number }> = [];
+    for (const e of enemies) {
+      important.push({ kind: 'enemy', name: e.name || '敌人', pls: e.pls, pid: e.pid });
+    }
+    for (const p of pois) {
+      important.push({ kind: 'poi', name: getPoiName(p.poi_id, ''), pls: p.pls });
+    }
+    if (important.length > 0) {
+      discovery.dispatchAttention('important', { moves: [], discoveries: important });
+    }
+
+    // 普通道具 → Toast（§7.8 不变量 8）
+    if (items.length > 0) {
+      const itemDiscoveries = items.map((i) => ({ kind: 'item', name: '道具', pls: i.pls }));
+      discovery.dispatchAttention('item', { moves: [], discoveries: itemDiscoveries });
     }
   }
 

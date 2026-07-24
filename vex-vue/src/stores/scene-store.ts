@@ -31,6 +31,7 @@
 
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import { useExploreStore } from '@/stores/explore-store';
 
 export type SceneId = 'explore' | 'atlas' | 'battle';
 
@@ -53,10 +54,17 @@ export const useSceneStore = defineStore('scene', () => {
 
   /**
    * 打开完整地图（从探索场景进入）
-   * 守门：战斗场景下直接 return（完整地图入口在战斗场景隐藏）
+   * 守门：
+   *   - 战斗场景下直接 return（完整地图入口在战斗场景隐藏）
+   *   - 导航演出期间直接 return（K-Q5-D Q5-18：导航期间冻结完整地图入口，
+   *     避免玩家在演出中打开地图、点击图格、无反应的 UX 问题）
    */
   function openAtlas(): void {
     if (current.value === 'battle') return;
+    // K-Q5-D Q5-18：导航演出期间拒绝打开完整地图
+    // 延迟引用 explore-store 避免 store 初始化循环（explore → move-director → scene）
+    const explore = useExploreStore();
+    if (explore.navigationPlaying) return;
     current.value = 'atlas';
   }
 

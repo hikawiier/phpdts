@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * @module K 状态管理层
+ * @framework K-11 三场景所有权
  */
 
 // ══════════════════════════════════════════════════
@@ -10,7 +11,7 @@
 //
 // 三段式结构（对齐 F-K1-Scenes §三不变量）：
 //   #app (h-screen flex flex-col)
-//     ├── StatusBar（单一顶栏所有者，按场景切换内容，不在各场景内部重复）
+//     ├── StatusBar（单一顶栏所有者；完整地图覆盖时保持探索顶栏不变）
 //     └── main (flex-1 flex min-h-0 overflow-hidden relative)
 //         ├── Transition scene-fade mode=out-in → 探索/战斗中央工作区互斥（B5.34）
 //         │   （3.2 实现 ExploreScene 内部，3.4 实现 BattleScene；本子任务先用 LeftPanel+RightPanel 占位）
@@ -172,10 +173,16 @@ onUnmounted(() => {
         </Transition>
 
         <!-- AtlasScene 模态覆盖（absolute inset-0，从上方淡入，B5.33）
-             下方探索场景冻结但可见；AtlasScene 占满 atlas-overlay 内部 -->
+             下方探索场景冻结但可见；点击模态外遮罩可关闭 -->
         <Transition name="atlas-fade">
-          <div v-if="sceneStore.isAtlas" class="atlas-overlay">
-            <AtlasScene />
+          <div
+            v-if="sceneStore.isAtlas"
+            class="atlas-overlay"
+            @click.self="sceneStore.closeAtlas"
+          >
+            <div class="atlas-modal" @click.stop>
+              <AtlasScene />
+            </div>
           </div>
         </Transition>
       </main>
@@ -207,29 +214,58 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* 完整地图：从上方淡入（B5.33），灰阶，无彩色
-   从顶栏降下的空间语义，translateY -14px→0
-   atlas-overlay 是模态容器，AtlasScene 占满其内部（h-full） */
+/* 完整地图：居中大模态，桌面约占可用画幅九成。 */
 .atlas-overlay {
   position: absolute;
   inset: 0;
   z-index: 20;
-  background: #0a0a0a;
-  border-top: 1px solid rgba(68, 68, 68, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(10px, 2vh, 20px) clamp(12px, 2vw, 28px);
+  background: rgba(0, 0, 0, 0.72);
   overflow: hidden;
 }
+.atlas-modal {
+  width: min(92vw, 1380px);
+  height: 90%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0a0a0a;
+  border: 1px solid rgba(112, 112, 112, 0.56);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.58);
+}
 .atlas-fade-enter-active {
-  transition: opacity 0.22s ease, transform 0.22s ease;
+  transition: opacity 0.22s ease;
 }
 .atlas-fade-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity 0.18s ease;
 }
 .atlas-fade-enter-from {
   opacity: 0;
-  transform: translateY(-14px);
 }
 .atlas-fade-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+}
+.atlas-fade-enter-active .atlas-modal,
+.atlas-fade-leave-active .atlas-modal {
+  transition: transform 0.22s ease;
+}
+.atlas-fade-enter-from .atlas-modal {
+  transform: translateY(-10px);
+}
+.atlas-fade-leave-to .atlas-modal {
+  transform: translateY(-6px);
+}
+
+@media (max-width: 900px) {
+  .atlas-overlay {
+    padding: 6px;
+  }
+  .atlas-modal {
+    width: 94%;
+    height: 92%;
+  }
 }
 </style>

@@ -7,6 +7,7 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import { useToastStore } from '@/stores/toast';
 import { validateBattleTemplates } from '@/data/battle-templates';
+import { task3Debug } from '@/utils/task3-debug';
 import './assets/styles/input.css';
 import './assets/styles/terminal.css';
 import './assets/styles/battle.css';
@@ -19,6 +20,13 @@ app.use(pinia);
 // 校验 BATTLE_TEMPLATES 字典对后端已知枚举值的覆盖度（§3.3 跨层契约可校验）
 if (import.meta.env.DEV) {
   validateBattleTemplates();
+  // Task3 调试桩：挂载全局对象供浏览器侧调用
+  // window.__TASK3_DEBUG.events() / clear() / summary() / download() / tail() / filter() / since()
+  window.__TASK3_DEBUG = task3Debug;
+  console.log(
+    '%c[TASK3_DEBUG] global ready: window.__TASK3_DEBUG.events() / summary() / download()',
+    'font-weight:bold;background:#334155;color:#e2e8f0;padding:2px 4px;border-radius:3px;',
+  );
 }
 
 // ── 全局错误处理 ──

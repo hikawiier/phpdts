@@ -14,12 +14,14 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
             obl_move($payload['to'], $pdata);
             break;
         case 'map.explore':
-            // 设计案 §5.3：obl_explore 返回结构化结果，handler 提取 explore_outcome 注入响应
+            // 设计案 §5.3 + §6.2 + §7.8：obl_explore 返回结构化结果，handler 透传 explore_outcome + info_result
+            // info_result 携带 enemies_discovered/pois_discovered/items_discovered，供前端 dispatchAttention 派发反馈层
             $result = obl_explore($pdata);
             return array(
                 'ok'   => true,
                 'data' => array(
                     'explore_outcome' => isset($result['explore_outcome']) ? $result['explore_outcome'] : 'normal',
+                    'info_result'     => isset($result['info_result']) ? $result['info_result'] : null,
                 ),
             );
         case 'map.navigate':

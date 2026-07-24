@@ -173,12 +173,14 @@ function obl_tick_orchestrator_advance_for_navigation_step(&$pdata, $step) {
         $pdata['sp'] = $fresh['sp'];
         // 注意：不同步 pls（pls 由 handler 的 perform_move_core 控制，监听器不应修改玩家位置）
         // 注意：不同步背包/装备（监听器不应修改这些）
+        // B-Q5-A Q5-11：监听器契约强约束——监听器不得修改 pls/pgroup（DESIGN.md §9.2）
         $old_pls = (int)$pdata['pls'];
         $old_pgroup = (int)$pdata['pgroup'];
         $new_pls = (int)$fresh['pls'];
         $new_pgroup = (int)$fresh['pgroup'];
         if ($old_pls !== $new_pls || $old_pgroup !== $new_pgroup) {
-            error_log("[NAV_DEBUG] tick_drift_detected! old_pgroup=$old_pgroup old_pls=$old_pls new_pgroup=$new_pgroup new_pls=$new_pls action=" . ($fresh['action'] ?? 'null') . " bid=" . ($fresh['bid'] ?? 'null') . " — 监听器修改了玩家位置，但 handler 未同步！");
+            // CRITICAL 级别：监听器违反契约修改了玩家位置，运行时监控应捕获并告警
+            error_log("[CRITICAL][NAV_DEBUG] tick_drift_detected! old_pgroup=$old_pgroup old_pls=$old_pls new_pgroup=$new_pgroup new_pls=$new_pls action=" . ($fresh['action'] ?? 'null') . " bid=" . ($fresh['bid'] ?? 'null') . " — 监听器违反契约修改了玩家位置（B-Q5-A Q5-11，DESIGN.md §9.2），handler 未同步！");
         }
     }
 

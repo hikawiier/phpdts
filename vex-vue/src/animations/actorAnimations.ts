@@ -141,7 +141,10 @@ export function jumpActor(
   tl.to(elements.pose, { scaleY: 0.6, duration: 0.1, ease: 'power2.in' }, 0);
   tl.to(elements.pose, { scaleY: 1.2, duration: 0.15, ease: 'power2.out' }, 0.1);
   tl.to(elements.pose, { scaleY: 0.55, duration: 0.25, ease: 'sine.in' }, 0.25);
-  tl.to(elements.pose, { scaleY: 1, duration: 0.9, ease: 'elastic.out(1, 0.35)' }, 0.5);
+  // K-12-H：落地弹性从 0.9s 缩短到 0.4s，避免角色到达目标后弹性动画拖沓感
+  // 原 0.9s 导致 speed=1 时 64% 时长（900ms）是落地后的弹性振荡，用户感知为"卡顿"
+  // 0.4s 保留弹性效果，总时长从 1.4s 降至 0.9s，speed=4 时从 350ms 降至 225ms
+  tl.to(elements.pose, { scaleY: 1, duration: 0.4, ease: 'elastic.out(1, 0.35)' }, 0.5);
   return tl;
 }
 

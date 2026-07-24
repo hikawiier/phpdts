@@ -6,11 +6,11 @@
 // ══════════════════════════════════════════════════
 // MainActionBar — 主操作区（F-K2-Explore §5.4 / 设计案 §7.3）
 //
-// 始终显示四项（认知稳定性，§5.4）：
-//   1. 移动 —— 接入移动导演（3.4 实现，本子任务 UI 占位）
+// 始终提供四项（认知稳定性，§5.4），并按位置追加区域通行命令：
+//   1. 移动 —— 接入移动导演
 //   2. 探索 —— 标签稳定，演出期间改显"[扫描中…]"而非"等待"（§5.10/B2.5）
-//   3. 当前移动倾向 —— 四种切换（稳健/就近/深入/效率，§5.6）
-//   4. 当前临时目标或暂停目标状态 —— 三态显示 none/active/paused（§5.9）
+//   3. 区域通行 —— 仅站在区域入口/出口时显示
+//   4-5. 当前移动倾向与临时目标默认收纳为导航设置摘要，手动展开后显示
 //
 // 演出期间门控分层（§5.4 / B6.10）：
 //   - inputLocked 锁定移动/探索/目标（会改变游戏状态的操作）
@@ -18,8 +18,7 @@
 //
 // variant: 'desktop'（右侧面板底部）/ 'mobile'（手机横屏底部安全区，紧凑横排）
 //
-// 3.4 移动导演实现后：移动按钮触发 startNavigation；演出控制区接入播放进度
-// 本子任务：移动按钮只切换 moveMode 占位；演出控制区为骨架
+// 移动按钮触发 startNavigation；移动进度与播放控制由地图上的 K-12 叠层独占
 // ══════════════════════════════════════════════════
 
 import { computed, ref } from 'vue';
@@ -29,6 +28,9 @@ import {
   type MoveTendency,
 } from '@/stores/explore-store';
 import { useMoveDirectorStore } from '@/stores/move-director';
+import { useTileActionStore } from '@/stores/tileAction';
+import { useMapStore } from '@/stores/map';
+import { commandQueue } from '@/stores/command-queue';
 
 const props = withDefaults(defineProps<{
   variant?: 'desktop' | 'mobile';
@@ -38,7 +40,10 @@ const props = withDefaults(defineProps<{
 
 const explore = useExploreStore();
 const nav = useMoveDirectorStore();
+const tileActionStore = useTileActionStore();
+const mapStore = useMapStore();
 
+const settingsOpen = ref<boolean>(false);
 const tendencyOpen = ref<boolean>(false);
 
 const currentTendencyLabel = computed<string>(() => {
@@ -49,11 +54,55 @@ const currentTendencyLabel = computed<string>(() => {
 const targetLabel = computed<string>(() => {
   const t = explore.target;
   if (t.kind === 'none') return '无目标';
-  if (t.kind === 'paused') return `暂停：${t.name}`;
+  if (t.kind === 'paused') return `继续前往：${t.name}`;
   return t.name;
 });
 
 const targetState = computed<'none' | 'active' | 'paused'>(() => explore.target.kind);
+const navigationSettingsSummary = computed<string>(
+  () => `${currentTendencyLabel.value} · ${targetLabel.value}`,
+);
+const moveButtonTitle = computed<string>(() => {
+  const action = explore.navigationPlaying
+    ? '移动导演播放中，可在地图进度条中加速或跳过。'
+    : '按当前倾向自动选择目标并逐格移动。';
+  return `${action} 当前导航设置：${navigationSettingsSummary.value}。使用右侧窄按钮展开或收起导航设置。`;
+});
+
+const currentRegionInfo = computed(() => {
+  if (!mapStore.links || mapStore.curRegion === null) return null;
+  return (mapStore.links.regions as Record<string, {
+    name?: string;
+    exit_pls?: string | number;
+    entrance_pls?: string | number;
+    next_region?: string | number | null;
+    prev_region?: string | number | null;
+  }>)[String(mapStore.curRegion)] || null;
+});
+const switchRegionVisible = computed<boolean>(() => {
+  const region = currentRegionInfo.value;
+  if (!region) return false;
+  const isOnExit = String(mapStore.curLoc) === String(region.exit_pls);
+  const isOnEntrance =
+    String(mapStore.curLoc) === String(region.entrance_pls) &&
+    region.prev_region !== null && region.prev_region !== undefined;
+  return isOnExit || isOnEntrance;
+});
+const isOnRegionExit = computed<boolean>(() => {
+  const region = currentRegionInfo.value;
+  return !!region && String(mapStore.curLoc) === String(region.exit_pls);
+});
+const switchRegionText = computed<string>(() => (
+  isOnRegionExit.value ? '前往下一区域' : '返回上一区域'
+));
+const switchRegionSummary = computed<string>(() => {
+  const region = currentRegionInfo.value;
+  if (!region || !mapStore.links) return '区域通行';
+  const targetRegionId = isOnRegionExit.value ? region.next_region : region.prev_region;
+  if (targetRegionId === null || targetRegionId === undefined) return '区域通行';
+  const targetRegion = (mapStore.links.regions as Record<string, { name?: string }>)[String(targetRegionId)];
+  return targetRegion?.name ? `通往 ${targetRegion.name}` : '区域通行';
+});
 
 // ── 移动按钮：接入移动导演（3.4，委托 explore.startNavigation → move-director） ──
 function onMove(): void {
@@ -61,36 +110,15 @@ function onMove(): void {
   explore.startNavigation();
 }
 
-// ── 移动导演播放控制（B6.10：加速/跳过始终可用，不被 inputLocked 门控） ──
-const navStatusText = computed<string>(() => {
-  if (nav.isPlaying) {
-    const stepNo = Math.max(0, nav.currentStepIndex + 1);
-    return `移动中… ${stepNo}/${nav.totalSteps}`;
-  }
-  if (nav.outcome === 'arrived') return nav.interruptReason || '已抵达';
-  if (nav.outcome === 'failed') return nav.interruptReason || '导航失败';
-  if (nav.outcome === 'interrupted_enemy') return nav.interruptReason || '导航中断';
-  return '';
-});
-
-const speedOptions: Array<{ id: 1 | 2 | 4; label: string }> = [
-  { id: 1, label: '1x' },
-  { id: 2, label: '2x' },
-  { id: 4, label: '4x' },
-];
-
-function onPickSpeed(s: 1 | 2 | 4): void {
-  nav.setSpeed(s);
-}
-
-function onSkipNav(): void {
-  nav.skip();
-}
-
 // ── 探索按钮：标签稳定，不改名"等待"（B2.5） ──
 function onExplore(): void {
   if (explore.inputLocked) return;
   explore.explore();
+}
+
+function onSwitchRegion(): void {
+  if (explore.inputLocked || !commandQueue.canExecute('map.move')) return;
+  tileActionStore.handleSwitchRegion();
 }
 
 // ── 跳过主动探索演出（B6.10：始终可用，不被 inputLocked 门控） ──
@@ -103,22 +131,27 @@ function onToggleTendency(): void {
   tendencyOpen.value = !tendencyOpen.value;
 }
 
+function onToggleSettings(): void {
+  settingsOpen.value = !settingsOpen.value;
+  if (!settingsOpen.value) tendencyOpen.value = false;
+}
+
 function onPickTendency(id: MoveTendency): void {
   explore.setTendency(id);
   tendencyOpen.value = false;
 }
 
-// ── 目标三态循环（占位演示：none → active → paused → none） ──
-function onCycleTarget(): void {
+// ── 目标状态操作：目标只能由完整地图/发现入口创建 ──
+// active → paused；paused → active + 重新导航；none 为只读状态
+function onTargetAction(): void {
   if (explore.inputLocked) return;
   const t = explore.target;
-  if (t.kind === 'none') {
-    // 占位：设定玩家附近一个未探索格为目标（3.4 接完整目标选择）
-    explore.setTarget(explore.playerPls ?? 0, '占位目标');
-  } else if (t.kind === 'active') {
+  if (t.kind === 'none') return;
+  if (t.kind === 'active') {
     explore.pauseTarget();
   } else {
-    explore.clearTarget();
+    explore.resumeTarget();
+    nav.startNavigation(explore.tendency, Number(t.pls));
   }
 }
 
@@ -130,34 +163,72 @@ function onTendencyBlur(): void {
 
 <template>
   <div class="main-action-bar" :class="`variant-${props.variant}`">
-    <!-- 移动 → 接入移动导演（3.4，自动选目标 → 逐格移动演出） -->
-    <button
-      class="term-btn ma-btn"
-      :class="{ 'is-active': explore.moveMode, 'is-busy': explore.navigationPlaying }"
-      :disabled="explore.inputLocked"
-      :title="explore.navigationPlaying ? '移动导演播放中（可加速/跳过）' : '自动导航：按当前倾向选目标 → 逐格移动演出'"
-      @click="onMove"
-    >{{ explore.navigationPlaying ? '[移动中…]' : '[移动]' }}</button>
+    <div class="ma-move-cluster" :class="{ 'is-settings-open': settingsOpen }">
+      <button
+        class="term-btn ma-command ma-move"
+        :class="{ 'is-active': explore.moveMode, 'is-busy': explore.navigationPlaying }"
+        :disabled="explore.inputLocked"
+        :title="moveButtonTitle"
+        @click="onMove"
+      >
+        <span class="ma-command-index">01</span>
+        <span class="ma-command-copy">
+          <span class="ma-command-label">{{ explore.navigationPlaying ? '移动中' : '移动' }}</span>
+          <span class="ma-command-state">{{ navigationSettingsSummary }}</span>
+        </span>
+      </button>
+      <button
+        class="term-btn ma-settings-trigger"
+        :class="{ 'is-open': settingsOpen }"
+        :aria-expanded="settingsOpen"
+        aria-label="展开或收起导航设置"
+        @click="onToggleSettings"
+      >{{ settingsOpen ? '⌃' : '⌄' }}</button>
+    </div>
 
-    <!-- 探索（标签稳定，演出期间改显[扫描中…]而非等待，B2.5） -->
     <button
-      class="term-btn ma-btn"
+      class="term-btn ma-command ma-explore"
       :class="{ 'is-busy': explore.exploring }"
       :disabled="explore.inputLocked"
       title="扫描周围：强化信息获取，普通结果进日志，重要结果进合并模态框"
       @click="onExplore"
-    >{{ explore.exploring ? '[扫描中…]' : '[探索]' }}</button>
+    >
+      <span class="ma-command-index">02</span>
+      <span class="ma-command-copy">
+        <span class="ma-command-label">{{ explore.exploring ? '扫描中' : '探索' }}</span>
+        <span class="ma-command-state">当前区域</span>
+      </span>
+      <span class="ma-command-glyph">⌁</span>
+    </button>
 
-    <!-- 当前移动倾向 -->
-    <div class="ma-tendency">
+    <button
+      v-if="switchRegionVisible"
+      class="term-btn ma-command ma-region"
+      :disabled="explore.inputLocked || !commandQueue.canExecute('map.move')"
+      :title="switchRegionSummary"
+      @click="onSwitchRegion"
+    >
+      <span class="ma-command-index">03</span>
+      <span class="ma-command-copy">
+        <span class="ma-command-label">{{ switchRegionText }}</span>
+        <span class="ma-command-state">{{ switchRegionSummary }}</span>
+      </span>
+      <span class="ma-command-glyph">›</span>
+    </button>
+
+    <div v-if="settingsOpen" class="ma-tendency">
       <button
-        class="term-btn ma-btn"
+        class="term-btn ma-meta-control"
         :class="{ 'is-active': tendencyOpen }"
         :disabled="explore.inputLocked"
         title="切换移动倾向"
         @click="onToggleTendency"
         @blur="onTendencyBlur"
-      >[倾向] {{ currentTendencyLabel }}</button>
+      >
+        <span class="ma-meta-label">移动倾向</span>
+        <span class="ma-meta-value">{{ currentTendencyLabel }}</span>
+        <span class="ma-meta-glyph">⌄</span>
+      </button>
       <div v-if="tendencyOpen" class="ma-tendency-menu" @mousedown.prevent>
         <button
           v-for="opt in TENDENCY_OPTIONS"
@@ -170,43 +241,22 @@ function onTendencyBlur(): void {
       </div>
     </div>
 
-    <!-- 当前临时目标 / 暂停目标状态（三态） -->
     <button
-      class="term-btn ma-btn ma-target"
+      v-if="settingsOpen"
+      class="term-btn ma-meta-control ma-target"
       :class="`tgt-${targetState}`"
-      :disabled="explore.inputLocked"
-      :title="targetState === 'none' ? '设定临时目标' : targetState === 'paused' ? '继续目标' : '暂停/清除目标'"
-      @click="onCycleTarget"
+      :disabled="explore.inputLocked || targetState === 'none'"
+      :title="targetState === 'none' ? '尚未选择临时目标' : targetState === 'paused' ? '继续前往目标' : '暂停当前目标'"
+      @click="onTargetAction"
     >
-      <span class="ma-target-label">[目标]</span>
-      <span class="ma-target-value">{{ targetLabel }}</span>
+      <span class="ma-meta-label">临时目标</span>
+      <span class="ma-meta-value ma-target-value">{{ targetLabel }}</span>
+      <span class="ma-target-state" aria-hidden="true"></span>
     </button>
 
-    <!-- 演出期间：主动探索的跳过始终可用（§5.4 / B6.10） -->
     <div v-if="explore.exploring" class="ma-skip">
-      <button class="term-btn ma-skip-btn" @click="onSkipExplore">[跳过]</button>
-    </div>
-
-    <!-- 移动导演播放控制（3.4 实现，B6.10：加速/跳过始终可用，不被 inputLocked 门控） -->
-    <div v-if="explore.navigationPlaying" class="ma-playback">
-      <div class="ma-pb-status">
-        <span class="ma-pb-step">{{ navStatusText }}</span>
-      </div>
-      <div class="ma-pb-controls">
-        <button
-          v-for="opt in speedOptions"
-          :key="opt.id"
-          class="term-btn ma-pb-btn"
-          :class="{ 'is-active': nav.speed === opt.id }"
-          :title="`切换为 ${opt.label} 速度播放（B6.4）`"
-          @click="onPickSpeed(opt.id)"
-        >[{{ opt.label }}]</button>
-        <button
-          class="term-btn ma-pb-btn ma-pb-skip"
-          title="跳过全部剩余演出，立即同步到最终权威状态（B6.3）"
-          @click="onSkipNav"
-        >[跳过]</button>
-      </div>
+      <span>扫描演出</span>
+      <button class="term-btn ma-skip-btn" @click="onSkipExplore">跳过  »</button>
     </div>
   </div>
 </template>
@@ -214,36 +264,102 @@ function onTendencyBlur(): void {
 <style scoped>
 .main-action-bar {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
   position: relative;
 }
 .main-action-bar.variant-mobile {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 3px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
 }
-.ma-btn {
-  padding: 5px 8px;
+.ma-move-cluster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  min-width: 0;
+}
+.ma-move-cluster .ma-command {
+  min-width: 0;
+  height: 100%;
+}
+.ma-move-cluster .ma-move {
+  border-right: 0;
+}
+.ma-settings-trigger {
+  width: 24px;
+  min-width: 24px;
+  height: 100%;
+  padding: 0;
+  border-color: #858585;
+  color: #777;
   font-size: 11px;
-  letter-spacing: 0.08em;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.ma-settings-trigger:hover,
+.ma-settings-trigger.is-open {
+  color: #fff;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.075);
+}
+.ma-command {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 6px 9px;
   width: 100%;
-  text-align: center;
+  text-align: left;
+  border-color: #858585;
+  background: rgba(255, 255, 255, 0.028);
+  letter-spacing: 0;
 }
-.variant-mobile .ma-btn {
-  padding: 4px 4px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
+.ma-command:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.085);
 }
-.ma-btn.is-active {
+.ma-command-index {
+  color: #555;
+  font-size: 9px;
+  align-self: start;
+  padding-top: 2px;
+}
+.ma-command-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.ma-command-label {
+  color: #f2f2f2;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.ma-command-state {
+  color: #696969;
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ma-command-glyph {
+  color: #8b8b8b;
+  font-size: 14px;
+  justify-self: end;
+}
+.ma-command.is-active {
   border-color: #fff;
   color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.075);
 }
-.ma-btn.is-busy {
+.ma-command.is-busy {
   border-color: #fff;
   color: #fff;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.065);
   animation: ma-pulse 1s ease-in-out infinite;
+}
+.ma-region {
+  grid-column: 1 / -1;
 }
 @keyframes ma-pulse {
   0%, 100% { opacity: 1; }
@@ -251,25 +367,63 @@ function onTendencyBlur(): void {
 }
 .ma-tendency {
   position: relative;
+  min-width: 0;
+}
+.ma-meta-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 8px;
+  text-align: left;
+  border-color: rgba(82, 82, 82, 0.62);
+  background: transparent;
+  letter-spacing: 0;
+}
+.ma-meta-label {
+  color: #555;
+  font-size: 8px;
+  line-height: 1.1;
+}
+.ma-meta-value {
+  grid-column: 1;
+  color: #b8b8b8;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ma-meta-glyph,
+.ma-target-state {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: #6c6c6c;
+}
+.ma-target-state {
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
 }
 .ma-tendency-menu {
-  position: absolute;
-  bottom: calc(100% + 2px);
-  left: 0;
-  right: 0;
+  position: static;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 3px;
+  gap: 3px;
+  padding: 4px;
+  margin-top: 4px;
   background: #0a0a0a;
-  border: 1px solid rgba(68, 68, 68, 0.5);
-  z-index: 5;
+  border: 1px solid rgba(110, 110, 110, 0.68);
 }
 .ma-tendency-item {
-  padding: 4px 6px;
+  padding: 5px 7px;
   font-size: 10px;
   text-align: left;
   border-color: rgba(68, 68, 68, 0.5);
+  letter-spacing: 0;
 }
 .ma-tendency-item.is-selected {
   border-color: #fff;
@@ -277,36 +431,20 @@ function onTendencyBlur(): void {
   background: rgba(255, 255, 255, 0.08);
 }
 .ma-target {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  flex-direction: column;
-  min-height: 32px;
-}
-.variant-mobile .ma-target {
-  flex-direction: row;
-  min-height: auto;
-}
-.ma-target-label {
-  color: #555;
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  min-width: 0;
 }
 .ma-target-value {
-  color: #ddd;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  color: #969696;
 }
 .ma-target.tgt-active {
-  border-color: #fff;
+  border-color: #a8a8a8;
 }
 .ma-target.tgt-active .ma-target-value {
   color: #fff;
+}
+.ma-target.tgt-active .ma-target-state {
+  color: #ddd;
+  background: #ddd;
 }
 .ma-target.tgt-paused {
   border-style: dashed;
@@ -315,65 +453,57 @@ function onTendencyBlur(): void {
 .ma-target.tgt-paused .ma-target-value {
   color: #aaa;
 }
+.ma-target.tgt-paused .ma-target-state {
+  color: #aaa;
+}
 .ma-skip {
   grid-column: 1 / -1;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 3px 4px 3px 8px;
+  border: 1px dashed rgba(104, 104, 104, 0.5);
+  color: #777;
+  font-size: 9px;
 }
 .ma-skip-btn {
-  padding: 2px 8px;
+  padding: 2px 7px;
   font-size: 9px;
   border-color: #666;
+  letter-spacing: 0;
 }
 
-/* ═══ 移动导演播放控制（3.4 实现，B6.10） ═══ */
-.ma-playback {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 4px 5px;
-  border: 1px solid rgba(136, 136, 136, 0.4);
-  background: rgba(255, 255, 255, 0.03);
+.variant-mobile .ma-command,
+.variant-mobile .ma-meta-control {
+  min-height: 34px;
+  padding: 4px 6px;
 }
-.ma-pb-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.variant-mobile .ma-command {
+  grid-template-columns: 16px minmax(0, 1fr) 10px;
+  gap: 4px;
+}
+.variant-mobile .ma-command-label {
   font-size: 10px;
-  color: #bbb;
-  letter-spacing: 0.04em;
 }
-.ma-pb-step {
-  color: #fff;
+.variant-mobile .ma-command-state,
+.variant-mobile .ma-meta-label {
+  display: none;
 }
-.ma-pb-controls {
+.variant-mobile .ma-meta-control {
   display: flex;
   align-items: center;
-  gap: 3px;
-  flex-wrap: wrap;
+  gap: 5px;
 }
-.ma-pb-btn {
-  padding: 2px 6px;
+.variant-mobile .ma-meta-value {
+  flex: 1 1 auto;
   font-size: 9px;
-  border-color: rgba(68, 68, 68, 0.5);
-  color: #888;
-  cursor: pointer;
-  line-height: 1.4;
 }
-.ma-pb-btn.is-active {
-  border-color: #fff;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+.variant-mobile .ma-meta-glyph,
+.variant-mobile .ma-target-state {
+  flex: 0 0 auto;
 }
-.ma-pb-skip {
-  border-color: rgba(136, 136, 136, 0.6);
-  color: #ddd;
-  margin-left: 2px;
-}
-.ma-pb-skip:hover {
-  border-color: #fff;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+.variant-mobile .ma-skip {
+  grid-column: 1 / -1;
 }
 </style>

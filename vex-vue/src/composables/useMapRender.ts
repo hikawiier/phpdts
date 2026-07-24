@@ -30,6 +30,7 @@ import { useCharacterStore } from '@/stores/character';
 import { isFalsy } from '@/utils/format';
 import { isReachable } from '@/composables/useMapReachability';
 import { createZoomState, ZOOM_STEP } from '@/composables/useMapZoom';
+import { task3Debug } from '@/utils/task3-debug';
 import type { TileInfo } from '@/types/api';
 import type { Character } from '@/types/character';
 import { isTileRevealed, type FogProjection } from '@/utils/map-visibility';
@@ -160,16 +161,46 @@ const visionBounds = computed(() => {
     | undefined;
   if (!tiles) return defaultBounds;
 
-  const playerTile = tiles[String(mapStore.curLoc)];
+  // 视觉中心：移动导演逐格播放期间冻结在起点，防止网格跟随 curLoc 即时重居中
+  // 导致玩家格始终位于网格中心 → from/anchor 相同 → playWorldMove 跳过动画（K-12）
+  const centerPls = mapStore.visualCenter ?? mapStore.curLoc;
+  const playerTile = tiles[String(centerPls)];
   if (!playerTile || playerTile.x === undefined || playerTile.y === undefined) return defaultBounds;
 
   const px = playerTile.x;
   const py = playerTile.y;
   // 半径 = VISION_RADIUS + 1（余量覆盖 BFS 对角线邻居）
-  const minC = Math.max(0, px - VISION_RADIUS - 1);
-  const maxC = px + VISION_RADIUS + 1;
-  const minR = Math.max(0, py - VISION_RADIUS - 1);
-  const maxR = py + VISION_RADIUS + 1;
+  let minC = Math.max(0, px - VISION_RADIUS - 1);
+  let maxC = px + VISION_RADIUS + 1;
+  let minR = Math.max(0, py - VISION_RADIUS - 1);
+  let maxR = py + VISION_RADIUS + 1;
+
+  // K-12-E：跳跃目标扩展——jump tier 目标格常在 5x5 视野外，
+  // 扩展 bounds 为包含起点和目标的包围盒，让目标格进入渲染范围
+  let jumpTargetXY: { x: number; y: number } | null = null;
+  const jumpTarget = mapStore.jumpTargetPls;
+  if (jumpTarget !== null) {
+    const targetTile = tiles[String(jumpTarget)];
+    if (targetTile && targetTile.x !== undefined && targetTile.y !== undefined) {
+      jumpTargetXY = { x: targetTile.x, y: targetTile.y };
+      minC = Math.min(minC, Math.max(0, jumpTargetXY.x - VISION_RADIUS - 1));
+      maxC = Math.max(maxC, jumpTargetXY.x + VISION_RADIUS + 1);
+      minR = Math.min(minR, Math.max(0, jumpTargetXY.y - VISION_RADIUS - 1));
+      maxR = Math.max(maxR, jumpTargetXY.y + VISION_RADIUS + 1);
+    }
+  }
+
+  task3Debug.log('map-render.visionBounds.recomputed', {
+    centerPls,
+    centerSource: mapStore.visualCenter !== null ? 'visualCenter' : 'curLoc',
+    curLoc: mapStore.curLoc,
+    visualCenter: mapStore.visualCenter,
+    jumpTargetPls: jumpTarget,
+    jumpTargetXY,
+    projectionRevision: mapStore.projectionRevision,
+    bounds: { minR, maxR, minC, maxC, cols: maxC - minC + 1, rows: maxR - minR + 1 },
+    playerTileXY: { x: px, y: py },
+  });
 
   return {
     minR,

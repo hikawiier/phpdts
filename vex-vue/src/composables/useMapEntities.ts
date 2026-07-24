@@ -14,7 +14,9 @@ import { useMapStore } from '@/stores/map';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
-import type { ActorElements, AnimationHandle, MoveTier, PresentationLease } from '@/types/actor-runtime';
+import { emitMoveAnimationCompletion } from '@/composables/moveAnimationChannel';
+import { task3Debug } from '@/utils/task3-debug';
+import type { ActorElements, AnimationHandle, AnimationResult, MoveTier, PresentationLease } from '@/types/actor-runtime';
 import type { MapEntity } from '@/types/map-entity';
 import type { PresentationRebaseMoveRegistration } from '@/types/presentation-scene';
 import type { SceneAnchor, TileRef } from '@/types/scene';
@@ -144,20 +146,9 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     const runtime = getActorById(entity.id);
     const anchor = resolveAnchor(entity);
     if (runtime && anchor) runtime.projectAnchor(anchor);
-    const from = runtime?.getScenePoint();
-    console.log('[P4_DBG] syncEntityPosition ' + JSON.stringify({
-      id: entity.id, pls: entity.pls,
-      hasRuntime: !!runtime, hasAnchor: !!anchor,
-      anchorX: anchor?.point.x, anchorY: anchor?.point.y,
-      fromX: from?.x, fromY: from?.y,
-    }));
   }
 
   function syncAllPositions(): void {
-    console.log('[P4_DBG] syncAllPositions entry', {
-      entityCount: presentationScene.snapshot.entities.length,
-      phase: presentationScene.phase,
-    });
     for (const entity of presentationScene.snapshot.entities) {
       if (presentationScene.phase === 'rebasing'
         && presentationScene.shouldAnimateRebaseActor(entity.id)) continue;
@@ -166,51 +157,98 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
   }
 
   async function playWorldMove(entity: MapEntity, lease: PresentationLease): Promise<void> {
-    console.log('[P4_DBG] playWorldMove entry', { id: entity.id, pls: entity.pls });
+    task3Debug.log('map-entities.playWorldMove.entry', {
+      entityId: entity.id,
+      pls: Number(entity.pls),
+      pgroup: Number(entity.pgroup),
+      t: Math.round(performance.now() * 10) / 10,
+    });
     await nextTick();
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     if (lease.released || worldMoves.get(entity.id) !== lease) {
-      console.log('[P4_DBG] playWorldMove early-exit lease-stale', {
-        id: entity.id, leaseReleased: lease.released,
-        worldMovesMatch: worldMoves.get(entity.id) === lease,
+      task3Debug.log('map-entities.playWorldMove.early-exit', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'lease preempted before rAF',
+        leaseReleased: lease.released,
+        isCurrentLease: worldMoves.get(entity.id) === lease,
       });
+      // 早退路径1：租约在 rAF 前被新租约抢占释放。
+      // 不发完成信号——新 playWorldMove 会负责发信号，旧信号若发出会被 moveDirector 按 targetPls 过滤。
       return;
     }
     const runtime = getActorById(entity.id);
     const anchor = resolveAnchor(entity);
     const from = runtime?.getScenePoint();
-    console.log('[P4_DBG] playWorldMove pre-play ' + JSON.stringify({
-      id: entity.id,
-      hasRuntime: !!runtime, hasAnchor: !!anchor, hasFrom: !!from,
-      fromX: from?.x, fromY: from?.y,
-      anchorX: anchor?.point.x, anchorY: anchor?.point.y,
-      isScenePointAtAnchor: from && anchor ? isScenePointAtAnchor(from, anchor) : null,
-    }));
     if (!runtime || !anchor || !from) {
+      task3Debug.log('map-entities.playWorldMove.early-exit', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'runtime/anchor/from missing',
+        runtimeExists: !!runtime,
+        anchorExists: !!anchor,
+        fromExists: !!from,
+      });
       lease.release({ reconcile: true });
       worldMoves.delete(entity.id);
+      // 早退路径2：runtime/anchor 缺失（DOM 未挂载等异常）。
+      // 不发完成信号——让 moveDirector 走超时兜底，避免错误推进。
       return;
     }
     if (isScenePointAtAnchor(from, anchor)) {
-      console.log('[P4_DBG] playWorldMove skip-at-anchor', { id: entity.id });
+      task3Debug.log('map-entities.playWorldMove.early-exit', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'already at anchor (no animation needed)',
+        anchorPoint: anchor.point,
+        fromPoint: from,
+      });
       runtime.projectAnchor(anchor);
       lease.release({ reconcile: true });
       if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+      // 早退路径3：已在目标锚点（无需动画）。
+      // M-1-A：发完成信号，moveDirector 立即推进，不等 1s 超时兜底。
+      emitMoveAnimationCompletion({
+        actorId: entity.id,
+        targetPls: Number(entity.pls),
+        completed: true,
+      });
       return;
     }
     runtime.projectAnchor(anchor);
     const tier = calcMoveTier(from.x, from.y, anchor);
-    console.log('[P4_DBG] playWorldMove dispatching move', { id: entity.id, tier });
+    task3Debug.log('map-entities.playWorldMove.dispatch', {
+      entityId: entity.id,
+      pls: Number(entity.pls),
+      tier,
+      fromPoint: from,
+      anchorPoint: anchor.point,
+      anchorCellWidth: anchor.cellWidth,
+      anchorCellHeight: anchor.cellHeight,
+      t: Math.round(performance.now() * 10) / 10,
+    });
     const visibilityHandle = tier === 'long'
       ? null
       : lease.play({ kind: 'reset-visible' });
     const handle = lease.play({ kind: 'move', target: anchor, tier });
-    await Promise.all([
-      handle.finished,
-      visibilityHandle?.finished ?? Promise.resolve(),
-    ]);
+    const moveResult: AnimationResult = await handle.finished;
+    await visibilityHandle?.finished ?? undefined;
     lease.release({ reconcile: true });
     if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
+    task3Debug.log('map-entities.playWorldMove.completed', {
+      entityId: entity.id,
+      pls: Number(entity.pls),
+      tier,
+      moveResultStatus: moveResult.status,
+      moveResultReason: moveResult.reason,
+      t: Math.round(performance.now() * 10) / 10,
+    });
+    // M-1-A：发完成信号（completed=true 仅当动画正常完成；cancelled/skipped 时 false 让超时兜底）
+    emitMoveAnimationCompletion({
+      actorId: entity.id,
+      targetPls: Number(entity.pls),
+      completed: moveResult.status === 'completed',
+    });
   }
 
   async function playRegionArrival(entity: MapEntity, lease: PresentationLease): Promise<void> {
@@ -237,11 +275,45 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     const runtime = getActorById(entity.id);
     const anchor = resolveAnchor(entity);
     const from = runtime?.getScenePoint();
-    if (!runtime || !anchor || !from) return null;
+    if (!runtime || !anchor || !from) {
+      task3Debug.log('map-entities.startRebaseWorldMove.skip', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'runtime/anchor/from missing',
+        runtimeExists: !!runtime,
+        anchorExists: !!anchor,
+        fromExists: !!from,
+      });
+      return null;
+    }
+
+    task3Debug.log('map-entities.startRebaseWorldMove.entry', {
+      entityId: entity.id,
+      pls: Number(entity.pls),
+      token,
+      fromPoint: from,
+      anchorPoint: anchor.point,
+      isAtAnchor: isScenePointAtAnchor(from, anchor),
+    });
+
+    // K-12-B / M-1-A：rebase 路径（跳过演出）立即发完成信号，不等动画。
+    // 跳过演出时 move-director 同步处理所有 step 不等待信号；
+    // 但若存在竞态使 move-director 仍在等待，立即发信号避免 1s 超时兜底无谓等待。
+    // targetPls 携带 entity.pls 供 moveDirector 过滤过期信号。
+    emitMoveAnimationCompletion({
+      actorId: entity.id,
+      targetPls: Number(entity.pls),
+      completed: true,
+    });
 
     worldMoves.get(entity.id)?.release({ reconcile: false });
     rebaseMoves.get(entity.id)?.cancel('rebase_move_replaced');
     if (isScenePointAtAnchor(from, anchor)) {
+      task3Debug.log('map-entities.startRebaseWorldMove.at-anchor', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'already at anchor, project only',
+      });
       runtime.projectAnchor(anchor);
       return null;
     }
@@ -252,10 +324,24 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
       sessionId: `rebase:${token}:${generation}`,
       replaceEqualOwner: true,
     });
-    if (!lease) return null;
+    if (!lease) {
+      task3Debug.log('map-entities.startRebaseWorldMove.lease-failed', {
+        entityId: entity.id,
+        pls: Number(entity.pls),
+        reason: 'runtime.acquire returned null (priority conflict)',
+      });
+      return null;
+    }
     worldMoves.set(entity.id, lease);
     runtime.projectAnchor(anchor);
     const tier = calcMoveTier(from.x, from.y, anchor);
+    task3Debug.log('map-entities.startRebaseWorldMove.dispatch', {
+      entityId: entity.id,
+      pls: Number(entity.pls),
+      tier,
+      fromPoint: from,
+      anchorPoint: anchor.point,
+    });
     const handles: AnimationHandle[] = [];
     if (tier !== 'long') handles.push(lease.play({ kind: 'reset-visible' }));
     handles.push(lease.play({ kind: 'move', target: anchor, tier }));
@@ -290,17 +376,12 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     const runtime = getActorById(entity.id);
     const inEntered = enteredEntities.has(entity.id);
     const inProjected = projectedRemovals.has(entity.id);
-    console.log('[P4_DBG] playFirstEnter entry', {
-      id: entity.id, pls: entity.pls,
-      hasRuntime: !!runtime, inEntered, inProjected,
-    });
     if (!runtime || inEntered || inProjected) return;
     const anchor = resolveAnchor(entity);
     if (!anchor) return;
     runtime.projectAnchor(anchor);
     enteredEntities.add(entity.id);
     if (entity.id === 'player') {
-      console.log('[P4_DBG] playFirstEnter -> onEnter (PLAYER)', { pls: entity.pls });
       playerAvatarStore.onEnter();
       return;
     }
@@ -377,13 +458,6 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
       const oldEntities = previous?.entities ?? [];
       const oldById = new Map(oldEntities.map(entity => [entity.id, entity]));
       const newIds = new Set(entities.map(entity => entity.id));
-      console.log('[P4_DBG] entitiesWatch fired ' + JSON.stringify({
-        newRevision: presentationScene.snapshot.revision,
-        phase: presentationScene.phase,
-        newEntities: entities.map(e => ({ id: e.id, pls: e.pls, pgroup: e.pgroup })),
-        oldEntities: oldEntities.map(e => ({ id: e.id, pls: e.pls, pgroup: e.pgroup })),
-        enteredEntities: [...enteredEntities],
-      }));
 
       for (const entity of entities) {
         projectedRemovals.get(entity.id)?.cancel('entity_rediscovered');
@@ -413,19 +487,17 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
 
       for (const entity of entities) {
         const previousEntity = oldById.get(entity.id);
-        if (!previousEntity) {
-          console.log('[P4_DBG] entity-loop skip no-previous', { id: entity.id, pls: entity.pls });
-          continue;
-        }
-        if (sameTile(previousEntity, entity)) {
-          console.log('[P4_DBG] entity-loop skip same-tile', { id: entity.id, pls: entity.pls });
-          continue;
-        }
-        console.log('[P4_DBG] entity-loop MOVED ' + JSON.stringify({
-          id: entity.id,
-          fromPls: previousEntity.pls, toPls: entity.pls,
-          fromPgroup: previousEntity.pgroup, toPgroup: entity.pgroup,
-        }));
+        if (!previousEntity) continue;
+        if (sameTile(previousEntity, entity)) continue;
+        task3Debug.log('map-entities.stopEntitiesWatch.entity-move', {
+          entityId: entity.id,
+          prevPls: Number(previousEntity.pls),
+          prevPgroup: Number(previousEntity.pgroup),
+          newPls: Number(entity.pls),
+          newPgroup: Number(entity.pgroup),
+          presentationPhase: presentationScene.phase,
+          projectionRevision: mapStore.projectionRevision,
+        });
         if (presentationScene.phase === 'rebasing') {
           if (presentationScene.shouldAnimateRebaseActor(entity.id)) {
             const token = presentationScene.rebaseToken;
@@ -437,11 +509,14 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
           continue;
         }
         const runtime = getActorById(entity.id);
-        if (!runtime) {
-          console.log('[P4_DBG] entity-loop skip no-runtime', { id: entity.id });
-          continue;
-        }
+        if (!runtime) continue;
         const existing = worldMoves.get(entity.id);
+        if (existing) {
+          task3Debug.log('map-entities.stopEntitiesWatch.cancel-existing', {
+            entityId: entity.id,
+            reason: 'new world move supersedes previous lease',
+          });
+        }
         existing?.release({ reconcile: false });
         const regionTransition = isRegionTransition(previousEntity, entity);
         const lease = runtime.acquire({
@@ -450,14 +525,22 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
           sessionId: `world:${mapStore.projectionRevision}:${runtime.generation}`,
           replaceEqualOwner: true,
         });
-        console.log('[P4_DBG] entity-loop acquire', {
-          id: entity.id, regionTransition, hasLease: !!lease, generation: runtime.generation,
-        });
         if (!lease) {
+          task3Debug.log('map-entities.stopEntitiesWatch.acquire-failed', {
+            entityId: entity.id,
+            reason: 'runtime.acquire returned null (priority conflict)',
+            regionTransition,
+          });
           syncEntityPosition(entity);
           continue;
         }
         worldMoves.set(entity.id, lease);
+        task3Debug.log('map-entities.stopEntitiesWatch.dispatch', {
+          entityId: entity.id,
+          pls: Number(entity.pls),
+          kind: regionTransition ? 'playRegionArrival' : 'playWorldMove',
+          regionTransition,
+        });
         void (regionTransition ? playRegionArrival(entity, lease) : playWorldMove(entity, lease));
       }
 
@@ -619,11 +702,35 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     });
   }, { immediate: true });
 
+  // K-12-D：视觉中心变更时重新同步实体位置。
+  // 移动导演在 navigation 结束时调用 clearVisualCenter()，网格从冻结的起点重居中到
+  // curLoc（最终位置）。此时所有图格 anchor 场景坐标变化，但实体 DOM 仍停留在冻结
+  // 网格内的旧像素位置——若不重新投影，角色会出现在错误的图格上（视觉跳跃）。
+  // rAF 内同步确保在浏览器绘制前完成投影，避免用户看到中间错位帧。
+  const stopVisualCenterWatch = watch(
+    () => mapStore.visualCenter,
+    () => {
+      requestAnimationFrame(() => syncAllPositions());
+    },
+  );
+
+  // K-12-E：跳跃目标扩展时网格尺寸变化（5x5 → 扩展包围盒），需重新投影所有实体。
+  // visionBounds 扩展后 cells computed 重算 → DOM 重渲染，但实体像素位置基于旧网格布局。
+  // rAF 内同步投影确保在浏览器绘制前完成，避免玩家出现在旧图格位置（视觉跳跃）。
+  const stopJumpTargetWatch = watch(
+    () => mapStore.jumpTargetPls,
+    () => {
+      requestAnimationFrame(() => syncAllPositions());
+    },
+  );
+
   function dispose(): void {
     stopIntentWatch();
     stopGridWatch();
     stopAuthorityWatch();
     stopEntitiesWatch();
+    stopVisualCenterWatch();
+    stopJumpTargetWatch();
     resizeObserver?.disconnect();
     unregisterScene?.();
     for (const lease of worldMoves.values()) lease.release({ reconcile: false });

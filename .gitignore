@@ -141,3 +141,5 @@ oblivions/**/node_modules/
 oblivions/pnpm-debug.log*
 
 oblivions/editor-next/editor.config.json
+/oblivions/docs
+/vex-vue/docs

@@ -56,7 +56,6 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   function dispatchIntent(next: PlayerAvatarIntent, force = false): void {
     const now = Date.now();
     const suppressed = !force && next === intent.value && now - lastIntentTs.value < 50;
-    console.log('[P4_DBG] dispatchIntent', { next, force, suppressed, isDown: isDown.value, prevIntent: intent.value });
     if (suppressed) return;
     lastIntentTs.value = now;
     intent.value = next;
@@ -65,7 +64,6 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
 
   // ── 自动恢复机制 ──
   function dispatchWithRecovery(next: PlayerAvatarIntent, force = false): void {
-    console.log('[P4_DBG] dispatchWithRecovery', { next, force, isDown: isDown.value, pendingIntent: pendingIntent.value });
     if (next !== 'die' && next !== 'fall' && isDown.value) {
       pendingIntent.value = next;
       dispatchIntent('popup');
@@ -76,7 +74,6 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
 
   // ── 游戏事件接入（预留接口） ──
   function onEnter(): void       {
-    console.log('[P4_DBG] onEnter called', { stack: new Error('trace').stack });
     dispatchWithRecovery('enter');
   }
   function onMove(): void        { dispatchWithRecovery('move'); }

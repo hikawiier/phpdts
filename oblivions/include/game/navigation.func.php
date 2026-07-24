@@ -218,10 +218,18 @@ function obl_navigation_tile_tide(array $tile) {
  *   （通过反转权重，所有边权重非负，保证 Dijkstra 正确性；
  *    shallow (w=1) → 边权 = max_w; abyss (w=3) → 边权 = 1，故 abyss 成本最低）
  *
- * 软偏好上限：加权路径长度过长时由 max_detour 软约束限制。
- * 这保证"软性偏好"而非"硬性强制"——超过绕行预算时调用方回退标准最短路径。
+ * 软偏好上限：加权路径长度（边数）相对标准最短路径长度的绕行格数，
+ * 不超过 max_detour。超出绕行预算时返回 ['next'=>null] 让调用方回退标准最短路径，
+ * 体现"软性偏好"而非"硬性强制"——超过绕行预算时放弃软偏好。
+ *
+ * 防回头机制：avoid_pls 传入时，该格视为 blocked（中间点避开），
+ * 用于打破 A↔B 反复横跳的死循环（导航器单步独立 Dijkstra 无"刚走过的格"记忆，
+ * 在低潮汐双子格拓扑下会产生跨调用环）。
  *
  * F-E6-Combat §5.3：已发现敌人占据的图格作为中间点不可通行（目标格除外）。
+ *
+ * E-Q5-D Q5-16：优先队列改用 SplMinHeap（自定义比较），单步最坏复杂度从
+ *   O(N² log N)（sort 模拟）降为 O(N log N)。
  *
  * @param int    $pgroup 区域
  * @param int    $from 起始格
@@ -230,14 +238,24 @@ function obl_navigation_tile_tide(array $tile) {
  * @param array  $tiles 区域图格集
  * @param array  $blocked_tiles 已发现敌人占据格集
  * @param string $mode 'steady'（避高潮汐）或 'deep'（趋高潮汐）
- * @param int    $max_detour 最大绕行格数（保留供未来扩展；当前未硬性截断）
- * @return int|null 下一格 pls，null 表示不可达
+ * @param int    $max_detour 最大绕行格数（硬约束：加权路径边数 - 标准最短路径边数 > max_detour 时回退）
+ * @param int    $standard_length 标准最短路径长度（边数），用于 max_detour 比较
+ * @param int    $avoid_pls 需要避开的格 pls（防回头，0 表示不避开）
+ * @return array ['next' => int|null, 'length' => int] next=下一格 pls，null=不可达/超 detour；length=加权路径边数
  */
-function obl_navigation_weighted_bfs_next($pgroup, $from, $to, &$pdata, array $tiles, array $blocked_tiles, $mode, $max_detour) {
+function obl_navigation_weighted_bfs_next($pgroup, $from, $to, &$pdata, array $tiles, array $blocked_tiles, $mode, $max_detour, $standard_length = 0, $avoid_pls = 0) {
     $from = (int)$from;
     $to = (int)$to;
-    if ($from === $to) return null;
-    if (!isset($tiles[$from]) || !isset($tiles[$to])) return null;
+    if ($from === $to) return array('next' => null, 'length' => 0);
+    if (!isset($tiles[$from]) || !isset($tiles[$to])) return array('next' => null, 'length' => -1);
+
+    $max_detour = max(0, (int)$max_detour);
+    $standard_length = max(0, (int)$standard_length);
+    $avoid_pls = (int)$avoid_pls;
+    // 防回头格视为 blocked 中间点（目标格例外：玩家可能正在折返到目标）
+    if ($avoid_pls > 0 && $avoid_pls !== $to) {
+        $blocked_tiles[$avoid_pls] = true;
+    }
 
     $tendency_cfg = obl_navigation_tendency_config();
     $weight_map = $tendency_cfg['tide_weight_map'];
@@ -245,18 +263,19 @@ function obl_navigation_weighted_bfs_next($pgroup, $from, $to, &$pdata, array $t
     $max_w = 1;
     foreach ($weight_map as $w) $max_w = max($max_w, (int)$w);
 
-    // Dijkstra 风格加权最短路径（PHP 无原生堆，用排序数组模拟优先队列）
-    // cost[v] = 从 from 到 v 的最小加权成本
+    // E-Q5-D Q5-16：Dijkstra 优先队列改用 SplMinHeap，单步复杂度从 O(N² log N) 降为 O(N log N)
+    // cost[v] = 从 from 到 v 的最小加权成本；dist[v] = 从 from 到 v 的边数（用于 max_detour 硬约束）
+    $heap = new obl_navigation_dijkstra_heap();
     $cost = array($from => 0);
+    $dist = array($from => 0);
     $predecessor = array();
     $processed = array($from => true);
-    // 队列元素 [cost, pls]；按 cost 升序处理
-    $queue = array(array(0, $from));
+    // 堆元素 [cost, pls]；按 cost 升序处理（cost 相同时按 pls 升序，确保确定性）
+    $heap->insert(array(0, $from));
 
-    while (!empty($queue)) {
-        // 取出最小 cost 项（已排序数组的首项）
-        sort($queue);
-        $frame = array_shift($queue);
+    while (!$heap->isEmpty()) {
+        // 取出最小 cost 项
+        $frame = $heap->extract();
         $current_cost = (int)$frame[0];
         $current = (int)$frame[1];
 
@@ -287,17 +306,30 @@ function obl_navigation_weighted_bfs_next($pgroup, $from, $to, &$pdata, array $t
             $edge_weight = ($mode === 'deep') ? ($max_w - $w + 1) : $w;
 
             $new_cost = $current_cost + $edge_weight;
+            $new_dist = $dist[$current] + 1;
+            // max_detour 硬约束：超出绕行预算的路径不再扩展（剪枝）
+            // standard_length=0 时不应用（兼容旧调用方未传 standard_length 的场景）
+            if ($standard_length > 0 && $new_dist - $standard_length > $max_detour) continue;
+
             if (!isset($cost[$neighbor]) || $new_cost < $cost[$neighbor]) {
                 $cost[$neighbor] = $new_cost;
+                $dist[$neighbor] = $new_dist;
                 $predecessor[$neighbor] = $current;
-                $queue[] = array($new_cost, $neighbor);
+                $heap->insert(array($new_cost, $neighbor));
             }
         }
     }
 
     if (!isset($predecessor[$to])) {
-        // 加权 BFS 不可达，回退 null（标准 BFS 也未必可达，由调用方决定）
-        return null;
+        // 加权 BFS 不可达（或被 max_detour 剪枝），返回 null 让调用方回退标准 BFS
+        return array('next' => null, 'length' => -1);
+    }
+
+    $weighted_length = $dist[$to];
+
+    // 二次 max_detour 校验：Dijkstra 可能找到绕远的最优路径，最终路径仍超 detour
+    if ($standard_length > 0 && $weighted_length - $standard_length > $max_detour) {
+        return array('next' => null, 'length' => $weighted_length);
     }
 
     // 回溯：从 to 找到 from 的下一格
@@ -305,7 +337,36 @@ function obl_navigation_weighted_bfs_next($pgroup, $from, $to, &$pdata, array $t
     while (isset($predecessor[$step]) && (int)$predecessor[$step] !== $from) {
         $step = (int)$predecessor[$step];
     }
-    return isset($predecessor[$step]) ? (int)$step : null;
+    $next = isset($predecessor[$step]) ? (int)$step : null;
+    return array('next' => $next, 'length' => $weighted_length);
+}
+
+/**
+ * Dijkstra 优先队列堆（E-Q5-D Q5-16：SplMinHeap 替代 sort 数组）
+ *
+ * 队列元素为 [cost, pls] 数组，按 cost 升序排列（min-heap 语义）。
+ * cost 相同时按 pls 升序排列，确保算法确定性（与原 sort 数组语义一致）。
+ *
+ * 单次 insert/extract 均为 O(log N)，整体单步复杂度 O(N log N)，
+ * 相比原 sort 模拟的 O(N² log N) 显著降低大区域导航延迟。
+ */
+class obl_navigation_dijkstra_heap extends SplMinHeap {
+    /**
+     * 比较两个堆元素（升序：cost 低者优先，cost 相同时 pls 小者优先）
+     *
+     * @param array $a [cost, pls]
+     * @param array $b [cost, pls]
+     * @return int 正数表示 a>b，负数表示 a<b，0 表示相等
+     */
+    protected function compare($a, $b): int {
+        $cost_a = (int)$a[0];
+        $cost_b = (int)$b[0];
+        if ($cost_a !== $cost_b) {
+            return $cost_a - $cost_b;
+        }
+        // 稳定性回退：pls 升序（与原 sort 数组对 [cost, pls] 排序的语义一致）
+        return (int)$a[1] - (int)$b[1];
+    }
 }
 
 /**
@@ -362,6 +423,68 @@ function obl_navigation_standard_bfs_next($from, $to, array $tiles, array $block
     return array('next' => $next, 'length' => $distance[$to]);
 }
 
+/**
+ * 标准 BFS 最短路径：返回完整路径数组（E-Q5-D Q5-5 efficient 单次 BFS 优化）
+ *
+ * 设计案 §5.1 + E-Q5-D：efficient 倾向需要"沿最短路径走 move_power 格"，
+ * 原实现为验证候选是否在最短路径上，对每个候选调用一次完整 BFS，单步复杂度 O(move_power × N)。
+ * 本函数从 from 出发跑一次 BFS，记录 distance + predecessor 表，回溯 from→to 完整路径，
+ * 供 efficient 直接取第 target_distance 格，单步复杂度降为 O(N)。
+ *
+ * F-E6-Combat §5.3：已发现敌人占据的图格作为中间点不可通行（目标格除外）。
+ *
+ * @param int   $from 起始格
+ * @param int   $to 目标格
+ * @param array $tiles 区域图格集
+ * @param array $blocked_tiles 已发现敌人占据格集
+ * @return array ['path' => int[], 'length' => int]
+ *               path[0]=from, path[length]=to；不可达 path=[] length=-1
+ */
+function obl_navigation_bfs_full_path($from, $to, array $tiles, array $blocked_tiles) {
+    $from = (int)$from;
+    $to = (int)$to;
+    if ($from === $to) return array('path' => array($from), 'length' => 0);
+    if (!isset($tiles[$from]) || !isset($tiles[$to])) return array('path' => array(), 'length' => -1);
+
+    $visited = array($from => true);
+    $predecessor = array();
+    $distance = array($from => 0);
+    $queue = array($from);
+
+    while (!empty($queue)) {
+        $current = array_shift($queue);
+        if ($current === $to) break;
+
+        $neighbors = $tiles[$current]['neighbors'] ?? array();
+        foreach ($neighbors as $neighbor) {
+            $neighbor = (int)$neighbor;
+            if (isset($visited[$neighbor])) continue;
+            if (!isset($tiles[$neighbor])) continue;
+            if (empty($tiles[$neighbor]['passable']) && $neighbor !== $to) continue;
+            if (isset($blocked_tiles[$neighbor]) && $neighbor !== $to) continue;
+
+            $visited[$neighbor] = true;
+            $predecessor[$neighbor] = $current;
+            $distance[$neighbor] = $distance[$current] + 1;
+            $queue[] = $neighbor;
+        }
+    }
+
+    if (!isset($visited[$to])) {
+        return array('path' => array(), 'length' => -1);
+    }
+
+    // 回溯完整路径：from → ... → to（path[0]=from, path[length]=to）
+    $path = array();
+    $step = $to;
+    while (true) {
+        array_unshift($path, $step);
+        if ($step === $from) break;
+        $step = (int)$predecessor[$step];
+    }
+    return array('path' => $path, 'length' => $distance[$to]);
+}
+
 // ----------------------------------------------------------------
 // 导航器初始化
 // ----------------------------------------------------------------
@@ -403,7 +526,29 @@ function obl_navigation_begin($payload, &$pdata) {
     // 1. 解析 payload
     $target_pls = isset($payload['target']) ? (int)$payload['target'] : null;
     $tendency = obl_navigation_normalize_tendency(isset($payload['tendency']) ? $payload['tendency'] : 'steady');
-    $max_steps = isset($payload['max_steps']) ? (int)$payload['max_steps'] : $default_max_steps;
+    $max_steps = isset($payload['max_steps']) ? (int)$payload['max_steps'] : 0;
+
+    // E-Q5-D Q5-13：max_steps 自适应——未显式指定时按区域对角线长度动态计算
+    // 设计案 §5.1 + §14：大区域远距离目标可能需要超过 20 步才能抵达，
+    // 固定 20 会导致 max_steps_reached 终态频繁触发，前端需频繁断点续导航。
+    // 自适应默认值 = min(对角线 × 1.5, navigation_max_steps_limit)，
+    // 仍受配置上界约束避免单请求超时（§14 性能保护）。
+    if ($max_steps < 1) {
+        $pgroup_for_diag = (int)$pdata['pgroup'];
+        $map_for_diag = obl_get_map_data($pgroup_for_diag);
+        $grid_meta = isset($map_for_diag['grids'][$pgroup_for_diag]) ? $map_for_diag['grids'][$pgroup_for_diag] : null;
+        if ($grid_meta && isset($grid_meta['cols']) && isset($grid_meta['rows'])) {
+            // BFS 网格距离上界 ≈ (cols-1) + (rows-1) = cols + rows - 2
+            $diagonal = (int)$grid_meta['cols'] + (int)$grid_meta['rows'] - 2;
+            if ($diagonal < 1) $diagonal = 1;
+            // 对角线 × 1.5 提供余量（绕行、避开敌人等），向上取整
+            $adaptive = (int)ceil($diagonal * 1.5);
+            $max_steps = min($adaptive, $limit_max_steps);
+        } else {
+            // 无网格元数据时回退配置默认值
+            $max_steps = $default_max_steps;
+        }
+    }
     if ($max_steps < 1) $max_steps = 1;
     if ($max_steps > $limit_max_steps) $max_steps = $limit_max_steps;
 
@@ -420,6 +565,9 @@ function obl_navigation_begin($payload, &$pdata) {
         'finished'        => false,
         'outcome'         => null,
         'outcome_reason'  => null,
+        // 防回头：记录玩家上一次所在的 pls，加权 BFS 把它视为 blocked 中间点
+        // 打破 A↔B 反复横跳死循环（导航器单步独立 Dijkstra 无记忆，跨调用形成环）
+        'previous_pls'    => 0,
     );
 
     // 2. 选择目标
@@ -524,14 +672,19 @@ function obl_navigation_next_step(&$navigation, &$pdata) {
     if ($cur_pls === $target_pls) return null;
 
     // 5. 寻路：BFS 找最短路径的下一格
-    $next_pls = obl_navigation_find_next_step($pgroup, $cur_pls, $target_pls, $pdata, $navigation['tendency']);
+    // E-Q5-C Q5-3：玩家指定目标时 nearby 跳过距离上限——target_is_auto=false 即玩家指定
+    // 防回头：把 navigation.previous_pls 传入，加权 BFS 把它视为 blocked 中间点
+    $is_player_targeted = empty($navigation['target_is_auto']);
+    $previous_pls = (int)($navigation['previous_pls'] ?? 0);
+    $next_pls = obl_navigation_find_next_step($pgroup, $cur_pls, $target_pls, $pdata, $navigation['tendency'], $is_player_targeted, $previous_pls);
     if ($next_pls === null) {
         // 无可达路径
         return null;
     }
 
-    // 6. 构造步骤信息
+    // 6. 构造步骤信息 + 记录防回头信息
     $navigation['steps_taken']++;
+    $navigation['previous_pls'] = $cur_pls;
     return array(
         'to_pls'   => $next_pls,
         'from_pls' => $cur_pls,
@@ -634,9 +787,10 @@ function obl_navigation_find_anchor_landing($pgroup, $anchor_pls, array $tiles, 
  * 寻路：按移动倾向选择从 from 到 to 的下一格（F-E5-Target §5.6 四种倾向差异化）
  *
  * 倾向路由：
- *   - steady（稳健探索）：加权 BFS 软偏好低潮汐，绕行不超过 steady_max_detour
+ *   - steady（稳健探索）：加权 BFS 软偏好低潮汐，绕行不超过 steady_max_detour（硬约束）
  *   - nearby（就近探索）：标准 BFS 最短路径，路径长度超 nearby_max_distance 时返回 null
- *   - deep（深入险境）：加权 BFS 软偏好高潮汐，绕行不超过 tendency_deep_max_detour
+ *     （E-Q5-C Q5-3：玩家指定目标时跳过距离上限——距离偏好仅用于自动选目标阶段）
+ *   - deep（深入险境）：加权 BFS 软偏好高潮汐，绕行不超过 tendency_deep_max_detour（硬约束）
  *   - efficient（效率优先）：标准 BFS 最短路径，返回沿路径方向 move_power 格的目标
  *     （最后一段 < move_power 时返回剩余最近格，遵守 obl_perform_move_core 距离校验）
  *
@@ -644,16 +798,31 @@ function obl_navigation_find_anchor_landing($pgroup, $anchor_pls, array $tiles, 
  *   BFS 把"已发现敌人占据的图格"视为不可通行（中间点），有替代路线时自动避开。
  *   目标格除外（由 obl_perform_move_core 占位校验兜底，允许玩家主动走向敌人）。
  *
- * @param int    $pgroup  区域
- * @param int    $from    起始格
- * @param int    $to      目标格
- * @param array  &$pdata  玩家数据
- * @param string $tendency 倾向
+ * E-Q5-C Q5-3：$is_player_targeted 区分"玩家指定目标"与"自动选目标"。
+ *   设计案 §5.8 "目标超出范围：创建远程导航，途中步幅和路线服从当前移动倾向"。
+ *   nearby 倾向的 max_distance 过滤是"自动选目标的距离偏好"，误用到玩家指定目标上
+ *   会导致 20 格远目标被直接判定为 route_invalid 中断。玩家指定目标必达，距离偏好
+ *   只在自动选目标阶段（obl_navigation_select_unexplored_tile）应用。
+ *
+ * 防回头（K-12-A 振荡根因修复）：
+ *   $previous_pls 传入时，steady/deep 加权 BFS 把它视为 blocked 中间点，
+ *   打破"加权最优路径经过对方"导致的 A↔B 跨调用反复横跳。
+ *   若加权 BFS 因 avoid 不可达，回退到不带 avoid 的加权 BFS；
+ *   若仍不可达或超 max_detour，再回退到标准最短路径。
+ *
+ * @param int    $pgroup             区域
+ * @param int    $from               起始格
+ * @param int    $to                 目标格
+ * @param array  &$pdata             玩家数据
+ * @param string $tendency           倾向
+ * @param bool   $is_player_targeted 是否玩家指定目标（true 时 nearby 跳过距离上限）
+ * @param int    $previous_pls       玩家上一次所在的 pls（防回头，0 表示无）
  * @return int|null 下一格的 pls，null 表示不可达
  */
-function obl_navigation_find_next_step($pgroup, $from, $to, &$pdata, $tendency) {
+function obl_navigation_find_next_step($pgroup, $from, $to, &$pdata, $tendency, $is_player_targeted = false, $previous_pls = 0) {
     $from = (int)$from;
     $to = (int)$to;
+    $previous_pls = (int)$previous_pls;
     if ($from === $to) return null;
 
     $map = obl_get_map_data($pgroup);
@@ -669,7 +838,6 @@ function obl_navigation_find_next_step($pgroup, $from, $to, &$pdata, $tendency) 
     // 先用标准 BFS 拿最短路径长度（所有倾向都需要它作为基准）
     $standard = obl_navigation_standard_bfs_next($from, $to, $tiles, $blocked_tiles);
     if ($standard['next'] === null) {
-        error_log("[NAV_DEBUG] bfs_unreachable: from=$from to=$to pgroup=$pgroup tendency=$tendency blocked_count=" . count($blocked_tiles));
         return null;
     }
     $shortest_length = $standard['length'];
@@ -680,102 +848,67 @@ function obl_navigation_find_next_step($pgroup, $from, $to, &$pdata, $tendency) 
 
     switch ($tendency) {
         case 'steady':
-            // 加权 BFS 软偏好低潮汐；绕行超过 steady_max_detour 则回退标准最短路径
-            $max_detour = (int)$tendency_cfg['steady_max_detour'];
-            $weighted_next = obl_navigation_weighted_bfs_next(
-                $pgroup, $from, $to, $pdata, $tiles, $blocked_tiles, 'steady', $max_detour
+        case 'deep':
+            // 加权 BFS 软偏好；max_detour 硬约束（超出绕行预算则回退标准最短路径）
+            $mode = $tendency;
+            $max_detour = (int)($tendency === 'steady'
+                ? $tendency_cfg['steady_max_detour']
+                : $tendency_cfg['tendency_deep_max_detour']);
+
+            // 第一选择：带防回头的加权 BFS（避开 previous_pls）
+            $weighted = obl_navigation_weighted_bfs_next(
+                $pgroup, $from, $to, $pdata, $tiles, $blocked_tiles, $mode,
+                $max_detour, $shortest_length, $previous_pls
             );
-            if ($weighted_next !== null) {
-                // 注：加权 BFS 内部按"软偏好"工作——若加权路径超过绕行预算，
-                // 加权 BFS 仍可能返回绕路结果。max_detour 是配置项软约束，
-                // 用户感觉绕行过多时可调小 max_detour 让回退更激进。
-                // 此处直接信任加权 BFS 结果（不做二次长度校验，避免重复 BFS）。
-                error_log("[NAV_DEBUG] bfs_ok: tendency=steady from=$from to=$to next=$weighted_next pgroup=$pgroup mode=weighted");
-                return $weighted_next;
+            if ($weighted['next'] !== null) {
+                return $weighted['next'];
             }
-            // 加权 BFS 不可达 → 回退标准最短路径
-            error_log("[NAV_DEBUG] bfs_ok: tendency=steady from=$from to=$to next={$standard['next']} pgroup=$pgroup mode=standard_fallback");
+
+            // 第二选择：不带防回头的加权 BFS（previous_pls 是必经之路时回退）
+            if ($previous_pls > 0) {
+                $weighted = obl_navigation_weighted_bfs_next(
+                    $pgroup, $from, $to, $pdata, $tiles, $blocked_tiles, $mode,
+                    $max_detour, $shortest_length, 0
+                );
+                if ($weighted['next'] !== null) {
+                    return $weighted['next'];
+                }
+            }
+
+            // 第三选择：标准最短路径（不带防回头，保证可达性）
             return $standard['next'];
 
         case 'nearby':
-            // 标准 BFS；路径长度超 move_power * tendency_nearby_max_actions 时返回 null
+            // 标准 BFS；自动选目标时路径长度超 move_power * tendency_nearby_max_actions 返回 null。
+            // E-Q5-C Q5-3：玩家指定目标时跳过距离上限——距离偏好仅用于自动选目标阶段，
+            // 玩家指定目标必达（设计案 §5.8 远程导航承诺）。
             $max_actions = (int)$tendency_cfg['tendency_nearby_max_actions'];
             $max_distance = $move_power * $max_actions;
-            if ($shortest_length > $max_distance) {
-                error_log("[NAV_DEBUG] bfs_reject: tendency=nearby from=$from to=$to length=$shortest_length max=$max_distance pgroup=$pgroup");
+            if (!$is_player_targeted && $shortest_length > $max_distance) {
                 return null;
             }
-            error_log("[NAV_DEBUG] bfs_ok: tendency=nearby from=$from to=$to next={$standard['next']} length=$shortest_length pgroup=$pgroup");
-            return $standard['next'];
-
-        case 'deep':
-            // 加权 BFS 软偏好高潮汐；绕行超过 tendency_deep_max_detour 则回退标准最短路径
-            $max_detour = (int)$tendency_cfg['tendency_deep_max_detour'];
-            $weighted_next = obl_navigation_weighted_bfs_next(
-                $pgroup, $from, $to, $pdata, $tiles, $blocked_tiles, 'deep', $max_detour
-            );
-            if ($weighted_next !== null) {
-                error_log("[NAV_DEBUG] bfs_ok: tendency=deep from=$from to=$to next=$weighted_next pgroup=$pgroup mode=weighted");
-                return $weighted_next;
-            }
-            error_log("[NAV_DEBUG] bfs_ok: tendency=deep from=$from to=$to next={$standard['next']} pgroup=$pgroup mode=standard_fallback");
             return $standard['next'];
 
         case 'efficient':
             // 标准 BFS 最短路径；返回沿路径方向 move_power 格的目标
-            // 实现思路：从 from 沿最短路径走 min(move_power, shortest_length) 格
-            // 通过 BFS 的 distance 字段找出"距离 from = move_power（或剩余）"的格
+            // E-Q5-D Q5-5：单次 BFS + 完整路径回溯，复杂度 O(N)
             $target_distance = min($move_power, $shortest_length);
             if ($target_distance <= 1) {
                 // 剩余路径 ≤ 1 格：直接走下一格
-                error_log("[NAV_DEBUG] bfs_ok: tendency=efficient from=$from to=$to next={$standard['next']} pgroup=$pgroup target_dist=$target_distance");
                 return $standard['next'];
             }
-            // 沿最短路径走 target_distance 格：用 BFS 距离 + 前驱回溯找出"距 from = target_distance"的格
-            // 重新跑一次 BFS 拿到完整 distance 表（standard_bfs_next 内部已有，但未返回完整表）
-            $visited = array($from => true);
-            $predecessor = array();
-            $distance = array($from => 0);
-            $queue = array($from);
-            $found_target_pls = null;
-            while (!empty($queue) && $found_target_pls === null) {
-                $current = array_shift($queue);
-                if ($current === $to) break;
-                $neighbors = $tiles[$current]['neighbors'] ?? array();
-                foreach ($neighbors as $neighbor) {
-                    $neighbor = (int)$neighbor;
-                    if (isset($visited[$neighbor])) continue;
-                    if (!isset($tiles[$neighbor])) continue;
-                    if (empty($tiles[$neighbor]['passable']) && $neighbor !== $to) continue;
-                    if (isset($blocked_tiles[$neighbor]) && $neighbor !== $to) continue;
-                    $visited[$neighbor] = true;
-                    $predecessor[$neighbor] = $current;
-                    $distance[$neighbor] = $distance[$current] + 1;
-                    // 找到沿最短路径方向距离 from = target_distance 的格
-                    // 注意：这是从 from 出发的 BFS，距离 = target_distance 的格可能是多个，
-                    // 我们只关心是否在到 to 的最短路径上
-                    if ($distance[$neighbor] === $target_distance) {
-                        // 验证该格是否在 from→to 的最短路径上：检查从该格到 to 的距离
-                        $remaining = obl_navigation_standard_bfs_next($neighbor, $to, $tiles, $blocked_tiles);
-                        if ($remaining['length'] === $shortest_length - $target_distance) {
-                            $found_target_pls = $neighbor;
-                            break;
-                        }
-                    }
-                    $queue[] = $neighbor;
-                }
+            // 单次 BFS 拿完整路径，取 path[target_distance] 作为下一落点
+            // path[0]=from, path[target_distance]=距 from target_distance 格的最短路径上的格
+            $path_result = obl_navigation_bfs_full_path($from, $to, $tiles, $blocked_tiles);
+            if (!empty($path_result['path']) && count($path_result['path']) > $target_distance) {
+                $next_pls = (int)$path_result['path'][$target_distance];
+                return $next_pls;
             }
-            if ($found_target_pls !== null) {
-                error_log("[NAV_DEBUG] bfs_ok: tendency=efficient from=$from to=$to next=$found_target_pls pgroup=$pgroup target_dist=$target_distance");
-                return $found_target_pls;
-            }
-            // 回退：直接走下一格
-            error_log("[NAV_DEBUG] bfs_ok: tendency=efficient from=$from to=$to next={$standard['next']} pgroup=$pgroup mode=fallback");
+            // 回退：直接走下一格（理论不应到达，bfs_full_path 与 standard_bfs_next 同源）
             return $standard['next'];
 
         default:
             // 未知倾向（已被 normalize_tendency 归一化为 steady，此处不应到达）
-            error_log("[NAV_DEBUG] bfs_ok: tendency=default from=$from to=$to next={$standard['next']} pgroup=$pgroup");
             return $standard['next'];
     }
 }
@@ -929,9 +1062,12 @@ function obl_navigation_select_target($pgroup, $pls, $tendency, &$pdata) {
     $target = obl_navigation_select_undiscovered_poi($pgroup, $pls, $tendency, $pdata);
     if ($target !== null) return $target;
 
-    // 优先级 3：隐藏敌人搜索位置（首期不实现，避免泄露敌人位置）
-    // TODO: 待敌人 AI 系统稳定后实现 obl_navigation_select_hidden_enemy_search_position
+    // E-Q5-E Q5-14：优先级 3——隐藏敌人搜索位置（§5.3 内容搜索 + §5.4 隐藏敌人搜索位置快照）
+    // 不向前端泄露敌人实体/位置：前端只看到搜索位置 pls，不看到 pid/name
+    $target = obl_navigation_select_hidden_enemy_search_position($pgroup, $pls, $tendency, $pdata);
+    if ($target !== null) return $target;
 
+    // 优先级 4：无目标（设计案 §7.10）
     return null;
 }
 
@@ -983,17 +1119,99 @@ function obl_navigation_select_unexplored_tile($pgroup, $pls, $tendency, &$pdata
     $weight_map = $tendency_cfg['tide_weight_map'];
     $move_power = function_exists('obl_get_move_power') ? (int)obl_get_move_power($pdata) : 1;
     $move_power = max(1, $move_power);
-    // 候选 BFS 距离上限：避免在大型区域扫描过多候选
-    $candidate_scan_limit = max(
+
+    // E-Q5-C Q5-6：候选扫描上限自适应——区域对角线长度与固定上限取较小值
+    // 设计案 §5.6 "最终覆盖所有可探索图格的收束目标"要求大区域稀疏未探索格也能进入候选集
+    // 对角线 BFS 距离 ≈ cols + rows（网格最坏路径），固定上限取所有倾向距离上限的最大值
+    // 大区域（cols+rows > fixed_limit）时按 fixed_limit 截断避免全图扫描；
+    // 小区域按对角线扫描确保覆盖所有可达未探索格
+    $fixed_limit = max(
         (int)$tendency_cfg['steady_max_target_distance'],
         (int)$tendency_cfg['tendency_deep_max_distance']
     );
-    $candidate_scan_limit = max($candidate_scan_limit, $move_power * max(
+    $fixed_limit = max($fixed_limit, $move_power * max(
         (int)$tendency_cfg['tendency_nearby_max_actions'],
         (int)$tendency_cfg['tendency_efficient_max_actions']
     ));
+    $grid_meta = isset($map['grids'][$pgroup]) ? $map['grids'][$pgroup] : null;
+    $region_diagonal = PHP_INT_MAX;
+    if ($grid_meta && isset($grid_meta['cols']) && isset($grid_meta['rows'])) {
+        // BFS 网格距离上界 ≈ (cols-1) + (rows-1) = cols + rows - 2
+        $region_diagonal = (int)$grid_meta['cols'] + (int)$grid_meta['rows'] - 2;
+        if ($region_diagonal < 1) $region_diagonal = 1;
+    }
+    $candidate_scan_limit = min($region_diagonal, $fixed_limit);
 
     // BFS 遍历，收集 explored=0 的可达图格候选
+    $candidates = obl_navigation_collect_unexplored_candidates(
+        $pgroup, $pls, $tiles, $occupied_tiles, $weight_map, $candidate_scan_limit
+    );
+
+    // E-Q5-C Q5-6：候选为空时回退全局扫描（不应用距离上限）
+    // 意图是"空间覆盖必完成"——玩家附近 candidate_scan_limit 半径内无未探索格时，
+    // 扩大到全区域扫描，避免无谓降级到 POI 候选（违反 §5.6 收束目标）
+    if (empty($candidates)) {
+        $candidates = obl_navigation_collect_unexplored_candidates(
+            $pgroup, $pls, $tiles, $occupied_tiles, $weight_map, PHP_INT_MAX
+        );
+    }
+
+    if (empty($candidates)) return null;
+
+    // 按倾向过滤候选集
+    $filtered = array();
+    foreach ($candidates as $cand) {
+        $distance = (int)$cand['distance'];
+        $action_count = obl_navigation_action_count($distance, $move_power);
+        $include = true;
+        switch ($tendency) {
+            case 'steady':
+                if ($distance > (int)$tendency_cfg['steady_max_target_distance']) $include = false;
+                break;
+            case 'nearby':
+                if ($action_count > (int)$tendency_cfg['tendency_nearby_max_actions']) $include = false;
+                break;
+            case 'deep':
+                if ($distance > (int)$tendency_cfg['tendency_deep_max_distance']) $include = false;
+                break;
+            case 'efficient':
+                if ($action_count > (int)$tendency_cfg['tendency_efficient_max_actions']) $include = false;
+                break;
+        }
+        if ($include) $filtered[] = $cand;
+    }
+
+    // 候选为空时返回 null（让 select_target 降级到优先级 2 POI 候选）
+    if (empty($filtered)) return null;
+
+    // 按倾向排序选首个候选
+    $best = obl_navigation_score_tendency_candidates($filtered, $tendency, $move_power);
+    return $best !== null ? (int)$best['pls'] : null;
+}
+
+/**
+ * BFS 遍历收集 explored=0 的可达图格候选（E-Q5-C Q5-6 抽取的辅助函数）
+ *
+ * 从 $pls 出发 BFS，收集 explored=0 的可达图格作为候选，应用 $scan_limit 距离上限。
+ * 候选元素结构：['pls' => int, 'distance' => int, 'tide' => string, 'tide_weight' => int]
+ *
+ * F-E5-Target §三.10：被活单位占用的图格不作为目标候选，也不作为路径中间点。
+ * 未探索格仍作为路径中间点继续扩展，以收集更多候选用于倾向排序。
+ *
+ * @param int    $pgroup         区域
+ * @param int    $pls            起始格
+ * @param array  $tiles          区域图格集
+ * @param array  $occupied_tiles 活单位占据格集
+ * @param array  $weight_map     潮汐权重表
+ * @param int    $scan_limit     BFS 距离上限（PHP_INT_MAX 表示无上限，全区域扫描）
+ * @return array 候选数组
+ */
+function obl_navigation_collect_unexplored_candidates($pgroup, $pls, array $tiles, array $occupied_tiles, array $weight_map, $scan_limit) {
+    global $db, $tablepre;
+    $pgroup = (int)$pgroup;
+    $pls = (int)$pls;
+    $scan_limit = (int)$scan_limit;
+
     $candidates = array();
     $visited = array($pls => true);
     $queue = array(array($pls, 0));
@@ -1003,8 +1221,8 @@ function obl_navigation_select_unexplored_tile($pgroup, $pls, $tendency, &$pdata
         $current = (int)$frame[0];
         $distance = (int)$frame[1];
 
-        // 候选距离上限：超过则不扩展（避免大区域扫描成本）
-        if ($distance > $candidate_scan_limit) continue;
+        // 候选距离上限：超过则不扩展（PHP_INT_MAX 时无上限，全区域扫描）
+        if ($distance > $scan_limit) continue;
 
         $neighbors = $tiles[$current]['neighbors'] ?? array();
         foreach ($neighbors as $neighbor) {
@@ -1044,37 +1262,7 @@ function obl_navigation_select_unexplored_tile($pgroup, $pls, $tendency, &$pdata
         }
     }
 
-    if (empty($candidates)) return null;
-
-    // 按倾向过滤候选集
-    $filtered = array();
-    foreach ($candidates as $cand) {
-        $distance = (int)$cand['distance'];
-        $action_count = obl_navigation_action_count($distance, $move_power);
-        $include = true;
-        switch ($tendency) {
-            case 'steady':
-                if ($distance > (int)$tendency_cfg['steady_max_target_distance']) $include = false;
-                break;
-            case 'nearby':
-                if ($action_count > (int)$tendency_cfg['tendency_nearby_max_actions']) $include = false;
-                break;
-            case 'deep':
-                if ($distance > (int)$tendency_cfg['tendency_deep_max_distance']) $include = false;
-                break;
-            case 'efficient':
-                if ($action_count > (int)$tendency_cfg['tendency_efficient_max_actions']) $include = false;
-                break;
-        }
-        if ($include) $filtered[] = $cand;
-    }
-
-    // 候选为空时返回 null（让 select_target 降级到优先级 2 POI 候选）
-    if (empty($filtered)) return null;
-
-    // 按倾向排序选首个候选
-    $best = obl_navigation_score_tendency_candidates($filtered, $tendency, $move_power);
-    return $best !== null ? (int)$best['pls'] : null;
+    return $candidates;
 }
 
 /**
@@ -1151,6 +1339,103 @@ function obl_navigation_select_undiscovered_poi($pgroup, $pls, $tendency, &$pdat
     if (empty($candidates)) return null;
 
     // 按倾向排序选首个候选（POI 候选不做距离上限过滤）
+    $best = obl_navigation_score_tendency_candidates($candidates, $tendency, $move_power);
+    return $best !== null ? (int)$best['pls'] : null;
+}
+
+/**
+ * 选隐藏敌人搜索位置作为目标（E-Q5-E Q5-14，设计案 §5.3 + §5.4）
+ *
+ * 当所有未探索格和未发现 POI 均已处理完后（优先级 1/2 均返回 null），
+ * 移动按钮继续承担内容搜索入口。查询当前区域 state=0（活）且 discovered=0
+ * （未发现）的敌人，按移动倾向排序取首个敌人所在格作为搜索位置。
+ *
+ * 不向前端泄露敌人实体信息（§5.5 后端可用隐藏数据，前端不提前泄露）：
+ *   - 前端只看到搜索位置 pls（作为导航目标），不看到敌人 pid/name
+ *   - 搜索位置是敌人当前位置快照，敌人可在导航过程中移动/离开/突袭
+ *
+ * 玩家抵达搜索位置后必定停止（§5.3），由 check_interrupt.arrived 中断；
+ * 敌人之后可以移动、离开、靠近或突袭（§5.4），本次导航不持续追踪实体。
+ * 通常情况下玩家在抵达搜索位置前已进入敌人信息范围，触发 enemy_discovered
+ * 中断（由移动过程中的 info 采集机制触发），不会真正踏上敌人所在格。
+ *
+ * 倾向差异化排序（与 select_undiscovered_poi 一致，不做距离上限过滤）：
+ *   - steady：距离升序 → tide_weight 升序
+ *   - nearby：行动次数升序 → 距离升序
+ *   - deep：tide_weight 降序 → 距离升序
+ *   - efficient：距离降序 → tide_weight 升序
+ *
+ * F-E6-Combat §5.3：BFS 距离计算只避开已发现敌人（隐藏敌人不阻挡路径）；
+ *   隐藏敌人所在格作为目标格可达（BFS 目标格不被 blocked_tiles 阻挡）。
+ *
+ * 边界案例：
+ *   - 隐藏敌人在导航过程中被击杀：下次选目标时该敌人 state>0，不再进入候选
+ *   - 隐藏敌人在导航过程中突袭玩家：触发 force_combat 中断，搜索位置失效
+ *   - 隐藏敌人所在格不可通行：跳过该候选（不选不可达目标）
+ *   - 区域内无活着的隐藏敌人：返回 null，select_target 走优先级 4 返回 no_target
+ *
+ * @param int    $pgroup  当前区域
+ * @param int    $pls     当前格
+ * @param string $tendency 移动倾向
+ * @param array  &$pdata  玩家数据
+ * @return int|null 搜索位置 pls（敌人所在格），null 表示无可用目标
+ */
+function obl_navigation_select_hidden_enemy_search_position($pgroup, $pls, $tendency, &$pdata) {
+    global $db, $tablepre;
+    $pgroup = (int)$pgroup;
+    $pls = (int)$pls;
+    $tendency = obl_navigation_normalize_tendency($tendency);
+
+    // 查询当前区域 state=0（活）且 discovered=0（未发现）的敌人
+    $sql = "SELECT pls FROM {$tablepre}oblplayers
+            WHERE type > 0 AND pgroup = {$pgroup}
+              AND state = 0 AND discovered = 0";
+    $result = $db->query($sql);
+    if (!$result) return null;
+
+    $raw_candidates = array();
+    while ($row = $db->fetch_array($result)) {
+        $raw_candidates[] = (int)$row['pls'];
+    }
+    if (empty($raw_candidates)) return null;
+
+    // 获取区域图格数据
+    $map = obl_get_map_data($pgroup);
+    $tiles = $map['tiles'][$pgroup] ?? array();
+    if (!isset($tiles[$pls])) return null;
+
+    // F-E6-Combat §5.3：BFS 寻路只避开已发现敌人（隐藏敌人不阻挡路径）
+    // 隐藏敌人所在格作为目标格可达（BFS 目标格不被 blocked_tiles 阻挡）
+    $blocked_tiles = obl_navigation_get_enemy_occupied_tiles($pgroup, (int)($pdata['pid'] ?? 0), false);
+
+    $tendency_cfg = obl_navigation_tendency_config();
+    $weight_map = $tendency_cfg['tide_weight_map'];
+    $move_power = function_exists('obl_get_move_power') ? (int)obl_get_move_power($pdata) : 1;
+    $move_power = max(1, $move_power);
+
+    // 构造候选集合（带 BFS 距离 + tide 信息）
+    $candidates = array();
+    foreach ($raw_candidates as $enemy_pls) {
+        if (!isset($tiles[$enemy_pls])) continue;
+        // 敌人所在格必须可通行（不可通行格如墙壁内的敌人不作为搜索目标）
+        if (empty($tiles[$enemy_pls]['passable'])) continue;
+        // 计算玩家到敌人所在格的 BFS 距离（隐藏敌人不阻挡路径）
+        $bfs_result = obl_navigation_standard_bfs_next($pls, $enemy_pls, $tiles, $blocked_tiles);
+        if ($bfs_result['next'] === null && $pls !== $enemy_pls) continue;
+        $distance = $bfs_result['length'];
+        if ($distance < 0) continue;
+        $tide = obl_navigation_tile_tide($tiles[$enemy_pls]);
+        $candidates[] = array(
+            'pls'         => $enemy_pls,
+            'distance'    => $distance,
+            'tide'        => $tide,
+            'tide_weight' => obl_navigation_tide_weight($tide, $weight_map),
+        );
+    }
+
+    if (empty($candidates)) return null;
+
+    // 按倾向排序选首个候选（与 select_undiscovered_poi 一致，不做距离上限过滤）
     $best = obl_navigation_score_tendency_candidates($candidates, $tendency, $move_power);
     return $best !== null ? (int)$best['pls'] : null;
 }
