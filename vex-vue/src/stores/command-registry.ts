@@ -23,11 +23,21 @@ export interface CommandSpec {
   itm0Allowed: boolean;
   readOnly: boolean;
   requiredCapabilities: ActorCapability[];
+  /**
+   * handler 内多次推进 tick（F-K4-Director §3.4 / 设计案 §3.4）。
+   * 与 advancesTick 的差异：advancesTick=true 表示命令推进 tick（触发一次 NPC 先攻轮）；
+   * internalTickAdvances=true 表示 handler 内部多次推进 tick（如 map.navigate 的逐次移动），
+   * 前端演出层需消费多次移动结果序列，不依赖命令队列的单次 tick 后检查。
+   */
+  internalTickAdvances?: boolean;
 }
 
 export const COMMAND_REGISTRY: Record<string, CommandSpec> = {
   // ── 探索类（advancesTick=true） ──
   'map.move':        { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['voluntary_move'] },
+  // 高层导航：后端选目标 + 多次原子移动 + 中断判断（F-K4-Director §3.1 / 设计案 §8.1）
+  // internalTickAdvances=true：handler 内多次推进 tick，前端移动导演消费多次移动结果序列
+  'map.navigate':    { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['voluntary_move'], internalTickAdvances: true },
   'map.explore':     { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'poi.search':      { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },
   'poi.interact':    { mode: 'explore', advancesTick: true,  itm0Allowed: false, readOnly: false, requiredCapabilities: ['time_pass'] },

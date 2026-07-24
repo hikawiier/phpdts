@@ -201,11 +201,13 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (this.disposed) return;
     if (this.channelOwners.has('spatial')) {
       this.pendingAnchor = anchor;
+      console.log('[P4_DBG] projectAnchor queued-pending ' + JSON.stringify({ id: this.id, anchorX: anchor.point.x, anchorY: anchor.point.y }));
       return;
     }
     this.currentAnchor = anchor;
     this.pendingAnchor = null;
     this.writeAnchor(anchor);
+    console.log('[P4_DBG] projectAnchor wrote-dom ' + JSON.stringify({ id: this.id, anchorX: anchor.point.x, anchorY: anchor.point.y }));
   }
 
   getProjectedAnchor(): SceneAnchor | null {
@@ -292,15 +294,24 @@ class ActorRuntimeImpl implements ActorRuntime {
     const elements = this.elements;
     if (!elements) {
       this.traceAnimation(command.kind, 'skipped', 'actor_dom_missing');
+      console.log('[P4_DBG] play skip dom-missing', { id: this.id, kind: command.kind });
       return skippedHandle('actor_dom_missing');
     }
     const required = requiredChannels(command);
+    const channelStatus = required.map(channel => ({
+      channel,
+      leaseHas: lease.channels.has(channel),
+      ownerIsLease: this.channelOwners.get(channel) === lease,
+      owner: this.channelOwners.get(channel)?.sessionId ?? null,
+    }));
     if (required.some(channel => !lease.channels.has(channel) || this.channelOwners.get(channel) !== lease)) {
       this.traceAnimation(command.kind, 'skipped', 'lease_channel_missing');
+      console.log('[P4_DBG] play skip channel-missing', { id: this.id, kind: command.kind, channelStatus });
       return skippedHandle('lease_channel_missing');
     }
     this.cancelChannels(required, 'replaced');
     this.traceAnimation(command.kind, 'start');
+    console.log('[P4_DBG] play dispatch', { id: this.id, kind: command.kind, tier: command.kind === 'move' ? command.tier : null, sessionId: lease.sessionId });
 
     let animation: gsap.core.Animation;
     let impactAt: number | null = null;

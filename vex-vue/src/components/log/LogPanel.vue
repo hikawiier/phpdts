@@ -16,6 +16,19 @@
 //   - 滚动容器 ref 传给 useLogScroll.bindScroll()
 //
 // 滚动逻辑由 useLogScroll composable 处理（命令式 scrollTop = scrollHeight）。
+//
+// ── 反馈层不变量（F-K5-Feedback §三.2-§三.5） ──
+// 本面板仅渲染探索场景日志，三场景日志所有权由 RightPanel 切分：
+//   - 探索场景（isExplore）：RightPanel 正常态 → 渲染 LogPanel（探索日志 + 战斗前奏日志）
+//   - 战斗场景（isBattle）：RightPanel 战斗态 → 渲染战斗战报面板，不复制探索日志（§三.4）
+//   - 完整地图（isAtlas）：AtlasScene 为模态覆盖层，无 LogPanel，不复制日志（§三.5）
+//
+// 原子移动日志不合并（§三.2 / §7.8）：
+//   - logStore.refreshLog 通过 entries.value = newAllEntries 全量替换
+//   - log-templates.ts 的 'move.success' 模板按单条 entry 渲染"从 XX 移动到了 XX"
+//   - 即每次原子移动（一格路径段）独立成条，不在 store / 模板层合并
+//   - 加速或跳过动画时 3.4 move-director 调用 PlaybackController 控制 GSAP 时间轴，
+//     但 logStore.entries 仍由 K-8 增量拉取独立维护，动画压缩不影响日志条目数（§三.3）
 // ══════════════════════════════════════════════════
 
 import { computed, onMounted, ref, watch, nextTick } from 'vue';

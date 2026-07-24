@@ -1,7 +1,7 @@
 <?php
 /**
  * @module E 游戏逻辑
- * @framework E-7 探索与交互管道
+ * @framework E-7 统一信息获取与探索编排系统
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -103,16 +103,24 @@ function obl_get_discovery_limit(&$pdata) {
  * - 仅更新 discovered=0 的道具（已发现的不降级）
  * - 同一格重复探索可继续发现剩余未发现道具
  *
- * @param int   $pgroup        当前区域
- * @param array $visible_tiles [pls => ['distance' => int]]
- * @param array &$pdata        玩家数据（读取技能等级影响发现上限）
+ * @param int        $pgroup          当前区域
+ * @param array      $visible_tiles   [pls => ['distance' => int]]
+ * @param array      &$pdata          玩家数据（读取技能等级影响发现上限）
+ * @param int|null   $budget_override 显式预算覆盖（F-E4-Info §5.3：move=1, explore=null=技能化）
+ *                                    null=使用 obl_get_discovery_limit($pdata)（默认，向后兼容）
+ *                                    >0=使用此值作为发现上限（来自 obl_get_info_config 的 info_budget）
  */
-function obl_discover_items($pgroup, $visible_tiles, &$pdata) {
+function obl_discover_items($pgroup, $visible_tiles, &$pdata, $budget_override = null) {
     global $db, $tablepre;
 
     if (empty($visible_tiles)) return;
 
-    $discover_limit = obl_get_discovery_limit($pdata);
+    // 预算优先级：显式覆盖 > 技能化上限
+    if ($budget_override !== null) {
+        $discover_limit = (int)$budget_override;
+    } else {
+        $discover_limit = obl_get_discovery_limit($pdata);
+    }
     if ($discover_limit <= 0) return;
 
     $pgroup_i = (int)$pgroup;
@@ -198,37 +206,77 @@ function obl_check_explore_sp(&$pdata) {
 // ----------------------------------------------------------------
 
 /**
- * 探索当前格：体力检查 → 点亮迷雾 → 发现道具 → 探索后钩子
+ * 探索当前格：体力检查 → 统一信息获取（explore 配置）→ 探索后钩子
+ *
+ * 设计意图（视野-探索-移动模块改造 §4.7 + §5.3）：
+ *   探索使用统一信息获取原语 obl_acquire_information（explore 配置），
+ *   强化预算 + 全集 filter，与移动共用原语但配置更强。
+ *
+ * 降级等待（设计案 §5.3）：
+ *   体力不足但玩家具备行动资格时，不直接拒绝，而是降级为 world.wait。
+ *   - 执行 world.wait 逻辑（emit wait.success）
+ *   - emit explore.degraded_to_wait 日志
+ *   - 返回 explore_outcome='degraded_wait'（不消耗探索体力，§5.6）
+ *   - 推进 tick（由 B-3 save_and_tick 保证）
+ *
+ * 结构化结果枚举（设计案 §5.3）：
+ *   - normal：正常执行，有发现
+ *   - no_discovery：正常执行，无发现
+ *   - degraded_wait：降级为等待
  *
  * @param array &$pdata          玩家数据
- * @param bool  $skip_sp_check   是否跳过体力检查（移动后自动探索时为 true）
+ * @param bool  $skip_sp_check   是否跳过体力检查（预留，自动探索时为 true）
+ * @return array ['explore_outcome' => string, 'info_result' => array|null, 'reason' => string|null]
  */
 function obl_explore(&$pdata, $skip_sp_check = false) {
     global $obl_log;
 
-    // 1. 体力检查（移动后自动探索跳过）
+    // 1. 体力检查：不足时降级为等待（设计案 §5.3 degraded_wait）
     if (!$skip_sp_check) {
-        if (!obl_check_explore_sp($pdata)) {
-            return;
+        $cfg = obl_get_config();
+        $cost = (int)($cfg['explore_sp_cost'] ?? 0);
+        if ($pdata['sp'] < $cost) {
+            // 降级为等待：执行 world.wait 逻辑 + emit 降级日志
+            // 降级不消耗探索体力（§5.6），玩家可在下一 tick 再次探索
+            if (isset($obl_log) && $obl_log) {
+                $obl_log->emit('wait.success', 'world');
+                $obl_log->emit('explore.degraded_to_wait', 'explore', array('reason' => 'no_sp'));
+            }
+            return array(
+                'explore_outcome' => 'degraded_wait',
+                'reason'          => 'no_sp',
+                'info_result'     => null,
+            );
         }
+        // 体力充足：扣除探索体力
+        $pdata['sp'] -= $cost;
     }
 
     $pgroup = (int)$pdata['pgroup'];
     $pls = (int)$pdata['pls'];
 
-    // 2. 更新视野（迷雾点亮 + 道具发现）
-    obl_update_vision($pgroup, $pls, $pdata);
+    // 2. 统一信息获取（explore 配置：强化预算 + 全集 filter）
+    $info_result = obl_acquire_information(
+        $pgroup, $pls, $pdata,
+        obl_get_info_config('explore')
+    );
 
-    // 3. 发现视野内的敌人（同时清除敌人所在格的迷雾）
-    // obl_discover_enemies 已由 obl_bootstrap.php 加载
-    $vision_range = obl_get_player_vision_range($pdata);
-    obl_discover_enemies($pgroup, $pls, $vision_range);
+    // 3. 判定探索结果枚举（设计案 §5.3）
+    $has_discovery = !empty($info_result['items_discovered'])
+        || !empty($info_result['enemies_discovered'])
+        || !empty($info_result['pois_discovered']);
+    $explore_outcome = $has_discovery ? 'normal' : 'no_discovery';
 
-    // 4. 探索日志
-    $obl_log->emit('explore.success', 'explore');
+    // 4. 探索日志（携带结构化结果）
+    $obl_log->emit('explore.success', 'explore', $info_result);
 
     // 5. 探索后钩子
     obl_post_explore_hook($pdata);
+
+    return array(
+        'explore_outcome' => $explore_outcome,
+        'info_result'     => $info_result,
+    );
 }
 
 // ----------------------------------------------------------------

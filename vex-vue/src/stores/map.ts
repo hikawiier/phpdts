@@ -94,7 +94,11 @@ export const useMapStore = defineStore('map', () => {
     const pls = patch.curLoc !== undefined
       ? normalizeLocation(patch.curLoc)
       : previous.currentTile?.pls ?? null;
-
+    console.log('[P4_DBG] updateMapData ' + JSON.stringify({
+      prevPls: previous.currentTile?.pls, newPls: pls,
+      prevRev: previous.revision,
+      hasLinks: !!patch.links, hasEnemies: !!patch.enemies,
+    }));
     commitProjection({
       currentTile: pgroup !== null && pls !== null ? { pgroup, pls } : null,
       links: patch.links !== undefined ? patch.links : previous.links,

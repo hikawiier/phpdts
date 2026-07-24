@@ -36,9 +36,9 @@ const htmlContent = computed<string>(() => {
   return renderLogEntry(props.entry);
 });
 
-/** 容器 class（log-entry + log-new + log-debug） */
+/** 容器 class（log-entry + log-type-{category} + log-new + log-debug） */
 const containerClass = computed<string[]>(() => {
-  const cls = ['log-entry'];
+  const cls = ['log-entry', `log-type-${props.entry.logcategory}`];
   if (props.isNew) cls.push('log-new');
   if (props.entry.debug) cls.push('log-debug');
   return cls;

@@ -33,8 +33,9 @@
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
-import { ref, nextTick } from 'vue';
+import { computed, ref, nextTick } from 'vue';
 import { dataManager } from '@/stores/data-manager';
+import { useSceneStore } from '@/stores/scene-store';
 import { getHeartbeatChangedScopes, isHeartbeatSoftFailed, oblHeartbeat, type OblHeartbeatResponse } from '@/api/client';
 import { useToastStore } from '@/stores/toast';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
@@ -150,8 +151,13 @@ function extractNpcPidFromScript(script: BattlePlayScript): number {
 }
 
 export const useBattleStore = defineStore('battle', () => {
+  // ── 场景所有权（F-K1-Scenes 单一真源） ──
+  // currentMode 派生自 sceneStore.isBattle，避免双源真值冲突。
+  // 模式切换通过 sceneStore.enterBattle / exitBattle 完成，不直接维护模式真值。
+  const sceneStore = useSceneStore();
+  const currentMode = computed<'normal' | 'battle'>(() => sceneStore.isBattle ? 'battle' : 'normal');
+
   // ── 战斗状态 ──
-  const currentMode = ref<'normal' | 'battle'>('normal');
   const currentEnemyPid = ref<number>(0);
   const currentQid = ref<number | null>(null);
   const currentGroomid = ref<number>(0);
@@ -502,7 +508,7 @@ export const useBattleStore = defineStore('battle', () => {
       return;
     }
 
-    currentMode.value = 'battle';
+    sceneStore.enterBattle();
     currentEnemyPid.value = enemyPid;
     currentQid.value = nextQid;
 
@@ -520,7 +526,7 @@ export const useBattleStore = defineStore('battle', () => {
   function exitBattleMode(): void {
     if (currentMode.value === 'normal') return;
 
-    currentMode.value = 'normal';
+    sceneStore.exitBattle();
     combatTargetsRequestGeneration++;
     currentEnemyPid.value = 0;
     currentQid.value = null;
@@ -611,7 +617,7 @@ export const useBattleStore = defineStore('battle', () => {
       return;
     }
 
-    currentMode.value = 'battle';
+    sceneStore.enterBattle();
     currentEnemyPid.value = enemyPid;
     currentQid.value = null;
     combatContext.value = null;
@@ -1114,7 +1120,7 @@ export const useBattleStore = defineStore('battle', () => {
   /** 重置为初始状态（退出战斗/切换角色时） */
   function reset(): void {
     combatTargetsRequestGeneration++;
-    currentMode.value = 'normal';
+    sceneStore.exitBattle();
     currentEnemyPid.value = 0;
     currentQid.value = null;
     currentGroomid.value = 0;

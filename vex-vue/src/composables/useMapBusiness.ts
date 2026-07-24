@@ -10,7 +10,7 @@
 // loadMap() 本身迁移到 mapStore action（useMapBusiness 调用 mapStore.loadMap）。
 //
 // 职责：
-//   - clickMove(areaId)：点击移动业务逻辑（提交命令 + 失效缓存 + 重新加载 + 广播）
+//   - clickMove(areaId)：点击移动业务逻辑（当前格广播探索 / 可达格委托移动导演逐格演出）
 //   - handleEnemyClick(enemy)：敌人点击战斗触发（M6 才有 startBattle，暂时占位）
 //   - highlightCell(areaId)：移动路径高亮
 //   - setupMapCallbacks()：注册渲染/交互回调 + battle:ended 监听 + DebugBus 状态
@@ -28,12 +28,13 @@ import { useMapStore } from '@/stores/map';
 import { useBattleStore } from '@/stores/battle';
 import { commandQueue } from '@/stores/command-queue';
 import { dataManager } from '@/stores/data-manager';
+import { useExploreStore } from '@/stores/explore-store';
+import { useMoveDirectorStore } from '@/stores/move-director';
 import { debugBus } from '@/composables/useDebugBus';
 import { setRenderCallbacks, setPathPreviewGetter, getZoomLevel, triggerHighlight } from '@/composables/useMapRender';
 import { setInteractionCallbacks, showPathPreview, clearPathPreview, centerOnPlayer, getPathPreviewCells } from '@/composables/useMapInteraction';
-import { perf } from '@/utils/perf';
 import type { Character } from '@/types/character';
-import { isBattleMapInputLocked, isSilentMapCommandLock } from '@/stores/battle-ui-policy';
+import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { getStatusLocale } from '@/data/status-locale';
 import { renderCommandFeedback } from '@/data/command-feedback';
@@ -41,9 +42,9 @@ import { renderCommandFeedback } from '@/data/command-feedback';
 /**
  * 点击移动 / 点击当前格探索
  *
- * 与现有 vex/js/map.js clickMove 一致：
  *   - 点击当前格 → 广播 map:click-current（tile-action 监听执行探索）
- *   - 点击其他格 → commandQueue.execute(move) → 失效缓存 → loadMap → 广播
+ *   - 点击其他格 → 委托 moveDirector.startNavigation 发送 map.navigate 并解析逐格演出
+ *     （F-K4-Director §5.2 / 设计案 §8.2；与 MainActionBar.onMove 同入口）
  */
 export async function clickMove(areaId: string | number): Promise<void> {
   if (areaId === undefined || areaId === null) return;
@@ -63,62 +64,19 @@ export async function clickMove(areaId: string | number): Promise<void> {
     return;
   }
 
-  perf.clear();
-  perf.mark('clickMove 开始', 'store');
+  // 点击相邻可达格 → 委托移动导演逐格演出（F-K4-Director §5.2 / 设计案 §8.2）
+  //
+  // 修复"点击地图相邻格子绕过移动导演"断档：原先直接发送 map.move（单次原子移动），
+  // 而移动导演只监听 map.navigate（高层导航），导致点击可达格走旧路径完全绕过导演，
+  // 无移动动画 / 无迷雾清除 / 无 DiscoveryModal 发现反馈。
+  // 现统一委托 moveDirector.startNavigation，由其发送 map.navigate 并解析逐格演出。
+  // inputLocked 门控由 startNavigation 内部处理（move-director.ts:596-597），无需重复检查。
+  // 旧 map.move 路径（invalidate/loadMap/clearPathPreview/highlightCell）已删除，移动导演
+  // 内部演出流程统一接管迷雾清除/发现反馈/位置投影；如需回退请通过 git 历史恢复。
   debugBus.emit('action', 'clickMove:trigger', { target: areaId, current: mapStore.curLoc });
-
-  const cmdParams = {
-    command: 'map.move',
-    payload: { to: parseInt(String(areaId), 10) },
-  };
-  const t0 = Date.now();
-  try {
-    perf.mark('→ sendOblCommand 开始', 'store');
-    const result = await commandQueue.execute(cmdParams);
-    perf.mark('← sendOblCommand 完成', 'store');
-    debugBus.emit('action', 'clickMove:response', {
-      elapsed_ms: Date.now() - t0,
-      success: result.success,
-    });
-    if (result.success) {
-      // 精准失效：move 命令影响地图、动作条、背包
-      perf.mark('→ invalidate', 'store');
-      dataManager.invalidate('game_map');
-      dataManager.invalidate('tile_actions');
-      dataManager.invalidate('player_inventory');
-      perf.mark('← invalidate 完成', 'store');
-
-      perf.mark('→ loadMap 开始', 'store');
-      await mapStore.loadMap();
-      perf.mark('← loadMap 完成', 'store');
-
-      perf.mark('→ broadcast game:action-completed', 'broadcast');
-      dataManager.broadcast('game:action-completed');
-      perf.mark('← broadcast game:action-completed 完成', 'broadcast');
-
-      // 移动成功后清理路径预览：玩家位置已变化，旧预览路径失效。
-      // 即便鼠标 @mouseleave 未触发（点击移动后鼠标静止），也能保证预览不残留。
-      clearPathPreview();
-
-      // 移动路径高亮：目标格闪烁
-      highlightCell(areaId);
-      perf.mark('clickMove 全部完成', 'store');
-
-      perf.report();
-    } else {
-      if (result.error === 'LOCKED' && isSilentMapCommandLock(result.lockReason)) return;
-      const message = result.message || result.error || '';
-      debugBus.emit('action', 'clickMove:failed', { target: areaId, error: result.error, message });
-      dataManager.broadcast('ui:toast', {
-        type: 'error',
-        msg: '移动失败' + (message ? ': ' + message : ''),
-        isHtml: !!result.messageIsHtml,
-      });
-    }
-  } catch (err) {
-    debugBus.emit('error', 'clickMove:error', { error: err instanceof Error ? err.message : String(err) });
-    dataManager.broadcast('ui:toast', { type: 'error', msg: '移动失败' });
-  }
+  const explore = useExploreStore();
+  const moveDirector = useMoveDirectorStore();
+  await moveDirector.startNavigation(explore.tendency, Number(areaId));
 }
 
 /**

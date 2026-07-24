@@ -47,6 +47,7 @@ import { useMapEntities } from '@/composables/useMapEntities';
 import { useBattleStore } from '@/stores/battle';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { useUiStore } from '@/stores/ui';
+import { useExploreStore } from '@/stores/explore-store';
 import type { MapEntity } from '@/types/map-entity';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
@@ -60,6 +61,7 @@ const playerAvatarStore = usePlayerAvatarStore();
 const uiStore = useUiStore();
 const presentationScene = usePresentationSceneStore();
 const aimTargetingStore = useAimTargetingStore();
+const exploreStore = useExploreStore();
 const actorLabelsEnabled = isDebugEnabled('labels');
 
 function isMapCommandInputLocked(): boolean {
@@ -146,11 +148,24 @@ function aimStateClass(state: AimTileVisualState): string | null {
   return null;
 }
 
+// ─── 三态认知视觉（B5.20-B5.25） ───
+// 在 useMapRender 的二态（fogged/explored）基础上，叠加"已揭示未到达"第三态：
+//   - fogged（迷雾）：cell.isFogged → 深色半透明 + 虚线淡边框 + ?（已有 .fogged 样式）
+//   - revealed（已揭示未到达）：!isFogged && !isCurrent && !exploredStore.isExplored → 中色 + 虚线边框 + · 角标
+//   - explored（已探索）：!isFogged && (isCurrent || exploredStore.isExplored) → 亮色 + 实线边框
+// 玩家位置（isCurrent）始终视为已探索（B5.23/B5.22 落点立即转已探索）
+function cognitiveClass(cell: CellData): string | null {
+  if (cell.isEmpty || cell.isFogged) return null;
+  if (cell.isCurrent) return 'cog-explored';
+  return exploreStore.isExplored(cell.pls) ? 'cog-explored' : 'cog-revealed';
+}
+
 function cellClass(cell: CellData): Array<string[] | string> {
   const state = aimTargetingStore.getTileVisualState(Number(cell.pls), cell.isFogged);
   const aimClass = aimStateClass(state);
   const hoverClass = aimTargetingStore.aimHoverPls === Number(cell.pls) ? 'aim-hover' : null;
-  const extras = [aimClass, hoverClass].filter(Boolean) as string[];
+  const cogClass = cognitiveClass(cell);
+  const extras = [aimClass, hoverClass, cogClass].filter(Boolean) as string[];
   return extras.length ? [cell.classList, ...extras] : [cell.classList];
 }
 
@@ -358,7 +373,7 @@ onUnmounted(() => {
         <!-- 当前格：立绘已迁出到 #mapGrid 直接子元素（角色层） -->
         <template v-else-if="cell.isCurrent">
           <span class="cell-name pulse-white player-label">
-            {{ cell.prefix }}{{ cell.displayLabel }}
+            <span class="player-at">@</span>{{ cell.prefix }}{{ cell.displayLabel }}
           </span>
         </template>
 
@@ -378,6 +393,13 @@ onUnmounted(() => {
         <template v-else>
           <span class="cell-coord">{{ cell.coordLabel }}</span>
         </template>
+
+        <!-- 已揭示未到达标记（B5.21：已揭示但玩家未到达的格显示 · 角标） -->
+        <span
+          v-if="!cell.isEmpty && !cell.isFogged && !cell.isCurrent && !exploreStore.isExplored(cell.pls)"
+          class="cell-unreached"
+          title="未到达"
+        >·</span>
 
         <!-- 路径预览方向箭头（由 useMapInteraction.pathPreviewCells 响应式状态驱动） -->
         <span v-if="cell.pathArrow" class="cell-path-arrow">{{ cell.pathArrow }}</span>
@@ -434,5 +456,43 @@ onUnmounted(() => {
    最终效果 = GSAP opacity × filter opacity（正常 1×1=1，半透明 1×0.5=0.5，死亡淡出 0×0.5=0） */
 .entity.entity-dimmed {
   filter: opacity(0.5);
+}
+
+/* ═══ 三态认知视觉（B5.20-B5.25，灰阶层级，§2.15） ═══ */
+/* 在 useMapRender 的 .fogged/.explored 基础上叠加认知维度：
+   - fogged（迷雾）：已有全局 .fogged 样式（深色半透明 + 虚线淡边框 + ?）
+   - cog-revealed（已揭示未到达）：中色 + 虚线边框（B5.21）
+   - cog-explored（已探索）：亮色 + 实线边框（B5.22） */
+:deep(.map-cell.cog-revealed) {
+  color: #777;
+  background: rgba(255, 255, 255, 0.025);
+  border-style: dashed;
+  border-color: rgba(68, 68, 68, 0.45);
+}
+:deep(.map-cell.cog-explored) {
+  color: #bbb;
+  background: rgba(255, 255, 255, 0.05);
+  border-style: solid;
+  border-color: rgba(68, 68, 68, 0.4);
+}
+
+/* 已揭示未到达角标（B5.21：· 标记玩家尚未到达） */
+.cell-unreached {
+  position: absolute;
+  bottom: 1px;
+  right: 2px;
+  color: rgba(136, 136, 136, 0.6);
+  font-size: 9px;
+  font-weight: 700;
+  pointer-events: none;
+  line-height: 1;
+}
+
+/* 玩家位置 @ 标记（B5.23：始终强调显示） */
+.player-at {
+  color: #fff;
+  font-weight: 900;
+  margin-right: 1px;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
 }
 </style>

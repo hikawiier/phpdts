@@ -20,6 +20,10 @@ CREATE TABLE bra_oblmappoi (
   pls tinyint unsigned NOT NULL default '0',
   poi_id varchar(32) NOT NULL default '',
 
+  -- 发现状态：进入玩家有效信息范围后 100% 发现（obl_discover_pois 设为 1）
+  -- 0=未发现（不进入自动导航目标池，前端不显示） 1=已发现
+  discovered tinyint(1) unsigned NOT NULL default '0',
+
   -- 状态机（核心）
   state varchar(16) NOT NULL default 'idle',
     -- idle / searched / cooldown / exhausted

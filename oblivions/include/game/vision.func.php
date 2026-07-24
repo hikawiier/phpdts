@@ -1,7 +1,7 @@
 <?php
 /**
  * @module E 游戏逻辑
- * @framework E-6 视野与感知系统
+ * @framework E-6 视野与地图认知状态系统
  */
 
 if (!defined('IN_GAME')) {

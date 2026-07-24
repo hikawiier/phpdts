@@ -125,20 +125,41 @@ export const useTileActionStore = defineStore('tileAction', () => {
     debugBus.emit('action', 'explore:trigger', {});
     try {
       const result = await commandQueue.execute({ command: 'map.explore', payload: {} });
-      if (result.success) {
-        dataManager.invalidate('tile_actions');
-        dataManager.invalidate('player_inventory');
-        dataManager.invalidate('game_map');
-        const mapStore = useMapStore();
-        await mapStore.loadMap();
-        dataManager.broadcast('game:action-completed');
-      } else {
+      if (!result.success) {
+        // 请求级非法状态（设计案 §13.2.7）：不消耗游戏刻，仅显示错误
         dataManager.broadcast('ui:toast', {
           type: 'error',
           msg: result.message || result.error || '探索失败',
           isHtml: !!result.messageIsHtml,
         });
+        return;
       }
+      // 设计案 §13.2.5/§13.2.6 + §6.2.2：读取 explore_outcome 枚举差异化反馈。
+      // 三种 outcome（normal/no_discovery/degraded_wait）均 ok=true 且推进 tick，
+      // 故统一失效缓存 + 刷新地图 + 广播；差异仅在 Toast 提示。
+      const outcome = (result.gamedata?.explore_outcome as string) || 'normal';
+      if (outcome === 'degraded_wait') {
+        // §13.2.6：探索失败并等待，明确显示原因，不播放成功扫描演出
+        dataManager.broadcast('ui:toast', {
+          type: 'warning',
+          msg: '探索失败并等待（体力不足或领域规则限制）',
+          duration: 2500,
+        });
+      } else if (outcome === 'no_discovery') {
+        // §13.2.5：正常探索但无发现，明确记录，不弹空模态框
+        dataManager.broadcast('ui:toast', {
+          type: 'info',
+          msg: '扫描完成，未发现新内容',
+          duration: 1800,
+        });
+      }
+      // normal：正常探索有发现，依赖后端 presentation 事件驱动发现模态框，不额外 toast
+      dataManager.invalidate('tile_actions');
+      dataManager.invalidate('player_inventory');
+      dataManager.invalidate('game_map');
+      const mapStore = useMapStore();
+      await mapStore.loadMap();
+      dataManager.broadcast('game:action-completed');
     } catch (e) {
       debugBus.emit('error', 'explore:error', {
         error: e instanceof Error ? e.message : String(e),

@@ -69,6 +69,12 @@ function obl_tick_orchestrator_status($ctx = null) {
 function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata, $dispatched) {
     global $gamevars;
 
+    // 设计案 §3.4：internal_tick_advances 命令的 tick 已在 handler 内逐次推进，
+    // 此处仅做最终保存（跳过 tick 推进 + 清理临时状态）
+    if (!empty($contract['internal_tick_advances'])) {
+        return obl_tick_orchestrator_finalize_after_internal_advances($ctx, $command, $contract, $pdata, $dispatched);
+    }
+
     obl_save_player($pdata);
 
     $should_advance_tick = $dispatched && !empty($contract['advances_tick']);
@@ -100,6 +106,133 @@ function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata,
 
     $status = obl_tick_orchestrator_status($ctx);
     $status['advanced'] = $should_advance_tick;
+    return $status;
+}
+
+/**
+ * 导航器原子移动后的 tick 推进入口（设计案 §3.4 方案 A）
+ *
+ * 与 obl_tick_orchestrator_after_command 的差异：
+ *   - 本入口用于 map.navigate handler 内部，每原子移动推进一次 tick
+ *   - 不保存玩家数据（handler 控制 pdata 状态，最终保存由 save_and_tick 完成）
+ *   - 标记 pending_tick_actor_behavior 为 world 域 map.navigate.step + seq
+ *   - 多次调用安全（每次完整推进一个 tick，含 day_advance_hook 等内部钩子）
+ *
+ * 设计案 §3.4 关键约束：
+ *   - 每原子移动的 tick 提交必须原子，保证已完成移动不回滚
+ *   - 每次完成一个完整 tick 结算（含敌人行动、地图变化、拦截事件）
+ *
+ * @param array &$pdata 玩家数据（读取 pid）
+ * @param array $step   当前原子移动步骤 ['to_pls', 'from_pls', 'seq']
+ * @return array 推进状态（含 tick 号供 handler 收集）
+ *   [
+ *     'tick' => int,           // 推进后的游戏刻
+ *     'processed_tick' => int,
+ *     'advanced' => true,      // 标识本次推进成功
+ *   ]
+ */
+function obl_tick_orchestrator_advance_for_navigation_step(&$pdata, $step) {
+    global $gamevars;
+
+    if (!isset($gamevars) || !is_array($gamevars)) $gamevars = array();
+
+    // 1. 标记 pending_tick_actor_behavior（world 域，map.navigate.step + seq）
+    $gamevars['obl_pending_tick_actor_behavior'] = array(
+        'pid'      => isset($pdata['pid']) ? (int)$pdata['pid'] : 0,
+        'domain'   => 'world',
+        'behavior' => 'map.navigate.step',
+        'seq'      => isset($step['seq']) ? (int)$step['seq'] : 0,
+    );
+
+    // 1.5 持久化玩家新位置到 DB（修复 tick 时序 BUG：1格1单位约束依赖 DB 查询）
+    // 与 obl_tick_orchestrator_after_command 行 77 时序保持一致
+    // 若不先保存，敌人 NPC AI 通过 DB 查询看到玩家旧位置，可"合法"移动到玩家新位置所在图格
+    // 导致玩家与敌人同格冲突（违背 1 格 1 单位核心原则）
+    obl_save_player($pdata);
+
+    // 2. 推进 tick（含 day_advance_hook 等内部钩子）
+    obl_tick_advance();
+
+    // 3. 同步 pretick = tick（新增，必须！否则下次心跳 resolve_pending 会重复结算）
+    obl_tick_synchronize();
+
+    // 4. 结算 tick 事件（新增，执行三阶段监听器）
+    //    设计案 §4.1：时间调度器按权威顺序完成本游戏刻
+    $tick_frame = obl_resolve_tick_events(1);
+
+    // 5. 重新加载 $pdata 关键字段（新增，保证 handler 持有最新副本）
+    //    obl_resolve_tick_events 内部抓取新副本，监听器可能修改玩家数据（如被突袭后 action='battle'）
+    //    只同步可能被监听器修改的字段，不替换整个数组（避免破坏 handler 的引用）
+    $fresh = obl_fetch_playerdata_by_pid($pdata['pid']);
+    if ($fresh) {
+        obl_format_playerdata($fresh);
+        $pdata['action'] = $fresh['action'];
+        $pdata['bid'] = $fresh['bid'];
+        $pdata['hp'] = $fresh['hp'];
+        $pdata['state'] = $fresh['state'];
+        $pdata['sp'] = $fresh['sp'];
+        // 注意：不同步 pls（pls 由 handler 的 perform_move_core 控制，监听器不应修改玩家位置）
+        // 注意：不同步背包/装备（监听器不应修改这些）
+        $old_pls = (int)$pdata['pls'];
+        $old_pgroup = (int)$pdata['pgroup'];
+        $new_pls = (int)$fresh['pls'];
+        $new_pgroup = (int)$fresh['pgroup'];
+        if ($old_pls !== $new_pls || $old_pgroup !== $new_pgroup) {
+            error_log("[NAV_DEBUG] tick_drift_detected! old_pgroup=$old_pgroup old_pls=$old_pls new_pgroup=$new_pgroup new_pls=$new_pls action=" . ($fresh['action'] ?? 'null') . " bid=" . ($fresh['bid'] ?? 'null') . " — 监听器修改了玩家位置，但 handler 未同步！");
+        }
+    }
+
+    // 6. 持久化（保证已完成移动不回滚）
+    obl_tick_orchestrator_persist();
+
+    // 7. 返回状态 + tick_frame（新增 tick_frame 供 handler 收集领域事件）
+    $status = obl_tick_orchestrator_status();
+    $status['advanced'] = true;
+    $status['tick_frame'] = $tick_frame;
+    return $status;
+}
+
+/**
+ * internal_tick_advances 命令的最终保存入口（设计案 §3.4）
+ *
+ * 与 obl_tick_orchestrator_after_command 的差异：
+ *   - 不推进 tick（已在 handler 内通过 advance_for_navigation_step 逐次推进）
+ *   - 仅执行最终保存（玩家数据 + gamevars）
+ *   - 清理 pending_tick_actor_behavior（避免遗留状态影响下次心跳）
+ *   - last_command_at 仍更新（命令已成功结束）
+ *
+ * @param mixed  $ctx        运行时上下文
+ * @param string $command    命令名
+ * @param array  $contract   命令合约
+ * @param array  &$pdata     玩家数据
+ * @param bool   $dispatched 是否成功分发
+ * @return array 状态
+ */
+function obl_tick_orchestrator_finalize_after_internal_advances($ctx, $command, $contract, &$pdata, $dispatched) {
+    global $gamevars;
+
+    // 1. 最终保存玩家数据
+    obl_save_player($pdata);
+
+    // 2. 更新 last_command_at（命令已成功结束）
+    if ($dispatched) {
+        $GLOBALS['obl_last_command_at'] = obl_tick_orchestrator_now();
+    }
+
+    // 3. 清理 pending_tick_actor_behavior（handler 内已逐次推进 tick）
+    if (isset($gamevars) && is_array($gamevars)) {
+        unset($gamevars['obl_pending_tick_actor_behavior']);
+        unset($gamevars['obl_pending_tick_battle_actor_scope']);
+    }
+
+    // 4. 持久化 gamevars（清理后状态）
+    obl_tick_orchestrator_persist();
+
+    // 5. 返回状态（advanced=false，因 tick 推进已在 handler 内完成；
+    //    internal_tick_advances=true 供 bus 响应构建识别）
+    $status = obl_tick_orchestrator_status($ctx);
+    $status['advanced'] = false;
+    $status['internal_tick_advances'] = true;
     return $status;
 }
 

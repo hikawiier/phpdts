@@ -389,6 +389,38 @@ export const LOG_TEMPLATES: Record<string, LogTemplate> = {
       return `你发现了<span class="red">${escapeHtml(params.enemy_name as string)}</span>的踪迹。`;
     },
   },
+  'poi.discovered': {
+    render: (params) => {
+      const poiName = getPoiName(params.poi_id as string | number | undefined);
+      return `你发现了<span class="yellow">${escapeHtml(poiName)}</span>。`;
+    },
+  },
+  // ─── navigate / 高层导航结果（设计案 §6.4 前端模板） ─────
+  'navigate.no_target': {
+    text: '未找到合适的移动目标。',
+  },
+  'navigate.no_sp': {
+    text: '体力不足，无法继续移动。',
+  },
+  'navigate.no_route': {
+    text: '无法找到通往目标的路线。',
+  },
+  'navigate.interrupt': {
+    render: (params) => {
+      const reasonMap: Record<string, string> = {
+        enemy_discovered: '发现敌对目标，导航中断。',
+        force_combat: '遭遇突袭，导航中断。',
+        move_failed: '移动失败，导航中断。',
+        poi_discovered: '发现 POI，导航中断。',
+        no_sp: '体力不足，导航中断。',
+        capability_lost: '移动能力失效，导航中断。',
+        target_invalid: '目标已失效，导航中断。',
+        max_steps_reached: '已达单次导航最大步数。',
+      };
+      const reason = (params.reason as string) || '';
+      return reasonMap[reason] || '导航中断。';
+    },
+  },
   'enemy.move': {
     render: (params) => {
       return `<span class="red">${escapeHtml(params.enemy_name as string)}</span>移动了位置。`;

@@ -31,6 +31,7 @@ import { commandQueue } from '@/stores/command-queue';
 import { useMapStore } from '@/stores/map';
 import { useCharacterStore } from '@/stores/character';
 import { useBattleStore } from '@/stores/battle';
+import { useSceneStore } from '@/stores/scene-store';
 import { useToastStore } from '@/stores/toast';
 import { findPath } from '@/composables/useMapReachability';
 import { getSkillTemplate } from '@/data/skill-templates';
@@ -125,6 +126,7 @@ const dropTargetIndex = ref<number | null>(null);
 const mapStore = useMapStore();
 const characterStore = useCharacterStore();
 const battleStore = useBattleStore();
+const sceneStore = useSceneStore();
 
 // ══════════════════════════════════════════════════
 // 初始化（监听 battle:preload-init 事件）
@@ -1080,6 +1082,18 @@ watch(() => battleStore.isPlayerTurn, (isMyTurn, wasMyTurn) => {
 });
 
 // ══════════════════════════════════════════════════
+// 场景切换兜底（F-K1-Scenes §5.6 探索↔战斗过渡时序）
+// ══════════════════════════════════════════════════
+
+watch(() => sceneStore.isBattle, (isBattle, wasBattle) => {
+  if (!wasBattle && isBattle) {
+    // 从探索再次进入战斗：PreloadArea 已挂载但 battle:preload-init 事件可能丢失
+    // （Transition out-in 时序下 broadcast 早于本次 watch 触发）
+    fallbackInitPreloadArea();
+  }
+});
+
+// ══════════════════════════════════════════════════
 // 生命周期
 // ══════════════════════════════════════════════════
 
@@ -1090,6 +1104,28 @@ function onPreloadInit(data: unknown): void {
 function onPreloadContextRefresh(data: unknown): void {
   if (!data) return;
   void initPreloadArea(data as PreloadInitEventData);
+}
+
+/**
+ * 兜底主动初始化：覆盖 battle:preload-init 事件因 Transition out-in 时序丢失的场景。
+ *
+ * 触发场景（F-K1-Scenes §5.6 探索↔战斗过渡时序）：
+ * - 初次挂载时已处于战斗态（onMounted 兜底）：Transition leave 期间 broadcast 早于监听器注册
+ * - 已挂载状态下从探索再次进入战斗（watch(isBattle) 兜底）：事件可能再次丢失
+ *
+ * 判据：mode.value === '' 表示从未收到 init 事件。
+ * 与事件驱动机制并存——事件正常到达时 mode.value 已被设置，本函数直接 return；
+ * 即使事件在兜底之后到达，initPreloadArea 的 sessionKey 去重 + dataManager.fetch
+ * 的 _pending 去重共同保证无并发请求冲突、无队列重置。
+ */
+function fallbackInitPreloadArea(): void {
+  if (mode.value !== '') return;
+  void initPreloadArea({
+    mode: 'pre-battle',
+    enemyPid: battleStore.combatTargets.suggestedTargetPid || 0,
+    playerPid: characterStore.player?.pid ?? 0,
+    combatContext: null,
+  });
 }
 
 function onBattleEnded(): void {
@@ -1118,6 +1154,11 @@ onMounted(() => {
   dataManager.listen('battle:aim-target-selected', onTargetSelect);
   dataManager.listen('battle:aim-exit', onAimExit);
   dataManager.listen('battle:ended', onBattleEnded);
+  // 兜底：Transition out-in leave 期间 broadcast 早于监听器注册，事件可能已丢失。
+  // 若挂载时已处于战斗态但 mode 仍为空，主动构造 pre-battle 初始化触发技能拉取。
+  if (sceneStore.isBattle) {
+    fallbackInitPreloadArea();
+  }
 });
 
 onUnmounted(() => {

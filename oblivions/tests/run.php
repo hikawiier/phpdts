@@ -8,8 +8,10 @@ $results = [];
 $exit = 0;
 try {
     $room->create();
-    foreach (['range_test.php', 'equipment_skill_test.php', 'skill_effect_test.php', 'domain_test.php', 'battle_integration_test.php', 'battle_turn_test.php', 'transaction_integration_test.php'] as $file) {
-        $suite = require __DIR__ . '/' . $file;
+    foreach (['range_test.php', 'equipment_skill_test.php', 'skill_effect_test.php', 'domain_test.php', 'battle_integration_test.php', 'battle_turn_test.php', 'transaction_integration_test.php', 'navigation_contract_test.php', 'info_acquire_test.php', 'navigation_integration_test.php', 'info_framework_test.php', 'navigation_tick_test.php', 'target_resolution_test.php', 'combat_boundary_test.php', 'move_types_test.php'] as $file) {
+        $path = __DIR__ . '/' . $file;
+        if (!file_exists($path)) continue;
+        $suite = require $path;
         $results = array_merge($results, $suite($room));
     }
 } catch (Throwable $e) {

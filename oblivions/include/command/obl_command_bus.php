@@ -386,6 +386,18 @@ function obl_command_feedback_rules($command) {
                 'explore.no_sp' => 'NO_SP',
             ),
         ),
+        'map.navigate' => array(
+            'log' => array(
+                // 设计案 §6.6：navigate.no_sp 在"无法启动"时 ok=false, code=NO_SP
+                // （handler 已直接返回 ok=false，此规则为冗余安全网）
+                'navigate.no_sp' => 'NO_SP',
+                // 注意：设计案 §6.4 列出 navigate.no_target / navigate.no_route / move.* 规则，
+                // 但 §6.6 要求这些场景返回 ok=true（结构化 navigation 结果）。
+                // 若加入 feedback_rules，bus 会将 ok=true 转为 ok=false 并丢失 navigation 数据。
+                // 因此不加入：handler emit 这些日志仅供前端 Toast 显示（B-4 日志即反馈的双通道），
+                // 前端通过 navigation.outcome / outcome_reason 获取结构化结果。
+            ),
+        ),
         'poi.search' => array(
             'log' => array(
                 'search.not_found' => 'POI_NOT_FOUND',

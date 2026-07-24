@@ -43,7 +43,7 @@ if (!defined('IN_GAME')) {
 /**
  * oblmapstates 表 schema 自愈
  *
- * 检查字段：last_refresh_day / refresh_count / last_refresh_turn
+ * 检查字段：explored / last_refresh_day / refresh_count / last_refresh_turn
  * 表结构定义：oblivions/sql/oblmapstates.sql
  */
 function obl_mapstates_schema_ensure() {
@@ -61,6 +61,7 @@ function obl_mapstates_schema_ensure() {
         `fog` tinyint(1) unsigned NOT NULL DEFAULT '0',
         `damaged` tinyint(1) unsigned NOT NULL DEFAULT '0',
         `flags` varchar(255) NOT NULL DEFAULT '',
+        `explored` tinyint(1) unsigned NOT NULL DEFAULT '0',
         `last_refresh_day` int unsigned NOT NULL DEFAULT '0',
         `refresh_count` smallint unsigned NOT NULL DEFAULT '0',
         `last_refresh_turn` int unsigned NOT NULL DEFAULT '0',
@@ -76,8 +77,11 @@ function obl_mapstates_schema_ensure() {
             $columns_known[$col_row['Field']] = true;
         }
     }
+    if (!isset($columns_known['explored'])) {
+        $db->query("ALTER TABLE `{$table}` ADD COLUMN `explored` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `flags`");
+    }
     if (!isset($columns_known['last_refresh_day'])) {
-        $db->query("ALTER TABLE `{$table}` ADD COLUMN `last_refresh_day` int unsigned NOT NULL DEFAULT '0' AFTER `flags`");
+        $db->query("ALTER TABLE `{$table}` ADD COLUMN `last_refresh_day` int unsigned NOT NULL DEFAULT '0' AFTER `explored`");
     }
     if (!isset($columns_known['refresh_count'])) {
         $db->query("ALTER TABLE `{$table}` ADD COLUMN `refresh_count` smallint unsigned NOT NULL DEFAULT '0' AFTER `last_refresh_day`");
@@ -93,7 +97,7 @@ function obl_mapstates_schema_ensure() {
 /**
  * oblmappoi 表 schema 自愈
  *
- * 检查字段：placed_by_pid / placed_at_day / ttl_days（E-12 POI 耐久系统）
+ * 检查字段：discovered / placed_by_pid / placed_at_day / ttl_days（E-12 POI 耐久系统）
  * 检查索引：idx_ttl_expiry（支撑 day_changed 监听器批量扫描过期 POI）
  * 表结构定义：oblivions/sql/oblmappoi.sql
  */
@@ -111,6 +115,7 @@ function obl_mappoi_schema_ensure() {
         `pgroup` tinyint unsigned NOT NULL DEFAULT '0',
         `pls` tinyint unsigned NOT NULL DEFAULT '0',
         `poi_id` varchar(32) NOT NULL DEFAULT '',
+        `discovered` tinyint(1) unsigned NOT NULL DEFAULT '0',
         `state` varchar(16) NOT NULL DEFAULT 'idle',
         `search_count` int unsigned NOT NULL DEFAULT '0',
         `search_count_remaining` smallint signed NOT NULL DEFAULT '-1',
@@ -127,13 +132,16 @@ function obl_mappoi_schema_ensure() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     $db->query($sql);
 
-    // 2. 检查 E-12 字段并补建
+    // 2. 检查字段并补建
     $columns_known = array();
     $col_result = $db->query("SHOW COLUMNS FROM `{$table}`");
     if ($col_result) {
         while ($col_row = $db->fetch_array($col_result)) {
             $columns_known[$col_row['Field']] = true;
         }
+    }
+    if (!isset($columns_known['discovered'])) {
+        $db->query("ALTER TABLE `{$table}` ADD COLUMN `discovered` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `poi_id`");
     }
     if (!isset($columns_known['placed_by_pid'])) {
         $db->query("ALTER TABLE `{$table}` ADD COLUMN `placed_by_pid` mediumint unsigned NOT NULL DEFAULT '0' AFTER `searched`");

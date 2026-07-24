@@ -8,7 +8,7 @@
 // 替代现有 vex/js/log.js 的滚动监听 + 未读计数逻辑。
 //
 // 职责：
-//   - isAtBottom ref（滚动容器是否在底部附近，< 50px）
+//   - isAtBottom ref（滚动容器是否在底部附近，≤ 32px）
 //   - unreadCount ref（未读新日志计数，forceScroll=false 场景累加）
 //   - scrollToBottom()：命令式滚动到底部 + 清零未读
 //   - checkIsAtBottom()：判断当前是否在底部
@@ -26,8 +26,8 @@ import { ref, onUnmounted } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import { LOG_EVENTS } from '@/stores/log';
 
-/** 底部判定阈值（px） */
-const BOTTOM_THRESHOLD = 50;
+/** 底部判定阈值（px）—— 距底部 ≤ 此值视为"在底部"，新条目自动滚动粘附 */
+const BOTTOM_THRESHOLD = 32;
 
 /**
  * 日志滚动 + 未读计数 composable
@@ -55,7 +55,7 @@ export function useLogScroll() {
   /** 累加未读事件处理函数引用 */
   let _addUnreadHandler: ((data: unknown) => void) | null = null;
 
-  // ── 判断是否在底部附近（< 50px） ──
+  // ── 判断是否在底部附近（≤ 32px） ──
   function checkIsAtBottom(): boolean {
     if (!_scroller) return true;
     return (

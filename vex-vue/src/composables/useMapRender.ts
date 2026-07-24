@@ -142,9 +142,48 @@ const cellHeight = computed<number>(() => Math.round(baseHeight.value * zoomStat
 const nameFontSize = computed<number>(() => Math.max(7, Math.round(9 * zoomState.zoomLevel.value)));
 const meFontSize = computed<number>(() => Math.max(6, Math.round(8 * zoomState.zoomLevel.value)));
 
+// ─── 局部视野边界（F-K2-Explore §三.1：只渲染当前视野覆盖的局部地图） ──
+// 设计案 §7.2：视野之外的图格不进入当前舞台
+// 实现：以玩家所在格为中心、半径=VISION_RADIUS+1 的固定矩形（不复制后端 BFS）
+//   - VISION_RADIUS 对齐 obl_config.vision_range=1（玩家脚下 + 邻接格）
+//   - +1 格余量确保 BFS 可达集（含对角线邻居）落在矩形内
+//   - 矩形内非 BFS 可达格自动呈现为迷雾格（isTileRevealed 返回 false）
+// cells/gridStyle/applyGridLayout 都引用此边界
+const VISION_RADIUS = 1; // 对齐 obl_config.vision_range=1
+const visionBounds = computed(() => {
+  const mapStore = useMapStore();
+  const defaultBounds = { minR: 0, maxR: 0, minC: 0, maxC: 0, cols: 1, rows: 1 };
+  if (!mapStore.links || mapStore.curRegion === null || mapStore.curLoc === null) return defaultBounds;
+
+  const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as
+    | Record<string, TileInfo & { x?: number; y?: number }>
+    | undefined;
+  if (!tiles) return defaultBounds;
+
+  const playerTile = tiles[String(mapStore.curLoc)];
+  if (!playerTile || playerTile.x === undefined || playerTile.y === undefined) return defaultBounds;
+
+  const px = playerTile.x;
+  const py = playerTile.y;
+  // 半径 = VISION_RADIUS + 1（余量覆盖 BFS 对角线邻居）
+  const minC = Math.max(0, px - VISION_RADIUS - 1);
+  const maxC = px + VISION_RADIUS + 1;
+  const minR = Math.max(0, py - VISION_RADIUS - 1);
+  const maxR = py + VISION_RADIUS + 1;
+
+  return {
+    minR,
+    maxR,
+    minC,
+    maxC,
+    cols: maxC - minC + 1,
+    rows: maxR - minR + 1,
+  };
+});
+
 const gridStyle = computed<Record<string, string>>(() => ({
-  gridTemplateColumns: `repeat(${colsRef.value}, ${cellSize.value}px)`,
-  gridTemplateRows: `repeat(${rowsRef.value}, ${cellHeight.value}px)`,
+  gridTemplateColumns: `repeat(${visionBounds.value.cols}, ${cellSize.value}px)`,
+  gridTemplateRows: `repeat(${visionBounds.value.rows}, ${cellHeight.value}px)`,
 }));
 
 /**
@@ -181,9 +220,6 @@ const cells: ComputedRef<CellData[]> = computed(() => {
   const regionGrid = (mapStore.links.grids as Record<string, { cols?: number; rows?: number }>)[String(mapStore.curRegion)];
   if (!regionGrid) return [];
 
-  const cols = regionGrid.cols || 10;
-  const rows = regionGrid.rows || 10;
-
   const fogData = mapStore.links.fog as FogProjection;
   const regionInfo = (mapStore.links.regions as Record<string, { name?: string; exit_pls?: string | number; entrance_pls?: string | number; prev_region?: string | number | null }>)[String(mapStore.curRegion)];
 
@@ -193,10 +229,21 @@ const cells: ComputedRef<CellData[]> = computed(() => {
   // 读取路径预览状态（响应式，由 useMapInteraction 维护）
   const pathPreview = _pathPreviewGetter();
 
+  // ── 局部视野渲染（F-K2-Explore §三.1：探索场景只渲染当前视野覆盖的局部地图） ──
+  // 设计案 §7.2：视野之外的图格不进入当前舞台，不以完整区域迷雾铺满屏幕
+  // 复用 visionBounds（视野边界单一信源，M-3 边界来源单一化）：
+  //   - visionBounds 以玩家所在格为中心、半径=VISION_RADIUS+1 的固定矩形
+  //   - 矩形外的图格完全不渲染（不进入 cells 数组）
+  //   - 矩形内仍按 isTileRevealed 区分"已揭示格（显示内容）"与"迷雾格（显示 ?）"
+  const renderMinR = visionBounds.value.minR;
+  const renderMaxR = visionBounds.value.maxR;
+  const renderMinC = visionBounds.value.minC;
+  const renderMaxC = visionBounds.value.maxC;
+
   const result: CellData[] = [];
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
+  for (let r = renderMinR; r <= renderMaxR; r++) {
+    for (let c = renderMinC; c <= renderMaxC; c++) {
       const tileInfo = coordIndex[c + ',' + r];
 
       // 空格子（无 tileInfo）
@@ -441,33 +488,40 @@ function applyGridLayout(
   const mapStore = useMapStore();
   if (!mapStore.links || mapStore.curRegion === null) return;
 
-  const regionGrid = (mapStore.links.grids as Record<string, { cols?: number; rows?: number }>)[String(mapStore.curRegion)];
-  if (!regionGrid) return;
+  // 布局维度来源统一：使用 visionBounds（视野局部矩形），不使用 regionGrid 完整区域维度
+  // 渲染层（cells / gridStyle）已使用 visionBounds，布局计算必须同源
+  // 否则单格尺寸按完整区域（如 20×20）计算，实际渲染的 5×5 视野网格会缩在容器左上角
+  const vb = visionBounds.value;
+  if (vb.cols <= 1 && vb.rows <= 1) return; // 安全检查：等待有效视野数据
 
-  const cols = regionGrid.cols || 10;
-  const rows = regionGrid.rows || 10;
+  const cols = vb.cols;
+  const rows = vb.rows;
   colsRef.value = cols;
   rowsRef.value = rows;
 
-  // 自适应格子尺寸：根据容器宽度计算，移动端允许更小
+  // 自适应格子尺寸：同时考虑容器宽高约束，让视野网格填满容器
   const isMobile = window.innerWidth <= 900;
   const baseMin = isMobile ? 32 : 48;
-  const baseMax = isMobile ? 48 : 80;
   const parent = (containerEl || (gridEl ? gridEl.parentElement : null)) as HTMLElement | null;
   const containerWidth = parent ? parent.offsetWidth - 16 : 0;
-  const newBaseSize = Math.max(baseMin, Math.min(baseMax, Math.floor(containerWidth / cols)));
+  const containerHeight = parent ? parent.offsetHeight - 16 : 0;
+  // 宽度约束：containerWidth / cols
+  // 高度约束：containerHeight / (rows * 0.75)，0.75 = cellHeight/cellWidth 比
+  const widthBasedSize = Math.floor(containerWidth / cols);
+  const heightBasedSize = Math.floor(containerHeight / (rows * 0.75));
+  const newBaseSize = Math.max(baseMin, Math.min(widthBasedSize, heightBasedSize));
   const newBaseHeight = Math.max(isMobile ? 26 : 36, Math.floor(newBaseSize * 0.75));
 
   baseSize.value = newBaseSize;
   baseHeight.value = newBaseHeight;
 
-  // 智能默认缩放：首次渲染时自动计算，让地图比容器大 25%（边缘裁切，引导探索）
+  // 智能默认缩放：fit 视野网格到容器（1.0x，不溢出）
+  // 视野矩形边缘是迷雾格/空格，无需 1.25x 裁切引导探索；玩家应一眼看清完整视野边界
   if (!zoomState.isInitialized.value) {
     const fitZoomX = containerWidth / (cols * newBaseSize);
-    const containerHeight = parent ? parent.offsetHeight - 16 : 0;
     const fitZoomY = containerHeight / (rows * newBaseHeight);
     const fitZoom = Math.min(fitZoomX, fitZoomY);
-    const initZoom = Math.max(0.5, Math.min(2.5, fitZoom * 1.25));
+    const initZoom = Math.max(0.5, Math.min(2.5, fitZoom));
     // 四舍五入到 0.05 精度
     zoomState.setZoom(Math.round(initZoom * 20) / 20);
     zoomState.setInitialized(true);

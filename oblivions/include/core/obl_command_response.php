@@ -53,6 +53,9 @@ function obl_command_http_status_for_code($code) {
         case 'MOVE_OCCUPIED':
         case 'MOVE_UNREACHABLE':
         case 'MOVE_NO_PATH':
+        case 'NAV_NO_TARGET':
+        case 'NAV_NO_ROUTE':
+        case 'EXPLORE_DEGRADED_TO_WAIT':
         case 'POI_NOT_FOUND':
         case 'POI_NOT_HERE':
         case 'POI_NOT_SEARCHABLE':

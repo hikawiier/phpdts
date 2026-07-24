@@ -80,6 +80,9 @@ export class CommandQueue {
   private readonly _schedule: NonNullable<CommandQueueOptions['schedule']>;
   private readonly _cancelSchedule: NonNullable<CommandQueueOptions['cancelSchedule']>;
   private _cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+  // 移动导演播放期门控（F-K4-Director §三.7/§三.8：复用 K-3，不建第二套锁）
+  // 由 move-director 在播放开始/结束时切换；阻塞新的移动/探索/目标命令
+  private _navigationPlaying = false;
 
   constructor(options: CommandQueueOptions = {}) {
     this._transport = options.transport ?? sendOblCommand;
@@ -119,6 +122,18 @@ export class CommandQueue {
       return { code: 'PRESENTATION_NOT_CAUGHT_UP', message: '战斗演出尚未结束。' };
     }
 
+    // ── 第 4.5 层：移动导演播放期门控（F-K4-Director §三.7/§三.8） ──
+    // 阻塞探索模式中推进 tick 的命令（map.move / map.explore / poi.* / world.wait）
+    // 排除 map.navigate：移动导演自身的初始化命令不走此门控
+    // （startNavigation 已有 isPlaying 兜底防重复；UI 层 inputLocked 禁用移动按钮）
+    // 加速/跳过/查看面板不通过命令队列，始终可用（B6.10/B6.11）
+    if (this._navigationPlaying && spec.mode === 'explore' && spec.advancesTick && command !== 'map.navigate') {
+      return {
+        code: 'NAVIGATION_PLAYING',
+        message: '移动导演播放中，请等待演出结束或加速/跳过。',
+      };
+    }
+
     for (const capability of spec.requiredCapabilities) {
       const block = capabilityBlockDecision(capability, playerStore.getCapabilityDecision(capability));
       if (block) return block;
@@ -145,6 +160,21 @@ export class CommandQueue {
 
   getBlockDecision(command: string): CommandBlockDecision | null {
     return this._blockDecision(command);
+  }
+
+  /**
+   * 移动导演播放期门控开关（F-K4-Director §三.7/§三.8，由 explore.setNavigationLock 联动调用）。
+   *
+   * 开启时阻塞探索模式中推进 tick 的命令（map.move / map.explore / map.navigate /
+   * poi.* / world.wait）；加速/跳过/查看面板不通过命令队列，始终可用（B6.10/B6.11）。
+   */
+  setNavigationPlaying(v: boolean): void {
+    this._navigationPlaying = v;
+  }
+
+  /** 移动导演是否正在播放（用于 UI 派生 / 测试断言） */
+  get navigationPlaying(): boolean {
+    return this._navigationPlaying;
   }
 
   /**

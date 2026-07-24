@@ -121,22 +121,31 @@ function obl_fetch_enemies_by_region($pgroup) {
 }
 
 /**
- * 查询指定图格内的所有玩家 PID
+ * 查询指定图格内的玩家 PID（F-E3-Map §三.8：一个图格最多一个单位）
  * 从 obl_move 占用检查的裸 SQL 抽出的共享原语，供移动/战斗等子系统复用
  * 纯读取，无副作用
  *
- * @param int $pgroup      区域组号
- * @param int $pls         图格 ID
- * @param int $exclude_pid 排除的 PID（如 actor 自己），0 表示不排除
+ * 默认返回所有 PID（含尸体 state>0）——战斗目标捕获需要捕获死体以显式标记
+ * TARGET_DEAD 后跳过，不能在捕获阶段就过滤。移动占位检查应传 $alive_only=true，
+ * 因为尸体不再是占据图格的活单位（与 obl_move 的 state=0 语义一致）。
+ *
+ * @param int  $pgroup      区域组号
+ * @param int  $pls         图格 ID
+ * @param int  $exclude_pid 排除的 PID（如 actor 自己），0 表示不排除
+ * @param bool $alive_only  true=仅返回 state=0 的活单位（移动占位用）；false=全部（战斗捕获用）
  * @return int[] PID 列表
  */
-function obl_get_pids_in_tile($pgroup, $pls, $exclude_pid = 0): array {
+function obl_get_pids_in_tile($pgroup, $pls, $exclude_pid = 0, $alive_only = false): array {
 	global $db, $tablepre;
 	$pgroup = (int)$pgroup;
 	$pls = (int)$pls;
 	$exclude_pid = (int)$exclude_pid;
+	$alive_only = (bool)$alive_only;
 
 	$sql = "SELECT pid FROM {$tablepre}oblplayers WHERE pgroup = {$pgroup} AND pls = {$pls}";
+	if ($alive_only) {
+		$sql .= " AND state = 0";
+	}
 	if ($exclude_pid > 0) {
 		$sql .= " AND pid != {$exclude_pid}";
 	}

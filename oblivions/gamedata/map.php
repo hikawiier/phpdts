@@ -41,23 +41,9 @@ return [
         'cols' => 11,
         'rows' => 11,
     ],
-    '3' => [
-        'pgroup' => 3,
-        'name' => '岛屿 #3',
-        'cols' => 10,
-        'rows' => 8,
-        'entrance_pls' => 35,
-        'exit_pls' => 39,
-        'next_region' => null,
-        'prev_region' => null,
-        'next_pls' => 39,
-        'prev_pls' => 35,
-        'exit_links' => [],
-    ],
     ],
     'grids' => [
         '1' => ['cols' => 11, 'rows' => 11],
         '2' => ['cols' => 11, 'rows' => 11],
-        '3' => ['cols' => 10, 'rows' => 8],
     ],
 ];

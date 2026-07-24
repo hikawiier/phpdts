@@ -450,6 +450,46 @@ body::after {
     padding: 1px 0 1px 4px;
 }
 
+/* ═══ 类型化视觉标记（灰阶层级，§2.15） ═══ */
+/* 按 logcategory 区分前缀标签与文本亮度，不引入彩色。
+   默认 .log-content color: #888（中灰）。 */
+
+/* 移动：中灰 */
+.log-entry.log-type-move .log-tag { color: #888; }
+.log-entry.log-type-move { color: #aaa; }
+
+/* 探索：中灰 */
+.log-entry.log-type-explore .log-tag { color: #888; }
+.log-entry.log-type-explore { color: #aaa; }
+
+/* 搜索/发现：高亮白（玩家主动发现的事件） */
+.log-entry.log-type-search .log-tag { color: #fff; font-weight: 700; }
+.log-entry.log-type-search { color: #fff; }
+
+/* 拾取：浅灰（成功反馈） */
+.log-entry.log-type-pickup .log-tag { color: #aaa; }
+.log-entry.log-type-pickup { color: #bbb; }
+
+/* 丢弃：暗灰（次要操作） */
+.log-entry.log-type-discard .log-tag { color: #555; }
+.log-entry.log-type-discard { color: #777; }
+
+/* 敌人：中灰强调（潜在威胁提示） */
+.log-entry.log-type-enemy .log-tag { color: #ccc; font-weight: 700; }
+.log-entry.log-type-enemy { color: #ccc; }
+
+/* 战斗：中灰加粗（高优先级事件） */
+.log-entry.log-type-battle .log-tag { color: #ccc; font-weight: 700; }
+.log-entry.log-type-battle { color: #ccc; font-weight: 600; }
+
+/* 系统：暗灰（环境/状态提示） */
+.log-entry.log-type-system .log-tag { color: #555; }
+.log-entry.log-type-system { color: #777; }
+
+/* 世界事件：高亮白（重要剧情/事件） */
+.log-entry.log-type-world .log-tag { color: #fff; font-weight: 700; }
+.log-entry.log-type-world { color: #fff; }
+
 /* 新日志高亮：1.5s 背景闪烁淡出 + 左侧色条标记 */
 @keyframes log-new-flash {
     0%   { background: rgba(255, 255, 255, 0.18); box-shadow: inset 2px 0 0 #fff; }

@@ -49,6 +49,25 @@ skill_effect_register_capability_provider();
 // 第 2 层：视野/迷雾/发现系统（依赖 obl_global + player + move + log）
 require_once GAME_ROOT . './oblivions/include/game/vision.func.php';
 
+// 第 2.1 层：统一信息获取原语（依赖 vision + explore 的 obl_discover_items/obl_get_discovery_limit）
+// 提供 obl_acquire_information / obl_get_info_config / obl_mark_explored / obl_discover_pois
+// 被 obl_post_move_hook（move 配置）和 obl_explore（explore 配置）消费
+require_once GAME_ROOT . './oblivions/include/game/info_acquire.func.php';
+
+// 第 2.2 层：自动导航器（依赖 move 的 obl_perform_move_core/obl_get_move_power/obl_get_distance +
+// info_acquire 的 obl_acquire_information/obl_mark_explored + actor.capability 的 actor_capability_decide）
+// 提供 obl_navigation_begin / next_step / check_interrupt / select_target 系列
+// 被 map.navigate handler（obl_command_handlers.php）消费
+require_once GAME_ROOT . './oblivions/include/game/navigation.func.php';
+
+// 第 2.25 层：E-13 移动方式与轨迹拦截框架（依赖 move 的 obl_perform_move_core/obl_get_move_power/
+// obl_get_distance/obl_get_map_data + vision 的 obl_calc_vision_range + player 的 obl_get_pids_in_tile）
+// 提供 obl_move_types / obl_move_type_find_path / obl_move_type_calc_info_footprint /
+// obl_trajectory_intercept_check 等移动方式参数维度原语。
+// 首期只实现 normal；fly/jump/teleport 仅预留配置槽位。轨迹拦截接口已建立但不注册规则。
+// 被 map.navigate handler 与未来 F-E5-Target / F-E6-Combat 消费。
+require_once GAME_ROOT . './oblivions/include/game/move_types.func.php';
+
 // 第 2.5 层：共享战斗状态机（new combat 的队列推进 / NPC 回合 / Tick Orchestrator 依赖）
 require_once GAME_ROOT . './oblivions/include/game/battle_state_machine.func.php';
 

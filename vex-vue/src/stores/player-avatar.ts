@@ -52,27 +52,41 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
   // 防抖：同一意图 50ms 内重复触发只执行一次
   // intentSeq 每次都递增：Vue ref 对相同值赋值不触发 watch，
   // 连续移动（intent 都是 'move'）时需要 intentSeq 变化来触发 composable 的 watch
-  function dispatchIntent(next: PlayerAvatarIntent): void {
+  // force 参数：移动导演连续派发逐次移动意图时跳过 50ms 抑制，确保序号递增（F-K4-Director §四 K-10）
+  function dispatchIntent(next: PlayerAvatarIntent, force = false): void {
     const now = Date.now();
-    if (next === intent.value && now - lastIntentTs.value < 50) return;
+    const suppressed = !force && next === intent.value && now - lastIntentTs.value < 50;
+    console.log('[P4_DBG] dispatchIntent', { next, force, suppressed, isDown: isDown.value, prevIntent: intent.value });
+    if (suppressed) return;
     lastIntentTs.value = now;
     intent.value = next;
     intentSeq.value++;
   }
 
   // ── 自动恢复机制 ──
-  function dispatchWithRecovery(next: PlayerAvatarIntent): void {
+  function dispatchWithRecovery(next: PlayerAvatarIntent, force = false): void {
+    console.log('[P4_DBG] dispatchWithRecovery', { next, force, isDown: isDown.value, pendingIntent: pendingIntent.value });
     if (next !== 'die' && next !== 'fall' && isDown.value) {
       pendingIntent.value = next;
       dispatchIntent('popup');
       return;
     }
-    dispatchIntent(next);
+    dispatchIntent(next, force);
   }
 
   // ── 游戏事件接入（预留接口） ──
-  function onEnter(): void       { dispatchWithRecovery('enter'); }
+  function onEnter(): void       {
+    console.log('[P4_DBG] onEnter called', { stack: new Error('trace').stack });
+    dispatchWithRecovery('enter');
+  }
   function onMove(): void        { dispatchWithRecovery('move'); }
+  /**
+   * 移动导演逐次移动意图派发（F-K4-Director §四 K-10）。
+   * 强制跳过 50ms 抑制，确保连续移动 intentSeq 递增，触发 composable watch。
+   * 实际玩家位置动画由 useMapEntities 的 entity position watch 驱动，
+   * 此意图用于驱动玩家立绘的移动姿态。
+   */
+  function onNavigateMove(): void { dispatchWithRecovery('move', true); }
   function onBattleStart(): void {
     desiredAppearance.value = 'battle';
     dispatchWithRecovery('battle-start');
@@ -155,6 +169,7 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     currentImage,
     onEnter,
     onMove,
+    onNavigateMove,
     onBattleStart,
     onBattleEnd,
     onHit,

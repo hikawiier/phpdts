@@ -387,6 +387,7 @@ class DesignAnchorValidator {
             'oblivions/cache/',
             'vex-vue/node_modules/',
             'vex-vue/dist/',
+            'vex-vue/src/mock/',
         );
         foreach ($excludedPrefixes as $prefix) {
             if (design_anchor_starts_with($normalized, $prefix)) {

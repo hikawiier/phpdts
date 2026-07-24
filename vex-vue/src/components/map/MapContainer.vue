@@ -14,6 +14,7 @@
 // ══════════════════════════════════════════════════
 
 import MapGrid from './MapGrid.vue';
+import MoveDirector from './MoveDirector.vue';
 import { useMapStore } from '@/stores/map';
 import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { computed } from 'vue';
@@ -65,8 +66,11 @@ const mapInfoHtml = computed(() => {
         v-html="mapInfoHtml"
       ></div>
 
-      <!-- 地图网格（MapGrid 组件管理 #mapContainer + #mapGrid） -->
-      <MapGrid />
+      <!-- 地图网格 + 移动导演叠加层（3.4 MoveDirector 演出层，F-K4-Director §5.2） -->
+      <div class="relative flex-1 min-h-0 flex">
+        <MapGrid />
+        <MoveDirector />
+      </div>
 
       <!-- 缩放控件（id 保留供 useMapInteraction 绑定事件） -->
       <div class="zoom-controls" title="Ctrl+滚轮缩放 | 拖拽平移">

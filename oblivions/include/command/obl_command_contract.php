@@ -29,6 +29,31 @@ function obl_command_contracts() {
             'itm0_allowed' => false,
             'required_capabilities' => array('time_pass'),
             'payload_schema' => array(),
+            // 设计案 §6.2.2：响应携带 explore_outcome 枚举（normal/no_discovery/degraded_wait）
+            // handler 通过 dispatch['data']['explore_outcome'] 返回（B-3 复用现有合并机制）
+            'response_extensions' => array('explore_outcome'),
+            'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
+        ),
+        'map.navigate' => array(
+            // 设计案 §6.2.1：高层导航命令，后端选目标 + 多次原子移动 + 中断判断
+            // 与 map.move 的差异：map.move 是单次精确移动（用于区域切换），
+            // map.navigate 是循环编排（选目标→原子移动→tick→检查中断→继续/停止）
+            'legacy' => 'obl_navigate',
+            'ui_mode' => 'explore',
+            'allowed_actions' => array('', null),
+            'advances_tick' => true,
+            'itm0_allowed' => false,
+            'required_capabilities' => array('voluntary_move'),
+            // 设计案 §3.4 关键字段：handler 内多次推进 tick，B-3 save_and_tick 跳过 tick 推进仅做最终保存
+            'internal_tick_advances' => true,
+            'payload_schema' => array(
+                // 目标 pls（玩家指定时）；省略=后端自动选目标（设计案 §5.2 目标优先级）
+                'target' => array('type' => 'int', 'required' => false, 'min' => 0),
+                // 移动倾向：steady/nearby/deep/efficient（设计案 §7.5）；首期默认 steady
+                'tendency' => array('type' => 'string', 'required' => false),
+                // 最大原子移动次数（防 PHP 超时）；max=配置上界 navigation_max_steps_limit=50
+                'max_steps' => array('type' => 'int', 'required' => false, 'min' => 1, 'max' => 50),
+            ),
             'refresh' => array('player_info', 'game_map', 'tile_actions', 'player_inventory', 'obl_log'),
         ),
         'poi.search' => array(
@@ -340,6 +365,8 @@ function obl_command_normalize_value($value, $type, $field, $rule = array()) {
         if (!is_numeric($value)) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'expected_int', 'field' => $field));
         $int = (int)$value;
         if (isset($rule['min']) && $int < (int)$rule['min']) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'below_min', 'field' => $field, 'min' => (int)$rule['min']));
+        // 设计案 §6.2.1 max_steps 上限校验：扩展 int 类型支持 max 字段
+        if (isset($rule['max']) && $int > (int)$rule['max']) return array('ok' => false, 'code' => 'INVALID_PAYLOAD', 'details' => array('reason' => 'above_max', 'field' => $field, 'max' => (int)$rule['max']));
         return array('ok' => true, 'value' => $int);
     }
     if ($type === 'string') {

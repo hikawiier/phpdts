@@ -4,33 +4,34 @@
  */
 
 // ══════════════════════════════════════════════════
-// App.vue — 根布局
+// App.vue — 根布局（三场景所有权框架 F-K1-Scenes）
 //
 // 替代现有 vex/index.html 的 #app 主结构 + vex/js/app.js 的全局事件绑定。
 //
-// 布局（与现有 index.html 一致）：
+// 三段式结构（对齐 F-K1-Scenes §三不变量）：
 //   #app (h-screen flex flex-col)
-//     ├── StatusBar (flex-none)
-//     └── main (flex-1 grid grid-cols-[65%_1fr])
-//         ├── LeftPanel (地图)
-//         └── RightPanel (日志+动作 / 战斗动作)
-//   浮动组件（Teleport to body 或固定定位）：
-//     ├── Modal
-//     ├── Itm0Modal（itm0 非空时弹出提醒）
-//     ├── PlayerDrawer
-//     ├── InventoryDrawer
-//     └── ToastContainer
+//     ├── StatusBar（单一顶栏所有者，按场景切换内容，不在各场景内部重复）
+//     └── main (flex-1 flex min-h-0 overflow-hidden relative)
+//         ├── Transition scene-fade mode=out-in → 探索/战斗中央工作区互斥（B5.34）
+//         │   （3.2 实现 ExploreScene 内部，3.4 实现 BattleScene；本子任务先用 LeftPanel+RightPanel 占位）
+//         └── Transition atlas-fade → AtlasScene 模态覆盖（absolute inset-0，B5.33）
+//             （3.3 实现 AtlasScene，本子任务留接入点）
+//   浮动组件：
+//     ├── Modal / Itm0Modal / CraftModal / PoiModal / DiscoveryModal / ToastContainer
+//     └── PortraitHint（竖屏旋转提示，fixed inset:0 z-index:9999 覆盖一切）
 //
 // 全局功能：
-//   - onMounted: 加载 player_info（状态栏显示真实数据）
-//   - battle-active 类：战斗模式下红色边框光效
+//   - onMounted: 加载 player_info + 地图数据 + 注册 store 事件监听
+//   - battle-active 类：战斗模式下红色边框光效（派生自 sceneStore.isBattle）
 //   - debug-ai 类：?debug=ai 时显示 tick 调试
+//   - 竖屏检测：matchMedia orientation: portrait，竖屏时挂载 PortraitHint
 // ══════════════════════════════════════════════════
 
-import { onMounted, onUnmounted, computed } from 'vue';
+import { onMounted, onUnmounted, computed, ref } from 'vue';
 import { usePlayerStore } from '@/stores/player';
 import { useMapStore } from '@/stores/map';
 import { useBattleStore } from '@/stores/battle';
+import { useSceneStore } from '@/stores/scene-store';
 import { useTileActionStore } from '@/stores/tileAction';
 import { useInventoryStore } from '@/stores/inventory';
 import { useToastStore } from '@/stores/toast';
@@ -39,6 +40,8 @@ import { useErrorLogStore } from '@/stores/error-log';
 import { usePoiStore } from '@/stores/poi';
 import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
+import ExploreScene from '@/components/layout/ExploreScene.vue';
+import AtlasScene from '@/components/map/AtlasScene.vue';
 import LeftPanel from '@/components/layout/LeftPanel.vue';
 import RightPanel from '@/components/layout/RightPanel.vue';
 import PlayerDrawer from '@/components/layout/PlayerDrawer.vue';
@@ -47,12 +50,16 @@ import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
 import PoiModal from '@/components/poi/PoiModal.vue';
+import GroundItemsModal from '@/components/actions/GroundItemsModal.vue';
+import DiscoveryModal from '@/components/DiscoveryModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
+import PortraitHint from '@/components/layout/PortraitHint.vue';
 import { isDebugEnabled } from '@/utils/debug-flags';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
 const battleStore = useBattleStore();
+const sceneStore = useSceneStore();
 const tileActionStore = useTileActionStore();
 const inventoryStore = useInventoryStore();
 const toastStore = useToastStore();
@@ -61,15 +68,35 @@ const errorLogStore = useErrorLogStore();
 const poiStore = usePoiStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
-const isBattleActive = computed(() => battleStore.currentMode === 'battle');
+// 派生自 sceneStore.isBattle（单一真源）
+const isBattleActive = computed(() => sceneStore.isBattle);
 
 // ── ?debug=ai 时加 .debug-ai 类（显示 tick 调试） ──
 const isDebugAi = computed(() => isDebugEnabled('ai'));
+
+// ── 竖屏检测：横屏是主设计基准，竖屏只显示旋转提示（设计案 §7.2 / B6.27-B6.29） ──
+const isPortrait = ref(false);
+let orientationMql: MediaQueryList | null = null;
+
+function onOrientationChange(event: MediaQueryListEvent): void {
+  isPortrait.value = event.matches;
+}
+
+// setup 阶段同步读取姿态，避免首屏闪烁
+if (typeof window !== 'undefined' && window.matchMedia) {
+  orientationMql = window.matchMedia('(orientation: portrait)');
+  isPortrait.value = orientationMql.matches;
+}
 
 // ── 初始化：加载玩家信息 + 地图数据 ──
 // 与现有 vex/js/app.js loadAll() 一致：player_info + game_map + enemies 并行
 // M4：同时注册 tileAction/inventory/toast 的事件监听（监听 map:loaded 等）
 onMounted(async () => {
+  // 注册竖屏姿态监听
+  if (orientationMql) {
+    orientationMql.addEventListener('change', onOrientationChange);
+  }
+
   // 注册 M4/M5/M6 store 的事件监听（监听 map:loaded / game:action-completed / ui:toast / preload:executed 等）
   tileActionStore.registerListeners();
   inventoryStore.registerListeners();
@@ -103,6 +130,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (orientationMql) {
+    orientationMql.removeEventListener('change', onOrientationChange);
+    orientationMql = null;
+  }
   battleStore.stopDaemonPoll();
   errorLogStore.stopPolling();
   commandQueue.destroy();
@@ -119,19 +150,34 @@ onUnmounted(() => {
     }"
   >
     <div class="h-full flex flex-col">
-      <!-- ═══ STATUS BAR ═══ -->
+      <!-- ═══ STATUS BAR（单一顶栏所有者，按场景切换内容 / B5.41） ═══ -->
       <StatusBar />
 
-      <!-- ═══ MAIN（§3.8 push 模式：抽屉作为 flex 子项参与布局挤压） ═══ -->
-      <main class="flex-1 flex min-h-0 overflow-hidden">
-        <!-- LEFT PUSH: PlayerDrawer（属性抽屉，关闭时 flex-basis:0） -->
-        <PlayerDrawer />
-        <!-- CENTER: Map（flex:65，被抽屉挤压时自动收缩） -->
-        <LeftPanel />
-        <!-- RIGHT: Log + Actions / Battle Actions（flex:35） -->
-        <RightPanel />
-        <!-- RIGHT PUSH: InventoryDrawer（背包抽屉，关闭时 flex-basis:0） -->
-        <InventoryDrawer />
+      <!-- ═══ MAIN（三场景所有权框架 F-K1-Scenes §三不变量） ═══ -->
+      <main class="flex-1 flex min-h-0 overflow-hidden relative">
+        <!-- 探索/战斗中央工作区互斥切换（Transition mode=out-in 灰阶淡入淡出，B5.34）
+             3.2 实现 ExploreScene（含 PlayerDrawer/InventoryDrawer push 抽屉）
+             3.4 替换战斗占位为 BattleScene -->
+        <Transition name="scene-fade" mode="out-in">
+          <ExploreScene v-if="!sceneStore.isBattle" key="explore" class="flex-1 flex min-h-0 min-w-0" />
+          <div v-else key="battle" class="flex-1 flex min-h-0 min-w-0">
+            <!-- 战斗场景占位：3.4 替换为 BattleScene 组件
+                 当前复用 LeftPanel（区域地图战斗呈现，B5.27）+ RightPanel（战斗动作预装填/瞄准/参战者/执行反馈，B5.28）
+                 PlayerDrawer/InventoryDrawer 暂保留在战斗占位（3.4 由 BattleScene 接管） -->
+            <PlayerDrawer />
+            <LeftPanel />
+            <RightPanel />
+            <InventoryDrawer />
+          </div>
+        </Transition>
+
+        <!-- AtlasScene 模态覆盖（absolute inset-0，从上方淡入，B5.33）
+             下方探索场景冻结但可见；AtlasScene 占满 atlas-overlay 内部 -->
+        <Transition name="atlas-fade">
+          <div v-if="sceneStore.isAtlas" class="atlas-overlay">
+            <AtlasScene />
+          </div>
+        </Transition>
       </main>
     </div>
 
@@ -140,6 +186,50 @@ onUnmounted(() => {
     <Itm0Modal />
     <CraftModal />
     <PoiModal />
+    <GroundItemsModal />
+    <DiscoveryModal />
     <ToastContainer />
+
+    <!-- ═══ 竖屏旋转提示（fixed inset:0 z-index:9999，覆盖一切 / B6.27-B6.29） ═══ -->
+    <PortraitHint v-if="isPortrait" />
   </div>
 </template>
+
+<style scoped>
+/* 探索 ↔ 战斗：灰阶淡入淡出（B5.34 / §2.15 视觉语言统一性）
+   out-in 保证旧场景先淡出再淡入，避免抖动 */
+.scene-fade-enter-active,
+.scene-fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.scene-fade-enter-from,
+.scene-fade-leave-to {
+  opacity: 0;
+}
+
+/* 完整地图：从上方淡入（B5.33），灰阶，无彩色
+   从顶栏降下的空间语义，translateY -14px→0
+   atlas-overlay 是模态容器，AtlasScene 占满其内部（h-full） */
+.atlas-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: #0a0a0a;
+  border-top: 1px solid rgba(68, 68, 68, 0.5);
+  overflow: hidden;
+}
+.atlas-fade-enter-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.atlas-fade-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.atlas-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-14px);
+}
+.atlas-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+</style>

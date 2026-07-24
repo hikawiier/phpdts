@@ -10,9 +10,10 @@ DROP TABLE IF EXISTS bra_oblmapstates;
 CREATE TABLE bra_oblmapstates (
   pgroup tinyint unsigned NOT NULL,
   pls tinyint unsigned NOT NULL default '0',
-  fog tinyint(1) unsigned NOT NULL default '0',        -- 0=未探索(迷雾) 1=已探索
+  fog tinyint(1) unsigned NOT NULL default '0',        -- 0=未揭示(迷雾) 1=已揭示(revealed)；与 explored 独立（F-E3-Map §三.2 三态独立）
   damaged tinyint(1) unsigned NOT NULL default '0',     -- 0=完好 1=被破坏（未启用：未来地形破坏系统使用）
   flags varchar(255) NOT NULL default '',               -- 扩展状态标记(JSON)（未启用：未来扩展点）
+  explored tinyint(1) unsigned NOT NULL default '0',    -- 0=未踏足 1=玩家已真实站上本格（自动导航目标选择依据，仅落点写）
 
   -- 野生道具刷新状态（iaid=0 AND source_iaid=0 的野生道具，容量计数走批量 COUNT 方案）
   -- 刷新判定采用"按天"机制（E-11 day_changed 事件触发），由 last_refresh_day 与当前游戏天比较

@@ -1,7 +1,7 @@
 <?php
 /**
  * @module E 游戏逻辑
- * @framework E-3 基于图的移动系统
+ * @framework E-3 基于图的移动与多行动导航系统
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -130,6 +130,7 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
     $map = obl_get_map_data($cur_pgroup);
     $tiles = $map['tiles'][$cur_pgroup] ?? [];
     if (!isset($tiles[$to_pls])) {
+        error_log("[NAV_DEBUG] move_core_fail: reason=invalid_target to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=n/a distance=n/a max=$max_distance");
         return ['success' => false, 'distance' => 0, 'reason' => 'invalid_target'];
     }
 
@@ -137,13 +138,15 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
 
     // 2. 可通行检查
     if (empty($target_tile['passable'])) {
+        error_log("[NAV_DEBUG] move_core_fail: reason=blocked to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=n/a max=$max_distance");
         return ['success' => false, 'distance' => 0, 'reason' => 'blocked'];
     }
 
-    // 3. 占用检查（1 格 1 单位）
+    // 3. 占用检查（1 格 1 单位）：仅活单位占据图格，尸体不阻挡移动（与 obl_move 的 state=0 语义一致）
     include_once GAME_ROOT . './oblivions/include/game/player.func.php';
-    $occupiers = obl_get_pids_in_tile($cur_pgroup, $to_pls, (int)($actor_data['pid'] ?? 0));
+    $occupiers = obl_get_pids_in_tile($cur_pgroup, $to_pls, (int)($actor_data['pid'] ?? 0), true);
     if (!empty($occupiers)) {
+        error_log("[NAV_DEBUG] move_core_fail: reason=occupied to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=n/a max=$max_distance");
         return ['success' => false, 'distance' => 0, 'reason' => 'occupied'];
     }
 
@@ -152,9 +155,11 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
 
     $distance = obl_get_distance($cur_pgroup, $cur_pls, $to_pls);
     if ($distance === -1) {
+        error_log("[NAV_DEBUG] move_core_fail: reason=unreachable to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=$distance max=$max_distance");
         return ['success' => false, 'distance' => 0, 'reason' => 'unreachable'];
     }
     if ($distance > $max_distance) {
+        error_log("[NAV_DEBUG] move_core_fail: reason=too_far to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=$distance max=$max_distance");
         return ['success' => false, 'distance' => $distance, 'reason' => 'too_far'];
     }
 
@@ -342,7 +347,7 @@ function obl_switch_region($region, $moveto, &$map, &$pdata) {
 function obl_check_move_sp(&$pdata, $distance = 1) {
     global $obl_log;
 
-    $cfg = include GAME_ROOT . './oblivions/gamedata/obl_config.php';
+    $cfg = obl_get_config();
     $base_cost = (int)($cfg['move_sp_cost'] ?? 0);
     $cost = $distance * $base_cost;
 
@@ -357,18 +362,30 @@ function obl_check_move_sp(&$pdata, $distance = 1) {
 }
 
 /**
- * 移动后钩子：点亮视野内迷雾（解耦移动与探索，不自动发现道具/敌人）
+ * 移动后钩子：标记落点已探索 + 统一信息获取（move 配置）
  *
- * 设计意图（任务2a）：移动是空间行为，探索是主动行为。解耦后：
- *   - 移动后玩家能看到新地图（迷雾点亮，含玩家所在格+视野内格子）
- *   - 玩家需主动点击 [探索周围] 按钮才能发现道具/敌人/触发探索后钩子
- *   - 探索命令消耗体力（按 obl_config.explore_sp_cost），移动不再消耗探索体力
+ * 设计意图（视野-探索-移动模块改造 §4.7）：
+ *   移动与探索共用统一信息获取原语 obl_acquire_information，通过配置形成差异。
+ *   移动后触发 move 配置（基础预算 + 全集 filter），获取视野范围内的信息。
+ *
+ * 职责：
+ *   1. 标记落点 explored（设计案 §4.6：explored 写入的唯一入口，仅落点写）
+ *   2. 调用 obl_acquire_information（move 配置）：点亮迷雾 + 基础道具/敌人/POI 发现
+ *   3. 返回结构化信息结果，供导航器收集（设计案 §4.3）
  *
  * @param array &$pdata 玩家数据
+ * @return array obl_acquire_information 返回的结构化信息结果
  */
 function obl_post_move_hook(&$pdata) {
-    // 移动后只点亮视野内迷雾，不发现道具/敌人（解耦移动与探索）
-    include_once GAME_ROOT . './oblivions/include/game/vision.func.php';
-    $visible_tiles = obl_calc_vision_range($pdata['pgroup'], $pdata['pls'], $pdata);
-    obl_clear_fog($pdata['pgroup'], $visible_tiles);
+    // 1. 标记落点已探索（设计案 §4.6：仅落点写 explored，中间路径格不写）
+    obl_mark_explored($pdata['pgroup'], $pdata['pls']);
+
+    // 2. 统一信息获取（move 配置：基础预算 + 全集 filter）
+    $info_result = obl_acquire_information(
+        $pdata['pgroup'], $pdata['pls'], $pdata,
+        obl_get_info_config('move')
+    );
+
+    // 3. 返回 info_result 供导航器收集（设计案 §4.3）
+    return $info_result;
 }
