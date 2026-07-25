@@ -34,6 +34,8 @@ export interface SceneGeometry {
   readonly generation: number;
   readonly active: boolean;
   readonly projectionRevision: number;
+  getInteractionRoot?(): HTMLElement | null;
+  whenReady?(): Promise<void>;
   resolveTile(tile: TileRef): SceneAnchor | null;
   sceneToViewport(point: ScenePoint): ViewportPoint | null;
   elementCenterToViewport(el: HTMLElement): ViewportPoint;

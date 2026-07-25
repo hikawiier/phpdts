@@ -21,7 +21,7 @@
 //
 // 演出事件转发（store → 组件单向触发）：
 // - battle:preload-init → PreloadArea 组件初始化装填区
-// - battle:play-damage-numbers → DamageNumber 组件播放残留数字
+// - battle:play-damage-numbers → DamageNumber 组件在命中阶段播放伤害数字
 //
 // 段文本播放机制（命令式驱动）：
 // - BattleMode.vue 挂载时通过 ref 注册 BattleBanner / BattleModal 的 player 实例
@@ -519,14 +519,13 @@ export const useBattleStore = defineStore('battle', () => {
       return;
     }
 
+    if (currentMode.value !== 'battle') usePlayerAvatarStore().prepareBattleEntry();
     sceneStore.enterBattle();
     currentEnemyPid.value = enemyPid;
     currentQid.value = nextQid;
 
     updateActionPanel(playerTurn, context, true);
 
-    // 玩家小人：被动遭遇战也触发战斗开始意图
-    usePlayerAvatarStore().onBattleStart();
   }
 
   /**
@@ -537,6 +536,7 @@ export const useBattleStore = defineStore('battle', () => {
   function exitBattleMode(): void {
     if (currentMode.value === 'normal') return;
 
+    usePlayerAvatarStore().settleBattleExit();
     sceneStore.exitBattle();
     combatTargetsRequestGeneration++;
     currentEnemyPid.value = 0;
@@ -553,8 +553,6 @@ export const useBattleStore = defineStore('battle', () => {
     dataManager.invalidate('enemies');
     dataManager.broadcast('battle:ended');
 
-    // 玩家小人：战斗结束意图
-    usePlayerAvatarStore().onBattleEnd();
   }
 
   /**
@@ -628,6 +626,7 @@ export const useBattleStore = defineStore('battle', () => {
       return;
     }
 
+    usePlayerAvatarStore().prepareBattleEntry();
     sceneStore.enterBattle();
     currentEnemyPid.value = enemyPid;
     currentQid.value = null;
@@ -647,8 +646,6 @@ export const useBattleStore = defineStore('battle', () => {
     dataManager.broadcast('battle:started', { enemyPid });
     void loadCombatTargets();
 
-    // 玩家小人：战斗开始意图
-    usePlayerAvatarStore().onBattleStart();
   }
 
   // ══════════════════════════════════════════════════
@@ -896,11 +893,17 @@ export const useBattleStore = defineStore('battle', () => {
   async function waitForSceneGeometry() {
     for (let i = 0; i < 10; i++) {
       const scene = getSceneGeometry();
-      if (scene) return scene;
+      if (scene) {
+        await scene.whenReady?.();
+        if (scene.active) return scene;
+      }
       await nextTick();
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     }
-    return getSceneGeometry();
+    const scene = getSceneGeometry();
+    if (!scene) return null;
+    await scene.whenReady?.();
+    return scene.active ? scene : null;
   }
 
   async function updateSegmentContext(_segment: BattleSegment, _npcPid: number): Promise<void> {
@@ -1131,6 +1134,7 @@ export const useBattleStore = defineStore('battle', () => {
   /** 重置为初始状态（退出战斗/切换角色时） */
   function reset(): void {
     combatTargetsRequestGeneration++;
+    usePlayerAvatarStore().settleBattleExit();
     sceneStore.exitBattle();
     currentEnemyPid.value = 0;
     currentQid.value = null;
@@ -1151,7 +1155,6 @@ export const useBattleStore = defineStore('battle', () => {
     consumedEventUids.clear();
     authorityRefreshGeneration++;
     pendingAuthorityScopes.clear();
-    usePlayerAvatarStore().resetAppearance();
     usePresentationSceneStore().reset();
     stopNpcTurnRefresh();
   }

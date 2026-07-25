@@ -190,6 +190,41 @@ return static function (TestRoom $room): array {
                 test_same('arrived', $nav['outcome_reason'], 'outcome_reason=arrived');
             },
 
+            'begin_preserves_impassable_anchor_adjustment' => static function () use ($room): void {
+                $room->resetData();
+                $player = $room->player('nav-anchor-impassable', 0, ['pgroup' => 1, 'pls' => 1]);
+                $nav = obl_navigation_begin(['target' => 5], $player);
+                test_same(5, $nav['requested_target_pls'], 'requested target preserves player anchor');
+                test_assert((int)$nav['target_pls'] !== 5, 'impassable anchor resolves to nearby landing');
+                test_same([
+                    'from_pls' => 5,
+                    'to_pls' => (int)$nav['target_pls'],
+                    'reasons' => ['impassable'],
+                ], $nav['target_adjustment'], 'impassable adjustment is structured');
+
+                $result = obl_command_build_navigation_result($nav, $player, [], []);
+                test_same(5, $result['requested_target_pls'], 'response preserves requested target');
+                test_same($nav['target_adjustment'], $result['target_adjustment'], 'response exposes adjustment metadata');
+            },
+
+            'begin_preserves_occupied_anchor_without_identity_leak' => static function () use ($room): void {
+                $room->resetData();
+                $player = $room->player('nav-anchor-occupied', 0, ['pgroup' => 1, 'pls' => 1]);
+                $room->player('nav-anchor-blocker', 1, ['pgroup' => 1, 'pls' => 4]);
+                $nav = obl_navigation_begin(['target' => 4], $player);
+                test_same(4, $nav['requested_target_pls'], 'occupied anchor preserves requested target');
+                test_assert((int)$nav['target_pls'] !== 4, 'occupied anchor resolves to nearby landing');
+                test_same(['occupied'], $nav['target_adjustment']['reasons'], 'occupancy reason does not expose actor identity');
+            },
+
+            'begin_combines_anchor_adjustment_reasons' => static function () use ($room): void {
+                $room->resetData();
+                $player = $room->player('nav-anchor-combined', 0, ['pgroup' => 1, 'pls' => 1]);
+                $room->player('nav-anchor-hidden-blocker', 1, ['pgroup' => 1, 'pls' => 5, 'discovered' => 0]);
+                $nav = obl_navigation_begin(['target' => 5], $player);
+                test_same(['impassable', 'occupied'], $nav['target_adjustment']['reasons'], 'all public adjustment reasons are preserved');
+            },
+
             'begin_no_target_when_auto_select_finds_nothing' => static function () use ($room): void {
                 $room->resetData();
                 // pgroup=999 无地图文件，select_target 找不到任何目标

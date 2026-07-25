@@ -5,6 +5,7 @@
 import type { SceneAnchor, ScenePoint } from './scene';
 
 export type MoveTier = 'duck' | 'jump' | 'long';
+export type CombatMoveStyle = 'dash' | 'escape';
 export type AttackKind = 'melee' | 'ranged';
 export type ActorChannel = 'spatial' | 'action' | 'visibility' | 'pose';
 export type PresentationOwner = 'ambient' | 'world' | 'battle' | 'terminal';
@@ -44,6 +45,13 @@ export type ActorCommand =
     tier: MoveTier;
     hold?: boolean;
     onTravelProgress?: (progress: number) => void;
+  }
+  | {
+    kind: 'combat-move';
+    from?: SceneAnchor;
+    target: SceneAnchor;
+    style: CombatMoveStyle;
+    hold?: boolean;
   }
   | { kind: 'attack'; target?: ScenePoint; attackKind: AttackKind }
   | { kind: 'hit'; direction: -1 | 0 | 1 }

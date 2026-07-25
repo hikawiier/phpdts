@@ -58,8 +58,35 @@ try {
   if (stationaryAim.pathData !== 'M 10 20 L 10 20' || stationaryAim.arrowAngle !== 0) {
     throw new Error('stationary aim geometry mismatch');
   }
+  const isometricBattle = await server.ssrLoadModule('/src/utils/isometric-battle.ts');
+  const isoTiles = [
+    { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+    { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 },
+  ];
+  const isoLayout = isometricBattle.createIsometricLayout(isoTiles, 640, 420, {
+    mirrorX: true,
+    zoom: 1.08,
+    focus: { x: 1, y: 1 },
+  });
+  const isoOrigin = isometricBattle.projectIsometric({ x: 0, y: 0 }, isoLayout);
+  const isoEast = isometricBattle.projectIsometric({ x: 1, y: 0 }, isoLayout);
+  const isoSouth = isometricBattle.projectIsometric({ x: 0, y: 1 }, isoLayout);
+  if (!(isoEast.x < isoOrigin.x && isoSouth.x > isoOrigin.x
+    && isoEast.y > isoOrigin.y && isoSouth.y > isoOrigin.y)) {
+    throw new Error('mirrored isometric projection axes mismatch');
+  }
+  const firstDelays = isoTiles.map(tile => isometricBattle.deterministicBattleTileDelay(tile.x, tile.y));
+  const secondDelays = isoTiles.map(tile => isometricBattle.deterministicBattleTileDelay(tile.x, tile.y));
+  if (firstDelays.join(',') !== secondDelays.join(',')) {
+    throw new Error('battle tile rise order is not deterministic');
+  }
+  if (firstDelays.every((delay, index) => index === 0 || delay >= firstDelays[index - 1])) {
+    throw new Error('battle tile rise order degraded into row-major order');
+  }
   const fixture = await server.ssrLoadModule('/src/stores/battle-director.fixture.ts');
   fixture.assertBattleDirectorFixture();
+  const moveDirectorFixture = await server.ssrLoadModule('/src/stores/move-director.fixture.ts');
+  moveDirectorFixture.assertMoveDirectorTargetAdjustmentFixture();
   const actorRuntimeFixture = await server.ssrLoadModule('/src/stores/actor-runtime.fixture.ts');
   actorRuntimeFixture.assertActorRuntimeContractFixture();
   await actorRuntimeFixture.assertAppearancePreemptionConvergenceFixture();

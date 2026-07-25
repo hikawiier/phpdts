@@ -42,11 +42,8 @@ import { usePoiStore } from '@/stores/poi';
 import { commandQueue } from '@/stores/command-queue';
 import StatusBar from '@/components/layout/StatusBar.vue';
 import ExploreScene from '@/components/layout/ExploreScene.vue';
+import BattleScene from '@/components/layout/BattleScene.vue';
 import AtlasScene from '@/components/map/AtlasScene.vue';
-import LeftPanel from '@/components/layout/LeftPanel.vue';
-import RightPanel from '@/components/layout/RightPanel.vue';
-import PlayerDrawer from '@/components/layout/PlayerDrawer.vue';
-import InventoryDrawer from '@/components/layout/InventoryDrawer.vue';
 import Modal from '@/components/layout/Modal.vue';
 import Itm0Modal from '@/components/inventory/Itm0Modal.vue';
 import CraftModal from '@/components/craft/CraftModal.vue';
@@ -161,15 +158,7 @@ onUnmounted(() => {
              3.4 替换战斗占位为 BattleScene -->
         <Transition name="scene-fade" mode="out-in">
           <ExploreScene v-if="!sceneStore.isBattle" key="explore" class="flex-1 flex min-h-0 min-w-0" />
-          <div v-else key="battle" class="flex-1 flex min-h-0 min-w-0">
-            <!-- 战斗场景占位：3.4 替换为 BattleScene 组件
-                 当前复用 LeftPanel（区域地图战斗呈现，B5.27）+ RightPanel（战斗动作预装填/瞄准/参战者/执行反馈，B5.28）
-                 PlayerDrawer/InventoryDrawer 暂保留在战斗占位（3.4 由 BattleScene 接管） -->
-            <PlayerDrawer />
-            <LeftPanel />
-            <RightPanel />
-            <InventoryDrawer />
-          </div>
+          <BattleScene v-else key="battle" class="flex-1 min-h-0 min-w-0" />
         </Transition>
 
         <!-- AtlasScene 模态覆盖（absolute inset-0，从上方淡入，B5.33）

@@ -32,6 +32,8 @@ import { useAimTargetingStore, type AimEnemyVisualState } from '@/stores/aim-tar
 import type { AimModeEventData } from '@/types/events';
 import { useToastStore } from '@/stores/toast';
 import { buildAimLineGeometry } from '@/utils/aim-line-geometry';
+import { getSceneGeometry } from '@/composables/sceneRegistry';
+import { task3Debug } from '@/utils/task3-debug';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
@@ -76,13 +78,14 @@ let _onMouseMove: ((e: MouseEvent) => void) | null = null;
 let _onMouseLeave: (() => void) | null = null;
 let _onClick: ((e: MouseEvent) => void) | null = null;
 let _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+let _boundGrid: HTMLElement | null = null;
 
 // ══════════════════════════════════════════════════
 // DOM 元素查询
 // ══════════════════════════════════════════════════
 
 function getMapGrid(): HTMLElement | null {
-  return document.getElementById('mapGrid');
+  return getSceneGeometry()?.getInteractionRoot?.() ?? null;
 }
 
 /** 获取玩家立绘上半身位置作为瞄准线起点 */
@@ -157,8 +160,14 @@ function currentTileCandidateIds(): number[] {
 
 function applyAimTargetable(): void {
   const grid = getMapGrid();
-  if (!grid) return;
   clearAimTargetable();
+  if (!grid) {
+    task3Debug.log('battle-aim.bind-missing-root', {
+      targetMode: aimTargetMode.value,
+      actId: aimTargetingStore.actId,
+    });
+    return;
+  }
 
   if (aimTargetMode.value !== 'tile') {
     // 计算敌人瞄准视觉状态，写入响应式 store（由 MapGrid.vue entityClass 消费）
@@ -183,20 +192,27 @@ function applyAimTargetable(): void {
   _onMouseMove = onAimMouseMove;
   _onMouseLeave = onAimMouseLeave;
   _onClick = onAimClick;
+  _boundGrid = grid;
   grid.addEventListener('mousemove', _onMouseMove);
   grid.addEventListener('mouseleave', _onMouseLeave);
-  grid.addEventListener('click', _onClick);
+  grid.addEventListener('click', _onClick, true);
+  task3Debug.log('battle-aim.bind-root', {
+    targetMode: aimTargetMode.value,
+    actId: aimTargetingStore.actId,
+    sceneGrid: grid.dataset.sceneGrid ?? null,
+  });
 }
 
 /** 清除所有敌人格的瞄准标记和事件 */
 function clearAimTargetable(): void {
   aimTargetingStore.clearEnemyAimStates();
 
-  const grid = getMapGrid();
+  const grid = _boundGrid;
   if (!grid) return;
   if (_onMouseMove) grid.removeEventListener('mousemove', _onMouseMove);
   if (_onMouseLeave) grid.removeEventListener('mouseleave', _onMouseLeave);
-  if (_onClick) grid.removeEventListener('click', _onClick);
+  if (_onClick) grid.removeEventListener('click', _onClick, true);
+  _boundGrid = null;
   _onMouseMove = null;
   _onMouseLeave = null;
   _onClick = null;
@@ -244,6 +260,12 @@ function onAimMouseLeave(): void {
 
 function onAimClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
+  task3Debug.log('battle-aim.click', {
+    targetMode: aimTargetMode.value,
+    targetTag: target?.tagName ?? null,
+    targetEntity: target?.closest?.('[data-character-pid]')?.getAttribute('data-character-pid') ?? null,
+    targetPls: target?.closest?.('[data-pls]')?.getAttribute('data-pls') ?? null,
+  });
   if (aimTargetMode.value === 'enemy') {
     const entity = target?.closest?.('[data-character-pid]') as HTMLElement | null;
     if (!entity) return;
@@ -279,10 +301,20 @@ function onAimClick(e: MouseEvent): void {
   }
 }
 
-function confirmEnemyTarget(pid: number): void {
-  if (!isEnemySelectable(pid) || !isEnemyInActionRange(pid)) return;
+function confirmEnemyTarget(pid: number): boolean {
+  const selectable = isEnemySelectable(pid);
+  const inRange = isEnemyInActionRange(pid);
+  task3Debug.log('battle-aim.confirm-enemy', {
+    pid,
+    selectable,
+    inRange,
+    originPls: aimOriginPls.value,
+    actionRange: aimActionRange.value,
+  });
+  if (!selectable || !inRange) return false;
   disambiguation.value = null;
   dataManager.broadcast('battle:aim-target-selected', { pid });
+  return true;
 }
 
 function onDisambiguationSelect(candidate: CombatTargetCandidate): void {

@@ -243,12 +243,13 @@ return static function (TestRoom $room): array {
             },
 
             'navigation_begin_accepts_impassable_fog_tile_as_anchor' => static function () use ($room): void {
-                // 验证现有 obl_navigation_begin 接受不可通行的迷雾格作为目标锚点
-                // （只校验存在性，不校验可通行性）
+                // 不可通行迷雾格保留为请求锚点，寻路目标解析为附近合法落点。
                 $room->resetData();
                 $player = $room->player('fog-anchor', 0, ['pgroup' => 1, 'pls' => 1]);
                 $nav = obl_navigation_begin(['target' => 5], $player);
-                test_same(5, (int)$nav['target_pls'], 'navigation accepts impassable fog tile 5 as anchor');
+                test_same(5, (int)$nav['requested_target_pls'], 'navigation preserves impassable fog tile 5 as requested anchor');
+                test_assert((int)$nav['target_pls'] !== 5, 'navigation resolves impassable anchor to a legal landing');
+                test_same(['impassable'], $nav['target_adjustment']['reasons'], 'navigation reports why anchor was adjusted');
                 test_same(false, $nav['target_is_auto'], 'target is player-specified');
             },
 

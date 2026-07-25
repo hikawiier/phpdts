@@ -6,7 +6,7 @@
 // 每个函数接收 ActorElements（anchor/pose/visibility），不关心实体身份
 // 调用方（useMapEntities / battle-actor-executor）负责决定何时播放何种动画
 import gsap from 'gsap';
-import type { ActorElements, AttackKind } from '@/types/actor-runtime';
+import type { ActorElements, AttackKind, CombatMoveStyle } from '@/types/actor-runtime';
 
 const Z_STANDING = 10;
 
@@ -159,6 +159,88 @@ export function jumpActor(
   // 原 0.9s 导致 speed=1 时 64% 时长（900ms）是落地后的弹性振荡，用户感知为"卡顿"
   // 0.4s 保留弹性效果，总时长从 1.4s 降至 0.9s，speed=4 时从 350ms 降至 225ms
   tl.to(elements.pose, { scaleY: 1, duration: 0.4, ease: 'elastic.out(1, 0.35)' }, 0.5);
+  return tl;
+}
+
+export function combatMoveActor(
+  elements: ActorElements,
+  toX: number,
+  toY: number,
+  cellHeight: number,
+  direction: 1 | -1 | 0,
+  style: CombatMoveStyle,
+): gsap.core.Timeline {
+  gsap.killTweensOf(elements.anchor);
+  gsap.killTweensOf(elements.pose);
+  if (style === 'escape') gsap.killTweensOf(elements.visibility);
+  updateEntityZIndex(elements.anchor);
+
+  const facing = direction === 0 ? 1 : direction;
+  const travelDuration = style === 'escape' ? 0.46 : 0.34;
+  const lift = Math.min(18, Math.max(8, cellHeight * 0.1));
+  const tl = gsap.timeline();
+  tl.set(elements.pose, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+  tl.to(elements.pose, {
+    x: -facing * 4,
+    y: 4,
+    rotation: -facing * 6,
+    scaleX: 1.06,
+    scaleY: 0.88,
+    duration: 0.08,
+    ease: 'power2.in',
+  });
+  tl.to(elements.anchor, {
+    x: toX,
+    y: toY,
+    duration: travelDuration,
+    ease: style === 'escape' ? 'power3.in' : 'power3.inOut',
+    onUpdate: () => updateEntityZIndex(elements.anchor),
+  }, 0.06);
+  tl.to(elements.pose, {
+    x: facing * 8,
+    y: -lift,
+    rotation: facing * 10,
+    scaleX: 0.94,
+    scaleY: 1.08,
+    duration: travelDuration * 0.58,
+    ease: 'power2.out',
+  }, 0.06);
+
+  if (style === 'escape') {
+    tl.to(elements.visibility, {
+      alpha: 0,
+      duration: 0.24,
+      ease: 'power2.in',
+    }, 0.24);
+    tl.to(elements.pose, {
+      x: facing * 14,
+      y: -lift * 0.45,
+      rotation: facing * 14,
+      scaleX: 0.9,
+      scaleY: 1.05,
+      duration: 0.2,
+      ease: 'power2.in',
+    }, 0.3);
+  } else {
+    tl.to(elements.pose, {
+      x: 0,
+      y: 2,
+      rotation: 0,
+      scaleX: 1.04,
+      scaleY: 0.9,
+      duration: 0.1,
+      ease: 'power2.in',
+    }, 0.33);
+    tl.to(elements.pose, {
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 0.2,
+      ease: 'back.out(2.4)',
+    });
+  }
   return tl;
 }
 

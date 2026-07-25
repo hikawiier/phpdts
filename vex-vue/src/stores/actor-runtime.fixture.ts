@@ -52,6 +52,7 @@ export function assertActorRuntimeContractFixture(): void {
   assertRemovalContract();
   assertTransformChannelIsolationContract();
   assertMoveRefStabilityContract();
+  assertCombatMoveSourceAnchorContract();
   assertInitialEnterPreemptionContract();
   assertFacingClassIsolationContract();
   assertPostureAndEscapeContract();
@@ -59,6 +60,25 @@ export function assertActorRuntimeContractFixture(): void {
   assertCombatTargetResolutionContract();
   assertRegionTransitionContract();
   assertGroundCameraInterpolationContract();
+}
+
+function assertCombatMoveSourceAnchorContract(): void {
+  const runtime = createActorRuntime('combat-mover');
+  const source = anchor(3, 3101, 80, 96);
+  const target = anchor(3, 3102, 144, 128);
+  const elements = createActorElements();
+  runtime.projectAnchor(target);
+  runtime.setElements(elements);
+  const lease = runtime.acquire({
+    owner: 'battle', channels: ['spatial', 'pose'], sessionId: 'combat-move-source',
+  });
+  assert(lease, 'combat move lease was not acquired');
+  const move = lease.play({ kind: 'combat-move', from: source, target, style: 'dash' });
+  assertScenePoint(runtime.getScenePoint(), source,
+    'combat move did not restore the event source anchor before travel');
+  move.cancel('fixture');
+  lease.release({ reconcile: false });
+  runtime.dispose();
 }
 
 function assertGroundCameraInterpolationContract(): void {

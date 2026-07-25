@@ -5,7 +5,6 @@
 
 // 战斗播放运行器：消费 PlaybackStep 列表，按 awaitPolicy 执行动画/日志/场景切换
 // 职责：遍历 steps → 创建执行任务 → 处理场景保护 → 执行完成回调
-import { dataManager } from '@/stores/data-manager';
 import {
   playActionChoreography,
   playCombatantCleared,
@@ -141,12 +140,6 @@ function createStepTask(step: PlaybackStep, runtime: BattlePlaybackRuntime): Pla
       return promiseTask(runtime.playBattleEndContent(step.segment, runtime.presentation.id));
     case 'modal_text':
       return promiseTask(runtime.playSegmentText(step.segment, step.options));
-    case 'damage_linger':
-      dataManager.broadcast('battle:play-damage-numbers', {
-        effects: step.effects,
-        npcPid: runtime.npcPid,
-      });
-      return promiseTask(Promise.resolve());
   }
 }
 

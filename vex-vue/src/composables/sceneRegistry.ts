@@ -20,6 +20,8 @@ export function registerSceneGeometry(adapter: SceneGeometry): () => void {
     get projectionRevision() {
       return adapter.projectionRevision;
     },
+    getInteractionRoot: () => adapter.getInteractionRoot?.() ?? null,
+    whenReady: () => adapter.whenReady?.() ?? Promise.resolve(),
     resolveTile: tile => adapter.resolveTile(tile),
     sceneToViewport: point => adapter.sceneToViewport(point),
     elementCenterToViewport: el => adapter.elementCenterToViewport(el),

@@ -497,7 +497,7 @@ function obl_navigation_bfs_full_path($from, $to, array $tiles, array $blocked_t
  *   2. 校验 tendency（未知值回退 steady）
  *   3. 应用 max_steps 默认值（配置 navigation_max_steps_default）
  *   4. 选择目标：
- *      - 玩家指定 target：直接使用，校验目标在当前区域且存在
+ *      - 玩家指定 target：保留请求锚点，校验后解析实际落点
  *      - 省略 target：调用 obl_navigation_select_target 自动选目标
  *   5. 返回导航器状态对象
  *
@@ -508,7 +508,9 @@ function obl_navigation_bfs_full_path($from, $to, array $tiles, array $blocked_t
  * @return array 导航器状态对象
  *   [
  *     'navigation_id' => string,  // 前端标识（用 request_id，由 handler 注入）
- *     'target_pls' => int|null,   // 目标格
+ *     'requested_target_pls' => int|null, // 玩家请求的原始导航锚点
+ *     'target_pls' => int|null,   // 实际导航目标
+ *     'target_adjustment' => array|null, // 原目标被解析到附近落点时的公开原因
  *     'target_is_auto' => bool,   // 是否自动选目标
  *     'tendency' => string,       // 移动倾向
  *     'max_steps' => int,         // 最大步数
@@ -557,7 +559,9 @@ function obl_navigation_begin($payload, &$pdata) {
 
     $navigation = array(
         'navigation_id'   => '',
+        'requested_target_pls' => null,
         'target_pls'      => null,
+        'target_adjustment' => null,
         'target_is_auto'  => false,
         'tendency'        => $tendency,
         'max_steps'       => $max_steps,
@@ -572,6 +576,7 @@ function obl_navigation_begin($payload, &$pdata) {
 
     // 2. 选择目标
     if ($target_pls !== null && $target_pls > 0) {
+        $navigation['requested_target_pls'] = $target_pls;
         // 玩家指定目标：校验目标在当前区域且存在
         $map = obl_get_map_data($pgroup);
         $tiles = $map['tiles'][$pgroup] ?? array();
@@ -591,6 +596,10 @@ function obl_navigation_begin($payload, &$pdata) {
         $target_occupied = isset($occupied_tiles[$target_pls]);
 
         if (!$target_passable || $target_occupied) {
+            $adjustment_reasons = array();
+            if (!$target_passable) $adjustment_reasons[] = 'impassable';
+            // 只公开“已被占据”，不借隐藏真值泄露占据者类型或身份。
+            if ($target_occupied) $adjustment_reasons[] = 'occupied';
             // 导航锚点：目标不可落脚，BFS 寻找附近合法落点
             $landing = obl_navigation_find_anchor_landing($pgroup, $target_pls, $tiles, $occupied_tiles);
             if ($landing === null) {
@@ -600,6 +609,11 @@ function obl_navigation_begin($payload, &$pdata) {
                 $navigation['outcome_reason'] = 'target_invalid';
                 return $navigation;
             }
+            $navigation['target_adjustment'] = array(
+                'from_pls' => $target_pls,
+                'to_pls'   => $landing,
+                'reasons'  => $adjustment_reasons,
+            );
             $target_pls = $landing; // 替换为合法落点
         }
 
@@ -626,7 +640,7 @@ function obl_navigation_begin($payload, &$pdata) {
         $navigation['target_is_auto'] = true;
     }
 
-    error_log("[NAV_DEBUG] begin_result: target_pls=" . ($navigation['target_pls'] ?? 'null') . " target_is_auto=" . (int)($navigation['target_is_auto'] ?? 0) . " finished=" . (int)($navigation['finished'] ?? 0) . " outcome=" . ($navigation['outcome'] ?? 'null') . " reason=" . ($navigation['outcome_reason'] ?? 'null') . " cur_pls={$pdata['pls']}");
+    error_log("[NAV_DEBUG] begin_result: requested_target_pls=" . ($navigation['requested_target_pls'] ?? 'null') . " target_pls=" . ($navigation['target_pls'] ?? 'null') . " target_is_auto=" . (int)($navigation['target_is_auto'] ?? 0) . " finished=" . (int)($navigation['finished'] ?? 0) . " outcome=" . ($navigation['outcome'] ?? 'null') . " reason=" . ($navigation['outcome_reason'] ?? 'null') . " cur_pls={$pdata['pls']}");
     return $navigation;
 }
 

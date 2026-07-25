@@ -58,7 +58,7 @@ export type NavSpeed = 1 | 2 | 4;
 //   interrupted_combat 是过渡态（场景交接中），handed_off_to_battle 是终态（已交接给战斗导演）
 //   避免与"未发生战斗的 idle"混淆，UI 可据终态显示中断原因
 // E-Q5-D Q5-13：新增 max_steps_reached 终态——单次导航达上限，前端自动断点续导航
-//   不映射为 failed：这是"未抵达但可续行"，不是失败；续发命令携带原 target/tendency
+//   不映射为 failed：这是"未抵达但可续行"，不是失败；续发命令携带实际落点/tendency
 export type NavOutcome =
   | 'idle'
   | 'playing'
@@ -106,6 +106,14 @@ export interface Discovery {
   kind: 'enemy' | 'poi' | 'item';
   name: string;
   at_pls: number;
+}
+
+export type TargetAdjustmentReason = 'impassable' | 'occupied';
+
+export interface TargetAdjustment {
+  requestedPls: number;
+  resolvedPls: number;
+  reasons: TargetAdjustmentReason[];
 }
 
 // 1x 速度下单步演出时长（ms）
@@ -171,12 +179,68 @@ interface RawNavigationResult {
   outcome?: string;      // arrived | interrupted | no_target | max_steps_reached
   outcome_reason?: string; // arrived | enemy_discovered | force_combat | move_failed | route_invalid | no_sp | capability_lost | target_invalid | max_steps_reached | poi_discovered | no_target
   final_position?: { pgroup?: number; pls?: number };
+  requested_target_pls?: number | null;
   target_pls?: number | null;
+  target_adjustment?: {
+    from_pls?: number;
+    to_pls?: number;
+    reasons?: string[];
+  } | null;
   target_is_auto?: boolean;
   tendency?: string;
   steps_taken?: number;
   max_steps?: number;
   navigation_id?: string;
+}
+
+function isPositivePls(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+export function parseTargetAdjustment(raw: RawNavigationResult): TargetAdjustment | null {
+  const adjustment = raw.target_adjustment;
+  if (!adjustment) return null;
+  const requestedPls = adjustment.from_pls ?? raw.requested_target_pls;
+  const resolvedPls = adjustment.to_pls ?? raw.target_pls;
+  if (!isPositivePls(requestedPls) || !isPositivePls(resolvedPls) || requestedPls === resolvedPls) {
+    return null;
+  }
+  const reasons = [...new Set(
+    (adjustment.reasons ?? []).filter(
+      (reason): reason is TargetAdjustmentReason => reason === 'impassable' || reason === 'occupied',
+    ),
+  )];
+  return { requestedPls, resolvedPls, reasons };
+}
+
+export function mergeTargetAdjustment(
+  current: TargetAdjustment | null,
+  incoming: TargetAdjustment | null,
+): TargetAdjustment | null {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  return {
+    requestedPls: current.requestedPls,
+    resolvedPls: incoming.resolvedPls,
+    reasons: [...new Set([...current.reasons, ...incoming.reasons])],
+  };
+}
+
+export function buildArrivalFeedback(
+  targetName: string,
+  adjustment: TargetAdjustment | null,
+): string {
+  if (!adjustment) return `已抵达 ${targetName || '目标'}`;
+  const impassable = adjustment.reasons.includes('impassable');
+  const occupied = adjustment.reasons.includes('occupied');
+  const reason = impassable && occupied
+    ? '不可通行且已被占据'
+    : impassable
+      ? '不可通行'
+      : occupied
+        ? '已被占据'
+        : '无法落脚';
+  return `已抵达附近落点 (${adjustment.resolvedPls})；原目标格 (${adjustment.requestedPls}) ${reason}`;
 }
 
 /**
@@ -186,10 +250,15 @@ interface RawNavigationResult {
  * - interrupted_enemy / interrupted_combat：固定中断描述
  * - failed：按 rawReason 子分支映射具体失败原因
  */
-function humanizeOutcomeReason(outcome: NavOutcome, rawReason: string, targetName: string): string {
+function humanizeOutcomeReason(
+  outcome: NavOutcome,
+  rawReason: string,
+  targetName: string,
+  targetAdjustment: TargetAdjustment | null,
+): string {
   switch (outcome) {
     case 'arrived':
-      return `已抵达 ${targetName || '目标'}`;
+      return buildArrivalFeedback(targetName, targetAdjustment);
     case 'interrupted_enemy':
       return '发现敌对目标，导航中断';
     case 'interrupted_combat':
@@ -237,16 +306,20 @@ function humanizeOutcomeReason(outcome: NavOutcome, rawReason: string, targetNam
  *     final_position: { pgroup, pls },
  *     outcome: 'arrived'|'interrupted'|'no_target'|'max_steps_reached',
  *     outcome_reason: 'arrived'|'enemy_discovered'|'force_combat'|'move_failed'|'route_invalid'|'no_sp'|'capability_lost'|'target_invalid'|'max_steps_reached'|'poi_discovered'|'no_target',
+ *     requested_target_pls: int|null,
  *     target_pls: int|null,
+ *     target_adjustment: { from_pls, to_pls, reasons }|null,
  *     ...
  *   }
  * 若后端未返回结构化导航数据，降级为基于命令成功/失败的单步结果。
  */
-function parseNavigationResult(result: CommandResult, startPls: number): {
+export function parseNavigationResult(result: CommandResult, startPls: number): {
   steps: NavigationStep[];
   outcome: NavOutcome;
   interruptReason: string;
   targetName: string;
+  targetAdjustment: TargetAdjustment | null;
+  resolvedTargetPls: number | null;
   finalPls: number;
   oscillationDetected: boolean;
 } {
@@ -262,6 +335,8 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
         outcome: 'failed',
         interruptReason: result.message || '导航失败',
         targetName: '',
+        targetAdjustment: null,
+        resolvedTargetPls: null,
         finalPls: startPls,
         oscillationDetected: false,
       };
@@ -271,6 +346,8 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
       outcome: 'arrived',
       interruptReason: result.message || '已抵达目标',
       targetName: '',
+      targetAdjustment: null,
+      resolvedTargetPls: null,
       finalPls: startPls,
       oscillationDetected: false,
     };
@@ -307,7 +384,7 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
     outcome = 'arrived';
   } else if (rawOutcome === 'max_steps_reached') {
     // E-Q5-D Q5-13：max_steps_reached 是独立终态，不映射为 failed
-    // 前端识别后自动断点续导航（续发 map.navigate 携带原 target/tendency）
+    // 前端识别后自动断点续导航（续发 map.navigate 携带实际落点/tendency）
     // 设计案 §十：不丢失已完成移动与游戏刻，续发命令从断点继续
     outcome = 'max_steps_reached';
   } else if (rawOutcome === 'interrupted') {
@@ -332,10 +409,11 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
     }
   }
 
-  // 步骤 5：targetName — 后端只有 target_pls（number|null），fallback 为"目标格 (N)"避免 toast 显示"已抵达 "
+  // 步骤 5：目标解析事实——target_pls 是实际落点；调整信息保留玩家原始锚点与公开原因。
   const targetPlsRaw = raw.target_pls;
+  const targetAdjustment = parseTargetAdjustment(raw);
   const targetName = (typeof targetPlsRaw === 'number' && targetPlsRaw > 0)
-    ? `目标格 (${targetPlsRaw})`
+    ? `${targetAdjustment ? '附近落点' : '目标格'} (${targetPlsRaw})`
     : '';
 
   // finalPls：优先用 final_position.pls（最终权威位置），其次回退到最后一步的 to_pls
@@ -359,7 +437,7 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
   }
 
   // 步骤 6：生成人类可读的 interruptReason（替代原始枚举值）
-  const interruptReason = humanizeOutcomeReason(outcome, rawReason, targetName);
+  const interruptReason = humanizeOutcomeReason(outcome, rawReason, targetName, targetAdjustment);
 
   // 步骤 7：返回
   return {
@@ -367,6 +445,8 @@ function parseNavigationResult(result: CommandResult, startPls: number): {
     outcome,
     interruptReason,
     targetName,
+    targetAdjustment,
+    resolvedTargetPls: isPositivePls(targetPlsRaw) ? targetPlsRaw : null,
     finalPls,
     oscillationDetected,
   };
@@ -563,6 +643,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   const outcome = ref<NavOutcome>('idle');
   const interruptReason = ref<string>('');
   const targetName = ref<string>('');
+  const targetAdjustment = ref<TargetAdjustment | null>(null);
   const discoveries = ref<Discovery[]>([]);
   const enRouteSummary = ref<string>('');
   const isPaused = ref<boolean>(false);
@@ -594,7 +675,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   let navHasPlayerTarget = false;
 
   // ── E-Q5-D Q5-13：断点续导航状态 ──
-  // max_steps_reached 终态时，前端自动续发 map.navigate 携带原 target/tendency
+  // max_steps_reached 终态时，前端自动续发 map.navigate 携带实际落点/tendency
   // 设计案 §十：不丢失已完成移动与游戏刻，续发命令从断点继续
   // resumeTarget=undefined 表示 auto-target，续发时让后端在断点处重新选目标
   //   （隐藏敌人/POI 状态可能已变化，§5.4/§7.4 重新选目标更准确）
@@ -626,6 +707,29 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   const hasPendingDiscoveries = computed<boolean>(
     () => outcome.value === 'interrupted_enemy' && discoveries.value.length > 0,
   );
+
+  function applyParsedTarget(
+    parsed: Pick<ReturnType<typeof parseNavigationResult>, 'targetName' | 'targetAdjustment' | 'resolvedTargetPls'>,
+    preserveExisting: boolean,
+  ): void {
+    targetAdjustment.value = preserveExisting
+      ? mergeTargetAdjustment(targetAdjustment.value, parsed.targetAdjustment)
+      : parsed.targetAdjustment;
+    targetName.value = targetAdjustment.value
+      ? `附近落点 (${targetAdjustment.value.resolvedPls})`
+      : parsed.targetName;
+    if (navHasPlayerTarget && parsed.resolvedTargetPls !== null) {
+      resumeTarget = parsed.resolvedTargetPls;
+    }
+  }
+
+  function currentArrivalFeedback(): string {
+    return buildArrivalFeedback(targetName.value, targetAdjustment.value);
+  }
+
+  function arrivalToastDuration(): number {
+    return targetAdjustment.value ? 2800 : 1800;
+  }
   const enemyDiscoveries = computed<Discovery[]>(() =>
     discoveries.value.filter((d) => d.kind === 'enemy'),
   );
@@ -956,8 +1060,8 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
    * E-Q5-D Q5-13：断点续导航——max_steps_reached 终态后自动续发 map.navigate
    *
    * 设计案 §十：不丢失已完成移动与游戏刻，续发命令从断点继续。
-   * 续行命令携带原 target/tendency：
-   *   - 玩家指定目标（resumeTarget 有值）：必达，续发携带原 target
+   * 续行命令携带实际落点/tendency：
+   *   - 玩家指定目标（resumeTarget 有值）：必达，续发携带后端解析出的可落脚目标
    *   - auto-target（resumeTarget=undefined）：在断点处重新选目标
    *     （隐藏敌人/POI 状态可能已变化，§5.4/§7.4 重新选目标更准确）
    *
@@ -1046,7 +1150,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     // 解析续行结果（保留已累积的 discoveries/enRouteSummary，续行是同一会话）
     const parsed = parseNavigationResult(result, fromPls);
     steps.value = parsed.steps;
-    targetName.value = parsed.targetName;
+    applyParsedTarget(parsed, true);
     finalPls.value = parsed.finalPls;
     parsedOutcome = parsed.outcome;
     currentStepIndex.value = -1;
@@ -1074,13 +1178,13 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       } else {
         // arrived
         outcome.value = 'arrived';
-        interruptReason.value = parsed.interruptReason || '已抵达目标';
+        interruptReason.value = currentArrivalFeedback();
         if (navHasPlayerTarget) {
           explore.clearTarget();
           navHasPlayerTarget = false;
         }
         void mapStore.loadMap();
-        toastStore.showToast(interruptReason.value, 'success', 1800, false, 'nav-arrived');
+        toastStore.showToast(interruptReason.value, 'success', arrivalToastDuration(), false, 'nav-arrived');
       }
       return;
     }
@@ -1115,7 +1219,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     buildSummary();
     phase.value = 'idle';
     outcome.value = 'arrived';
-    interruptReason.value = `已抵达 ${targetName.value}`;
+    interruptReason.value = currentArrivalFeedback();
     explore.setNavigationLock(false); // B6.13 演出追上权威状态后恢复输入
     // 解除视觉中心冻结：网格重新跟随 curLoc 居中到最终位置
     mapStore.clearVisualCenter();
@@ -1139,7 +1243,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     // 演出期间 applyStep 增量写入 stub 敌人，此处一次性用后端权威数据覆盖
     // 不 await：fire-and-forget，避免阻塞 UI 终态反馈
     void mapStore.loadMap();
-    toastStore.showToast(interruptReason.value, 'success', 1800, false, 'nav-arrived');
+    toastStore.showToast(interruptReason.value, 'success', arrivalToastDuration(), false, 'nav-arrived');
   }
 
   function handleInterrupt(reason: NavOutcome, combatName?: string): void {
@@ -1249,7 +1353,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       }
     }
 
-    // E-Q5-D Q5-13：存储续行参数——max_steps_reached 终态时续发携带原 target/tendency
+    // E-Q5-D Q5-13：先存请求目标；后端若解析为附近落点，解析响应后改存实际落点。
     // auto-target（target undefined）续行时让后端在断点处重新选目标
     resumeTarget = target;
     resumeTendency = usedTendency;
@@ -1299,7 +1403,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     // 解析后端返回的多次移动结果
     const parsed = parseNavigationResult(result, fromPls);
     steps.value = parsed.steps;
-    targetName.value = parsed.targetName;
+    applyParsedTarget(parsed, false);
     finalPls.value = parsed.finalPls;
     // E-Q5-D Q5-13：存储解析终态，供 play() 在播放完所有 step 后判断是否续行
     parsedOutcome = parsed.outcome;
@@ -1329,13 +1433,13 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
         toastStore.showToast(interruptReason.value, 'error', 3000, false, 'nav-failed');
       } else {
         outcome.value = 'arrived';
-        interruptReason.value = parsed.interruptReason || '已抵达目标';
+        interruptReason.value = currentArrivalFeedback();
         // K-Q5-B Q5-4：抵达时清除玩家指定目标书签（目标已达成）
         if (navHasPlayerTarget) {
           explore.clearTarget();
           navHasPlayerTarget = false;
         }
-        toastStore.showToast(interruptReason.value, 'success', 1800, false, 'nav-arrived');
+        toastStore.showToast(interruptReason.value, 'success', arrivalToastDuration(), false, 'nav-arrived');
       }
       return;
     }
@@ -1508,16 +1612,18 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       outcome.value = 'handed_off_to_battle';
     } else {
       outcome.value = 'arrived';
-      interruptReason.value = `已抵达 ${targetName.value}`;
+      interruptReason.value = currentArrivalFeedback();
       // K-Q5-B Q5-4：跳过后抵达也清除目标书签（目标已达成）
       if (navHasPlayerTarget) {
         explore.clearTarget();
         navHasPlayerTarget = false;
       }
-      // K-Q5-A Q5-8：arrived toast 合并"已抵达 XXX"+ 途中摘要
+      // K-Q5-A Q5-8：抵达反馈与途中摘要复用同一目标调整语义。
+      const skippedArrival = ['跳过演出', interruptReason.value];
+      if (enRouteSummary.value) skippedArrival.push(enRouteSummary.value);
       toastStore.showToast(
-        `跳过演出；已抵达 ${targetName.value}；${enRouteSummary.value}`,
-        'info', 2000, false, 'nav-skipped',
+        skippedArrival.join('；'),
+        'info', targetAdjustment.value ? 3000 : 2000, false, 'nav-skipped',
       );
     }
   }
@@ -1552,6 +1658,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     outcome.value = 'idle';
     interruptReason.value = '';
     targetName.value = '';
+    targetAdjustment.value = null;
     discoveries.value = [];
     enRouteSummary.value = '';
     finalPls.value = 0;
@@ -1667,6 +1774,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     outcome,
     interruptReason,
     targetName,
+    targetAdjustment,
     discoveries,
     enRouteSummary,
     isPaused,

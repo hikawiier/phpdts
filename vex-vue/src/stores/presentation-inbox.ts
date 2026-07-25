@@ -1,12 +1,14 @@
 /**
  * @module K 状态管理层
  * @framework K-9 有序批处理消费者 + 间隙检测
+ * @framework K-1 战斗回合编排 + 演示播放管道
  */
 
 // 演出批次收件箱：缓存来自 command/heartbeat 响应的实时演出事件
 // 按 batch_seq 顺序消费，支持 gap 检测与权威回退（F5 冷启动时的展示快进）
 import type { CommandResult, OblHeartbeatResponse } from '@/api/client';
 import type { PresentationBatchV1 } from '@/types/api';
+import { usePresentationSceneStore } from './presentation-scene';
 
 // 校验是否为有效的 presentation.v1 batch 结构
 function isPresentationBatch(value: unknown): value is PresentationBatchV1 {
@@ -116,9 +118,10 @@ export const presentationInbox = new PresentationInbox();
 /**
  * 将命令/心跳响应中的演出批次入队（K-9 有序批处理消费者）。
  *
- * 不在此处调用 presentationScene.beginPlayback()：
- *   - 战斗演出由 battle.ts playScript() 直接调用 beginPlayback() 认领场景
- *   - 探索模式下调用 beginPlayback() 会将 presentationScene.phase 设为 'playing'，
+ * 仅战斗批次在入队成功时立即调用 presentationScene.beginPlayback()：
+ *   - 必须在 command/heartbeat 随后的权威刷新前冻结战斗场景，避免角色先投影到结果位置
+ *   - battle.ts playScript() 仍负责创建演员会话，重复 beginPlayback() 保持幂等
+ *   - 探索批次不能调用 beginPlayback()，否则会将 presentationScene.phase 设为 'playing'，
  *     导致 syncAuthoritative 延迟应用实体快照（presentation-scene.ts syncAuthoritative
  *     在 phase !== 'idle' 时将快照存为 pending 而不立即应用），
  *     阻断移动导演的位置动画驱动链：
@@ -129,7 +132,18 @@ export const presentationInbox = new PresentationInbox();
 export function ingestPresentationResponse(
   response: CommandResult | OblHeartbeatResponse | null | undefined,
 ): boolean {
-  return presentationInbox.enqueueResponse(response);
+  const accepted = presentationInbox.enqueueResponse(response);
+  const batch = response?.presentation;
+  if (accepted && isPresentationBatch(batch) && isBattlePresentationBatch(batch)) {
+    usePresentationSceneStore().beginPlayback();
+  }
+  return accepted;
+}
+
+function isBattlePresentationBatch(batch: PresentationBatchV1): boolean {
+  return batch.qid !== null
+    || Number(batch.state_after.bid) > 0
+    || batch.state_after.action === 'battle';
 }
 
 /**

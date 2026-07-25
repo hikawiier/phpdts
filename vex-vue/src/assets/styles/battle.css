@@ -343,39 +343,46 @@
     color: #6bbb6b;
 }
 
-/* 模态框关闭后的残留伤害数字（淡入→停留→淡出） */
-.damage-number-linger {
+/* 命中阶段的战场伤害数字（弹出→停顿→上浮消散） */
+.battle-damage-number {
     position: fixed;
-    font-size: 14px;
-    font-weight: 700;
-    color: #ff6b6b;
-    text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1;
+    color: #f06a62;
+    text-shadow:
+        -1px -1px 0 #050505,
+        1px -1px 0 #050505,
+        -1px 1px 0 #050505,
+        1px 1px 0 #050505,
+        0 3px 8px rgba(0, 0, 0, 0.92);
     pointer-events: none;
-    z-index: 400;
+    z-index: 522;
     white-space: nowrap;
-    transform: translate(-50%, 0);
-    animation: damage-linger 2s ease-out forwards;
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.72);
+    animation: battle-damage-impact 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes damage-linger {
+@keyframes battle-damage-impact {
     0% {
         opacity: 0;
-        transform: translate(-50%, 0) scale(0.8);
+        transform: translate(-50%, 8px) scale(0.72);
     }
-    15% {
+    12% {
         opacity: 1;
-        transform: translate(-50%, -4px) scale(1.1);
+        transform: translate(-50%, -5px) scale(1.2);
     }
-    25% {
-        transform: translate(-50%, -4px) scale(1);
+    24% {
+        transform: translate(-50%, -2px) scale(1);
     }
-    75% {
+    62% {
         opacity: 1;
-        transform: translate(-50%, -4px) scale(1);
+        transform: translate(-50%, -7px) scale(1);
     }
     100% {
         opacity: 0;
-        transform: translate(-50%, -12px) scale(1);
+        transform: translate(-50%, -24px) scale(0.94);
     }
 }
 

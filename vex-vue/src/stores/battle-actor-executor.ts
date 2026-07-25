@@ -4,6 +4,7 @@
  */
 
 import { nextTick } from 'vue';
+import { dataManager } from '@/stores/data-manager';
 import { getActorById } from '@/composables/actorRegistry';
 import { isCueAnimationHandle } from '@/composables/useActorRuntime';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
@@ -19,7 +20,7 @@ import {
   createUnarmedHitPopup,
 } from './battle-overlay-executor';
 import type { AnimationHandle } from '@/types/actor-runtime';
-import type { SceneGeometry, ScenePoint } from '@/types/scene';
+import type { SceneGeometry, ScenePoint, TileRef } from '@/types/scene';
 import type { BattlePresentationSession } from './battle-presentation-session';
 import type {
   CombatantView,
@@ -171,6 +172,7 @@ async function playHitSequence(
 ): Promise<void> {
   await playCueStage('hitBefore', spec.hitBefore, action, context, scope);
   if (scope.cancelled) return;
+  broadcastDamageNumbers(action);
   traceChoreography(action, 'stage:start', { stage: 'hitMain', cues: spec.hitMain ? [spec.hitMain] : [] });
   const hitMain = spec.hitMain ? startCue('hitMain', spec.hitMain, action, context, scope) : [];
   traceChoreography(action, 'stage:start', { stage: 'hitConcurrent', cues: spec.hitConcurrent });
@@ -343,16 +345,16 @@ export function playCombatantCleared(
   context.presentation.markBattleExit(actorId, 'escaped', retreatTarget);
   if (!retreat) return taskFromHandle(lease.play({ kind: 'fade' }));
 
-  // retreat 路径：串行 fade（原格淡出）+ move tier='long'（teleport + arriveAnim 弹起）
   const retreatAnchor = context.scene.resolveTile(retreatTarget!);
   if (!retreatAnchor) return completedTask();
-  return createTask(async scope => {
-    const fadeHandle = scope.add(lease.play({ kind: 'fade' }));
-    await fadeHandle.finished;
-    if (scope.cancelled) return;
-    const moveHandle = scope.add(lease.play({ kind: 'move', target: retreatAnchor, tier: 'long' }));
-    await moveHandle.finished;
-  });
+  const retreatSource = readRetreatSource(notice, retreatTarget!);
+  const sourceAnchor = retreatSource ? context.scene.resolveTile(retreatSource) : null;
+  return taskFromHandle(lease.play({
+    kind: 'combat-move',
+    from: sourceAnchor ?? undefined,
+    target: retreatAnchor,
+    style: 'escape',
+  }));
 }
 
 function readRetreatTarget(notice: DirectedNotice): { pgroup: number; pls: number } | null {
@@ -363,6 +365,12 @@ function readRetreatTarget(notice: DirectedNotice): { pgroup: number; pls: numbe
   return Number.isFinite(pgroup) && Number.isFinite(pls) ? { pgroup, pls } : null;
 }
 
+function readRetreatSource(notice: DirectedNotice, target: TileRef): TileRef | null {
+  const pgroup = Number(notice.combatant?.pgroup ?? target.pgroup);
+  const pls = Number(notice.delta?.pls_before);
+  return Number.isFinite(pgroup) && Number.isFinite(pls) && pls > 0 ? { pgroup, pls } : null;
+}
+
 function playMoveAction(
   action: DirectedAction,
   context: BattleActorExecutionContext,
@@ -370,16 +378,30 @@ function playMoveAction(
   const target = getMoveTarget(action);
   if (!target || target.pgroup === undefined || target.pls === undefined) return completedTask();
   const anchor = context.scene.resolveTile({ pgroup: target.pgroup, pls: target.pls });
+  const source = getMoveSource(action, target);
+  const sourceAnchor = source ? context.scene.resolveTile(source) : null;
   const actorId = combatantEntityId(action.actor);
   const actor = getActorById(actorId);
   if (!anchor || !actor) return completedTask();
-  const from = actor.getScenePoint();
-  const tier = from ? calcMoveTier(from, anchor.point, anchor.cellWidth, anchor.cellHeight) : 'long';
-  const channels = tier === 'long'
-    ? ['spatial', 'pose', 'visibility'] as const
-    : ['spatial', 'pose'] as const;
-  const lease = context.presentation.getLease(actorId, [...channels]);
-  return lease ? taskFromHandle(lease.play({ kind: 'move', target: anchor, tier, hold: true })) : completedTask();
+  const lease = context.presentation.getLease(actorId, ['spatial', 'pose']);
+  if (!lease) return completedTask();
+  traceChoreography(action, 'combat-move:resolve', {
+    source,
+    sourcePoint: sourceAnchor?.point ?? null,
+    target: { pgroup: target.pgroup, pls: target.pls },
+    targetPoint: anchor.point,
+  });
+  return createTask(async scope => {
+    const handle = scope.add(lease.play({
+      kind: 'combat-move',
+      from: sourceAnchor ?? undefined,
+      target: anchor,
+      style: 'dash',
+      hold: true,
+    }));
+    await handle.finished;
+    if (!scope.cancelled) broadcastDamageNumbers(action);
+  });
 }
 
 function taskFromHandle(handle: AnimationHandle): PlaybackExecutionTask {
@@ -422,13 +444,6 @@ export function resolveCombatTargetEntityId(
   return target.pid === currentPid ? 'player' : `enemy-${target.pid}`;
 }
 
-function calcMoveTier(from: ScenePoint, to: ScenePoint, cellWidth: number, cellHeight: number): 'duck' | 'jump' | 'long' {
-  const distance = Math.max(Math.abs(to.x - from.x) / cellWidth, Math.abs(to.y - from.y) / cellHeight);
-  if (distance <= 1.5) return 'duck';
-  if (distance <= 6.5) return 'jump';
-  return 'long';
-}
-
 function directionBetween(source: ScenePoint | null | undefined, target: ScenePoint | null | undefined): -1 | 0 | 1 {
   if (!source || !target || source.x === target.x) return 0;
   return source.x < target.x ? 1 : -1;
@@ -441,11 +456,27 @@ function getMoveTarget(action: DirectedAction): CombatTargetView | null {
     ?? null;
 }
 
+function getMoveSource(action: DirectedAction, target: CombatTargetView): TileRef | null {
+  const effect = action.effects.find(candidate => candidate.type === 'move');
+  const pgroup = Number(action.actor.pgroup ?? effect?.source?.pgroup ?? target.pgroup);
+  const pls = Number(effect?.delta?.pls_before ?? action.actor.pls);
+  return Number.isFinite(pgroup) && Number.isFinite(pls) && pls > 0 ? { pgroup, pls } : null;
+}
+
 function isDamageHpDrop(effect: DirectedEffect): boolean {
   if (effect.type !== 'damage' || !effect.target.snapshot) return false;
   const before = Number(effect.delta?.hp_before ?? effect.target.snapshot.hp);
   const after = Number(effect.delta?.hp_after ?? effect.target.snapshot.hp);
   return after < before;
+}
+
+function broadcastDamageNumbers(action: DirectedAction): void {
+  const effects = action.effects.filter(effect =>
+    effect.visual.kind === 'damage_number'
+    && Number(effect.visual.value ?? effect.value ?? 0) > 0,
+  );
+  if (effects.length === 0) return;
+  dataManager.broadcast('battle:play-damage-numbers', { effects });
 }
 
 function uniqueCombatants(combatants: CombatantView[]): CombatantView[] {

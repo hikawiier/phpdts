@@ -92,6 +92,9 @@ export function assertBattleDirectorFixture(): void {
   }
 
   const plan = planBattlePlayback(script);
+  if (plan.steps.some(step => String(step.kind) === 'damage_linger')) {
+    throw new Error('damage number playback remained detached from action impact');
+  }
   const battleEndSteps = plan.steps.filter(step => step.segment === battleEnd).map(step => step.kind);
   if (battleEndSteps.join(',') !== 'battle_end_overlay_enter,presentation_scene_handoff,battle_end_modal_content') {
     throw new Error('battle_end barrier ordering mismatch');

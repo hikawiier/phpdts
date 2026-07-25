@@ -3,6 +3,7 @@
  * @framework K-10 角色动画意图派发
  * @framework K-12 移动导演演出框架
  * @framework M-1 租赁式动画架构
+ * @framework M-2 场景差异投影
  */
 
 import { nextTick, shallowRef, watch, type Ref } from 'vue';
@@ -21,10 +22,10 @@ import {
   keepElementWithinCameraSafeZone,
 } from '@/composables/useMapInteraction';
 import { task3Debug } from '@/utils/task3-debug';
-import type { ActorElements, AnimationHandle, AnimationResult, MoveTier, PresentationLease } from '@/types/actor-runtime';
+import type { ActorElements, ActorRuntime, AnimationHandle, AnimationResult, MoveTier, PresentationLease } from '@/types/actor-runtime';
 import type { MapEntity } from '@/types/map-entity';
 import type { PresentationRebaseMoveRegistration } from '@/types/presentation-scene';
-import type { SceneAnchor, ScenePoint, TileRef } from '@/types/scene';
+import type { SceneAnchor, SceneGeometry, ScenePoint, TileRef } from '@/types/scene';
 
 const DUCK_MAX_GRID = 1.5;
 const JUMP_MAX_GRID = 6.5;
@@ -113,7 +114,16 @@ function actorElements(root: HTMLElement): ActorElements | null {
     : null;
 }
 
-export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
+export interface MapEntitySceneOptions {
+  createSceneGeometry?: () => SceneGeometry;
+  beforeFirstEntityEnter?: (entity: MapEntity) => Promise<void> | void;
+  onFirstPlayerEnter?: (runtime: ActorRuntime, entity: MapEntity) => Promise<void> | void;
+}
+
+export function useMapEntities(
+  gridRef: Ref<HTMLElement | null>,
+  options: MapEntitySceneOptions = {},
+) {
   const entitiesStore = useEntitiesStore();
   const mapStore = useMapStore();
   const presentationScene = usePresentationSceneStore();
@@ -413,16 +423,24 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
   }
 
   async function playFirstEnter(entity: MapEntity): Promise<void> {
-    const runtime = getActorById(entity.id);
+    let runtime = getActorById(entity.id);
     const inEntered = enteredEntities.has(entity.id);
     const inProjected = projectedRemovals.has(entity.id);
     if (!runtime || inEntered || inProjected) return;
+    await options.beforeFirstEntityEnter?.(entity);
+    if (enteredEntities.has(entity.id) || projectedRemovals.has(entity.id)) return;
+    runtime = getActorById(entity.id);
+    if (!runtime || runtime.disposed) return;
     const anchor = resolveAnchor(entity);
     if (!anchor) return;
     runtime.projectAnchor(anchor);
     enteredEntities.add(entity.id);
     if (entity.id === 'player') {
-      playerAvatarStore.onEnter();
+      if (options.onFirstPlayerEnter) {
+        await options.onFirstPlayerEnter(runtime, entity);
+      } else {
+        playerAvatarStore.onEnter();
+      }
       return;
     }
     const lease = runtime.acquire({
@@ -433,6 +451,10 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     if (!lease) return;
     await lease.play({ kind: 'enter' }).finished;
     lease.release();
+  }
+
+  function playAllFirstEntries(): void {
+    for (const entity of presentationScene.snapshot.entities) void playFirstEnter(entity);
   }
 
   function startProjectedRemoval(entity: MapEntity): void {
@@ -586,7 +608,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
 
       nextTick(() => requestAnimationFrame(() => {
         syncAllPositions();
-        for (const entity of entities) void playFirstEnter(entity);
+        playAllFirstEntries();
       }));
 
       for (const id of [...enteredEntities]) {
@@ -728,7 +750,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     unregisterScene = null;
     if (!grid) return;
 
-    const scene = createMapSceneGeometry(
+    const scene = options.createSceneGeometry?.() ?? createMapSceneGeometry(
       gridRef,
       () => mapStore.curRegion,
       () => mapStore.projectionRevision,
@@ -738,7 +760,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     resizeObserver.observe(grid);
     requestAnimationFrame(() => {
       syncAllPositions();
-      for (const entity of presentationScene.snapshot.entities) void playFirstEnter(entity);
+      playAllFirstEntries();
     });
   }, { immediate: true });
 
@@ -761,5 +783,5 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     enteredEntities.clear();
   }
 
-  return { setEntityRef, syncAllPositions, displayEntities, dispose };
+  return { setEntityRef, syncAllPositions, playAllFirstEntries, displayEntities, dispose };
 }

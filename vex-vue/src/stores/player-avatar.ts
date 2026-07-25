@@ -138,6 +138,21 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     currentAppearance.value = appearance;
   }
 
+  /** 战斗场景挂载前固定常规形态，实际翻面由战斗地图的入场序列编排。 */
+  function prepareBattleEntry(): void {
+    desiredAppearance.value = 'battle';
+    currentAppearance.value = 'normal';
+    isFled.value = false;
+  }
+
+  /** 场景所有权交还探索前同步收敛外观，避免退出意图随战斗 DOM 一起卸载。 */
+  function settleBattleExit(): void {
+    desiredAppearance.value = 'normal';
+    currentAppearance.value = 'normal';
+    isFled.value = false;
+    pendingIntent.value = null;
+  }
+
   function resetAppearance(): void {
     desiredAppearance.value = 'normal';
     currentAppearance.value = 'normal';
@@ -182,6 +197,8 @@ export const usePlayerAvatarStore = defineStore('playerAvatar', () => {
     notifyDown,
     setHpRatio,
     commitAppearance,
+    prepareBattleEntry,
+    settleBattleExit,
     resetAppearance,
     preloadAppearanceImages,
     dispatchIntent,

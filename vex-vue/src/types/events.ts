@@ -80,10 +80,8 @@ export interface PreloadInitEventData {
 
 /** 伤害数字事件数据（battle:play-damage-numbers） */
 export interface PlayDamageNumbersEventData {
-  /** 同一 segment 的 v2 effect 数组 */
+  /** 同一次动作命中的 v2 effect 数组 */
   effects: import('@/stores/battle-director').DirectedEffect[];
-  /** 敌人 PID（用于兜底定位敌人 DOM 元素） */
-  npcPid: number;
 }
 
 /** DebugBus 事件条目 */

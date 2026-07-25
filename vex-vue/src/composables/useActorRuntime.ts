@@ -7,6 +7,7 @@ import gsap from 'gsap';
 import {
   arriveAnim,
   attackAnim,
+  combatMoveActor,
   fadeOut,
   fall,
   hitAnim,
@@ -431,6 +432,42 @@ class ActorRuntimeImpl implements ActorRuntime {
         onCompleted = () => { this.currentAnchor = command.target; };
         break;
       }
+      case 'combat-move': {
+        if (command.from) {
+          this.currentAnchor = command.from;
+          this.writeAnchor(command.from);
+        }
+        const from = this.getScenePoint();
+        const target = command.target.point;
+        gsap.set(elements.anchor, {
+          width: command.target.cellWidth,
+          height: command.target.cellHeight,
+          xPercent: -50,
+          yPercent: -100,
+        });
+        if (from && target.x > from.x) this.setFacing('right');
+        else if (from && target.x < from.x) this.setFacing('left');
+        const direction: -1 | 0 | 1 = !from || target.x === from.x ? 0 : target.x < from.x ? -1 : 1;
+        animation = combatMoveActor(
+          elements,
+          target.x,
+          target.y,
+          command.target.cellHeight,
+          direction,
+          command.style,
+        );
+        task3Debug.log('actor-runtime.play.combat-move-start', {
+          actorId: this.id,
+          style: command.style,
+          sourceTile: command.from?.tile ?? null,
+          sourcePoint: from,
+          targetTile: command.target.tile,
+          targetPoint: target,
+          generation: this.generation,
+        });
+        onCompleted = () => { this.currentAnchor = command.target; };
+        break;
+      }
       case 'attack': {
         const from = this.getScenePoint() ?? { space: 'scene' as const, x: 0, y: 0 };
         if (command.target?.x !== undefined) {
@@ -603,6 +640,7 @@ class ActorRuntimeImpl implements ActorRuntime {
 
 function debugCommandName(command: ActorCommand): string {
   if (command.kind === 'move') return `move:${command.tier}`;
+  if (command.kind === 'combat-move') return `combat-move:${command.style}`;
   if (command.kind === 'attack') return `attack:${command.attackKind}`;
   return command.kind;
 }
@@ -616,6 +654,9 @@ function requiredChannels(command: ActorCommand): ActorChannel[] {
     case 'transform-appearance': return ['pose'];
     case 'reset-pose': return ['pose'];
     case 'move': return command.tier === 'long'
+      ? ['spatial', 'pose', 'visibility']
+      : ['spatial', 'pose'];
+    case 'combat-move': return command.style === 'escape'
       ? ['spatial', 'pose', 'visibility']
       : ['spatial', 'pose'];
     case 'attack':

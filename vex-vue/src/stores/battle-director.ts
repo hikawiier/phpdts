@@ -146,8 +146,7 @@ export type PlaybackStepKind =
   | 'battle_end_overlay_enter'
   | 'presentation_scene_handoff'
   | 'battle_end_modal_content'
-  | 'modal_text'
-  | 'damage_linger';
+  | 'modal_text';
 
 export type PlaybackAwaitPolicy = 'none' | 'completion' | 'duration';
 
@@ -203,12 +202,6 @@ export interface BattleEndModalContentStep extends PlaybackStepBase {
   segment: BattleSegment;
 }
 
-export interface DamageLingerStep extends PlaybackStepBase {
-  kind: 'damage_linger';
-  segment: BattleSegment;
-  effects: DirectedEffect[];
-}
-
 export type PlaybackStep =
   | PrepareMapStep
   | SegmentContextStep
@@ -217,8 +210,7 @@ export type PlaybackStep =
   | BattleEndOverlayEnterStep
   | PresentationSceneHandoffStep
   | BattleEndModalContentStep
-  | ModalTextStep
-  | DamageLingerStep;
+  | ModalTextStep;
 
 export interface BattlePlaybackPlan {
   schema: 'battleplayback.v1';
@@ -600,13 +592,6 @@ export function planBattlePlayback(script: BattlePlayScript): BattlePlaybackPlan
       timeout: 30000,
     });
 
-    steps.push({
-      id: nextId('damage_linger', segment),
-      kind: 'damage_linger',
-      segment,
-      effects: segment.actions.flatMap(action => action.effects),
-      awaitPolicy: 'none',
-    });
   }
 
   return { schema: 'battleplayback.v1', script, steps };

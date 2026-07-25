@@ -459,7 +459,7 @@ function obl_command_handler_map_navigate($payload, &$pdata) {
  * @return array navigation 响应结构
  */
 function obl_command_build_navigation_result($navigation, &$pdata, $steps, $presentation_events) {
-    error_log("[NAV_DEBUG] build_result: outcome=" . ($navigation['outcome'] ?? 'null') . " outcome_reason=" . ($navigation['outcome_reason'] ?? 'null') . " steps_count=" . count($steps ?? []) . " target_pls=" . ($navigation['target_pls'] ?? 'null') . " final_pgroup={$pdata['pgroup']} final_pls={$pdata['pls']} steps_taken=" . ($navigation['steps_taken'] ?? 0) . " max_steps=" . ($navigation['max_steps'] ?? 0));
+    error_log("[NAV_DEBUG] build_result: outcome=" . ($navigation['outcome'] ?? 'null') . " outcome_reason=" . ($navigation['outcome_reason'] ?? 'null') . " steps_count=" . count($steps ?? []) . " requested_target_pls=" . ($navigation['requested_target_pls'] ?? 'null') . " target_pls=" . ($navigation['target_pls'] ?? 'null') . " final_pgroup={$pdata['pgroup']} final_pls={$pdata['pls']} steps_taken=" . ($navigation['steps_taken'] ?? 0) . " max_steps=" . ($navigation['max_steps'] ?? 0));
     return array(
         'navigation_id'  => $navigation['navigation_id'],
         'steps'          => $steps,
@@ -469,7 +469,9 @@ function obl_command_build_navigation_result($navigation, &$pdata, $steps, $pres
         ),
         'outcome'        => $navigation['outcome'],
         'outcome_reason' => $navigation['outcome_reason'],
+        'requested_target_pls' => $navigation['requested_target_pls'] ?? null,
         'target_pls'     => $navigation['target_pls'],
+        'target_adjustment' => $navigation['target_adjustment'] ?? null,
         'target_is_auto' => $navigation['target_is_auto'],
         'tendency'       => $navigation['tendency'],
         'steps_taken'    => $navigation['steps_taken'],
