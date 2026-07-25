@@ -277,7 +277,7 @@ function tileDisplayLabel(t: AtlasTile): string {
 // 类名与主页面地图（MapGrid.vue / terminal.css）对齐：
 //   - 基础类 .map-cell 在模板中固定（复用全局样式）
 //   - 四态认知视觉类（non-existent/fogged/cog-revealed/explored/cog-explored）对齐主页面命名
-//   - non-existent 是 atlas 独有的第四态扩展（主页面地图通过 visionBounds 过滤不渲染此格）
+//   - non-existent 是 atlas 独有的第四态扩展；主页面只保留不可交互的空坐标锚点
 //   - 死敌/活敌通过 has-enemy / has-dead-enemy 区分（B5.24 补全）
 function tileClass(t: AtlasTile): Record<string, boolean> {
   const sel = atlas.selectedTile;
@@ -832,7 +832,7 @@ const targetCoord = computed<string>(() => {
 }
 
 /* ═══ 四态认知视觉 — atlas 扩展（非存在格） ═══ */
-/* non-existent 是 atlas 独有的第四态（主页面地图通过 visionBounds 过滤不渲染此格） */
+/* non-existent 是 atlas 独有的第四态；主页面同坐标仅作为不可交互的空锚点存在 */
 /* 其余三态（fogged/cog-revealed/explored/cog-explored）复用全局 + 本 scoped 样式 */
 .map-cell.non-existent {
   color: transparent;

@@ -38,7 +38,13 @@ export type ActorCommand =
   | { kind: 'arrive' }
   | { kind: 'transform-appearance'; swap: () => void }
   | { kind: 'reset-pose' }
-  | { kind: 'move'; target: SceneAnchor; tier: MoveTier; hold?: boolean }
+  | {
+    kind: 'move';
+    target: SceneAnchor;
+    tier: MoveTier;
+    hold?: boolean;
+    onTravelProgress?: (progress: number) => void;
+  }
   | { kind: 'attack'; target?: ScenePoint; attackKind: AttackKind }
   | { kind: 'hit'; direction: -1 | 0 | 1 }
   | { kind: 'fall' }

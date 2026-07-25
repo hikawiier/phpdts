@@ -64,19 +64,10 @@ export const useMapStore = defineStore('map', () => {
   const links = computed(() => projection.value.links);
   const enemies = computed(() => projection.value.enemies);
 
-  // ── 视觉中心冻结（K-12 移动导演逐格演出支持） ──
-  // 导航逐格播放期间冻结视野中心，防止 visionBounds 跟随 curLoc 即时重居中
-  // 导致玩家格始终位于网格中心 → from/anchor 场景坐标相同 → playWorldMove 跳过动画。
-  // 冻结后网格固定在起点，玩家实体在固定网格内逐格移动，动画驱动链正常工作。
-  // 导航结束（抵达/中断/跳过）后清除冻结，网格重新跟随 curLoc 居中。
+  // ── 相机视觉中心（K-12 移动导演逐格演出支持） ──
+  // 完整区域网格与实体锚点始终固定；导航播放期间仅冻结相机中心，避免权威位置
+  // 提前跳到终点时相机抢先滚动。单步完成后导演再推进视觉中心跟随玩家。
   const visualCenter = ref<number | null>(null);
-
-  // ── K-12-E：跳跃目标扩展（jump tier 视野网格扩展） ──
-  // efficient 倾向下多格跳跃（jump tier）的目标格常在 5x5 视野网格外。
-  // 设置 jumpTargetPls 后，visionBounds 扩展为包含起点和目标的包围盒，
-  // 让目标格进入渲染范围，resolveTile 才能找到目标 cell → 动画正常播放。
-  // 动画完成后由 recenterVisionGridAfterStep 清除，网格恢复 5x5。
-  const jumpTargetPls = ref<number | null>(null);
 
   // ── 加载状态 ──
   const loading = ref<boolean>(false);
@@ -139,28 +130,13 @@ export const useMapStore = defineStore('map', () => {
     });
   }
 
-  /** 清除视觉中心冻结，恢复跟随 curLoc */
+  /** 清除相机冻结，恢复跟随 curLoc */
   function clearVisualCenter(): void {
     const prev = visualCenter.value;
     visualCenter.value = null;
-    // K-12-E：同时清除跳跃目标扩展，避免遗留状态影响下次导航
-    const prevJumpTarget = jumpTargetPls.value;
-    jumpTargetPls.value = null;
     task3Debug.log('map-store.clearVisualCenter', {
       prevVisualCenter: prev,
       curLoc: curLoc.value,
-      prevJumpTarget,
-    });
-  }
-
-  /** K-12-E：设置跳跃目标，触发 visionBounds 扩展包含目标格 */
-  function setJumpTarget(pls: number | null): void {
-    const prev = jumpTargetPls.value;
-    jumpTargetPls.value = pls;
-    task3Debug.log('map-store.setJumpTarget', {
-      prevJumpTarget: prev,
-      newJumpTarget: pls,
-      visualCenter: visualCenter.value,
     });
   }
 
@@ -303,13 +279,11 @@ export const useMapStore = defineStore('map', () => {
     loading,
     error,
     visualCenter,
-    jumpTargetPls,
     // actions
     commitProjection,
     updateMapData,
     setVisualCenter,
     clearVisualCenter,
-    setJumpTarget,
     loadMap,
     reset,
   };

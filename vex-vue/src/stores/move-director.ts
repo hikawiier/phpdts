@@ -26,7 +26,7 @@
 // ══════════════════════════════════════════════════
 
 import { defineStore } from 'pinia';
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed } from 'vue';
 import { commandQueue } from '@/stores/command-queue';
 import { useExploreStore, type MoveTendency } from '@/stores/explore-store';
 import { useMapStore } from '@/stores/map';
@@ -410,7 +410,7 @@ function detectAndTruncateOscillation(steps: NavigationStep[]): {
  * 距离定义（设计案 §3）：DUCK_MAX_GRID=1.5 / JUMP_MAX_GRID=6.5 基于切比雪夫距离（max(|dx|/cellW, |dy|/cellH)）。
  * 邻接格（正交/对角线）gridDist=1 ≤ 1.5 → duck；2~6.5 → jump；>6.5 → long。
  *
- * 无法预判时回退 'duck'（最保守，保持视觉中心冻结）。
+ * 场景未初始化时回退 duck；图格锚点异常缺失时回退 jump，二者都保持相机冻结。
  */
 function predictStepTier(fromPls: number, toPls: number, mapStore: ReturnType<typeof useMapStore>): MoveTier {
   const scene = getSceneGeometry();
@@ -430,15 +430,11 @@ function predictStepTier(fromPls: number, toPls: number, mapStore: ReturnType<ty
   const fromAnchor = scene.resolveTile({ pgroup: region, pls: fromPls });
   const toAnchor = scene.resolveTile({ pgroup: region, pls: toPls });
   if (!fromAnchor || !toAnchor) {
-    // K-12-B：目标格在 5x5 视野网格外时 resolveTile 返回 null（efficient 倾向多格跳跃常态）。
-    // 此时无法计算精确 gridDist，但目标格在视野外意味着距离 > 视野半径（2 格），
-    // 必然属于 jump 区间（2~6.5 格）。回退 'jump' 而非 'duck'：
-    //   1. jump 超时 1500ms（duck 1000ms），避免多格 jump 动画（~1.4s）被超时打断
-    //   2. playWorldMove 仍会按实际 fromPoint/anchorPoint 距离决定真实动画 tier
-    //   3. 'long' 会释放视觉中心冻结，导致网格跳变；'jump' 保持冻结更安全
+    // 完整区域固定网格下锚点缺失属于场景尚未就绪或数据异常。
+    // 回退 jump 以保留更宽松的动画超时，同时维持相机冻结。
     task3Debug.log('move-director.predictStepTier.fallback', {
       fromPls, toPls, tier: 'jump',
-      reason: 'anchor resolve failed (target outside vision grid, fallback to jump for safer timeout)',
+      reason: 'anchor resolve failed (scene not ready or tile missing)',
       fromAnchorPresent: !!fromAnchor,
       toAnchorPresent: !!toAnchor,
     });
@@ -579,7 +575,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   // ── K-12-H：卡顿定位时间戳追踪 ──
   // 记录上一个关键事件的时间，在下一个关键事件中计算 dt（时间差），
   // 让用户在 console 日志中直观看到每个阶段的耗时，精确定位"卡顿"位置。
-  // 关键事件链：play.step → scheduleNextStep → onCompletion.accepted → recenter.entry → recenter.done → play.step(下一步)
+  // 关键事件链：play.step → scheduleNextStep → onCompletion.accepted → followCameraAfterStep → play.step(下一步)
   let lastKeyEventT = 0;
   function timingInfo(): { t: number; dt: number } {
     const now = performance.now();
@@ -800,60 +796,12 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     currentStepIndex.value++;
     const step = steps.value[currentStepIndex.value];
 
-    // K-12-C：applyStep 前预判 tier，决定视觉中心冻结/释放
-    // duck/jump 期间保持冻结（若已被前序 long 步释放则重新冻结到 from_pls），
-    // long 步在 applyStep 后释放冻结，网格重居中到新位置
-    let tier = predictStepTier(step.from_pls, step.to_pls, mapStore);
+    // K-12-C：applyStep 前预判 tier，决定相机冻结/释放。
+    // duck/jump 动画期间相机留在起点，long 闪现后直接跟随权威位置。
+    const tier = predictStepTier(step.from_pls, step.to_pls, mapStore);
     const visualCenterBeforeApply = mapStore.visualCenter;
     if (tier !== 'long' && mapStore.visualCenter === null) {
       mapStore.setVisualCenter(step.from_pls);
-    }
-
-    // K-12-E：jump tier 目标格常在 5x5 视野外（efficient 倾向多格跳跃），
-    // resolveTile 返回 null → playWorldMove early-exit → 动画不播放。
-    // 设置 jumpTargetPls 后 visionBounds 扩展为包含起点和目标的包围盒，
-    // 等待网格重渲染 + syncAllPositions 重新投影后，目标格进入渲染范围。
-    // K-12-G：recenterVisionGridAfterStep 可能已预设 jumpTarget，此时跳过等待周期。
-    if (tier === 'jump') {
-      const jumpTargetPreset = mapStore.jumpTargetPls === step.to_pls;
-      if (jumpTargetPreset) {
-        // K-12-G：recenter 已预设 jumpTarget 并完成等待，跳过重复等待
-        task3Debug.log('move-director.play.jump-grid-expand.preset', {
-          stepIdx: currentStepIndex.value,
-          from_pls: step.from_pls,
-          to_pls: step.to_pls,
-          visualCenter: mapStore.visualCenter,
-          jumpTargetPls: mapStore.jumpTargetPls,
-          note: 'jumpTarget 已由 recenterVisionGridAfterStep 预设，跳过等待周期',
-        });
-      } else {
-        task3Debug.log('move-director.play.jump-grid-expand', {
-          stepIdx: currentStepIndex.value,
-          from_pls: step.from_pls,
-          to_pls: step.to_pls,
-          visualCenter: mapStore.visualCenter,
-        });
-        mapStore.setJumpTarget(step.to_pls);
-        await nextTick();
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-        await nextTick();
-      }
-      // 网格扩展后重新预判 tier（fallback 'jump' 可能变为实际 'duck'/'jump'/'long'）
-      const rePredictedTier = predictStepTier(step.from_pls, step.to_pls, mapStore);
-      if (rePredictedTier !== tier) {
-        task3Debug.log('move-director.play.jump-grid-expand.tier-recalculated', {
-          prevTier: tier,
-          newTier: rePredictedTier,
-          from_pls: step.from_pls,
-          to_pls: step.to_pls,
-          preset: jumpTargetPreset,
-        });
-        tier = rePredictedTier;
-        // 实际是 long：清除扩展和冻结，走 long 路径（clearVisualCenter 同时清 jumpTarget）
-        if (tier === 'long') {
-          mapStore.clearVisualCenter();
-        }
-      }
     }
 
     task3Debug.log('move-director.play.step', {
@@ -866,7 +814,6 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       speed: speed.value,
       visualCenterBeforeApply,
       visualCenterAfterPredict: mapStore.visualCenter,
-      jumpTargetPls: mapStore.jumpTargetPls,
       ...timingInfo(),
     });
 
@@ -883,7 +830,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       projectionRevision: mapStore.projectionRevision,
     });
 
-    // K-12-C：long 步在 curLoc 更新后释放冻结，网格重居中到新位置
+    // K-12-C：long 闪现不需要等待空间动画，权威位置更新后立即释放相机冻结。
     if (tier === 'long') {
       mapStore.clearVisualCenter();
     }
@@ -899,80 +846,16 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     scheduleNextStepAfterAnimation(step.to_pls, tier);
   }
 
-  /**
-   * K-12-C：单步动画完成后更新视觉中心到新位置，让 5x5 视野网格跟随玩家滚动。
-   * K-12-E：同时清除跳跃目标扩展，网格从扩展包围盒恢复为 5x5。
-   * K-12-G：预判下一步是否需要 jump-grid-expand，若是则预设 jumpTarget，
-   *         让 play() 跳过 jump-grid-expand 的等待周期，减少每步延迟。
-   *
-   * 关键时序：
-   *   1. setVisualCenter(targetPls) → 触发 visionBounds 重算 + visualCenter watcher 排程 rAF
-   *   2. setJumpTarget(null) → 清除扩展，visionBounds 缩回 5x5（此时 visualCenter 已是 targetPls）
-   *   3. 预判下一步 tier，若是 jump 则预设 nextJumpTarget（K-12-G）
-   *   4. await nextTick → Vue 刷新响应式，网格 DOM 重渲染（新 cells 进入视野）
-   *   5. await rAF → watcher 的 syncAllPositions 执行，将玩家投影到 curLoc
-   *   6. play() → 检测 jumpTarget 已预设 → 跳过 jump-grid-expand 等待 → applyStep → 动画
-   *
-   * 不更新时（visualCenter === null，如 long 步已释放）：清除 jumpTarget 后直接返回。
-   */
-  async function recenterVisionGridAfterStep(targetPls: number): Promise<void> {
-    // K-12-E：无论如何都清除跳跃目标扩展（动画已完成或超时兜底，扩展不再需要）
-    const hadJumpTarget = mapStore.jumpTargetPls !== null;
-    if (hadJumpTarget) {
-      mapStore.setJumpTarget(null);
-    }
-    if (mapStore.visualCenter === null) {
-      if (hadJumpTarget) {
-        task3Debug.log('move-director.recenterVisionGridAfterStep.skip', {
-          targetPls,
-          reason: 'visualCenter is null (long step released or not frozen), jumpTarget cleared',
-        });
-      }
-      return;
-    }
-
-    // K-12-G：预判下一步是否需要 jump-grid-expand
-    // 在 setVisualCenter 之前预判（基于当前 visualCenter 的视野），若下一步目标在视野外，
-    // predictStepTier 会 fallback 到 'jump'，此时预设 jumpTarget 让 play() 跳过等待。
-    // 注意：预判时 visualCenter 还是旧值（未设置 targetPls），但 nextStep.from_pls 是当前 targetPls，
-    // 下一步目标是否在新视野内取决于 targetPls 视野范围。fallback 'jump' 是安全的：
-    // 若实际是 duck，play() 不会进入 jump-grid-expand 分支，jumpTarget 会被 applyStep 后的 recenter 清除。
-    const nextStepIdx = currentStepIndex.value + 1;
-    const nextStep = nextStepIdx < steps.value.length ? steps.value[nextStepIdx] : null;
-    let presetJumpTarget: number | null = null;
-    if (nextStep) {
-      const nextTier = predictStepTier(nextStep.from_pls, nextStep.to_pls, mapStore);
-      if (nextTier === 'jump') {
-        presetJumpTarget = nextStep.to_pls;
-      }
-    }
-
-    task3Debug.log('move-director.recenterVisionGridAfterStep.entry', {
+  /** K-12-C：连续位移动画完成后，将相机中心推进到玩家的新位置。 */
+  async function followCameraAfterStep(targetPls: number): Promise<void> {
+    if (mapStore.visualCenter === null) return;
+    task3Debug.log('move-director.followCameraAfterStep', {
       targetPls,
       prevVisualCenter: mapStore.visualCenter,
       curLoc: mapStore.curLoc,
-      hadJumpTarget,
-      presetJumpTarget,
-      nextStepIdx,
-      nextStepToPls: nextStep?.to_pls ?? null,
       ...timingInfo(),
     });
     mapStore.setVisualCenter(targetPls);
-    // K-12-G：预设下一步的 jumpTarget（与 setVisualCenter 合并为单个等待周期）
-    if (presetJumpTarget !== null) {
-      mapStore.setJumpTarget(presetJumpTarget);
-    }
-    await nextTick();
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-    task3Debug.log('move-director.recenterVisionGridAfterStep.done', {
-      targetPls,
-      visualCenter: mapStore.visualCenter,
-      curLoc: mapStore.curLoc,
-      jumpTargetPls: mapStore.jumpTargetPls,
-      presetJumpTarget,
-      note: '网格已重渲染，玩家已投影到新视觉中心',
-      ...timingInfo(),
-    });
   }
 
   /**
@@ -1021,15 +904,15 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       });
       playTimer = null;
       expectedCompletionPls = null;
-      // K-12-C：超时兜底也更新视野网格（动画可能被跳过但视觉中心仍需滚动）
-      void recenterVisionGridAfterStep(expectedPls).then(() => {
+      // K-12-C：超时兜底也推进相机（动画可能被跳过，但视觉中心仍需跟随）。
+      void followCameraAfterStep(expectedPls).then(() => {
         if (phase.value === 'playing' && !isPaused.value) {
           void play();
         } else {
           task3Debug.log('move-director.scheduleNextStepAfterAnimation.timeout.skip-play', {
             phase: phase.value,
             isPaused: isPaused.value,
-            reason: 'phase changed during recenter',
+            reason: 'phase changed during camera follow',
           });
         }
       });
@@ -1374,14 +1257,11 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     // §8.4 门控开始：移动导演播放时阻止新的移动/探索/目标命令
     explore.setNavigationLock(true);
 
-    // K-12-D：在 await 前冻结视觉中心到起点。
+    // K-12-D：在 await 前冻结相机中心到起点。
     // 命令队列在 await 期间会广播 'game:command-committed'，触发 battle.ts 的
     // flushAuthoritativeStores → mapStore.loadMap()，将 curLoc 直接更新到最终位置。
-    // 若视觉中心未冻结，visionBounds 会跟随 curLoc 即时重居中到终点，导致：
-    //   - 终点 anchor 落在视口中心（与角色 DOM 旧位置相同）→ playWorldMove 误判
-    //     "已在锚点" → 跳过动画（K-12 早期退出路径3）
-    // 提前冻结后网格固定在起点，终点 anchor 在固定网格内有偏移，动画驱动链正常工作。
-    // 失败路径需显式 clearVisualCenter 释放冻结（见下方错误处理）。
+    // 命令提交会提前刷新最终权威位置；若不冻结，相机会在逐格演出开始前跳到终点。
+    // 完整区域网格本身不移动，冻结只约束相机。失败路径仍需显式释放（见下方错误处理）。
     mapStore.setVisualCenter(fromPls);
 
     task3Debug.log('move-director.startNavigation.entry', {
@@ -1764,17 +1644,15 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       playTimer = null;
     }
     expectedCompletionPls = null;
-    // K-12-C：单步动画完成后更新视野网格到新位置，让下一步的 from/to 锚点都在可见视野内。
-    // await 确保 grid 重渲染 + syncAllPositions 投影玩家到当前 curLoc（= step.to_pls）后
-    // 再推进 play()，避免 applyStep 更新 curLoc 后 syncAllPositions 投影到错误位置跳过动画。
-    void recenterVisionGridAfterStep(event.targetPls).then(() => {
+    // K-12-C：单步动画完成后推进相机，再开始下一步演出。
+    void followCameraAfterStep(event.targetPls).then(() => {
       if (phase.value === 'playing' && !isPaused.value) {
         void play();
       } else {
         task3Debug.log('move-director.onMoveAnimationCompletion.skip-play', {
           phase: phase.value,
           isPaused: isPaused.value,
-          reason: 'phase changed during recenter',
+          reason: 'phase changed during camera follow',
         });
       }
     });

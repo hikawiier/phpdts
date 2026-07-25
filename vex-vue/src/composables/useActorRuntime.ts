@@ -402,7 +402,13 @@ class ActorRuntimeImpl implements ActorRuntime {
           updateEntityZIndex(elements.anchor);
           animation = arriveAnim(elements);
         } else if (command.tier === 'jump') {
-          animation = jumpActor(elements, target.x, target.y, command.target.cellHeight);
+          animation = jumpActor(
+            elements,
+            target.x,
+            target.y,
+            command.target.cellHeight,
+            command.onTravelProgress,
+          );
         } else {
           animation = moveActor(
             elements.anchor,

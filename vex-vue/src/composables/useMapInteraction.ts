@@ -26,6 +26,7 @@ import { findPath, getDirectionArrow, isReachable } from '@/composables/useMapRe
 import type { TileInfo } from '@/types/api';
 import { isBattleMapInputLocked } from '@/stores/battle-ui-policy';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
+import type { ScenePoint } from '@/types/scene';
 
 // ─── 回调注入（由 useMapBusiness 调用） ───
 let _onKeyMove: ((pls: string | number) => Promise<void> | void) | null = null;
@@ -99,40 +100,101 @@ export function shakeCurrentCell(): void {
   triggerShakeCurrent();
 }
 
-/**
- * 自动居中到玩家位置
- * 与现有 map-interaction.js centerOnPlayer 一致
- * 用 offsetLeft/offsetTop 计算玩家格在滚动内容中的绝对位置
- */
-export function centerOnPlayer(smooth = true): void {
-  const grid = document.getElementById('mapGrid');
-  const container = document.getElementById('mapContainer');
-  const playerCell = grid ? grid.querySelector('.map-cell.current') as HTMLElement | null : null;
-  if (!playerCell || !container) return;
-
-  // 用 offsetLeft/offsetTop 计算玩家格在滚动内容中的绝对位置
-  // 这比 getBoundingClientRect 更准确，因为它不受 flex 居中影响
+function offsetWithinContainer(
+  element: HTMLElement,
+  container: HTMLElement,
+): { left: number; top: number } | null {
   let cellOffsetLeft = 0;
   let cellOffsetTop = 0;
-  let el: HTMLElement | null = playerCell;
+  let el: HTMLElement | null = element;
   while (el && el !== container) {
     cellOffsetLeft += el.offsetLeft;
     cellOffsetTop += el.offsetTop;
     el = el.offsetParent as HTMLElement | null;
   }
+  return el === container ? { left: cellOffsetLeft, top: cellOffsetTop } : null;
+}
 
-  const cellW = playerCell.offsetWidth;
-  const cellH = playerCell.offsetHeight;
-
-  // 滚动到使玩家格居中
-  const scrollX = cellOffsetLeft + cellW / 2 - container.clientWidth / 2;
-  const scrollY = cellOffsetTop + cellH / 2 - container.clientHeight / 2;
-
+function scrollCameraTo(
+  contentX: number,
+  contentY: number,
+  container: HTMLElement,
+  smooth: boolean,
+): void {
   container.scrollTo({
-    left: Math.max(0, scrollX),
-    top: Math.max(0, scrollY),
-    behavior: smooth ? 'smooth' : 'instant',
+    left: Math.max(0, contentX - container.clientWidth / 2),
+    top: Math.max(0, contentY - container.clientHeight / 2),
+    behavior: smooth ? 'smooth' : 'auto',
   });
+}
+
+/** 将场景坐标移动到相机中心，供动画进度驱动的连续跟随使用。 */
+export function centerOnScenePoint(point: ScenePoint, smooth = false): void {
+  const grid = document.getElementById('mapGrid');
+  const container = document.getElementById('mapContainer');
+  if (!grid || !container) return;
+  const gridOffset = offsetWithinContainer(grid, container);
+  if (!gridOffset) return;
+  scrollCameraTo(gridOffset.left + point.x, gridOffset.top + point.y, container, smooth);
+}
+
+/** 仅在元素越出相机中心安全区时修正滚动，保留局部动作幅度。 */
+export function keepElementWithinCameraSafeZone(
+  element: HTMLElement,
+  horizontalRadius: number,
+  verticalRadius: number,
+): void {
+  const container = document.getElementById('mapContainer');
+  if (!container || !element.isConnected) return;
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const deltaX = elementRect.left + elementRect.width / 2
+    - (containerRect.left + containerRect.width / 2);
+  const deltaY = elementRect.top + elementRect.height / 2
+    - (containerRect.top + containerRect.height / 2);
+  const correctionX = Math.abs(deltaX) > horizontalRadius
+    ? deltaX - Math.sign(deltaX) * horizontalRadius
+    : 0;
+  const correctionY = Math.abs(deltaY) > verticalRadius
+    ? deltaY - Math.sign(deltaY) * verticalRadius
+    : 0;
+  if (correctionX === 0 && correctionY === 0) return;
+  container.scrollTo({
+    left: Math.max(0, container.scrollLeft + correctionX),
+    top: Math.max(0, container.scrollTop + correctionY),
+    behavior: 'auto',
+  });
+}
+
+/** 将指定图格移动到相机中心。 */
+export function centerOnTile(pls: string | number, smooth = true): void {
+  const grid = document.getElementById('mapGrid');
+  const container = document.getElementById('mapContainer');
+  const targetCell = grid
+    ? grid.querySelector(`[data-pls="${String(pls)}"]`) as HTMLElement | null
+    : null;
+  if (!targetCell || !container) return;
+  const cellOffset = offsetWithinContainer(targetCell, container);
+  if (!cellOffset) return;
+
+  const cellW = targetCell.offsetWidth;
+  const cellH = targetCell.offsetHeight;
+  scrollCameraTo(
+    cellOffset.left + cellW / 2,
+    cellOffset.top + cellH / 2,
+    container,
+    smooth,
+  );
+}
+
+/**
+ * 居中到导演视觉中心；无演出冻结时回退到玩家权威位置。
+ */
+export function centerOnPlayer(smooth = true): void {
+  const mapStore = useMapStore();
+  const cameraPls = mapStore.visualCenter ?? mapStore.curLoc;
+  if (cameraPls === null) return;
+  centerOnTile(cameraPls, smooth);
 }
 
 /**

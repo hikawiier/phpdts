@@ -12,7 +12,8 @@
 //
 // 职责：
 //   - 挂载 #mapGrid + #mapContainer DOM 元素
-//   - v-for 渲染 cells（替代 innerHTML 命令式渲染）
+//   - v-for 渲染完整区域 cells（替代局部视野 DOM 裁剪）
+//   - 相机视窗上叠加不拦截输入的径向暗角
 //   - onMounted: 注册业务回调 + 应用布局 + 初始化交互 + 居中
 //   - watch mapStore 数据变化 → 重新应用布局 + 居中
 //   - onUnmounted: 清理事件监听 + 重置渲染状态
@@ -258,15 +259,28 @@ watch(
     if (!gridRef.value || !containerRef.value) return;
     try {
       renderMapGrid(gridRef.value, containerRef.value);
-      // 渲染后居中到玩家位置（等 DOM 更新完成）
+      // 移动演出持有视觉中心时只更新布局，相机由动画进度/视觉中心 watcher 控制。
       nextTick(() => {
-        requestAnimationFrame(() => centerOnPlayer(true));
+        requestAnimationFrame(() => {
+          if (mapStore.visualCenter === null) centerOnPlayer(true);
+        });
       });
     } catch (e) {
       console.error('[MapGrid] render error:', e);
     }
   },
   { deep: false }, // 顶层引用变化即可（loadMap 会替换整个 links/enemies）
+);
+
+// 导演视觉中心只移动相机，不再触发网格裁剪或重建。
+watch(
+  () => mapStore.visualCenter,
+  () => {
+    if (!initialized) return;
+    nextTick(() => {
+      requestAnimationFrame(() => centerOnPlayer(true));
+    });
+  },
 );
 
 // ─── 仅在玩家位置/区域变化时清理路径预览 ───
@@ -306,7 +320,7 @@ onMounted(() => {
   if (mapStore.links && mapStore.curRegion !== null) {
     renderMapGrid(gridRef.value, containerRef.value);
     nextTick(() => {
-      requestAnimationFrame(() => centerOnPlayer(true));
+      requestAnimationFrame(() => centerOnPlayer(false));
     });
   }
 
@@ -336,14 +350,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 地图容器（保留 id 供 useMapInteraction 使用） -->
-  <div
-    id="mapContainer"
-    ref="containerRef"
-    class="map-container flex-1 min-h-0 overflow-auto relative"
-  >
-    <!-- 地图网格（保留 id 供 useMapRender + useMapInteraction 使用） -->
-    <div id="mapGrid" ref="gridRef" class="ascii-map-grid" :style="gridStyle">
+  <div class="map-viewport-shell flex-1 min-h-0 relative overflow-hidden">
+    <!-- 地图相机（保留 id 供 useMapInteraction 使用） -->
+    <div
+      id="mapContainer"
+      ref="containerRef"
+      class="map-container absolute inset-0 overflow-auto"
+    >
+      <!-- 完整区域网格（保留 id 供 useMapRender + useMapInteraction 使用） -->
+      <div id="mapGrid" ref="gridRef" class="ascii-map-grid" :style="gridStyle">
       <!-- 背景层：纯视觉黑底（立绘可见性由 GSAP alpha 控制，不依赖 z-index 遮挡） -->
       <div class="map-background"></div>
 
@@ -435,11 +450,35 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+      </div>
     </div>
+
+    <div class="vision-vignette" aria-hidden="true"></div>
   </div>
 </template>
 
 <style scoped>
+.map-viewport-shell {
+  isolation: isolate;
+  background: #000;
+}
+.vision-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0) 56%,
+    rgba(0, 0, 0, 0.02) 70%,
+    rgba(0, 0, 0, 0.12) 82%,
+    rgba(0, 0, 0, 0.32) 93%,
+    rgba(0, 0, 0, 0.62) 100%
+  );
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.25);
+}
+
 /* ═══ 当前格背景样式 ═══ */
 /* 立绘已迁出到 #mapGrid 直接子元素（实体层 .entity），相关样式在 terminal.css 全局定义 */
 

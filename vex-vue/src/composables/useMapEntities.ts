@@ -1,6 +1,7 @@
 /**
  * @module M 组合式函数
  * @framework K-10 角色动画意图派发
+ * @framework K-12 移动导演演出框架
  * @framework M-1 租赁式动画架构
  */
 
@@ -15,11 +16,15 @@ import { usePlayerAvatarStore } from '@/stores/player-avatar';
 import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
 import { emitMoveAnimationCompletion } from '@/composables/moveAnimationChannel';
+import {
+  centerOnScenePoint,
+  keepElementWithinCameraSafeZone,
+} from '@/composables/useMapInteraction';
 import { task3Debug } from '@/utils/task3-debug';
 import type { ActorElements, AnimationHandle, AnimationResult, MoveTier, PresentationLease } from '@/types/actor-runtime';
 import type { MapEntity } from '@/types/map-entity';
 import type { PresentationRebaseMoveRegistration } from '@/types/presentation-scene';
-import type { SceneAnchor, TileRef } from '@/types/scene';
+import type { SceneAnchor, ScenePoint, TileRef } from '@/types/scene';
 
 const DUCK_MAX_GRID = 1.5;
 const JUMP_MAX_GRID = 6.5;
@@ -53,6 +58,22 @@ function calcMoveTier(fromX: number, fromY: number, target: SceneAnchor): MoveTi
 export function isScenePointAtAnchor(from: { x: number; y: number }, target: SceneAnchor): boolean {
   return Math.abs(from.x - target.point.x) < 0.5
     && Math.abs(from.y - target.point.y) < 0.5;
+}
+
+export function interpolateGroundCameraPoint(
+  from: ScenePoint,
+  target: SceneAnchor,
+  progress: number,
+  fromCellHeight = target.cellHeight,
+): ScenePoint {
+  const clamped = Math.max(0, Math.min(1, progress));
+  const fromCenterY = from.y - fromCellHeight / 2;
+  const targetCenterY = target.point.y - target.cellHeight / 2;
+  return {
+    space: 'scene',
+    x: from.x + (target.point.x - from.x) * clamped,
+    y: fromCenterY + (targetCenterY - fromCenterY) * clamped,
+  };
 }
 
 export interface CancellableProjectedRemoval {
@@ -100,6 +121,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
   const displayEntities = shallowRef<MapEntity[]>([]);
   const enteredEntities = new Set<string>();
   const runtimeIds = new Set<string>();
+  const entityRoots = new Map<string, HTMLElement>();
   const worldMoves = new Map<string, PresentationLease>();
   const rebaseMoves = new Map<string, PresentationRebaseMoveRegistration>();
   const projectedRemovals = new Map<string, CancellableProjectedRemoval>();
@@ -108,6 +130,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
 
   function setEntityRef(id: string, el: HTMLElement | null): void {
     if (!el) {
+      entityRoots.delete(id);
       if (actorTraceEnabled) {
         debugBus.emit('actor', 'map-ref:unmount', {
           actorId: id,
@@ -128,6 +151,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     }
     const elements = actorElements(el);
     if (!elements) return;
+    entityRoots.set(id, el);
     let runtime = getActorById(id);
     if (!runtime) {
       runtime = createActorRuntime(id);
@@ -217,6 +241,22 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     }
     runtime.projectAnchor(anchor);
     const tier = calcMoveTier(from.x, from.y, anchor);
+    const fromCellHeight = entityRoots.get(entity.id)?.offsetHeight || anchor.cellHeight;
+    const onTravelProgress = entity.id === 'player' && tier === 'jump'
+      ? (progress: number) => {
+          centerOnScenePoint(
+            interpolateGroundCameraPoint(from, anchor, progress, fromCellHeight),
+          );
+          const root = entityRoots.get(entity.id);
+          if (root) {
+            keepElementWithinCameraSafeZone(
+              root,
+              anchor.cellWidth * 0.65,
+              anchor.cellHeight * 0.65,
+            );
+          }
+        }
+      : undefined;
     task3Debug.log('map-entities.playWorldMove.dispatch', {
       entityId: entity.id,
       pls: Number(entity.pls),
@@ -230,7 +270,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     const visibilityHandle = tier === 'long'
       ? null
       : lease.play({ kind: 'reset-visible' });
-    const handle = lease.play({ kind: 'move', target: anchor, tier });
+    const handle = lease.play({ kind: 'move', target: anchor, tier, onTravelProgress });
     const moveResult: AnimationResult = await handle.finished;
     await visibilityHandle?.finished ?? undefined;
     lease.release({ reconcile: true });
@@ -702,35 +742,11 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     });
   }, { immediate: true });
 
-  // K-12-D：视觉中心变更时重新同步实体位置。
-  // 移动导演在 navigation 结束时调用 clearVisualCenter()，网格从冻结的起点重居中到
-  // curLoc（最终位置）。此时所有图格 anchor 场景坐标变化，但实体 DOM 仍停留在冻结
-  // 网格内的旧像素位置——若不重新投影，角色会出现在错误的图格上（视觉跳跃）。
-  // rAF 内同步确保在浏览器绘制前完成投影，避免用户看到中间错位帧。
-  const stopVisualCenterWatch = watch(
-    () => mapStore.visualCenter,
-    () => {
-      requestAnimationFrame(() => syncAllPositions());
-    },
-  );
-
-  // K-12-E：跳跃目标扩展时网格尺寸变化（5x5 → 扩展包围盒），需重新投影所有实体。
-  // visionBounds 扩展后 cells computed 重算 → DOM 重渲染，但实体像素位置基于旧网格布局。
-  // rAF 内同步投影确保在浏览器绘制前完成，避免玩家出现在旧图格位置（视觉跳跃）。
-  const stopJumpTargetWatch = watch(
-    () => mapStore.jumpTargetPls,
-    () => {
-      requestAnimationFrame(() => syncAllPositions());
-    },
-  );
-
   function dispose(): void {
     stopIntentWatch();
     stopGridWatch();
     stopAuthorityWatch();
     stopEntitiesWatch();
-    stopVisualCenterWatch();
-    stopJumpTargetWatch();
     resizeObserver?.disconnect();
     unregisterScene?.();
     for (const lease of worldMoves.values()) lease.release({ reconcile: false });
@@ -738,6 +754,7 @@ export function useMapEntities(gridRef: Ref<HTMLElement | null>) {
     for (const run of projectedRemovals.values()) run.cancel('map_entities_disposed', false);
     for (const id of runtimeIds) unregisterActor(id);
     runtimeIds.clear();
+    entityRoots.clear();
     worldMoves.clear();
     rebaseMoves.clear();
     projectedRemovals.clear();

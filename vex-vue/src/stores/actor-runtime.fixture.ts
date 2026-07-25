@@ -19,6 +19,7 @@ import { useEntitiesStore } from '@/stores/entities';
 import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
 import {
   createCancellableProjectedRemoval,
+  interpolateGroundCameraPoint,
   isRegionTransition,
   isScenePointAtAnchor,
 } from '@/composables/useMapEntities';
@@ -57,6 +58,21 @@ export function assertActorRuntimeContractFixture(): void {
   assertTerminalAbortContract();
   assertCombatTargetResolutionContract();
   assertRegionTransitionContract();
+  assertGroundCameraInterpolationContract();
+}
+
+function assertGroundCameraInterpolationContract(): void {
+  const from = { space: 'scene' as const, x: 20, y: 80 };
+  const target = anchor(1, 2, 220, 180);
+  const midpoint = interpolateGroundCameraPoint(from, target, 0.5, 40);
+  assert(midpoint.x === 120 && midpoint.y === 111,
+    'jump camera did not interpolate between ground-level cell centers');
+  const clampedStart = interpolateGroundCameraPoint(from, target, -1, 40);
+  const clampedEnd = interpolateGroundCameraPoint(from, target, 2, 40);
+  assert(clampedStart.x === 20 && clampedStart.y === 60,
+    'jump camera progress did not clamp at the source cell center');
+  assert(clampedEnd.x === 220 && clampedEnd.y === 162,
+    'jump camera progress did not clamp at the target cell center');
 }
 
 function assertFacingClassIsolationContract(): void {
@@ -319,7 +335,7 @@ export function assertMapSceneGeometryFixture(): void {
   const grid = {
     offsetWidth: 200,
     offsetHeight: 100,
-    querySelector: (selector: string) => selector === '[data-pls="1001"]' ? cell : null,
+    querySelector: (selector: string) => selector === '.map-cell[data-pls="1001"]' ? cell : null,
     getBoundingClientRect: () => ({ left: 10, top: 20, width: 400, height: 300 }),
   } as unknown as HTMLElement;
   Object.defineProperty(cell, 'offsetParent', { value: grid });

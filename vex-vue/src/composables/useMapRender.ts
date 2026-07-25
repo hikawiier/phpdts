@@ -30,7 +30,6 @@ import { useCharacterStore } from '@/stores/character';
 import { isFalsy } from '@/utils/format';
 import { isReachable } from '@/composables/useMapReachability';
 import { createZoomState, ZOOM_STEP } from '@/composables/useMapZoom';
-import { task3Debug } from '@/utils/task3-debug';
 import type { TileInfo } from '@/types/api';
 import type { Character } from '@/types/character';
 import { isTileRevealed, type FogProjection } from '@/utils/map-visibility';
@@ -134,8 +133,8 @@ const _highlightPls = ref<string | null>(null);
 // ─── 响应式布局状态（供 gridStyle computed 使用） ───
 const baseSize = ref<number>(48);
 const baseHeight = ref<number>(32);
-const colsRef = ref<number>(10);
-const rowsRef = ref<number>(10);
+const CAMERA_WINDOW_COLS = 5;
+const CAMERA_WINDOW_ROWS = 5;
 
 // ─── 计算属性：格子尺寸 / 字体大小 / 网格样式 ───
 const cellSize = computed<number>(() => Math.round(baseSize.value * zoomState.zoomLevel.value));
@@ -143,78 +142,30 @@ const cellHeight = computed<number>(() => Math.round(baseHeight.value * zoomStat
 const nameFontSize = computed<number>(() => Math.max(7, Math.round(9 * zoomState.zoomLevel.value)));
 const meFontSize = computed<number>(() => Math.max(6, Math.round(8 * zoomState.zoomLevel.value)));
 
-// ─── 局部视野边界（F-K2-Explore §三.1：只渲染当前视野覆盖的局部地图） ──
-// 设计案 §7.2：视野之外的图格不进入当前舞台
-// 实现：以玩家所在格为中心、半径=VISION_RADIUS+1 的固定矩形（不复制后端 BFS）
-//   - VISION_RADIUS 对齐 obl_config.vision_range=1（玩家脚下 + 邻接格）
-//   - +1 格余量确保 BFS 可达集（含对角线邻居）落在矩形内
-//   - 矩形内非 BFS 可达格自动呈现为迷雾格（isTileRevealed 返回 false）
-// cells/gridStyle/applyGridLayout 都引用此边界
-const VISION_RADIUS = 1; // 对齐 obl_config.vision_range=1
-const visionBounds = computed(() => {
+// ─── 完整区域边界：所有图格始终物化，认知权限仍由 isTileRevealed 决定 ──
+const regionBounds = computed(() => {
   const mapStore = useMapStore();
   const defaultBounds = { minR: 0, maxR: 0, minC: 0, maxC: 0, cols: 1, rows: 1 };
-  if (!mapStore.links || mapStore.curRegion === null || mapStore.curLoc === null) return defaultBounds;
-
-  const tiles = mapStore.links.tiles[String(mapStore.curRegion)] as
-    | Record<string, TileInfo & { x?: number; y?: number }>
-    | undefined;
-  if (!tiles) return defaultBounds;
-
-  // 视觉中心：移动导演逐格播放期间冻结在起点，防止网格跟随 curLoc 即时重居中
-  // 导致玩家格始终位于网格中心 → from/anchor 相同 → playWorldMove 跳过动画（K-12）
-  const centerPls = mapStore.visualCenter ?? mapStore.curLoc;
-  const playerTile = tiles[String(centerPls)];
-  if (!playerTile || playerTile.x === undefined || playerTile.y === undefined) return defaultBounds;
-
-  const px = playerTile.x;
-  const py = playerTile.y;
-  // 半径 = VISION_RADIUS + 1（余量覆盖 BFS 对角线邻居）
-  let minC = Math.max(0, px - VISION_RADIUS - 1);
-  let maxC = px + VISION_RADIUS + 1;
-  let minR = Math.max(0, py - VISION_RADIUS - 1);
-  let maxR = py + VISION_RADIUS + 1;
-
-  // K-12-E：跳跃目标扩展——jump tier 目标格常在 5x5 视野外，
-  // 扩展 bounds 为包含起点和目标的包围盒，让目标格进入渲染范围
-  let jumpTargetXY: { x: number; y: number } | null = null;
-  const jumpTarget = mapStore.jumpTargetPls;
-  if (jumpTarget !== null) {
-    const targetTile = tiles[String(jumpTarget)];
-    if (targetTile && targetTile.x !== undefined && targetTile.y !== undefined) {
-      jumpTargetXY = { x: targetTile.x, y: targetTile.y };
-      minC = Math.min(minC, Math.max(0, jumpTargetXY.x - VISION_RADIUS - 1));
-      maxC = Math.max(maxC, jumpTargetXY.x + VISION_RADIUS + 1);
-      minR = Math.min(minR, Math.max(0, jumpTargetXY.y - VISION_RADIUS - 1));
-      maxR = Math.max(maxR, jumpTargetXY.y + VISION_RADIUS + 1);
-    }
-  }
-
-  task3Debug.log('map-render.visionBounds.recomputed', {
-    centerPls,
-    centerSource: mapStore.visualCenter !== null ? 'visualCenter' : 'curLoc',
-    curLoc: mapStore.curLoc,
-    visualCenter: mapStore.visualCenter,
-    jumpTargetPls: jumpTarget,
-    jumpTargetXY,
-    projectionRevision: mapStore.projectionRevision,
-    bounds: { minR, maxR, minC, maxC, cols: maxC - minC + 1, rows: maxR - minR + 1 },
-    playerTileXY: { x: px, y: py },
-  });
-
+  if (!mapStore.links || mapStore.curRegion === null) return defaultBounds;
+  const grid = (mapStore.links.grids as Record<string, { cols?: number; rows?: number }>)[String(mapStore.curRegion)];
+  const cols = Math.max(1, Number(grid?.cols) || 1);
+  const rows = Math.max(1, Number(grid?.rows) || 1);
   return {
-    minR,
-    maxR,
-    minC,
-    maxC,
-    cols: maxC - minC + 1,
-    rows: maxR - minR + 1,
+    minR: 0,
+    maxR: rows - 1,
+    minC: 0,
+    maxC: cols - 1,
+    cols,
+    rows,
   };
 });
 
 const gridStyle = computed<Record<string, string>>(() => ({
-  gridTemplateColumns: `repeat(${visionBounds.value.cols}, ${cellSize.value}px)`,
-  gridTemplateRows: `repeat(${visionBounds.value.rows}, ${cellHeight.value}px)`,
+  gridTemplateColumns: `repeat(${regionBounds.value.cols}, ${cellSize.value}px)`,
+  gridTemplateRows: `repeat(${regionBounds.value.rows}, ${cellHeight.value}px)`,
+  width: `${regionBounds.value.cols * cellSize.value}px`,
+  height: `${regionBounds.value.rows * cellHeight.value}px`,
+  boxSizing: 'content-box',
 }));
 
 /**
@@ -260,16 +211,11 @@ const cells: ComputedRef<CellData[]> = computed(() => {
   // 读取路径预览状态（响应式，由 useMapInteraction 维护）
   const pathPreview = _pathPreviewGetter();
 
-  // ── 局部视野渲染（F-K2-Explore §三.1：探索场景只渲染当前视野覆盖的局部地图） ──
-  // 设计案 §7.2：视野之外的图格不进入当前舞台，不以完整区域迷雾铺满屏幕
-  // 复用 visionBounds（视野边界单一信源，M-3 边界来源单一化）：
-  //   - visionBounds 以玩家所在格为中心、半径=VISION_RADIUS+1 的固定矩形
-  //   - 矩形外的图格完全不渲染（不进入 cells 数组）
-  //   - 矩形内仍按 isTileRevealed 区分"已揭示格（显示内容）"与"迷雾格（显示 ?）"
-  const renderMinR = visionBounds.value.minR;
-  const renderMaxR = visionBounds.value.maxR;
-  const renderMinC = visionBounds.value.minC;
-  const renderMaxC = visionBounds.value.maxC;
+  // 完整区域持续渲染；视觉范围由相机缩放与 MapGrid 径向暗角表达。
+  const renderMinR = regionBounds.value.minR;
+  const renderMaxR = regionBounds.value.maxR;
+  const renderMinC = regionBounds.value.minC;
+  const renderMaxC = regionBounds.value.maxC;
 
   const result: CellData[] = [];
 
@@ -519,57 +465,45 @@ function applyGridLayout(
   const mapStore = useMapStore();
   if (!mapStore.links || mapStore.curRegion === null) return;
 
-  // 布局维度来源统一：使用 visionBounds（视野局部矩形），不使用 regionGrid 完整区域维度
-  // 渲染层（cells / gridStyle）已使用 visionBounds，布局计算必须同源
-  // 否则单格尺寸按完整区域（如 20×20）计算，实际渲染的 5×5 视野网格会缩在容器左上角
-  const vb = visionBounds.value;
-  if (vb.cols <= 1 && vb.rows <= 1) return; // 安全检查：等待有效视野数据
+  const bounds = regionBounds.value;
+  const cols = bounds.cols;
+  const rows = bounds.rows;
 
-  const cols = vb.cols;
-  const rows = vb.rows;
-  colsRef.value = cols;
-  rowsRef.value = rows;
-
-  // 自适应格子尺寸：同时考虑容器宽高约束，让视野网格填满容器
+  // 单格尺寸按相机窗口计算，而不是把完整区域压缩进容器。
+  // 默认约显示 5×5；完整区域通过滚动相机浏览，DOM 坐标始终稳定。
   const isMobile = window.innerWidth <= 900;
   const baseMin = isMobile ? 32 : 48;
   const parent = (containerEl || (gridEl ? gridEl.parentElement : null)) as HTMLElement | null;
-  const containerWidth = parent ? parent.offsetWidth - 16 : 0;
-  const containerHeight = parent ? parent.offsetHeight - 16 : 0;
-  // 宽度约束：containerWidth / cols
-  // 高度约束：containerHeight / (rows * 0.75)，0.75 = cellHeight/cellWidth 比
-  const widthBasedSize = Math.floor(containerWidth / cols);
-  const heightBasedSize = Math.floor(containerHeight / (rows * 0.75));
-  const newBaseSize = Math.max(baseMin, Math.min(widthBasedSize, heightBasedSize));
+  const containerWidth = Math.max(1, (parent?.clientWidth || 0) - 16);
+  const containerHeight = Math.max(1, (parent?.clientHeight || 0) - 16);
+  const cameraCols = Math.min(cols, CAMERA_WINDOW_COLS);
+  const cameraRows = Math.min(rows, CAMERA_WINDOW_ROWS);
+  const widthBasedSize = Math.floor(containerWidth / cameraCols);
+  const heightBasedSize = Math.floor(containerHeight / (cameraRows * 0.75));
+  const maxBaseSize = isMobile ? 140 : 220;
+  const newBaseSize = Math.max(baseMin, Math.min(widthBasedSize, heightBasedSize, maxBaseSize));
   const newBaseHeight = Math.max(isMobile ? 26 : 36, Math.floor(newBaseSize * 0.75));
 
   baseSize.value = newBaseSize;
   baseHeight.value = newBaseHeight;
 
-  // 智能默认缩放：fit 视野网格到容器（1.0x，不溢出）
-  // 视野矩形边缘是迷雾格/空格，无需 1.25x 裁切引导探索；玩家应一眼看清完整视野边界
+  // 1.0x 是约五乘五相机窗口的基准尺度，用户仍可在此基础上缩放。
   if (!zoomState.isInitialized.value) {
-    const fitZoomX = containerWidth / (cols * newBaseSize);
-    const fitZoomY = containerHeight / (rows * newBaseHeight);
-    const fitZoom = Math.min(fitZoomX, fitZoomY);
-    const initZoom = Math.max(0.5, Math.min(2.5, fitZoom));
-    // 四舍五入到 0.05 精度
-    zoomState.setZoom(Math.round(initZoom * 20) / 20);
+    zoomState.setZoom(1);
     zoomState.setInitialized(true);
   }
 
-  // 容器居中布局：grid 小于容器时居中，大于容器时从左上角开始（允许滚动居中）
+  // 四周相机缓冲允许边角图格也滚动到视窗中心。
   const zoomLevel = zoomState.getZoom();
   const cs = Math.round(newBaseSize * zoomLevel);
   const ch = Math.round(newBaseHeight * zoomLevel);
-  const gridW = cols * cs;
-  const gridH = rows * ch;
   if (containerEl) {
-    const needCenterX = gridW <= containerEl.clientWidth;
-    const needCenterY = gridH <= containerEl.clientHeight;
-    containerEl.style.display = 'flex';
-    containerEl.style.alignItems = needCenterY ? 'center' : 'flex-start';
-    containerEl.style.justifyContent = needCenterX ? 'center' : 'flex-start';
+    const cameraPadX = Math.max(0, containerEl.clientWidth / 2 - cs / 2);
+    const cameraPadY = Math.max(0, containerEl.clientHeight / 2 - ch / 2);
+    containerEl.style.display = 'block';
+    containerEl.style.alignItems = '';
+    containerEl.style.justifyContent = '';
+    containerEl.style.padding = `${cameraPadY}px ${cameraPadX}px`;
   }
 
   updateZoomLabel();

@@ -121,6 +121,7 @@ export function jumpActor(
   toX: number,
   toY: number,
   cellHeight: number,
+  onTravelProgress?: (progress: number) => void,
 ): gsap.core.Timeline {
   gsap.killTweensOf(elements.anchor);
   gsap.killTweensOf(elements.pose);
@@ -128,15 +129,28 @@ export function jumpActor(
   const airTime = 0.5;
   const fromY = Number(gsap.getProperty(elements.anchor, 'y')) || 0;
   const peakY = Math.min(fromY, toY) - cellHeight * 0.6;
+  const travel = { progress: 0 };
   const tl = gsap.timeline();
+  onTravelProgress?.(0);
+  tl.to(travel, {
+    progress: 1,
+    duration: airTime,
+    ease: 'power1.inOut',
+  }, 0);
   tl.to(elements.anchor, { x: toX, duration: airTime, ease: 'power1.inOut' }, 0);
   tl.to(elements.anchor, {
     y: peakY, duration: airTime / 2, ease: 'power2.out',
-    onUpdate: () => updateEntityZIndex(elements.anchor),
+    onUpdate: () => {
+      updateEntityZIndex(elements.anchor);
+      onTravelProgress?.(travel.progress);
+    },
   }, 0);
   tl.to(elements.anchor, {
     y: toY, duration: airTime / 2, ease: 'power2.in',
-    onUpdate: () => updateEntityZIndex(elements.anchor),
+    onUpdate: () => {
+      updateEntityZIndex(elements.anchor);
+      onTravelProgress?.(travel.progress);
+    },
   }, airTime / 2);
   tl.to(elements.pose, { scaleY: 0.6, duration: 0.1, ease: 'power2.in' }, 0);
   tl.to(elements.pose, { scaleY: 1.2, duration: 0.15, ease: 'power2.out' }, 0.1);
