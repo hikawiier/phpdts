@@ -4,11 +4,17 @@
 
 import { API_ACTIONS, type ApiAction } from './endpoints';
 import { perf } from '@/utils/perf';
+import { debugBus } from '@/composables/useDebugBus';
 import type { PresentationBatchV1 } from '@/types/api';
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/phpdts';
 
 const DEFAULT_FETCH_TIMEOUT = 15000;
+
+/** 判断是否为游戏 API 请求（排除 Vite HMR / 字体 / 静态资源） */
+function isGameApiRequest(url: string): boolean {
+  return url.includes('/oblivions/api/');
+}
 
 function buildReadApiUrl(action: ApiAction, params: Record<string, string> = {}): string {
   const query = new URLSearchParams({ ...params, scope: action }).toString();
@@ -19,17 +25,55 @@ function buildReadApiUrl(action: ApiAction, params: Record<string, string> = {})
  * 带超时的 fetch 封装：超时后 abort，避免网络挂起永久阻塞调用方。
  * dataManager 去重会让一个挂起的 Promise 阻塞后续同 action 的所有 fetch，
  * 因此所有 API 调用必须经过此封装。
+ *
+ * 调试埋桩：所有游戏 API 请求（/oblivions/api/）自动 emit 到 debugBus 的 'api' 类别，
+ * 可通过 window.__phpdtsDebug.since(seq).filter(e => e.cat === 'api') 获取纯游戏请求，
+ * 避免使用 list_network_requests 被 Vite HMR 请求淹没。
  */
 export function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
   timeoutMs = DEFAULT_FETCH_TIMEOUT,
 ): Promise<Response> {
+  const isGameApi = isGameApiRequest(url);
+  const method = options.method || 'GET';
+  const startedAt = performance.now();
+
+  if (isGameApi) {
+    debugBus.emit('api', 'fetch.request', {
+      url: url.replace(API_BASE, ''),
+      method,
+    });
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
-    clearTimeout(timer);
-  });
+  return fetch(url, { ...options, signal: controller.signal })
+    .then(res => {
+      if (isGameApi) {
+        debugBus.emit('api', 'fetch.response', {
+          url: url.replace(API_BASE, ''),
+          method,
+          status: res.status,
+          duration: Math.round(performance.now() - startedAt),
+        });
+      }
+      return res;
+    })
+    .catch(err => {
+      if (isGameApi) {
+        debugBus.emit('api', 'fetch.error', {
+          url: url.replace(API_BASE, ''),
+          method,
+          error: err instanceof Error ? err.message : String(err),
+          duration: Math.round(performance.now() - startedAt),
+        });
+      }
+      throw err;
+    })
+    .finally(() => {
+      clearTimeout(timer);
+    });
 }
 
 let oblHeartbeatInFlight: Promise<OblHeartbeatResponse> | null = null;

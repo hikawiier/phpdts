@@ -122,6 +122,7 @@ function obl_get_move_power($actor_data): int {
  * @return array ['success' => bool, 'distance' => int, 'reason' => string]
  */
 function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array {
+    global $obl_diag_log;
     $to_pls = (int)$to_pls;
     $cur_pgroup = (int)$actor_data['pgroup'];
     $cur_pls = (int)$actor_data['pls'];
@@ -130,7 +131,17 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
     $map = obl_get_map_data($cur_pgroup);
     $tiles = $map['tiles'][$cur_pgroup] ?? [];
     if (!isset($tiles[$to_pls])) {
-        error_log("[NAV_DEBUG] move_core_fail: reason=invalid_target to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=n/a distance=n/a max=$max_distance");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('move.fail', 'move', array(
+                'reason'    => 'invalid_target',
+                'to_pls'    => $to_pls,
+                'cur_pls'   => $cur_pls,
+                'pgroup'    => $cur_pgroup,
+                'passable'  => null,
+                'distance'  => null,
+                'max'       => $max_distance,
+            ));
+        }
         return ['success' => false, 'distance' => 0, 'reason' => 'invalid_target'];
     }
 
@@ -138,7 +149,17 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
 
     // 2. 可通行检查
     if (empty($target_tile['passable'])) {
-        error_log("[NAV_DEBUG] move_core_fail: reason=blocked to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=n/a max=$max_distance");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('move.fail', 'move', array(
+                'reason'    => 'blocked',
+                'to_pls'    => $to_pls,
+                'cur_pls'   => $cur_pls,
+                'pgroup'    => $cur_pgroup,
+                'passable'  => (int)!empty($target_tile['passable']),
+                'distance'  => null,
+                'max'       => $max_distance,
+            ));
+        }
         return ['success' => false, 'distance' => 0, 'reason' => 'blocked'];
     }
 
@@ -146,7 +167,17 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
     include_once GAME_ROOT . './oblivions/include/game/player.func.php';
     $occupiers = obl_get_pids_in_tile($cur_pgroup, $to_pls, (int)($actor_data['pid'] ?? 0), true);
     if (!empty($occupiers)) {
-        error_log("[NAV_DEBUG] move_core_fail: reason=occupied to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=n/a max=$max_distance");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('move.fail', 'move', array(
+                'reason'    => 'occupied',
+                'to_pls'    => $to_pls,
+                'cur_pls'   => $cur_pls,
+                'pgroup'    => $cur_pgroup,
+                'passable'  => (int)!empty($target_tile['passable']),
+                'distance'  => null,
+                'max'       => $max_distance,
+            ));
+        }
         return ['success' => false, 'distance' => 0, 'reason' => 'occupied'];
     }
 
@@ -155,11 +186,31 @@ function obl_perform_move_core(&$actor_data, $to_pls, int $max_distance): array 
 
     $distance = obl_get_distance($cur_pgroup, $cur_pls, $to_pls);
     if ($distance === -1) {
-        error_log("[NAV_DEBUG] move_core_fail: reason=unreachable to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=$distance max=$max_distance");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('move.fail', 'move', array(
+                'reason'    => 'unreachable',
+                'to_pls'    => $to_pls,
+                'cur_pls'   => $cur_pls,
+                'pgroup'    => $cur_pgroup,
+                'passable'  => (int)!empty($target_tile['passable']),
+                'distance'  => $distance,
+                'max'       => $max_distance,
+            ));
+        }
         return ['success' => false, 'distance' => 0, 'reason' => 'unreachable'];
     }
     if ($distance > $max_distance) {
-        error_log("[NAV_DEBUG] move_core_fail: reason=too_far to_pls=$to_pls cur_pls=$cur_pls pgroup=$cur_pgroup passable=" . (int)!empty($target_tile['passable']) . " distance=$distance max=$max_distance");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('move.fail', 'move', array(
+                'reason'    => 'too_far',
+                'to_pls'    => $to_pls,
+                'cur_pls'   => $cur_pls,
+                'pgroup'    => $cur_pgroup,
+                'passable'  => (int)!empty($target_tile['passable']),
+                'distance'  => $distance,
+                'max'       => $max_distance,
+            ));
+        }
         return ['success' => false, 'distance' => $distance, 'reason' => 'too_far'];
     }
 

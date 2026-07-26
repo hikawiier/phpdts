@@ -24,6 +24,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { dataManager } from '@/stores/data-manager';
 import type { ToastEventData } from '@/types/events';
+import { debugBus } from '@/composables/useDebugBus';
 
 export type ToastType = 'info' | 'success' | 'error' | 'warning';
 
@@ -67,6 +68,14 @@ export const useToastStore = defineStore('toast', () => {
       const last = toasts.value[toasts.value.length - 1];
       if (last && last.mergeId === mergeId && last.type === type) {
         last.count++;
+        debugBus.emit('ui', 'ui.toast.merge', {
+          id: last.id,
+          type,
+          duration,
+          mergeId,
+          count: last.count,
+          message: message.slice(0, 160),
+        });
         // 重置消失计时器
         if (last.timerId !== null) {
           clearTimeout(last.timerId);
@@ -93,6 +102,14 @@ export const useToastStore = defineStore('toast', () => {
       count: 1,
       timerId,
     });
+    debugBus.emit('ui', 'ui.toast.show', {
+      id,
+      type,
+      duration,
+      mergeId: mergeId ?? null,
+      count: 1,
+      message: message.slice(0, 160),
+    });
   }
 
   /** 移除 Toast */
@@ -104,6 +121,13 @@ export const useToastStore = defineStore('toast', () => {
         clearTimeout(toast.timerId);
       }
       toasts.value.splice(idx, 1);
+      debugBus.emit('ui', 'ui.toast.remove', {
+        id: toast.id,
+        type: toast.type,
+        mergeId: toast.mergeId ?? null,
+        count: toast.count,
+        message: toast.message.slice(0, 160),
+      });
     }
   }
 

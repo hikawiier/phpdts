@@ -17,7 +17,7 @@
 //   - completed=false 表示动画被抢占/取消，moveDirector 应走超时兜底
 // ══════════════════════════════════════════════════
 
-import { task3Debug } from '@/utils/task3-debug';
+import { animationTrace } from '@/utils/animation-trace';
 
 export interface MoveAnimationCompletionEvent {
   /** 动画所属实体 ID（moveDirector 仅消费 'player'） */
@@ -34,7 +34,7 @@ const listeners = new Set<CompletionListener>();
 
 /** 发送完成信号（由 useMapEntities 调用） */
 export function emitMoveAnimationCompletion(event: MoveAnimationCompletionEvent): void {
-  task3Debug.log('move-animation-channel.emit', {
+  animationTrace.log('move-animation-channel.emit', {
     actorId: event.actorId,
     targetPls: event.targetPls,
     completed: event.completed,
@@ -44,7 +44,7 @@ export function emitMoveAnimationCompletion(event: MoveAnimationCompletionEvent)
     try {
       listener(event);
     } catch (err) {
-      task3Debug.log('move-animation-channel.listener-error', {
+      animationTrace.log('move-animation-channel.listener-error', {
         actorId: event.actorId,
         targetPls: event.targetPls,
         error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -57,12 +57,12 @@ export function emitMoveAnimationCompletion(event: MoveAnimationCompletionEvent)
 /** 订阅完成信号（由 moveDirector 调用），返回取消订阅函数 */
 export function onMoveAnimationCompletion(listener: CompletionListener): () => void {
   listeners.add(listener);
-  task3Debug.log('move-animation-channel.subscribe', {
+  animationTrace.log('move-animation-channel.subscribe', {
     listenerCountAfterSubscribe: listeners.size,
   });
   return () => {
     listeners.delete(listener);
-    task3Debug.log('move-animation-channel.unsubscribe', {
+    animationTrace.log('move-animation-channel.unsubscribe', {
       listenerCountAfterUnsubscribe: listeners.size,
     });
   };

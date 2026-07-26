@@ -3,7 +3,6 @@
  * @module B 命令系统
  * @framework B-1 声明式命令合约
  * @framework B-2 双层负载校验管道
- * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');

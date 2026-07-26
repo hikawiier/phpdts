@@ -33,6 +33,7 @@ import { useToastStore } from '@/stores/toast';
 import { commandQueue } from '@/stores/command-queue';
 import { useMoveDirectorStore } from '@/stores/move-director';
 import { useTileActionStore } from '@/stores/tileAction';
+import { debugBus } from '@/composables/useDebugBus';
 
 /** 移动倾向（§5.6） */
 export type MoveTendency = 'steady' | 'nearby' | 'deep' | 'efficient';
@@ -55,6 +56,9 @@ export type TargetState =
   | { kind: 'none' }
   | { kind: 'active'; pls: string | number; name: string }
   | { kind: 'paused'; pls: string | number; name: string };
+
+// ─── DebugBus state 注册标志（避免重复注册） ───
+let _debugStateRegistered = false;
 
 export const useExploreStore = defineStore('explore', () => {
   const mapStore = useMapStore();
@@ -233,6 +237,18 @@ export const useExploreStore = defineStore('explore', () => {
   // ── 手机横屏标签切换 ──
   function setMobileTab(tab: 'log' | 'tile'): void {
     mobileTab.value = tab;
+  }
+
+  // ─── DebugBus 状态注册（供 ?debug=ai 使用） ───
+  if (!_debugStateRegistered) {
+    _debugStateRegistered = true;
+    debugBus.registerState('explore', () => ({
+      tendency: tendency.value,
+      inputLocked: inputLocked.value,
+      navigationPlaying: navigationPlaying.value,
+      exploredCount: exploredTiles.value.size,
+      playerPls: playerPls.value,
+    }));
   }
 
   return {

@@ -42,7 +42,8 @@ import { onMoveAnimationCompletion } from '@/composables/moveAnimationChannel';
 import { getActorById } from '@/composables/actorRegistry';
 import { getSceneGeometry } from '@/composables/sceneRegistry';
 import { setPlaybackSpeed } from '@/composables/useActorRuntime';
-import { task3Debug } from '@/utils/task3-debug';
+import { debugBus } from '@/composables/useDebugBus';
+import { animationTrace } from '@/utils/animation-trace';
 import type { MoveTier } from '@/types/actor-runtime';
 import type { CommandResult } from '@/api/client';
 import type { Enemy } from '@/types/api';
@@ -468,7 +469,7 @@ function detectAndTruncateOscillation(steps: NavigationStep[]): {
   }
   for (let i = 2; i < steps.length; i++) {
     if (steps[i].to_pls === steps[i - 2].to_pls) {
-      task3Debug.log('move-director.detectAndTruncateOscillation.detected', {
+      animationTrace.log('move-director.detectAndTruncateOscillation.detected', {
         oscillationStepIdx: i,
         prevToPls: steps[i - 2].to_pls,
         curToPls: steps[i].to_pls,
@@ -495,14 +496,14 @@ function detectAndTruncateOscillation(steps: NavigationStep[]): {
 function predictStepTier(fromPls: number, toPls: number, mapStore: ReturnType<typeof useMapStore>): MoveTier {
   const scene = getSceneGeometry();
   if (!scene) {
-    task3Debug.log('move-director.predictStepTier.fallback', {
+    animationTrace.log('move-director.predictStepTier.fallback', {
       fromPls, toPls, tier: 'duck', reason: 'scene geometry missing',
     });
     return 'duck';
   }
   const region = mapStore.curRegion;
   if (region === null) {
-    task3Debug.log('move-director.predictStepTier.fallback', {
+    animationTrace.log('move-director.predictStepTier.fallback', {
       fromPls, toPls, tier: 'duck', reason: 'curRegion is null',
     });
     return 'duck';
@@ -512,7 +513,7 @@ function predictStepTier(fromPls: number, toPls: number, mapStore: ReturnType<ty
   if (!fromAnchor || !toAnchor) {
     // 完整区域固定网格下锚点缺失属于场景尚未就绪或数据异常。
     // 回退 jump 以保留更宽松的动画超时，同时维持相机冻结。
-    task3Debug.log('move-director.predictStepTier.fallback', {
+    animationTrace.log('move-director.predictStepTier.fallback', {
       fromPls, toPls, tier: 'jump',
       reason: 'anchor resolve failed (scene not ready or tile missing)',
       fromAnchorPresent: !!fromAnchor,
@@ -530,7 +531,7 @@ function predictStepTier(fromPls: number, toPls: number, mapStore: ReturnType<ty
   if (gridDist <= 1.5) tier = 'duck';
   else if (gridDist <= 6.5) tier = 'jump';
   else tier = 'long';
-  task3Debug.log('move-director.predictStepTier', {
+  animationTrace.log('move-director.predictStepTier', {
     fromPls, toPls, tier, gridDist,
     fromPoint: from, toPoint: toAnchor.point,
     runtimeExists: !!runtime,
@@ -626,6 +627,9 @@ function deriveStepEvents(s: RawStepData): MoveTickEvent[] {
 
   return events;
 }
+
+// ─── DebugBus state 注册标志（避免重复注册） ───
+let _debugStateRegistered = false;
 
 export const useMoveDirectorStore = defineStore('moveDirector', () => {
   const explore = useExploreStore();
@@ -875,14 +879,14 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
         // 让玩家决定下一步操作（设计案 §三 K-12-A 边界案例）
         // 自动选目标的设计意图是"低操作负担的短距离探索"，不是"必达远程目标"
         if (!navHasPlayerTarget) {
-          task3Debug.log('move-director.play.end.max-steps-auto', {
+          animationTrace.log('move-director.play.end.max-steps-auto', {
             currentStepIdx: currentStepIndex.value,
             navHasPlayerTarget,
           });
           finishMaxStepsReachedAuto();
           return;
         }
-        task3Debug.log('move-director.play.end.max-steps-resume', {
+        animationTrace.log('move-director.play.end.max-steps-resume', {
           currentStepIdx: currentStepIndex.value,
           navHasPlayerTarget,
           resumeCount,
@@ -890,7 +894,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
         void resumeFromBreakpoint();
         return;
       }
-      task3Debug.log('move-director.play.end.arrived', {
+      animationTrace.log('move-director.play.end.arrived', {
         currentStepIdx: currentStepIndex.value,
         parsedOutcome,
       });
@@ -908,7 +912,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       mapStore.setVisualCenter(step.from_pls);
     }
 
-    task3Debug.log('move-director.play.step', {
+    animationTrace.log('move-director.play.step', {
       stepIdx: currentStepIndex.value,
       totalSteps: steps.value.length,
       from_pls: step.from_pls,
@@ -925,7 +929,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     const res = applyStep(step, true);
     const curLocAfterApply = mapStore.curLoc;
 
-    task3Debug.log('move-director.applyStep.done', {
+    animationTrace.log('move-director.applyStep.done', {
       stepIdx: currentStepIndex.value,
       curLocBeforeApply,
       curLocAfterApply,
@@ -953,7 +957,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   /** K-12-C：连续位移动画完成后，将相机中心推进到玩家的新位置。 */
   async function followCameraAfterStep(targetPls: number): Promise<void> {
     if (mapStore.visualCenter === null) return;
-    task3Debug.log('move-director.followCameraAfterStep', {
+    animationTrace.log('move-director.followCameraAfterStep', {
       targetPls,
       prevVisualCenter: mapStore.visualCenter,
       curLoc: mapStore.curLoc,
@@ -988,7 +992,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
         ? STEP_TIMEOUT_MULTIPLIER_JUMP
         : STEP_TIMEOUT_MULTIPLIER_LONG;
     const timeoutMs = (BASE_STEP_MS * multiplier) / speed.value + SAFETY_BUFFER_MS;
-    task3Debug.log('move-director.scheduleNextStepAfterAnimation', {
+    animationTrace.log('move-director.scheduleNextStepAfterAnimation', {
       expectedPls,
       timeoutMs,
       speed: speed.value,
@@ -999,7 +1003,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       ...timingInfo(),
     });
     playTimer = setTimeout(() => {
-      task3Debug.log('move-director.scheduleNextStepAfterAnimation.timeout', {
+      animationTrace.log('move-director.scheduleNextStepAfterAnimation.timeout', {
         expectedPls,
         timedOut: true,
         note: '动画完成信号未到达，超时兜底强制推进',
@@ -1013,7 +1017,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
         if (phase.value === 'playing' && !isPaused.value) {
           void play();
         } else {
-          task3Debug.log('move-director.scheduleNextStepAfterAnimation.timeout.skip-play', {
+          animationTrace.log('move-director.scheduleNextStepAfterAnimation.timeout.skip-play', {
             phase: phase.value,
             isPaused: isPaused.value,
             reason: 'phase changed during camera follow',
@@ -1043,7 +1047,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     interruptReason.value = `已移动 ${currentStepIndex.value + 1} 步，未抵达自动目标`;
     explore.setNavigationLock(false);
     mapStore.clearVisualCenter();
-    task3Debug.log('move-director.finishMaxStepsReachedAuto', {
+    animationTrace.log('move-director.finishMaxStepsReachedAuto', {
       outcome: outcome.value,
       phase: phase.value,
       currentStepIdx: currentStepIndex.value,
@@ -1077,7 +1081,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     }
     expectedCompletionPls = null;
     resumeCount++;
-    task3Debug.log('move-director.resumeFromBreakpoint.entry', {
+    animationTrace.log('move-director.resumeFromBreakpoint.entry', {
       resumeTarget,
       resumeTendency,
       resumeCount,
@@ -1102,7 +1106,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     }
     if (consecutiveOscillationCount >= MAX_CONSECUTIVE_OSCILLATION) {
       // 振荡熔断：连续续行都检测到振荡，说明后端修复未生效，停止续行
-      task3Debug.log('move-director.resumeFromBreakpoint.oscillation-circuit-breaker', {
+      animationTrace.log('move-director.resumeFromBreakpoint.oscillation-circuit-breaker', {
         consecutiveOscillationCount,
         MAX_CONSECUTIVE_OSCILLATION,
         resumeCount,
@@ -1223,7 +1227,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     explore.setNavigationLock(false); // B6.13 演出追上权威状态后恢复输入
     // 解除视觉中心冻结：网格重新跟随 curLoc 居中到最终位置
     mapStore.clearVisualCenter();
-    task3Debug.log('move-director.finishArrived', {
+    animationTrace.log('move-director.finishArrived', {
       outcome: outcome.value,
       phase: phase.value,
       targetName: targetName.value,
@@ -1256,7 +1260,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     phase.value = 'idle';
     // 解除视觉中心冻结：中断后网格重新跟随 curLoc 居中到中断点
     mapStore.clearVisualCenter();
-    task3Debug.log('move-director.handleInterrupt', {
+    animationTrace.log('move-director.handleInterrupt', {
       reason,
       combatName,
       phase: phase.value,
@@ -1368,7 +1372,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     // 完整区域网格本身不移动，冻结只约束相机。失败路径仍需显式释放（见下方错误处理）。
     mapStore.setVisualCenter(fromPls);
 
-    task3Debug.log('move-director.startNavigation.entry', {
+    animationTrace.log('move-director.startNavigation.entry', {
       fromPls,
       target,
       tendency: usedTendency,
@@ -1544,7 +1548,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     }
     expectedCompletionPls = null;
     phase.value = 'rebasing';
-    task3Debug.log('move-director.skip.entry', {
+    animationTrace.log('move-director.skip.entry', {
       phase: phase.value,
       currentStepIdx: currentStepIndex.value,
       totalSteps: steps.value.length,
@@ -1568,7 +1572,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
     buildSummary();
     phase.value = 'idle';
     explore.setNavigationLock(false);
-    task3Debug.log('move-director.skip.done', {
+    animationTrace.log('move-director.skip.done', {
       lastInterrupted,
       combatName,
       finalStepIdx: currentStepIndex.value,
@@ -1705,7 +1709,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
   // dispose 后不会误推进（dispose 设 phase=idle，监听器早期返回）。
   onMoveAnimationCompletion((event) => {
     if (event.actorId !== 'player') {
-      task3Debug.log('move-director.onMoveAnimationCompletion.filtered', {
+      animationTrace.log('move-director.onMoveAnimationCompletion.filtered', {
         reason: 'actorId !== player',
         actorId: event.actorId,
         targetPls: event.targetPls,
@@ -1714,7 +1718,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       return;
     }
     if (phase.value !== 'playing' || isPaused.value) {
-      task3Debug.log('move-director.onMoveAnimationCompletion.filtered', {
+      animationTrace.log('move-director.onMoveAnimationCompletion.filtered', {
         reason: 'phase not playing or paused',
         phase: phase.value,
         isPaused: isPaused.value,
@@ -1724,7 +1728,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       return;
     }
     if (event.targetPls !== expectedCompletionPls) {
-      task3Debug.log('move-director.onMoveAnimationCompletion.filtered', {
+      animationTrace.log('move-director.onMoveAnimationCompletion.filtered', {
         reason: 'targetPls mismatch expectedCompletionPls',
         eventTargetPls: event.targetPls,
         expectedCompletionPls,
@@ -1733,14 +1737,14 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       return;
     }
     if (!event.completed) {
-      task3Debug.log('move-director.onMoveAnimationCompletion.filtered', {
+      animationTrace.log('move-director.onMoveAnimationCompletion.filtered', {
         reason: 'event.completed === false',
         targetPls: event.targetPls,
         note: '动画被抢占/取消，等待超时兜底',
       });
       return;
     }
-    task3Debug.log('move-director.onMoveAnimationCompletion.accepted', {
+    animationTrace.log('move-director.onMoveAnimationCompletion.accepted', {
       targetPls: event.targetPls,
       completed: event.completed,
       phase: phase.value,
@@ -1756,7 +1760,7 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       if (phase.value === 'playing' && !isPaused.value) {
         void play();
       } else {
-        task3Debug.log('move-director.onMoveAnimationCompletion.skip-play', {
+        animationTrace.log('move-director.onMoveAnimationCompletion.skip-play', {
           phase: phase.value,
           isPaused: isPaused.value,
           reason: 'phase changed during camera follow',
@@ -1764,6 +1768,15 @@ export const useMoveDirectorStore = defineStore('moveDirector', () => {
       }
     });
   });
+
+  // ─── DebugBus 状态注册（供 ?debug=ai 使用） ───
+  if (!_debugStateRegistered) {
+    _debugStateRegistered = true;
+    debugBus.registerState('moveDirector', () => ({
+      isPlaying: isPlaying.value,
+      phase: phase.value,
+    }));
+  }
 
   return {
     // 状态

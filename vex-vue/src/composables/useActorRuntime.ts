@@ -35,7 +35,7 @@ import type {
 } from '@/types/actor-runtime';
 import type { SceneAnchor, ScenePoint } from '@/types/scene';
 import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
-import { task3Debug } from '@/utils/task3-debug';
+import { animationTrace } from '@/utils/animation-trace';
 
 const OWNER_PRIORITY: Record<PresentationOwner, number> = {
   ambient: 0,
@@ -60,7 +60,7 @@ export function setPlaybackSpeed(speed: number): void {
   const prev = playbackSpeed;
   playbackSpeed = speed;
   if (prev !== speed) {
-    task3Debug.log('actor-runtime.setPlaybackSpeed', { prevSpeed: prev, newSpeed: speed });
+    animationTrace.log('actor-runtime.setPlaybackSpeed', { prevSpeed: prev, newSpeed: speed });
   }
 }
 
@@ -192,7 +192,7 @@ class ActorRuntimeImpl implements ActorRuntime {
 
   acquire(request: LeaseRequest): PresentationLease | null {
     if (this.disposed) {
-      task3Debug.log('actor-runtime.acquire.failed', {
+      animationTrace.log('actor-runtime.acquire.failed', {
         actorId: this.id,
         reason: 'runtime disposed',
         owner: request.owner,
@@ -216,7 +216,7 @@ class ActorRuntimeImpl implements ActorRuntime {
         && conflict.owner === request.owner;
       if (conflictPriority > requestPriority
         || (conflictPriority === requestPriority && !canReplaceEqual)) {
-        task3Debug.log('actor-runtime.acquire.failed', {
+        animationTrace.log('actor-runtime.acquire.failed', {
           actorId: this.id,
           reason: 'priority conflict',
           owner: request.owner,
@@ -236,7 +236,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     lease.addChannels(request.channels);
     this.leases.add(lease);
     for (const channel of request.channels) this.channelOwners.set(channel, lease);
-    task3Debug.log('actor-runtime.acquire.success', {
+    animationTrace.log('actor-runtime.acquire.success', {
       actorId: this.id,
       owner: request.owner,
       channels: [...request.channels],
@@ -341,7 +341,7 @@ class ActorRuntimeImpl implements ActorRuntime {
   play(lease: RuntimeLease, command: ActorCommand): AnimationHandle {
     const elements = this.elements;
     if (!elements) {
-      task3Debug.log('actor-runtime.play.skipped', {
+      animationTrace.log('actor-runtime.play.skipped', {
         actorId: this.id,
         commandKind: command.kind,
         reason: 'actor_dom_missing',
@@ -352,7 +352,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     }
     const required = requiredChannels(command);
     if (required.some(channel => !lease.channels.has(channel) || this.channelOwners.get(channel) !== lease)) {
-      task3Debug.log('actor-runtime.play.skipped', {
+      animationTrace.log('actor-runtime.play.skipped', {
         actorId: this.id,
         commandKind: command.kind,
         reason: 'lease_channel_missing',
@@ -419,7 +419,7 @@ class ActorRuntimeImpl implements ActorRuntime {
             direction,
           );
         }
-        task3Debug.log('actor-runtime.play.move-tween-start', {
+        animationTrace.log('actor-runtime.play.move-tween-start', {
           actorId: this.id,
           tier: command.tier,
           fromPoint: from,
@@ -456,7 +456,7 @@ class ActorRuntimeImpl implements ActorRuntime {
           direction,
           command.style,
         );
-        task3Debug.log('actor-runtime.play.combat-move-start', {
+        animationTrace.log('actor-runtime.play.combat-move-start', {
           actorId: this.id,
           style: command.style,
           sourceTile: command.from?.tile ?? null,
@@ -500,7 +500,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (playbackSpeed !== 1) {
       animation.timeScale(playbackSpeed);
     }
-    task3Debug.log('actor-runtime.play.timeScale-applied', {
+    animationTrace.log('actor-runtime.play.timeScale-applied', {
       actorId: this.id,
       commandKind: command.kind,
       playbackSpeed,
@@ -510,7 +510,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     let handle!: TimelineHandle;
     handle = new TimelineHandle(animation, impactAt, result => {
       if (result.status === 'completed') onCompleted?.();
-      task3Debug.log('actor-runtime.tween-settled', {
+      animationTrace.log('actor-runtime.tween-settled', {
         actorId: this.id,
         commandKind: command.kind,
         status: result.status,
@@ -541,7 +541,7 @@ class ActorRuntimeImpl implements ActorRuntime {
     if (lease.released) return;
     lease.released = true;
     const channels = [...lease.channels].filter(channel => this.channelOwners.get(channel) === lease);
-    task3Debug.log('actor-runtime.releaseLease', {
+    animationTrace.log('actor-runtime.releaseLease', {
       actorId: this.id,
       owner: lease.owner,
       sessionId: lease.sessionId,

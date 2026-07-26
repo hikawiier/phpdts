@@ -30,3 +30,12 @@ export const debugFlags = parseDebugFlags();
 export function isDebugEnabled(flag: DebugFlag): boolean {
   return debugFlags.has(flag);
 }
+
+export function isDebugAllEnabled(search?: string): boolean {
+  const source = search
+    ?? (typeof window !== 'undefined' ? window.location.search : '');
+  return new URLSearchParams(source)
+    .getAll('debug')
+    .flatMap(value => value.split(','))
+    .some(value => value.trim().toLowerCase() === 'all');
+}

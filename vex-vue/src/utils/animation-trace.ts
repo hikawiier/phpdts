@@ -1,13 +1,13 @@
 /**
- * @module K 状态管理层
+ * @module A API 层
  *
  * ══════════════════════════════════════════════════
- * Task3 调试桩基础设施 / Animation Dispatch Tracer
+ * 动画追踪基础设施 / Animation Trace
  * ══════════════════════════════════════════════════
  *
  * 用途：在动画派发全链路（K-10 角色动画意图派发 / K-12 移动导演演出框架 /
  *      M-1 租赁式动画架构）关键点放置持久化调试桩，让用户在浏览器中复现
- *      问题后，可通过 window.__TASK3_DEBUG 全局对象导出完整事件日志供根因分析。
+ *      问题后，可通过 window.__PHPDTS_TRACE 全局对象导出完整事件日志供根因分析。
  *
  * 设计原则：
  *   - 持久化到源码（非运行时 evaluate_script 注入），用户复现问题时无需我实时介入
@@ -17,9 +17,9 @@
  *   - 内部循环缓冲区上限 1000 条，超出后覆盖最旧条目，防止内存爆炸
  *   - 每个事件携带双时间戳（performance.now() 用于相对时序分析，
  *     Date.now() 用于跨页面/跨会话对齐）、事件类型、关键数据、可选调用栈
- *   - 任务唯一前缀 [TASK3_DEBUG] + 彩色 console 输出，便于用户实时观察
+ *   - 任务唯一前缀 [ANIMATION_TRACE] + 彩色 console 输出，便于用户实时观察
  *
- * 浏览器侧接口（DEV 模式挂载到 window.__TASK3_DEBUG）：
+ * 浏览器侧接口（DEV 模式挂载到 window.__PHPDTS_TRACE）：
  *   - events()           返回所有事件数组的副本
  *   - clear()            清空缓冲区
  *   - summary()          返回事件统计（按类型分组计数）
@@ -29,13 +29,16 @@
  *   - since(ts)          返回某时间戳（Date.now()）之后的事件
  *
  * 使用示例（业务代码埋桩）：
- *   import { task3Debug } from '@/utils/task3-debug';
- *   task3Debug.log('move-director.play.step', { stepIdx, from_pls, to_pls, tier });
- *   task3Debug.log('actor-runtime.acquire', { actorId, owner, channels }, true);  // 第三个参数 captureStack=true
+ *   import { animationTrace } from '@/utils/animation-trace';
+ *   animationTrace.log('move-director.play.step', { stepIdx, from_pls, to_pls, tier });
+ *   animationTrace.log('actor-runtime.acquire', { actorId, owner, channels }, true);  // 第三个参数 captureStack=true
  */
 
+import { debugBus } from '@/composables/useDebugBus';
+import { isDebugAllEnabled } from '@/utils/debug-flags';
+
 // ── 事件类型 ──
-export interface Task3DebugEvent {
+export interface AnimationTraceEvent {
   /** 相对时间戳（performance.now()，页面加载后毫秒数，用于相对时序分析） */
   t: number;
   /** 绝对时间戳（Date.now()，Unix 毫秒，用于跨页面/跨会话对齐） */
@@ -50,11 +53,11 @@ export interface Task3DebugEvent {
 
 // ── 内部状态 ──
 const MAX_EVENTS = 1000;
-const buffer: Task3DebugEvent[] = [];
+const buffer: AnimationTraceEvent[] = [];
 let overflowed = 0;
 
 // DEV 守卫：生产构建中所有 log() 调用整体失效
-const IS_DEV = import.meta.env.DEV;
+const IS_DEV = import.meta.env.DEV || isDebugAllEnabled();
 
 // ── 控制台彩色样式（按事件类型命名空间分色） ──
 const STYLE_BASE = 'font-weight:bold;padding:2px 4px;border-radius:3px;';
@@ -110,12 +113,12 @@ function log(type: string, data: unknown = null, captureStack = false): void {
   if (!IS_DEV) return;
   try {
     const now = performance.now();
-    const event: Task3DebugEvent = {
+    const event: AnimationTraceEvent = {
       t: now,
       ts: Date.now(),
       type,
       data,
-      stack: captureStack ? new Error('task3-debug stack').stack ?? null : undefined,
+      stack: captureStack ? new Error('animation-trace stack').stack ?? null : undefined,
     };
 
     // 循环缓冲区：超出上限覆盖最旧条目
@@ -124,13 +127,14 @@ function log(type: string, data: unknown = null, captureStack = false): void {
       overflowed++;
     }
     buffer.push(event);
+    debugBus.emit('animation', type, data);
 
     // 彩色 console 输出（便于用户实时观察）
     // K-12-H：在 console 输出中显示 performance.now() 时间戳，便于定位卡顿位置
     const style = pickStyle(type);
     const dataStr = safeStringify(data);
     const timeStr = now.toFixed(1).padStart(9, ' ');
-    console.log(`%c[TASK3_DEBUG] ${timeStr}ms ${type}`, style, dataStr || '');
+    console.log(`%c[ANIMATION_TRACE] ${timeStr}ms ${type}`, style, dataStr || '');
   } catch {
     // 调试桩自身异常绝不影响业务
   }
@@ -139,7 +143,7 @@ function log(type: string, data: unknown = null, captureStack = false): void {
 /**
  * 返回所有事件数组的副本（避免外部修改污染内部缓冲区）。
  */
-function events(): Task3DebugEvent[] {
+function events(): AnimationTraceEvent[] {
   return buffer.slice();
 }
 
@@ -150,7 +154,7 @@ function clear(): void {
   buffer.length = 0;
   overflowed = 0;
   if (IS_DEV) {
-    console.log('%c[TASK3_DEBUG] buffer cleared', STYLE_DEFAULT);
+    console.log('%c[ANIMATION_TRACE] buffer cleared', STYLE_DEFAULT);
   }
 }
 
@@ -184,7 +188,7 @@ function summary(): {
 /**
  * 返回最近 N 条事件（默认 20）。
  */
-function tail(n = 20): Task3DebugEvent[] {
+function tail(n = 20): AnimationTraceEvent[] {
   if (n <= 0) return [];
   return buffer.slice(-Math.min(n, buffer.length));
 }
@@ -192,7 +196,7 @@ function tail(n = 20): Task3DebugEvent[] {
 /**
  * 按事件类型过滤（支持字符串前缀匹配或正则）。
  */
-function filter(type: string | RegExp): Task3DebugEvent[] {
+function filter(type: string | RegExp): AnimationTraceEvent[] {
   if (typeof type === 'string') {
     return buffer.filter(ev => ev.type.startsWith(type));
   }
@@ -202,14 +206,14 @@ function filter(type: string | RegExp): Task3DebugEvent[] {
 /**
  * 返回某时间戳（Date.now()）之后的事件。
  */
-function since(ts: number): Task3DebugEvent[] {
+function since(ts: number): AnimationTraceEvent[] {
   return buffer.filter(ev => ev.ts >= ts);
 }
 
 /**
  * 下载所有事件为 JSON 文件（便于用户分享给我）。
  *
- * 文件名格式：task3-debug-YYYYMMDD-HHmmss.json
+ * 文件名格式：animation-trace-YYYYMMDD-HHmmss.json
  */
 function download(): void {
   if (!IS_DEV) return;
@@ -229,21 +233,21 @@ function download(): void {
     const a = document.createElement('a');
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    const fname = `task3-debug-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
+    const fname = `animation-trace-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
     a.href = url;
     a.download = fname;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log(`%c[TASK3_DEBUG] downloaded ${buffer.length} events to ${fname}`, STYLE_DEFAULT);
+    console.log(`%c[ANIMATION_TRACE] downloaded ${buffer.length} events to ${fname}`, STYLE_DEFAULT);
   } catch (e) {
-    console.error('[TASK3_DEBUG] download failed:', e);
+    console.error('[ANIMATION_TRACE] download failed:', e);
   }
 }
 
 // ── 对外导出的调试桩 API ──
-export const task3Debug = {
+export const animationTrace = {
   log,
   events,
   clear,
@@ -254,9 +258,9 @@ export const task3Debug = {
   download,
 };
 
-// ── 类型声明：window.__TASK3_DEBUG ──
+// ── 类型声明：window.__PHPDTS_TRACE ──
 declare global {
   interface Window {
-    __TASK3_DEBUG?: typeof task3Debug;
+    __PHPDTS_TRACE?: typeof animationTrace;
   }
 }

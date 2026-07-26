@@ -4,6 +4,7 @@
  * @framework C-2 独立运行时启动
  * @framework C-3 事务管理与房间互斥锁
  * @framework C-4 事件批量投递（Presentation 系统）
+ * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -18,7 +19,7 @@ if (!defined('IN_GAME')) {
 
 function obl_runtime_boot($kind = 'command') {
     global $db, $now, $gtablepre, $tablepre, $groomid, $gruleset, $udata, $gamevars, $gamestate;
-    global $cuser, $cpass, $obl_log, $obl_error_log, $obl_battle_log;
+    global $cuser, $cpass, $obl_log, $obl_error_log, $obl_battle_log, $obl_diag_log;
     global $dbhost, $dbuser, $dbpw, $dbname, $pconnect, $database, $dbcharset, $charset;
     global $slave_level, $master_dbhost, $master_dbuser, $master_dbpw, $master_dbname, $master_tablepre;
     global $moveut, $moveutmin, $cookiedomain, $cookiepath, $errorinfo, $gamecfg;
@@ -112,12 +113,40 @@ function obl_runtime_boot($kind = 'command') {
     if (!isset($obl_error_log)) $obl_error_log = new OblivionsErrorLogger();
     if (!isset($obl_battle_log)) $obl_battle_log = new BattleLogCollector();
 
+    // A-5 诊断日志：仅 ?debug=all 启用时实例化，零生产开销
+    // 调用方需 if (isset($obl_diag_log) && $obl_diag_log) 守卫
+    if (!isset($obl_diag_log)) {
+        $obl_diag_log = (function_exists('obl_debug_enabled') && obl_debug_enabled())
+            ? new OblivionsDiagnosticLogger()
+            : null;
+    }
+
     if (empty($GLOBALS['obl_request_uid'])) {
         try {
             $GLOBALS['obl_request_uid'] = $kind . '-' . bin2hex(random_bytes(8));
         } catch (Throwable $e) {
             $GLOBALS['obl_request_uid'] = $kind . '-' . str_replace('.', '', uniqid('', true));
         }
+    }
+
+    // A-5-2 加固：请求关联字段（设计案 §3.4）
+    // 诊断日志条目通过 OblivionsDiagnosticLogger::emit 自动读取这两个全局变量附加到 entry 顶层
+    if (!isset($GLOBALS['obl_request_kind'])) {
+        $GLOBALS['obl_request_kind'] = $kind;
+    }
+    // obl_current_command 由 command handler 在分发前显式设置（默认空字符串）
+    if (!isset($GLOBALS['obl_current_command'])) {
+        $GLOBALS['obl_current_command'] = '';
+    }
+
+    // A-5-2 加固：Fatal Error 兜底持久化（设计案 §3.2）
+    // register_shutdown_function 检测 Fatal 时调用 obl_runtime_persist_logs，
+    // 覆盖 Parse Error / Fatal Error / OOM 等无法被 try/catch 捕获的路径。
+    // 静态变量守卫防止 obl_runtime_boot 多次调用时重复注册。
+    static $shutdown_registered = false;
+    if (!$shutdown_registered) {
+        register_shutdown_function('obl_runtime_persist_logs_on_fatal');
+        $shutdown_registered = true;
     }
 
     return array(
@@ -318,12 +347,13 @@ function obl_runtime_shutdown_cleanup() {
 }
 
 function obl_runtime_persist_logs($pdata = null, $source = 'api', $writers = array()) {
-    global $obl_log, $obl_error_log, $obl_battle_log, $groomid;
+    global $obl_log, $obl_error_log, $obl_battle_log, $obl_diag_log, $groomid;
     $pid = is_array($pdata) && isset($pdata['pid']) ? (int)$pdata['pid'] : 0;
     if ($pid <= 0) return array('ok' => true, 'warnings' => array());
     $warnings = array();
     if (isset($obl_log) && $obl_log && $obl_log->hasEntries()) obl_log_persist($obl_log, $groomid, $pid);
     if (isset($obl_error_log) && $obl_error_log && $obl_error_log->hasEntries()) obl_error_log_persist($obl_error_log, $groomid, $pid);
+    if (isset($obl_diag_log) && $obl_diag_log && $obl_diag_log->hasEntries()) obl_diag_log_persist($obl_diag_log, $groomid, $pid);
     // 默认 battle writer：把 BattleLogCollector 的事件流追加写入 debug 文件，
     // 供复现 BUG 时分析。调用方仍可通过 $writers['battle'] 显式注入覆盖。
     $battle_writer = isset($writers['battle']) && is_callable($writers['battle'])
@@ -342,6 +372,35 @@ function obl_runtime_persist_logs($pdata = null, $source = 'api', $writers = arr
         $warnings[] = 'COMBAT_DEBUG_PERSIST_FAILED';
     }
     return array('ok' => true, 'warnings' => $warnings);
+}
+
+/**
+ * Fatal Error 兜底持久化（A-5-2 加固，设计案 §3.2）
+ *
+ * 由 register_shutdown_function 注册，在 PHP 关闭阶段执行。
+ * 检测最后一个错误是否为 Fatal（Parse Error / Fatal Error / OOM 等），
+ * 是则触发诊断日志持久化，覆盖 try/catch 无法捕获的路径。
+ *
+ * 幂等性：obl_diag_log_persist 内部通过 $logger->clear() 保证多次调用安全；
+ * 若 obl_runtime_persist_logs 已在正常/异常路径执行过，此处为空操作。
+ */
+function obl_runtime_persist_logs_on_fatal() {
+    $error = error_get_last();
+    if (!is_array($error)) return;
+    $fatal_types = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR;
+    if (($error['type'] & $fatal_types) === 0) return;
+
+    // 检测到 Fatal，尽力持久化诊断日志
+    try {
+        $pdata = null;
+        if (function_exists('obl_fetch_playerdata_by_name') && isset($GLOBALS['cuser'])) {
+            $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+        }
+        obl_runtime_persist_logs($pdata, 'fatal');
+    } catch (Throwable $e) {
+        // 兜底路径不能再抛错，仅 error_log 留痕
+        error_log('[OBL_DIAG_PERSIST_FATAL_FAILED] ' . $e->getMessage());
+    }
 }
 
 function obl_runtime_reload_tick_globals() {

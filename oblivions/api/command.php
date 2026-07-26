@@ -92,16 +92,24 @@ try {
         $response = obl_runtime_attach_presentation($response, $presentation);
     }
 
-    if (!$rolled_back) {
-        $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
-        $persist = obl_runtime_persist_logs($pdata, 'command');
-        if (!empty($persist['warnings'])) $response['warnings'] = array_values($persist['warnings']);
-    }
+    // A-5-2 加固：诊断日志持久化与事务成功/失败解耦（设计案 §3.2）
+    // 回滚路径也持久化——最需要调试的"失败现场"不能再丢日志
+    $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+    $persist = obl_runtime_persist_logs($pdata, 'command');
+    if (!empty($persist['warnings'])) $response['warnings'] = array_values($persist['warnings']);
     obl_runtime_release_room_lock($lock_name);
     $GLOBALS['obl_runtime_lock_name'] = null;
     obl_command_response_emit($response);
 } catch (Throwable $e) {
     obl_runtime_transaction_rollback();
+    // A-5-2 加固：异常路径也持久化诊断日志（catch 块不再丢日志）
+    try {
+        $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+        obl_runtime_persist_logs($pdata, 'command');
+    } catch (Throwable $persist_ex) {
+        // 持久化本身失败不掩盖原异常，仅 error_log 留痕
+        error_log('[OBL_DIAG_PERSIST_FAILED] ' . $persist_ex->getMessage());
+    }
     obl_runtime_release_room_lock($lock_name);
     $GLOBALS['obl_runtime_lock_name'] = null;
     obl_command_response_emit(obl_command_response_error('INTERNAL_ERROR', $e->getMessage()));

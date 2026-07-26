@@ -48,7 +48,7 @@ import { usePresentationSceneStore } from '@/stores/presentation-scene';
 import { ingestPresentationResponse, presentationInbox } from '@/stores/presentation-inbox';
 import type { ApiAction } from '@/api/endpoints';
 import { getSceneGeometry } from '@/composables/sceneRegistry';
-import { actorTraceEnabled } from '@/composables/useDebugBus';
+import { actorTraceEnabled, debugBus } from '@/composables/useDebugBus';
 import type { BattleQueue, PlayerInfo, Enemy, CombatViewModel, CombatTargetsResponse, BattleState } from '@/types/api';
 import type { PresentationAnimationRun } from '@/types/presentation-scene';
 import {
@@ -150,6 +150,9 @@ function extractNpcPidFromScript(script: BattlePlayScript): number {
   }
   return 0;
 }
+
+// ─── DebugBus state 注册标志（避免重复注册） ───
+let _debugStateRegistered = false;
 
 export const useBattleStore = defineStore('battle', () => {
   // ── 场景所有权（F-K1-Scenes 单一真源） ──
@@ -1157,6 +1160,16 @@ export const useBattleStore = defineStore('battle', () => {
     pendingAuthorityScopes.clear();
     usePresentationSceneStore().reset();
     stopNpcTurnRefresh();
+  }
+
+  // ─── DebugBus 状态注册（供 ?debug=ai 使用） ───
+  if (!_debugStateRegistered) {
+    _debugStateRegistered = true;
+    debugBus.registerState('battle', () => ({
+      currentMode: currentMode.value,
+      isPlayingBattleLog: isPlayingBattleLog.value,
+      isProcessingBattle: isProcessingBattle.value,
+    }));
   }
 
   return {

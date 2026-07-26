@@ -1,6 +1,5 @@
 /**
  * @module K 状态管理层
- * @framework K-1 战斗回合编排 + 演示播放管道
  */
 
 // 战斗播放运行器：消费 PlaybackStep 列表，按 awaitPolicy 执行动画/日志/场景切换

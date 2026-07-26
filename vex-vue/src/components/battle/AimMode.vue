@@ -33,7 +33,7 @@ import type { AimModeEventData } from '@/types/events';
 import { useToastStore } from '@/stores/toast';
 import { buildAimLineGeometry } from '@/utils/aim-line-geometry';
 import { getSceneGeometry } from '@/composables/sceneRegistry';
-import { task3Debug } from '@/utils/task3-debug';
+import { animationTrace } from '@/utils/animation-trace';
 
 // ── 状态 ──
 const aimModeActive = ref<boolean>(false);
@@ -162,7 +162,7 @@ function applyAimTargetable(): void {
   const grid = getMapGrid();
   clearAimTargetable();
   if (!grid) {
-    task3Debug.log('battle-aim.bind-missing-root', {
+    animationTrace.log('battle-aim.bind-missing-root', {
       targetMode: aimTargetMode.value,
       actId: aimTargetingStore.actId,
     });
@@ -196,7 +196,7 @@ function applyAimTargetable(): void {
   grid.addEventListener('mousemove', _onMouseMove);
   grid.addEventListener('mouseleave', _onMouseLeave);
   grid.addEventListener('click', _onClick, true);
-  task3Debug.log('battle-aim.bind-root', {
+  animationTrace.log('battle-aim.bind-root', {
     targetMode: aimTargetMode.value,
     actId: aimTargetingStore.actId,
     sceneGrid: grid.dataset.sceneGrid ?? null,
@@ -260,7 +260,7 @@ function onAimMouseLeave(): void {
 
 function onAimClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  task3Debug.log('battle-aim.click', {
+  animationTrace.log('battle-aim.click', {
     targetMode: aimTargetMode.value,
     targetTag: target?.tagName ?? null,
     targetEntity: target?.closest?.('[data-character-pid]')?.getAttribute('data-character-pid') ?? null,
@@ -304,7 +304,7 @@ function onAimClick(e: MouseEvent): void {
 function confirmEnemyTarget(pid: number): boolean {
   const selectable = isEnemySelectable(pid);
   const inRange = isEnemyInActionRange(pid);
-  task3Debug.log('battle-aim.confirm-enemy', {
+  animationTrace.log('battle-aim.confirm-enemy', {
     pid,
     selectable,
     inRange,

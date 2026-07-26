@@ -2,7 +2,6 @@
 /**
  * @module B 命令系统
  * @framework B-3 命令总线执行管道
- * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');
@@ -198,8 +197,16 @@ function obl_command_handler_dispatch($command, $payload, &$pdata) {
  * @return array ['ok' => bool, 'data' => [...], 'code' => string|null]
  */
 function obl_command_handler_map_navigate($payload, &$pdata) {
-    global $obl_log;
-    error_log("[NAV_DEBUG] nav_begin: pid={$pdata['pid']} payload=" . json_encode($payload) . " cur_pgroup={$pdata['pgroup']} cur_pls={$pdata['pls']} sp={$pdata['sp']}");
+    global $obl_log, $obl_diag_log;
+    if (isset($obl_diag_log) && $obl_diag_log) {
+        $obl_diag_log->emit('nav.begin', 'navigate', array(
+            'pid'         => isset($pdata['pid']) ? (int)$pdata['pid'] : 0,
+            'payload'     => $payload,
+            'cur_pgroup'  => isset($pdata['pgroup']) ? (int)$pdata['pgroup'] : 0,
+            'cur_pls'     => isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
+            'sp'          => isset($pdata['sp']) ? (int)$pdata['sp'] : 0,
+        ));
+    }
 
     // 1. 初始化导航器（解析 payload + 选目标）
     $navigation = obl_navigation_begin($payload, $pdata);
@@ -459,7 +466,20 @@ function obl_command_handler_map_navigate($payload, &$pdata) {
  * @return array navigation 响应结构
  */
 function obl_command_build_navigation_result($navigation, &$pdata, $steps, $presentation_events) {
-    error_log("[NAV_DEBUG] build_result: outcome=" . ($navigation['outcome'] ?? 'null') . " outcome_reason=" . ($navigation['outcome_reason'] ?? 'null') . " steps_count=" . count($steps ?? []) . " requested_target_pls=" . ($navigation['requested_target_pls'] ?? 'null') . " target_pls=" . ($navigation['target_pls'] ?? 'null') . " final_pgroup={$pdata['pgroup']} final_pls={$pdata['pls']} steps_taken=" . ($navigation['steps_taken'] ?? 0) . " max_steps=" . ($navigation['max_steps'] ?? 0));
+    global $obl_diag_log;
+    if (isset($obl_diag_log) && $obl_diag_log) {
+        $obl_diag_log->emit('nav.build_result', 'navigate', array(
+            'outcome'              => isset($navigation['outcome']) ? $navigation['outcome'] : null,
+            'outcome_reason'       => isset($navigation['outcome_reason']) ? $navigation['outcome_reason'] : null,
+            'steps_count'          => count($steps ?? array()),
+            'requested_target_pls' => isset($navigation['requested_target_pls']) ? $navigation['requested_target_pls'] : null,
+            'target_pls'           => isset($navigation['target_pls']) ? $navigation['target_pls'] : null,
+            'final_pgroup'         => isset($pdata['pgroup']) ? (int)$pdata['pgroup'] : 0,
+            'final_pls'            => isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
+            'steps_taken'          => isset($navigation['steps_taken']) ? (int)$navigation['steps_taken'] : 0,
+            'max_steps'            => isset($navigation['max_steps']) ? (int)$navigation['max_steps'] : 0,
+        ));
+    }
     return array(
         'navigation_id'  => $navigation['navigation_id'],
         'steps'          => $steps,

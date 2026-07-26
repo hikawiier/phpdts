@@ -521,6 +521,7 @@ function obl_navigation_bfs_full_path($from, $to, array $tiles, array $blocked_t
  *   ]
  */
 function obl_navigation_begin($payload, &$pdata) {
+    global $obl_diag_log;
     $cfg = obl_get_config();
     $default_max_steps = (int)($cfg['navigation_max_steps_default'] ?? 20);
     $limit_max_steps = (int)($cfg['navigation_max_steps_limit'] ?? 50);
@@ -640,7 +641,17 @@ function obl_navigation_begin($payload, &$pdata) {
         $navigation['target_is_auto'] = true;
     }
 
-    error_log("[NAV_DEBUG] begin_result: requested_target_pls=" . ($navigation['requested_target_pls'] ?? 'null') . " target_pls=" . ($navigation['target_pls'] ?? 'null') . " target_is_auto=" . (int)($navigation['target_is_auto'] ?? 0) . " finished=" . (int)($navigation['finished'] ?? 0) . " outcome=" . ($navigation['outcome'] ?? 'null') . " reason=" . ($navigation['outcome_reason'] ?? 'null') . " cur_pls={$pdata['pls']}");
+    if (isset($obl_diag_log) && $obl_diag_log) {
+        $obl_diag_log->emit('nav.begin_result', 'navigate', array(
+            'requested_target_pls' => isset($navigation['requested_target_pls']) ? $navigation['requested_target_pls'] : null,
+            'target_pls'           => isset($navigation['target_pls']) ? $navigation['target_pls'] : null,
+            'target_is_auto'       => isset($navigation['target_is_auto']) ? (int)$navigation['target_is_auto'] : 0,
+            'finished'             => isset($navigation['finished']) ? (int)$navigation['finished'] : 0,
+            'outcome'              => isset($navigation['outcome']) ? $navigation['outcome'] : null,
+            'outcome_reason'       => isset($navigation['outcome_reason']) ? $navigation['outcome_reason'] : null,
+            'cur_pls'              => isset($pdata['pls']) ? (int)$pdata['pls'] : 0,
+        ));
+    }
     return $navigation;
 }
 
@@ -954,6 +965,7 @@ function obl_navigation_find_next_step($pgroup, $from, $to, &$pdata, $tendency, 
  *                     null 表示无中断，可继续
  */
 function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
+    global $obl_diag_log;
     $cur_pls = (int)$pdata['pls'];
     $target_pls = (int)$navigation['target_pls'];
 
@@ -964,7 +976,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
         $navigation['finished'] = true;
         $navigation['outcome'] = 'interrupted';
         $navigation['outcome_reason'] = 'force_combat';
-        error_log("[NAV_DEBUG] interrupt: reason=force_combat cur_pls=$cur_pls target_pls=$target_pls");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                'reason'     => 'force_combat',
+                'cur_pls'    => $cur_pls,
+                'target_pls' => $target_pls,
+            ));
+        }
         return array(
             'reason'  => 'force_combat',
             'details' => array(
@@ -979,7 +997,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
         $navigation['finished'] = true;
         $navigation['outcome'] = 'arrived';
         $navigation['outcome_reason'] = 'arrived';
-        error_log("[NAV_DEBUG] interrupt: reason=arrived cur_pls=$cur_pls target_pls=$target_pls");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                'reason'     => 'arrived',
+                'cur_pls'    => $cur_pls,
+                'target_pls' => $target_pls,
+            ));
+        }
         return array('reason' => 'arrived', 'details' => array());
     }
 
@@ -988,7 +1012,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
         $navigation['finished'] = true;
         $navigation['outcome'] = 'interrupted';
         $navigation['outcome_reason'] = 'enemy_discovered';
-        error_log("[NAV_DEBUG] interrupt: reason=enemy_discovered cur_pls=$cur_pls target_pls=$target_pls");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                'reason'     => 'enemy_discovered',
+                'cur_pls'    => $cur_pls,
+                'target_pls' => $target_pls,
+            ));
+        }
         return array(
             'reason'  => 'enemy_discovered',
             'details' => array('enemies' => $info_result['enemies_discovered']),
@@ -1000,7 +1030,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
         $navigation['finished'] = true;
         $navigation['outcome'] = 'interrupted';
         $navigation['outcome_reason'] = 'poi_discovered';
-        error_log("[NAV_DEBUG] interrupt: reason=poi_discovered cur_pls=$cur_pls target_pls=$target_pls");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                'reason'     => 'poi_discovered',
+                'cur_pls'    => $cur_pls,
+                'target_pls' => $target_pls,
+            ));
+        }
         return array(
             'reason'  => 'poi_discovered',
             'details' => array('pois' => $info_result['pois_discovered']),
@@ -1016,7 +1052,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
         $navigation['finished'] = true;
         $navigation['outcome'] = 'interrupted';
         $navigation['outcome_reason'] = 'no_sp';
-        error_log("[NAV_DEBUG] interrupt: reason=no_sp cur_pls=$cur_pls target_pls=$target_pls");
+        if (isset($obl_diag_log) && $obl_diag_log) {
+            $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                'reason'     => 'no_sp',
+                'cur_pls'    => $cur_pls,
+                'target_pls' => $target_pls,
+            ));
+        }
         return array('reason' => 'no_sp', 'details' => array());
     }
 
@@ -1030,7 +1072,13 @@ function obl_navigation_check_interrupt(&$navigation, &$pdata, $info_result) {
             $navigation['finished'] = true;
             $navigation['outcome'] = 'interrupted';
             $navigation['outcome_reason'] = 'capability_lost';
-            error_log("[NAV_DEBUG] interrupt: reason=capability_lost cur_pls=$cur_pls target_pls=$target_pls");
+            if (isset($obl_diag_log) && $obl_diag_log) {
+                $obl_diag_log->emit('nav.interrupt', 'navigate', array(
+                    'reason'     => 'capability_lost',
+                    'cur_pls'    => $cur_pls,
+                    'target_pls' => $target_pls,
+                ));
+            }
             return array(
                 'reason'  => 'capability_lost',
                 'details' => array('capability' => 'voluntary_move'),

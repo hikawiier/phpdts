@@ -86,6 +86,8 @@ export interface PlayDamageNumbersEventData {
 
 /** DebugBus 事件条目 */
 export interface DebugBusEntry {
+  seq: number;
+  t: number;
   ts: number;
   cat: string; // 事件类别
   step: string; // 事件步骤

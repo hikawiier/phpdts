@@ -18,6 +18,8 @@ function obl_command_api_handle($envelope) {
     global $groomid, $obl_log, $obl_error_log, $obl_battle_log, $obl_runtime_ctx;
 
     $command = $envelope['command'];
+    // A-5-2 加固：记录当前命令名，供诊断日志条目附加（设计案 §3.4）
+    $GLOBALS['obl_current_command'] = (string)$command;
     $request_id = isset($envelope['request_id']) ? (string)$envelope['request_id'] : '';
     $contract = obl_command_contract($command);
     if (!$contract) {
@@ -66,7 +68,7 @@ function obl_command_api_handle($envelope) {
                 $request_id,
                 isset($gate['data']) ? $gate['data'] : null
             );
-        } elseif ((int)$pdata['hp'] <= 0) {
+        } elseif (empty($contract['debug_only']) && (int)$pdata['hp'] <= 0) {
             $response = obl_command_response_error('COMMAND_NOT_ALLOWED', '', null, $request_id);
         } else {
             $feedback_snapshot = obl_command_feedback_snapshot();
@@ -160,6 +162,13 @@ function obl_command_authenticate_player() {
 }
 
 function obl_command_gate($command, $contract, $payload, $envelope, &$pdata) {
+    if (!empty($contract['debug_only'])) {
+        if (!function_exists('obl_debug_enabled') || !obl_debug_enabled()) {
+            return array('ok' => false, 'code' => 'DEBUG_MODE_REQUIRED');
+        }
+        return array('ok' => true);
+    }
+
     if (!obl_command_allowed_by_contract($contract, $pdata)) {
         return array('ok' => false, 'code' => 'COMMAND_NOT_ALLOWED');
     }

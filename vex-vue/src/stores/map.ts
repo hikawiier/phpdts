@@ -30,7 +30,7 @@ import { dataManager } from '@/stores/data-manager';
 import { debugBus } from '@/composables/useDebugBus';
 import { computeReachableMap } from '@/composables/useMapReachability';
 import { perf } from '@/utils/perf';
-import { task3Debug } from '@/utils/task3-debug';
+import { animationTrace } from '@/utils/animation-trace';
 import { useCharacterStore } from '@/stores/character';
 import type { GameMap, Enemy } from '@/types/api';
 import type { TileRef } from '@/types/scene';
@@ -108,7 +108,7 @@ export const useMapStore = defineStore('map', () => {
       enemies: patch.enemies !== undefined ? patch.enemies : previous.enemies,
     });
     if (hadCurLocChange) {
-      task3Debug.log('map-store.updateMapData.curLoc', {
+      animationTrace.log('map-store.updateMapData.curLoc', {
         prevPls,
         newPls: pls,
         prevPgroup: previous.currentTile?.pgroup ?? null,
@@ -123,7 +123,7 @@ export const useMapStore = defineStore('map', () => {
   function setVisualCenter(pls: number | null): void {
     const prev = visualCenter.value;
     visualCenter.value = pls;
-    task3Debug.log('map-store.setVisualCenter', {
+    animationTrace.log('map-store.setVisualCenter', {
       prevVisualCenter: prev,
       newVisualCenter: pls,
       curLoc: curLoc.value,
@@ -134,7 +134,7 @@ export const useMapStore = defineStore('map', () => {
   function clearVisualCenter(): void {
     const prev = visualCenter.value;
     visualCenter.value = null;
-    task3Debug.log('map-store.clearVisualCenter', {
+    animationTrace.log('map-store.clearVisualCenter', {
       prevVisualCenter: prev,
       curLoc: curLoc.value,
     });

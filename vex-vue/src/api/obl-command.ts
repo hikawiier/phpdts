@@ -9,6 +9,7 @@ import { API_BASE, fetchWithTimeout, type CommandResult } from './client';
 import { renderCommandFeedback } from '@/data/command-feedback';
 import { perf } from '@/utils/perf';
 import type { PresentationBatchV1 } from '@/types/api';
+import { isDebugAllEnabled } from '@/utils/debug-flags';
 
 // 命令请求信封：command/request_id/payload/expected/client
 export interface OblCommandEnvelope<TPayload = unknown> {
@@ -58,7 +59,8 @@ export async function sendOblCommand<TPayload = unknown>(
 
   return perf.spanAsync(`sendOblCommand(${body.command})`, 'api', async () => {
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/oblivions/api/command.php`, {
+      const debugQuery = body.command.startsWith('debug.') && isDebugAllEnabled() ? '?debug=all' : '';
+      const res = await fetchWithTimeout(`${API_BASE}/oblivions/api/command.php${debugQuery}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

@@ -3,7 +3,7 @@
  */
 
 // ══════════════════════════════════════════════════
-// 临时性能分析工具 / Performance Profiler
+// 性能分析工具 / Performance Profiler
 //
 // 用途：定位指令提交到界面更新的延迟瓶颈
 // 使用：在浏览器控制台执行 perf.enable() 开启，perf.disable() 关闭

@@ -79,6 +79,13 @@ try {
     obl_command_response_emit($response);
 } catch (Throwable $e) {
     obl_runtime_transaction_rollback();
+    // A-5-2 加固：异常路径也持久化诊断日志（设计案 §3.2）
+    try {
+        $pdata = obl_fetch_playerdata_by_name($GLOBALS['cuser']);
+        obl_runtime_persist_logs($pdata, 'heartbeat');
+    } catch (Throwable $persist_ex) {
+        error_log('[OBL_DIAG_PERSIST_FAILED] ' . $persist_ex->getMessage());
+    }
     obl_runtime_release_room_lock($lock_name);
     $GLOBALS['obl_runtime_lock_name'] = null;
     obl_command_response_emit(obl_command_response_error('INTERNAL_ERROR', $e->getMessage()));

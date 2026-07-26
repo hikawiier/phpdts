@@ -21,7 +21,7 @@ import {
   centerOnScenePoint,
   keepElementWithinCameraSafeZone,
 } from '@/composables/useMapInteraction';
-import { task3Debug } from '@/utils/task3-debug';
+import { animationTrace } from '@/utils/animation-trace';
 import type { ActorElements, ActorRuntime, AnimationHandle, AnimationResult, MoveTier, PresentationLease } from '@/types/actor-runtime';
 import type { MapEntity } from '@/types/map-entity';
 import type { PresentationRebaseMoveRegistration } from '@/types/presentation-scene';
@@ -191,7 +191,7 @@ export function useMapEntities(
   }
 
   async function playWorldMove(entity: MapEntity, lease: PresentationLease): Promise<void> {
-    task3Debug.log('map-entities.playWorldMove.entry', {
+    animationTrace.log('map-entities.playWorldMove.entry', {
       entityId: entity.id,
       pls: Number(entity.pls),
       pgroup: Number(entity.pgroup),
@@ -200,7 +200,7 @@ export function useMapEntities(
     await nextTick();
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     if (lease.released || worldMoves.get(entity.id) !== lease) {
-      task3Debug.log('map-entities.playWorldMove.early-exit', {
+      animationTrace.log('map-entities.playWorldMove.early-exit', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'lease preempted before rAF',
@@ -215,7 +215,7 @@ export function useMapEntities(
     const anchor = resolveAnchor(entity);
     const from = runtime?.getScenePoint();
     if (!runtime || !anchor || !from) {
-      task3Debug.log('map-entities.playWorldMove.early-exit', {
+      animationTrace.log('map-entities.playWorldMove.early-exit', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'runtime/anchor/from missing',
@@ -230,7 +230,7 @@ export function useMapEntities(
       return;
     }
     if (isScenePointAtAnchor(from, anchor)) {
-      task3Debug.log('map-entities.playWorldMove.early-exit', {
+      animationTrace.log('map-entities.playWorldMove.early-exit', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'already at anchor (no animation needed)',
@@ -267,7 +267,7 @@ export function useMapEntities(
           }
         }
       : undefined;
-    task3Debug.log('map-entities.playWorldMove.dispatch', {
+    animationTrace.log('map-entities.playWorldMove.dispatch', {
       entityId: entity.id,
       pls: Number(entity.pls),
       tier,
@@ -285,7 +285,7 @@ export function useMapEntities(
     await visibilityHandle?.finished ?? undefined;
     lease.release({ reconcile: true });
     if (worldMoves.get(entity.id) === lease) worldMoves.delete(entity.id);
-    task3Debug.log('map-entities.playWorldMove.completed', {
+    animationTrace.log('map-entities.playWorldMove.completed', {
       entityId: entity.id,
       pls: Number(entity.pls),
       tier,
@@ -326,7 +326,7 @@ export function useMapEntities(
     const anchor = resolveAnchor(entity);
     const from = runtime?.getScenePoint();
     if (!runtime || !anchor || !from) {
-      task3Debug.log('map-entities.startRebaseWorldMove.skip', {
+      animationTrace.log('map-entities.startRebaseWorldMove.skip', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'runtime/anchor/from missing',
@@ -337,7 +337,7 @@ export function useMapEntities(
       return null;
     }
 
-    task3Debug.log('map-entities.startRebaseWorldMove.entry', {
+    animationTrace.log('map-entities.startRebaseWorldMove.entry', {
       entityId: entity.id,
       pls: Number(entity.pls),
       token,
@@ -359,7 +359,7 @@ export function useMapEntities(
     worldMoves.get(entity.id)?.release({ reconcile: false });
     rebaseMoves.get(entity.id)?.cancel('rebase_move_replaced');
     if (isScenePointAtAnchor(from, anchor)) {
-      task3Debug.log('map-entities.startRebaseWorldMove.at-anchor', {
+      animationTrace.log('map-entities.startRebaseWorldMove.at-anchor', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'already at anchor, project only',
@@ -375,7 +375,7 @@ export function useMapEntities(
       replaceEqualOwner: true,
     });
     if (!lease) {
-      task3Debug.log('map-entities.startRebaseWorldMove.lease-failed', {
+      animationTrace.log('map-entities.startRebaseWorldMove.lease-failed', {
         entityId: entity.id,
         pls: Number(entity.pls),
         reason: 'runtime.acquire returned null (priority conflict)',
@@ -385,7 +385,7 @@ export function useMapEntities(
     worldMoves.set(entity.id, lease);
     runtime.projectAnchor(anchor);
     const tier = calcMoveTier(from.x, from.y, anchor);
-    task3Debug.log('map-entities.startRebaseWorldMove.dispatch', {
+    animationTrace.log('map-entities.startRebaseWorldMove.dispatch', {
       entityId: entity.id,
       pls: Number(entity.pls),
       tier,
@@ -551,7 +551,7 @@ export function useMapEntities(
         const previousEntity = oldById.get(entity.id);
         if (!previousEntity) continue;
         if (sameTile(previousEntity, entity)) continue;
-        task3Debug.log('map-entities.stopEntitiesWatch.entity-move', {
+        animationTrace.log('map-entities.stopEntitiesWatch.entity-move', {
           entityId: entity.id,
           prevPls: Number(previousEntity.pls),
           prevPgroup: Number(previousEntity.pgroup),
@@ -574,7 +574,7 @@ export function useMapEntities(
         if (!runtime) continue;
         const existing = worldMoves.get(entity.id);
         if (existing) {
-          task3Debug.log('map-entities.stopEntitiesWatch.cancel-existing', {
+          animationTrace.log('map-entities.stopEntitiesWatch.cancel-existing', {
             entityId: entity.id,
             reason: 'new world move supersedes previous lease',
           });
@@ -588,7 +588,7 @@ export function useMapEntities(
           replaceEqualOwner: true,
         });
         if (!lease) {
-          task3Debug.log('map-entities.stopEntitiesWatch.acquire-failed', {
+          animationTrace.log('map-entities.stopEntitiesWatch.acquire-failed', {
             entityId: entity.id,
             reason: 'runtime.acquire returned null (priority conflict)',
             regionTransition,
@@ -597,7 +597,7 @@ export function useMapEntities(
           continue;
         }
         worldMoves.set(entity.id, lease);
-        task3Debug.log('map-entities.stopEntitiesWatch.dispatch', {
+        animationTrace.log('map-entities.stopEntitiesWatch.dispatch', {
           entityId: entity.id,
           pls: Number(entity.pls),
           kind: regionTransition ? 'playRegionArrival' : 'playWorldMove',

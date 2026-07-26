@@ -3,7 +3,6 @@
  * @module A API 层
  * @framework A-3 状态查询范围分发
  * @framework A-4 结构化视图投影函数集
- * @framework A-5 调试工具框架
  */
 if (!defined('IN_GAME')) {
     exit('Access Denied');

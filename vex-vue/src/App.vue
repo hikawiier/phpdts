@@ -52,7 +52,9 @@ import GroundItemsModal from '@/components/actions/GroundItemsModal.vue';
 import DiscoveryModal from '@/components/DiscoveryModal.vue';
 import ToastContainer from '@/components/layout/ToastContainer.vue';
 import PortraitHint from '@/components/layout/PortraitHint.vue';
-import { isDebugEnabled } from '@/utils/debug-flags';
+import DebugConsole from '@/components/debug/DebugConsole.vue';
+import { useDebugConsoleStore } from '@/stores/debug-console';
+import { isDebugAllEnabled, isDebugEnabled } from '@/utils/debug-flags';
 
 const playerStore = usePlayerStore();
 const mapStore = useMapStore();
@@ -64,6 +66,7 @@ const toastStore = useToastStore();
 const logStore = useLogStore();
 const errorLogStore = useErrorLogStore();
 const poiStore = usePoiStore();
+const debugConsoleStore = useDebugConsoleStore();
 
 // ── 战斗模式：根元素加 .battle-active 类（红色边框光效） ──
 // 派生自 sceneStore.isBattle（单一真源）
@@ -71,6 +74,7 @@ const isBattleActive = computed(() => sceneStore.isBattle);
 
 // ── ?debug=ai 时加 .debug-ai 类（显示 tick 调试） ──
 const isDebugAi = computed(() => isDebugEnabled('ai'));
+const isDebugAll = computed(() => isDebugAllEnabled());
 
 // ── 竖屏检测：横屏是主设计基准，竖屏只显示旋转提示（设计案 §7.2 / B6.27-B6.29） ──
 const isPortrait = ref(false);
@@ -125,6 +129,10 @@ onMounted(async () => {
   if (playerStore.isInBattle) {
     await battleStore.refreshBattle();
   }
+
+  if (isDebugAll.value) {
+    await debugConsoleStore.initialize();
+  }
 });
 
 onUnmounted(() => {
@@ -135,6 +143,7 @@ onUnmounted(() => {
   battleStore.stopDaemonPoll();
   errorLogStore.stopPolling();
   commandQueue.destroy();
+  debugConsoleStore.destroy();
 });
 </script>
 
@@ -185,6 +194,7 @@ onUnmounted(() => {
     <GroundItemsModal />
     <DiscoveryModal />
     <ToastContainer />
+    <DebugConsole v-if="isDebugAll" />
 
     <!-- ═══ 竖屏旋转提示（fixed inset:0 z-index:9999，覆盖一切 / B6.27-B6.29） ═══ -->
     <PortraitHint v-if="isPortrait" />

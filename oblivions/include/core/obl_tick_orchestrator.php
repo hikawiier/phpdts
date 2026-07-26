@@ -132,7 +132,7 @@ function obl_tick_orchestrator_after_command($ctx, $command, $contract, &$pdata,
  *   ]
  */
 function obl_tick_orchestrator_advance_for_navigation_step(&$pdata, $step) {
-    global $gamevars;
+    global $gamevars, $obl_error_log, $obl_diag_log;
 
     if (!isset($gamevars) || !is_array($gamevars)) $gamevars = array();
 
@@ -180,7 +180,25 @@ function obl_tick_orchestrator_advance_for_navigation_step(&$pdata, $step) {
         $new_pgroup = (int)$fresh['pgroup'];
         if ($old_pls !== $new_pls || $old_pgroup !== $new_pgroup) {
             // CRITICAL 级别：监听器违反契约修改了玩家位置，运行时监控应捕获并告警
+            // 三通道告警：PHP error_log（运维可见）+ obl_error_log（命令反馈链路）+ obl_diag_log（调试诊断）
+            $drift_params = array(
+                'old_pgroup' => $old_pgroup,
+                'old_pls'    => $old_pls,
+                'new_pgroup' => $new_pgroup,
+                'new_pls'    => $new_pls,
+                'action'     => isset($fresh['action']) ? $fresh['action'] : null,
+                'bid'        => isset($fresh['bid']) ? $fresh['bid'] : null,
+            );
+            // 通道 1：PHP error_log（保留——运维可见，CRITICAL 错误需进系统日志）
             error_log("[CRITICAL][NAV_DEBUG] tick_drift_detected! old_pgroup=$old_pgroup old_pls=$old_pls new_pgroup=$new_pgroup new_pls=$new_pls action=" . ($fresh['action'] ?? 'null') . " bid=" . ($fresh['bid'] ?? 'null') . " — 监听器违反契约修改了玩家位置（B-Q5-A Q5-11，DESIGN.md §9.2），handler 未同步！");
+            // 通道 2：obl_error_log（保留——承担命令反馈链路，前端可见失败原因）
+            if (isset($obl_error_log) && $obl_error_log) {
+                $obl_error_log->emit('tick.drift_detected', $drift_params, 'tick');
+            }
+            // 通道 3：obl_diag_log（新增——调试诊断链路，按 category='tick' 拉取）
+            if (isset($obl_diag_log) && $obl_diag_log) {
+                $obl_diag_log->emit('tick.drift_detected', 'tick', $drift_params);
+            }
         }
     }
 
