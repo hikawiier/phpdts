@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 生成器注册表（对齐 NEW_DESIGN.md §3.7.2 + Dian.md O-4）
+// 生成器注册表（M8 主题生成器；P1 归入 O-6 世界工作区命令）
 //
 // 设计意图（对齐 2.6 配置驱动 + 模式 5 注册表架构）：
 //   - Map-based 全局注册表：Generator 实现统一接口，通过 registerGenerator 注册到全局 Map

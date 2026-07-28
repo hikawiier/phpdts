@@ -145,21 +145,24 @@ body {
   border-style: double;
 }
 
+/* tide 灰阶亮度——作为 box-shadow inset 叠加，不覆盖可通行格的 bg-gray-700 底色
+ * 避免 abyss tide 的可通行格被覆盖成和空白格一样的暗色 */
 .tide-deep {
-  background-color: rgba(136, 136, 136, 0.35);
+  box-shadow: inset 0 0 0 100px rgba(80, 80, 80, 0.3);
 }
 .tide-abyss {
-  background-color: rgba(34, 34, 34, 0.8);
+  box-shadow: inset 0 0 0 100px rgba(10, 10, 10, 0.45);
 }
 
-/* 不可通行格斜线纹理（C-8：替代 ✕ 文字标记，对齐 2.15 形状编码不引入彩色） */
+/* 不可通行格斜线纹理（C-8：替代 ✕ 文字标记，对齐 2.15 形状编码不引入彩色）
+ * 高对比度斜线——在 bg-gray-900 (#111111) 上需 0.55 不透明度的中灰才足够醒目 */
 .cell-blocked-texture {
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
-    transparent 4px,
-    rgba(136, 136, 136, 0.3) 4px,
-    rgba(136, 136, 136, 0.3) 5px
+    transparent 3px,
+    rgba(170, 170, 170, 0.55) 3px,
+    rgba(170, 170, 170, 0.55) 5px
   );
 }
 

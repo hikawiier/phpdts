@@ -1,0 +1,4 @@
+{
+  "_comment": "Force CommonJS scope for ts-node compatibility. The O-1 Workspace Gateway (oblivions/editor-next/server/) imports php-array-parser.ts via require() at runtime. editor-next/package.json has 'type': 'module', which would make Node.js treat .ts files here as ESM and break require(). This override scopes just this directory to CommonJS. Vite/vue-tsc use bundler resolution and are unaffected.",
+  "type": "commonjs"
+}

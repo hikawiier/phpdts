@@ -36,6 +36,11 @@ export const POI_LOCALE: Record<string, PoiLocaleEntry> = {
   // ─── 内容扩充（任务3）── 深渊区 POI
   'mystic_shrine': { name: '神秘祭坛', desc: '石砌祭坛上凝结着古老的血迹，周围散发着令人不安的气息。' },
 
+  // ─── F-6 交互型 POI（locked_door / locked_chest）──────────────────
+  // mechanic=interact_locked_door / interact_locked_chest，需工具触发解锁
+  'locked_door': { name: '上锁的门', desc: '一扇紧锁的金属门，看起来需要工具才能打开。' },
+  'locked_chest': { name: '上锁的宝箱', desc: '结实的金属宝箱，锁孔锈迹斑斑，需要合适的工具。' },
+
   // ─── F-7 玩家可放置 POI ──────────────────────────
   // 由 firewood 道具 use_effect=place_poi 生成的 POI 实例（state='idle' 待点燃）
   'campfire_unlit': { name: '熄灭的营火', desc: '一捆干柴堆成的未点燃火堆，可以用打火机点燃。' },

@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 生成器基类（对齐 NEW_DESIGN.md §3.7.1 + Dian.md O-4）
+// 生成器基类（M8 主题生成器）
 //
 // 设计意图（对齐 2.6 配置驱动 + 3.3 约束是意图的近似）：
 //   - Generator 接口契约：id / name / description 元信息 + 参数 schema + 全项目生成 + 单区域生成

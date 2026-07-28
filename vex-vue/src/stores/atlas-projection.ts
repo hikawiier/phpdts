@@ -62,8 +62,9 @@ export interface AtlasTile {
   /** 通行性（迷雾格不暴露；undefined=未知，false=不可通行，true=可通行） */
   passable?: boolean;
   /** discovered=1 的敌人（B5.24，迷雾格不暴露）
-   *  state: 0=活着，>0=死亡（B5.24 补全：死敌/活敌区分显示） */
-  enemy?: { pid: string | number; name: string; state: number };
+   *  state: 0=活着，>0=死亡（B5.24 补全：死敌/活敌区分显示）
+   *  P4 扩展：新增 type 字段供 getEnemyName(locale fallback) 查询使用 */
+  enemy?: { pid: string | number; type: string | number; name: string; state: number };
   /** 已发现的 POI（B5.25，占位接口，区域级数据源待接入） */
   poi?: { name: string };
   /** 已发现的普通地面道具（B5.25，占位接口，区域级数据源待接入） */
@@ -161,8 +162,9 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
   // ── discovered=1 敌人索引（按 pls，仅当前区域） ──
   // B5.24：只显示 discovered=1 的敌人；迷雾格的敌人在 tiles computed 中按 state 过滤
   // B5.24 补全：收集 state 字段（0=活着，>0=死亡），用于视图层区分死活显示
-  const enemiesByPls = computed<Record<string, { pid: string | number; name: string; state: number }>>(() => {
-    const map: Record<string, { pid: string | number; name: string; state: number }> = {};
+  // P4 扩展：携带 type 字段供视图层调用 getEnemyName(type, fallback) 查询 locale 中文名
+  const enemiesByPls = computed<Record<string, { pid: string | number; type: string | number; name: string; state: number }>>(() => {
+    const map: Record<string, { pid: string | number; type: string | number; name: string; state: number }> = {};
     if (mapStore.curRegion === null) return map;
     const curRegionStr = String(mapStore.curRegion);
     for (const e of mapStore.enemies as Enemy[]) {
@@ -170,7 +172,7 @@ export const useAtlasProjectionStore = defineStore('atlas-projection', () => {
       if (String(e.pgroup) !== curRegionStr) continue;
       // 归一化 state：兼容 string/number，0=活着，>0=死亡
       const stateNum = Number(e.state) || 0;
-      map[String(e.pls)] = { pid: e.pid, name: e.name, state: stateNum };
+      map[String(e.pls)] = { pid: e.pid, type: e.type, name: e.name, state: stateNum };
     }
     return map;
   });

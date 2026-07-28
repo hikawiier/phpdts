@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // GridOverlay：叠层容器组件（对齐 NEW_DESIGN.md §3.3.2 + §3.8 + DESIGN.md 2.13）
@@ -22,6 +23,9 @@ import OverlayFog from '@/components/overlays/OverlayFog.vue';
 import OverlayVision from '@/components/overlays/OverlayVision.vue';
 import OverlayReachability from '@/components/overlays/OverlayReachability.vue';
 import OverlayTideHeatmap from '@/components/overlays/OverlayTideHeatmap.vue';
+import OverlayPoiDistribution from '@/components/overlays/OverlayPoiDistribution.vue';
+import OverlayWilditemDistribution from '@/components/overlays/OverlayWilditemDistribution.vue';
+import OverlayEnemyDistribution from '@/components/overlays/OverlayEnemyDistribution.vue';
 import type { Pls, Tile } from '@/shared';
 
 const props = defineProps<{
@@ -81,6 +85,21 @@ const playerPls = computed(() => renderer.playerPos.value.pls);
       v-bind="layoutProps"
       :reachability-distance="reachabilityDistance"
       :path-preview="pathPreview"
+    />
+    <!-- POI 分布叠层（O-8）：不依赖玩家位置，由 distribution workspace 选中规则驱动 -->
+    <OverlayPoiDistribution
+      v-if="activeOverlays.poi"
+      v-bind="layoutProps"
+    />
+    <!-- 野生道具分布叠层（O-8）：选中 distribution.scatter 规则时激活 -->
+    <OverlayWilditemDistribution
+      v-if="activeOverlays.wilditem"
+      v-bind="layoutProps"
+    />
+    <!-- 敌人分布叠层（O-8）：选中 distribution.enemy 规则时激活 -->
+    <OverlayEnemyDistribution
+      v-if="activeOverlays.enemy"
+      v-bind="layoutProps"
     />
   </div>
 </template>

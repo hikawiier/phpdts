@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // BrushPresetPanel：画笔预设面板（对齐 NEW_DESIGN.md §3.1.5）
 //

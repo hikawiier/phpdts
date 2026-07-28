@@ -280,7 +280,7 @@ function obl_create_enemy_record($enemy_type, $pgroup, $pls) {
 
     // 载入敌人配置（按需）
     if (!isset($obl_enemies_config)) {
-        include GAME_ROOT . './oblivions/gamedata/enemies_config.php';
+        $obl_enemies_config = include GAME_ROOT . './oblivions/gamedata/enemies_config.php';
     }
 
     $config = isset($obl_enemies_config[$enemy_type]) ? $obl_enemies_config[$enemy_type] : null;

@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // scatter_pool 字段 schema（对齐 gamedata/scatter_pool.php）
 //

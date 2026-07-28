@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 常量集导出聚合（@/shared/constants）
 

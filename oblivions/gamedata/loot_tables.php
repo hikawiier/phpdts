@@ -11,7 +11,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // 表 ID 与 POI 模板 ID 共用同一命名空间（"表 ID 即 POI ID"约定）
 //
 // 结构：groups[] 物品组 + 组内 entries[] 互斥选项 + 表级 durability_decay 开关
-// 替代旧 poi_loot.php 的扁平 [['item_id','count','rate']] 结构
+// 原 poi_loot.php（孤儿文件，运行时零消费）已 P3 归档，此为 F-4 标准结构
 //
 // 字段语义：
 //   - 表级 name               : 表名（日志/调试用）
@@ -862,6 +862,36 @@ return [
                     ['item_id' => 'stamina_potion',  'weight' => 15, 'count' => 1],
                     ['item_id' => 'rusty_pipe',      'weight' => 10, 'count' => 1],
                     ['item_id' => 'scrap_vest',      'weight' => 5,  'count' => 1],
+                ],
+            ],
+        ],
+    ],
+
+    // ─── 神秘礼盒掉落（由 item_use_effect_open_gift_box 消费）──────────────
+    // 原 gift_box_loot_table.php 独立文件，P3 阶段合并到 loot_tables.php 统一管理。
+    // 调用方：item_use_effect_open_gift_box（item.use_effects.func.php）
+    // 调用方式：include loot_tables.php → 取 ['gift_box_loot'] 表定义
+    //           → 遍历 groups 调用 obl_roll_group（F-4 原语）
+    //           → obl_apply_durability_decay（如启用）
+    'gift_box_loot' => [
+        'name' => '神秘礼盒掉落',
+        // 礼盒产物不含装备耐久概念（盒子本身的 itme=1 是开盒次数标识）
+        'durability_decay' => false,
+        'groups' => [
+            // 第一组：100% 出一件物品（互斥加权选一）
+            [
+                'chance' => 1.0,
+                'entries' => [
+                    // 常见物资（高权重）
+                    ['item_id' => 'scrap_metal', 'weight' => 30, 'count' => [1, 3]],
+                    ['item_id' => 'dirty_rag',  'weight' => 25, 'count' => [1, 2]],
+                    ['item_id' => 'cloth',      'weight' => 20, 'count' => [1, 2]],
+                    // 偶尔有好装备（中权重）
+                    ['item_id' => 'scrap_blade', 'weight' => 10, 'count' => 1],
+                    ['item_id' => 'scrap_vest',  'weight' => 8,  'count' => 1],
+                    // 罕见药物（低权重）
+                    ['item_id' => 'health_potion',  'weight' => 5, 'count' => 1],
+                    ['item_id' => 'stamina_potion', 'weight' => 2, 'count' => 1],
                 ],
             ],
         ],

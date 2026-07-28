@@ -978,7 +978,7 @@ function obl_debug_state_console($ctx) {
     $result = $db->query("SELECT pid,type,name,pgroup,pls,hp,mhp,sp,msp,ap,max_ap,action,bid,state,discovered FROM {$tablepre}oblplayers WHERE type>0 ORDER BY pid");
     while ($result && ($row = $db->fetch_array($result))) $enemies[] = obl_debug_actor_summary($row);
     $config = array();
-    include GAME_ROOT . './oblivions/gamedata/enemies_config.php';
+    $obl_enemies_config = include GAME_ROOT . './oblivions/gamedata/enemies_config.php';
     foreach (($obl_enemies_config ?? array()) as $type => $enemy) {
         $config[] = array('type' => (int)$type, 'name' => (string)($enemy['name'] ?? ''));
     }

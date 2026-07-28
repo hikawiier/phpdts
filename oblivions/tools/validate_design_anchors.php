@@ -333,6 +333,8 @@ class DesignAnchorValidator {
         $roots = array(
             array('path' => 'oblivions', 'extensions' => array('php')),
             array('path' => 'vex-vue/src', 'extensions' => array('ts', 'vue')),
+            array('path' => 'oblivions/editor-next/src', 'extensions' => array('ts', 'vue')),
+            array('path' => 'oblivions/editor-next/server/src', 'extensions' => array('ts')),
         );
 
         foreach ($roots as $scanRoot) {
@@ -385,6 +387,8 @@ class DesignAnchorValidator {
             'oblivions/tools/',
             'oblivions/docs/',
             'oblivions/cache/',
+            'oblivions/editor-next/tests/',
+            'oblivions/editor-next/.storybook/',
             'vex-vue/node_modules/',
             'vex-vue/dist/',
             'vex-vue/src/mock/',
@@ -571,6 +575,9 @@ class DesignAnchorValidator {
 
     private function isSupportedAnchorExtension($path) {
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (design_anchor_starts_with($path, 'oblivions/editor-next/')) {
+            return in_array($extension, array('ts', 'vue'), true) && !$this->isExcludedPath($path);
+        }
         if (design_anchor_starts_with($path, 'oblivions/')) {
             return $extension === 'php' && !$this->isExcludedPath($path);
         }

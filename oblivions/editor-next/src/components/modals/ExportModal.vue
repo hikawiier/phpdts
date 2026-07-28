@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // ExportModal：导出模态框（对齐 editor-next-独立化与备份还原功能-设计案 Task F）

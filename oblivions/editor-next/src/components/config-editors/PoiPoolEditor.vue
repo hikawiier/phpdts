@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // PoiPoolEditor：poi_pool 编辑器（对齐 NEW_DESIGN.md §3.4.3 + §3.4.5 schema 驱动 UI）

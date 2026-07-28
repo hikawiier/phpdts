@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 废墟城市生成器（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-4）
+// 废墟城市生成器（M8 主题生成器）
 //
 // 主题意图：模拟城市废墟——height 字段分层（低/中/高）映射街区结构：
 //   - height=2（塔楼）：建筑核心，floor=magic，多数 passable=false（实体建筑）

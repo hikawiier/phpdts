@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 连通图算法：
 //   - O-0 编辑器侧操作：autoConnect / breakConnection / restoreConnection / disconnectAll / getBrokenNeighbors

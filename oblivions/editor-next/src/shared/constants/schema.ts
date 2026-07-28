@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 配置 schema 接口定义（对齐 NEW_DESIGN.md §3.4.5 schema 驱动 UI）
 //
@@ -25,6 +26,8 @@ import type { Tide } from '../types/map';
  * - string-list：字符串数组（prob_mods_source 等）
  * - kv-list：键值对映射（loot_table_overrides 等）
  * - entry-list：结构化条目数组（event_pool / dismantle_returns 等）
+ * - ref：单值引用（next_region 等），渲染为资源选择器；目标 kind/字段由 refKind / refField 指定
+ * - ref-list：引用数组（neighbors / _breaks 等），渲染为多选资源选择器
  */
 export type FieldType =
   | 'text'
@@ -35,7 +38,9 @@ export type FieldType =
   | 'count-range'
   | 'string-list'
   | 'kv-list'
-  | 'entry-list';
+  | 'entry-list'
+  | 'ref'
+  | 'ref-list';
 
 /**
  * 字段 schema 描述

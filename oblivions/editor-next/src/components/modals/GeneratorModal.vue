@@ -1,6 +1,7 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
-// GeneratorModal：生成器双模式模态框（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-4）
+// GeneratorModal：生成器双模式模态框（M8 主题生成器入口）
 //
 // 设计意图（对齐 2.6 配置驱动 + 2.15 灰阶基底 + 唯一强调色 + §3.7.6 双模式）：
 //   - Schema 驱动 UI：按 generator.getParamSchema() 自动渲染控件，新增字段无需修改组件

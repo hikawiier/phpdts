@@ -50,6 +50,11 @@ export default defineConfig(({ command }) => ({
         changeOrigin: true,
         agent: proxyAgent,
       },
+      // O-1 Workspace Gateway：本地工作区服务，端口 5180（避开 5175 编辑器与 5174 vex-vue）
+      '/api': {
+        target: 'http://127.0.0.1:5180',
+        changeOrigin: false,
+      },
     },
   },
   worker: {

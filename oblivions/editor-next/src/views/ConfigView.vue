@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // ConfigView：配置编辑视图（对齐 NEW_DESIGN.md §3.4 + §3.4.4 + §3.4.5）
@@ -141,6 +142,13 @@ function handleReset(): void {
           未保存
         </span>
         <span v-else-if="hasAnyConfig" class="text-[10px] text-gray-600">已保存</span>
+        <!-- P1 阶段 obl_config 只读提示 -->
+        <span
+          class="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-[10px] text-gray-400"
+          title="本节为只读展示，P1 阶段不可编辑；config.runtime 资源节点由 Resource Graph 装配时填充"
+        >
+          obl_config 只读
+        </span>
       </div>
       <div class="flex items-center gap-1">
         <BaseButton size="sm" variant="default" @click="openLoadModal">加载</BaseButton>

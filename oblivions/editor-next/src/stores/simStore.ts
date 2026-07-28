@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // simStore：模拟状态（对齐 NEW_DESIGN.md §3.3 + DESIGN.md 2.8 dry-run 契约）
 //

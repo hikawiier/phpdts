@@ -1,22 +1,25 @@
+// @module O 内容工具箱
 //
 // configStore：配置文件缓存（对齐 NEW_DESIGN.md §3.4 + DESIGN.md §3.4.4）
 //
-// 研判：
+// 研判（P1-E 重构后）：
 //   - 配置编辑框架的核心状态层
 //   - 复用 shared 的 parsePhpArray / generateConfigPhp 序列化器
 //   - validateStore 配置交叉引用校验读取此处 state
 //   - M7 后端保存调用 toPhpFiles()，由 generateConfigPhp 反向生成
 //
 // 设计意图（对齐 2.6 配置驱动 + §3.4.4 配置缓存策略）：
-//   - 内存缓存 scatter_pool / poi_table / poi_pool / obl_config（只读）
+//   - 内存缓存 scatter_pool / poi_table / poi_pool（P3/P4 才迁移到 Resource Graph）
+//   - oblConfig 改为派生自 graph-store 的 config.runtime:obl_config 节点（只读）
 //   - 不持久化到 localStorage——配置变更必须显式保存到后端或导出才能持久化
 //   - 数据流单向：解析 PHP → configStore → 编辑 → 反向生成 PHP
 //   - rate 是"基础率"，不与运行时倍率预先折算（倍率由后端应用）
-//   - obl_config 只读不编辑（避免覆盖后端现存配置）
+//   - obl_config 只读不编辑（避免覆盖后端现存配置）；loadFromPhpStrings 内部
+//     把 obl_config 解析后写入 graph-store 的 config.runtime:obl_config 节点
 //   - 配置缓存与地图数据隔离，保存配置不触发地图重渲染
 //
 // 接口约定（供 M6 / M7 使用）：
-//   - state：scatterPool / poiTable / poiPool / oblConfig（只读）/ isDirty
+//   - state：scatterPool / poiTable / poiPool / oblConfig（派生 computed，只读）/ isDirty
 //   - 加载：loadFromPhpStrings(files: Record<string, string>) → ParseResult
 //   - scatter CRUD：updateScatterEntry / addScatterEntry / removeScatterEntry / moveScatterEntry
 //   - poi_table CRUD：updatePoiTemplate / addPoiTemplate / removePoiTemplate / renamePoiTemplate
@@ -46,6 +49,7 @@ import type {
   OblConfig,
 } from '@/shared';
 import type { Tide } from '@/shared';
+import { useGraphStore } from '@/graph/graph-store';
 
 /**
  * 加载结果（对齐 NEW_DESIGN.md §3.4.4 单向数据流）
@@ -435,11 +439,15 @@ function poiPoolToCodegen(pool: PoiPool): CodegenValue {
 // ─── Store 定义 ────────────────────────────────────────────
 
 export const useConfigStore = defineStore('config', () => {
+  // ─── graph-store 实例（响应式入口，用于派生 oblConfig） ───
+  const graph = useGraphStore();
+
   // ─── state ────────────────────────────────────────────
   const scatterPool = ref<ScatterPool | null>(null);
   const poiTable = ref<PoiTable | null>(null);
   const poiPool = ref<PoiPool | null>(null);
-  const oblConfig = ref<OblConfig | null>(null); // 只读，不编辑
+  // oblConfig 改为派生 computed——从 graph-store 的 config.runtime:obl_config 节点读取
+  // （见下方 computed 定义；此处仅留注释，不再保留独立 ref）
   const isDirty = ref(false);
 
   // ─── getters ──────────────────────────────────────────
@@ -458,10 +466,31 @@ export const useConfigStore = defineStore('config', () => {
     }));
   });
 
+  /**
+   * oblConfig 派生 computed——从 graph-store 的 config.runtime:obl_config 节点读取 entries。
+   *
+   * 数据权威源是 graph-store 中的 `config.runtime:obl_config` 节点。
+   * 外部不得直接修改（无 setOblConfig action）；oblConfig 由 loadFromPhpStrings
+   * 解析后通过 graph.upsertNode 写入节点。
+   *
+   * 节点不存在时返回 null（与旧 ref<OblConfig | null> 行为一致）。
+   */
+  const oblConfig = computed<OblConfig | null>(() => {
+    const nodes = graph.findNodesByKind('config.runtime');
+    // config.runtime 节点 id 固定为 'obl_config'（见 schema/kinds/config-runtime.ts）
+    const node = nodes.find((n) => n.id === 'obl_config');
+    if (!node) return null;
+    const data = node.data as { entries?: OblConfig };
+    return data.entries ?? null;
+  });
+
   // ─── 加载 ─────────────────────────────────────────────
 
   /**
    * 从 PHP 文件字符串映射加载配置（对齐 §3.4.4 单向数据流：解析 PHP → configStore）
+   *
+   * obl_config 部分不再写入本地 ref，而是通过 graph.upsertNode 写入 graph-store 的
+   * config.runtime:obl_config 节点（oblConfig 派生 computed 自动响应）。
    *
    * @param files 文件名 → 内容映射，支持的 key：
    *   - 'scatter_pool.php' / 'poi_table.php' / 'poi_pool.php' / 'obl_config.php'
@@ -521,12 +550,28 @@ export const useConfigStore = defineStore('config', () => {
       }
     }
 
-    // obl_config（只读）
+    // obl_config（只读）——写入 graph-store 的 config.runtime:obl_config 节点
+    // oblConfig 派生 computed 自动响应节点变更
     const oblConfigContent = findFile(CONFIG_FILE_OBL_CONFIG);
     if (oblConfigContent !== undefined) {
       const result = parsePhpArray(oblConfigContent);
       if (result.ok && result.value !== null) {
-        oblConfig.value = normalizeOblConfig(result.value);
+        const entries = normalizeOblConfig(result.value);
+        // 同步调用，computed 立即响应（P0-P4：graph-store actions 同步）
+        graph.upsertNode({
+          kind: 'config.runtime',
+          id: 'obl_config',
+          data: { entries },
+          source: [
+            {
+              filePath: 'oblivions/gamedata/obl_config.php',
+              lineStart: 1,
+              lineEnd: 1,
+              format: 'php',
+            },
+          ],
+          revision: '',
+        });
         loaded.push(CONFIG_FILE_OBL_CONFIG);
       } else {
         errors[CONFIG_FILE_OBL_CONFIG] = result.error?.message ?? '解析失败';
@@ -566,14 +611,10 @@ export const useConfigStore = defineStore('config', () => {
   }
 
   /**
-   * 直接设置 obl_config（只读，不清 dirty）
-   */
-  function setOblConfig(next: OblConfig): void {
-    oblConfig.value = next;
-  }
-
-  /**
-   * 一次性加载全部配置（程序化构造，绕过 PHP 解析）
+   * 一次性加载全部配置（程序化构造，绕过 PHP 解析）。
+   *
+   * oblConfig 部分通过 graph.upsertNode 写入 config.runtime:obl_config 节点
+   * （oblConfig 派生 computed 自动响应）。
    */
   function loadAll(payload: {
     scatterPool: ScatterPool;
@@ -585,7 +626,21 @@ export const useConfigStore = defineStore('config', () => {
     poiTable.value = payload.poiTable;
     poiPool.value = payload.poiPool;
     if (payload.oblConfig !== undefined) {
-      oblConfig.value = payload.oblConfig;
+      // 同步调用，computed 立即响应（P0-P4：graph-store actions 同步）
+      graph.upsertNode({
+        kind: 'config.runtime',
+        id: 'obl_config',
+        data: { entries: payload.oblConfig },
+        source: [
+          {
+            filePath: 'oblivions/gamedata/obl_config.php',
+            lineStart: 1,
+            lineEnd: 1,
+            format: 'php',
+          },
+        ],
+        revision: '',
+      });
     }
     isDirty.value = false;
   }
@@ -814,13 +869,15 @@ export const useConfigStore = defineStore('config', () => {
   /**
    * 重置配置缓存（清空所有 state）
    *
-   * 对齐 §3.4.4：配置缓存仅保存在内存，不持久化到 localStorage
+   * 对齐 §3.4.4：配置缓存仅保存在内存，不持久化到 localStorage。
+   * oblConfig 派生自 graph-store，reset 时移除 graph-store 中的 config.runtime 节点。
    */
   function reset(): void {
     scatterPool.value = null;
     poiTable.value = null;
     poiPool.value = null;
-    oblConfig.value = null;
+    // 移除 graph-store 中的 config.runtime 节点（oblConfig 派生 computed 自动响应为 null）
+    graph.removeNode('config.runtime:obl_config');
     isDirty.value = false;
   }
 
@@ -852,7 +909,6 @@ export const useConfigStore = defineStore('config', () => {
     setScatterPool,
     setPoiTable,
     setPoiPool,
-    setOblConfig,
     // scatter CRUD
     updateScatterEntry,
     addScatterEntry,

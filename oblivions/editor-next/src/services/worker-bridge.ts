@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // worker-bridge：Web Worker 通信桥（对齐 NEW_DESIGN.md §3.2.5）
 //

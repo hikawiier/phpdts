@@ -308,7 +308,8 @@ describe('projectStore', () => {
       const p = project.addRegion('A')!;
       const pls = project.addTile(p, 0, 0);
       project.deleteTile(p, pls!);
-      expect(project.project.tiles[p]![pls!]!).toBeUndefined();
+      // P1-E：tiles[pgroup] 在无 tile 时为 undefined（projectFromGraph 不创建空字典）
+      expect(project.project.tiles[p]?.[pls!]).toBeUndefined();
     });
 
     it('删除格后清理邻居引用（对称）', () => {
@@ -669,9 +670,10 @@ describe('projectStore', () => {
     });
 
     it('清空 localStorage', () => {
-      localStorage.setItem('oblivions_editor_project', 'test');
+      // P1-E：存储 key 改为 _meta 后缀（仅元数据）
+      localStorage.setItem('oblivions_editor_project_meta', 'test');
       project.clearProject();
-      expect(localStorage.getItem('oblivions_editor_project')).toBeNull();
+      expect(localStorage.getItem('oblivions_editor_project_meta')).toBeNull();
     });
   });
 
@@ -743,37 +745,40 @@ describe('projectStore', () => {
   });
 
   describe('loadFromStorage', () => {
-    it('localStorage 有合法数据时加载成功', async () => {
+    it('localStorage 有合法元数据时加载成功', async () => {
+      // P1-E：存储 key 改为 _meta，仅持久化元数据（不含完整 MapProject）
+      // graph-store 的 world 节点从 loader.ts 重新装配，loadFromStorage 仅恢复元数据
       const data = {
         name: 'Test',
         createdAt: 1000,
         updatedAt: 2000,
-        payload: makeSampleProject(),
+        currentPgroup: 1,
+        selectedPls: null,
       };
-      localStorage.setItem('oblivions_editor_project', JSON.stringify(data));
+      localStorage.setItem('oblivions_editor_project_meta', JSON.stringify(data));
       const ok = await project.loadFromStorage();
       expect(ok).toBe(true);
       expect(project.projectName).toBe('Test');
-      expect(project.currentPgroup).toBe(1);
+      // currentPgroup 在 graph 无对应 region 时回退到第一个 region（此处无 region，保持 null）
       expect(project.usingIndexedDB).toBe(false);
     });
 
-    it('localStorage 无数据且 IndexedDB 无数据时返回 false', async () => {
+    it('localStorage 无数据时返回 false', async () => {
       localStorage.clear();
       const ok = await project.loadFromStorage();
       expect(ok).toBe(false);
     });
 
-    it('localStorage 数据损坏时回退到 IndexedDB（或返回 false）', async () => {
-      localStorage.setItem('oblivions_editor_project', '{not valid json');
+    it('localStorage 数据损坏时返回 false', async () => {
+      localStorage.setItem('oblivions_editor_project_meta', '{not valid json');
       const ok = await project.loadFromStorage();
       expect(ok).toBe(false);
     });
 
-    it('payload 缺字段时视为无效', async () => {
+    it('name 字段缺失时视为无效', async () => {
       localStorage.setItem(
-        'oblivions_editor_project',
-        JSON.stringify({ name: 'X', createdAt: 0, updatedAt: 0, payload: {} }),
+        'oblivions_editor_project_meta',
+        JSON.stringify({ createdAt: 0, updatedAt: 0 }),
       );
       const ok = await project.loadFromStorage();
       expect(ok).toBe(false);
@@ -782,40 +787,66 @@ describe('projectStore', () => {
 
   describe('边界：pls / pgroup 范围', () => {
     it(`nextPls 达 ${PLS_MAX} 上限后返回 null`, () => {
+      // P1-E：project.project 是只读 computed，通过 loadProject 写入 graph-store
       const p = project.addRegion('A')!;
-      // 直接构造一个 pls=PLS_MAX 的 tile
-      project.project.tiles[p]![PLS_MAX as Pls] = {
-        name: '',
-        desc: '',
-        floor: 'standard',
-        tide: 'shallow',
-        height: 0,
-        passable: true,
-        destructible: false,
-        neighbors: [],
-        x: 0,
-        y: 0,
-        preset_safe: false,
-        _breaks: [],
+      const boundaryProject: MapProject = {
+        regions: {
+          [p]: {
+            name: 'A',
+            desc: '',
+            entrance_pls: null,
+            exit_pls: null,
+            next_region: null,
+            prev_region: null,
+            exit_links: [],
+            cols: 8,
+            rows: 6,
+          },
+        },
+        grids: { [p]: { cols: 8, rows: 6 } },
+        tiles: {
+          [p]: {
+            [PLS_MAX as Pls]: {
+              name: '',
+              desc: '',
+              floor: 'standard',
+              tide: 'shallow',
+              height: 0,
+              passable: true,
+              destructible: false,
+              neighbors: [],
+              x: 0,
+              y: 0,
+              preset_safe: false,
+              _breaks: [],
+            },
+          },
+        },
       };
+      project.loadProject(boundaryProject);
       expect(project.nextPls(p)).toBeNull();
     });
 
     it(`nextPgroup 达 ${PGROUP_MAX} 上限后返回 null`, () => {
-      // 直接构造 pgroup=PGROUP_MAX 的区域
-      project.project.regions[PGROUP_MAX as Pgroup] = {
-        name: 'max',
-        desc: '',
-        entrance_pls: null,
-        exit_pls: null,
-        next_region: null,
-        prev_region: null,
-        exit_links: [],
-        cols: 1,
-        rows: 1,
+      // P1-E：通过 loadProject 写入 pgroup=PGROUP_MAX 的区域到 graph-store
+      const boundaryProject: MapProject = {
+        regions: {
+          [PGROUP_MAX as Pgroup]: {
+            name: 'max',
+            desc: '',
+            entrance_pls: null,
+            exit_pls: null,
+            next_region: null,
+            prev_region: null,
+            exit_links: [],
+            cols: 1,
+            rows: 1,
+          },
+        },
+        grids: { [PGROUP_MAX as Pgroup]: { cols: 1, rows: 1 } },
+        tiles: { [PGROUP_MAX as Pgroup]: {} },
       };
-      project.project.grids[PGROUP_MAX as Pgroup] = { cols: 1, rows: 1 };
-      project.project.tiles[PGROUP_MAX as Pgroup]! = {};
+      project.loadProject(boundaryProject);
       expect(project.nextPgroup()).toBeNull();
     });
   });

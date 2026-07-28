@@ -177,7 +177,7 @@ function item_use_effect_gain_resistance($item, &$pdata) {
  * 物品实例列表，逐件经 itm0 → obl_organize_inventory 放入背包。
  *
  * 流程：
- *   1. include gift_box_loot_table.php，取出 gift_box_loot 表定义
+ *   1. include loot_tables.php，取出 gift_box_loot 表定义（P3 合并自原 gift_box_loot_table.php）
  *   2. 遍历 groups，逐组调用 obl_roll_group 累积物品实例
  *   3. 若 durability_decay=true，调用 obl_apply_durability_decay
  *   4. 逐件 obl_put_item_to_itm0 + obl_organize_inventory 放入背包
@@ -195,8 +195,8 @@ function item_use_effect_open_gift_box($item, &$pdata) {
 
     $item_id = isset($item['itmid']) ? (string)$item['itmid'] : '';
 
-    // 1. 加载 gift_box_loot_table 配置
-    $gift_tables = include GAME_ROOT . './oblivions/gamedata/gift_box_loot_table.php';
+    // 1. 加载 gift_box_loot 表定义（P3 阶段合并到 loot_tables.php 统一管理）
+    $gift_tables = include GAME_ROOT . './oblivions/gamedata/loot_tables.php';
     if (!is_array($gift_tables) || !isset($gift_tables['gift_box_loot'])) {
         $obl_log->emit('open_gift_box.table_missing', 'system', [
             'item_id' => $item_id,

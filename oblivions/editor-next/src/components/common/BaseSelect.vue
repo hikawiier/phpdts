@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // 通用下拉选择（灰阶基底，对齐 DESIGN.md 2.15）
 import { computed } from 'vue';

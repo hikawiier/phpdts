@@ -1,13 +1,14 @@
 //
-// validateStore 单元测试（对齐 NEW_DESIGN.md §7.3 M6：store 覆盖率 ≥ 85%）
+// validateStore 单元测试（对齐 O-10 分层校验调度）
 //
 // 覆盖点：
-//   - state：issues / lastRunMode / lastRunAt / filter / isRunning / includeConfig / lootTableIds / itemTableIds
+//   - state：issues / lastRunMode / lastRunAt / filter / isRunning / includeConfig
 //   - getters：errorCount / warningCount / filteredIssues / hasIssues / summary
-//   - actions：setIssues / setFilter / setRunning / setIncludeConfig / setLootTableIds / setItemTableIds
+//   - actions：setIssues / setFilter / setRunning / setIncludeConfig
 //   - 调度：runLight / runFull / scheduleLightValidation（debounce 300ms） / cancelScheduledLight / clear
 //   - 集成：runFull 读取 projectStore + configStore 数据，includeConfig=false 时跳过配置交叉引用
 //   - 边界：空 project 不抛错 / filter 切换影响 filteredIssues / includeConfig 开关影响 runFull 行为
+//   - 注意：lootTableIds / itemTableIds 已移除（O-10 由 graph-store 查询替代）
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
@@ -145,11 +146,6 @@ describe('validateStore', () => {
     it('includeConfig 默认 true', () => {
       expect(validate.includeConfig).toBe(true);
     });
-
-    it('lootTableIds / itemTableIds 默认空数组', () => {
-      expect(validate.lootTableIds).toEqual([]);
-      expect(validate.itemTableIds).toEqual([]);
-    });
   });
 
   // ─── getters ──────────────────────────────────────────────
@@ -261,18 +257,6 @@ describe('validateStore', () => {
       validate.setIncludeConfig(false);
       expect(validate.includeConfig).toBe(false);
     });
-
-    it('setLootTableIds / setItemTableIds 注入引用表（克隆不引用原数组）', () => {
-      const loot = ['a', 'b'];
-      const item = ['x', 'y'];
-      validate.setLootTableIds(loot);
-      validate.setItemTableIds(item);
-      expect(validate.lootTableIds).toEqual(loot);
-      expect(validate.itemTableIds).toEqual(item);
-      // 修改原数组不影响 store
-      loot.push('z');
-      expect(validate.lootTableIds).toEqual(['a', 'b']);
-    });
   });
 
   // ─── 调度：runLight / runFull ────────────────────────────
@@ -306,8 +290,9 @@ describe('validateStore', () => {
     it('从 projectStore + configStore 读取数据并跑 Full 验证', () => {
       project.loadProject(makeBrokenProject());
       // entrance_pls=null → 跳过 BFS；手动设置以触发 BFS
-      // 注意：projectStore.project 是 ref<MapProject>，Pinia 自动解包后需通过 project.project 访问
-      project.project.regions[1]!.entrance_pls = 1;
+      // P1-H 后 structure-validator 从 graph-store 读取，必须用 updateRegion 同步图，
+      // 直接改 project.project.regions[...] 不会传播到 graph-store
+      project.updateRegion(1, { entrance_pls: 1 });
       validate.runFull();
       expect(validate.lastRunMode).toBe('full');
       // Full 验证应触发 CONNECTIVITY_ISLAND warning（孤岛 pls=2）
@@ -337,29 +322,6 @@ describe('validateStore', () => {
       validate.runFull({ includeConfig: false });
       const poolRefIssues = validate.issues.filter((i) => i.rule === 'poi_pool_ref');
       expect(poolRefIssues).toHaveLength(0);
-    });
-
-    it('overrideOptions 覆盖默认选项', () => {
-      project.loadProject(makeBrokenProject());
-      project.project.regions[1]!.entrance_pls = 1;
-      // 即使默认 includeConnectivity=true，override false 后跳过 BFS
-      validate.runFull({ includeConnectivity: false });
-      const islandIssues = validate.issues.filter((i) => i.rule === 'connectivity_island');
-      expect(islandIssues).toHaveLength(0);
-    });
-
-    it('lootTableIds / itemTableIds 从 store state 读取', () => {
-      project.loadProject(makeValidProject());
-      config.loadAll({
-        scatterPool: makeScatterPool(),
-        poiTable: makePoiTable(),
-        poiPool: { shallow: [], deep: [], abyss: [] },
-      });
-      validate.setLootTableIds(['nonexistent_loot']);
-      validate.runFull();
-      // poi_table.supply_cache.loot_table_id='supply_loot' 不在 ['nonexistent_loot'] → warning
-      const lootIssues = validate.issues.filter((i) => i.rule === 'poi_loot_table_ref');
-      expect(lootIssues).toHaveLength(1);
     });
   });
 
@@ -426,15 +388,13 @@ describe('validateStore', () => {
       );
       validate.setFilter('error');
       validate.setRunning(true);
-      validate.setLootTableIds(['a']);
       validate.clear();
       expect(validate.issues).toEqual([]);
       expect(validate.lastRunMode).toBeNull();
       expect(validate.lastRunAt).toBeNull();
       expect(validate.isRunning).toBe(false);
-      // filter / lootTableIds 不被 clear 重置（只重置 issues 与运行状态）
+      // filter 不被 clear 重置（只重置 issues 与运行状态）
       expect(validate.filter).toBe('error');
-      expect(validate.lootTableIds).toEqual(['a']);
     });
   });
 });

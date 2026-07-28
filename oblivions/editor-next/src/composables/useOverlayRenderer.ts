@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // useOverlayRenderer：叠层调度统一入口（对齐 NEW_DESIGN.md §3.3.2 + §3.8 + DESIGN.md 2.13）
 //
@@ -29,6 +30,9 @@ export interface ActiveOverlays {
   vision: boolean;
   reachability: boolean;
   tideHeatmap: boolean;
+  wilditem: boolean;
+  poi: boolean;
+  enemy: boolean;
 }
 
 /**
@@ -39,8 +43,24 @@ export interface ActiveOverlays {
  *   2. fog（次底层，半透明遮罩）
  *   3. vision（中层，边框高亮）
  *   4. reachability（上层，边框 + 路径线）
+ *   5. wilditem（顶层，候选格灰阶 + 排除原因纹理 + 生成率）
+ *   6. poi（顶层，候选格灰阶 + 排除原因纹理 + 概率数字）
+ *   7. enemy（顶层，候选格灰阶 + 排除原因纹理 + 放置数量）
+ *
+ * 分布叠层（wilditem / poi / enemy）置于顶层原因：分布规则候选格与
+ * vision/reachability 视觉语义不同，灰阶 + 概率数字需要清晰可见；
+ * 上层不遮挡玩家选中态（选中态由 GridCell 自身 z-index 保证）。
+ * 三类分布叠层互斥——同一时刻只激活一个（由 DistributionOverlayPanel 切换）。
  */
-const OVERLAY_RENDER_ORDER = ['tideHeatmap', 'fog', 'vision', 'reachability'] as const;
+const OVERLAY_RENDER_ORDER = [
+  'tideHeatmap',
+  'fog',
+  'vision',
+  'reachability',
+  'wilditem',
+  'poi',
+  'enemy',
+] as const;
 
 export function useOverlayRenderer() {
   const overlay = useOverlayStore();
@@ -55,6 +75,9 @@ export function useOverlayRenderer() {
       vision: flags.vision,
       reachability: flags.reachability,
       tideHeatmap: flags.tideHeatmap,
+      wilditem: flags.wilditem,
+      poi: flags.poi,
+      enemy: flags.enemy,
     };
   });
 

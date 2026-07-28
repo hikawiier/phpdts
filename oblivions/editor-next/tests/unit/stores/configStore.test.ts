@@ -579,9 +579,20 @@ describe('configStore', () => {
       expect(config.isDirty).toBe(true);
     });
 
-    it('setOblConfig 直接设置但不标记 dirty', () => {
+    it('oblConfig 通过 loadAll 写入 graph-store（不再提供 setOblConfig）', () => {
+      // P1-E 重构后 oblConfig 是从 graph-store 派生的只读 computed
+      // 不再提供 setOblConfig action；通过 loadAll 或 loadFromPhpStrings 写入
       const cfg: OblConfig = { key: 'value' };
-      config.setOblConfig(cfg);
+      config.loadAll({
+        scatterPool: {
+          shallow: { initial: [], refresh: [] },
+          deep: { initial: [], refresh: [] },
+          abyss: { initial: [], refresh: [] },
+        },
+        poiTable: { x: { searchable: false, repeatable: false } },
+        poiPool: { shallow: [], deep: [], abyss: [] },
+        oblConfig: cfg,
+      });
       expect(config.oblConfig).toEqual(cfg);
       expect(config.isDirty).toBe(false);
     });

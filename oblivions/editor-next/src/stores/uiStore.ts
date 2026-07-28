@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // uiStore：UI 状态（对齐 NEW_DESIGN.md §2.3.10）
 // 管理 UI 通用状态（modals / toasts / theme）

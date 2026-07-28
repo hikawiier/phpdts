@@ -39,6 +39,7 @@ import { useAtlasStore } from '@/stores/atlas-store';
 import { useExploreStore } from '@/stores/explore-store';
 import { useSceneStore } from '@/stores/scene-store';
 import { getDirectionArrow } from '@/composables/useMapReachability';
+import { getEnemyName } from '@/data/enemy-locale';
 import type { AtlasTile } from '@/stores/atlas-projection';
 
 const atlas = useAtlasStore();
@@ -315,7 +316,7 @@ function tileTitle(t: AtlasTile): string {
   if (t.passable === false) parts.push('不可通行');
   if (t.enemy) {
     const status = t.enemy.state > 0 ? '（已死亡）' : '';
-    parts.push(`敌人${status}：${t.enemy.name}`);
+    parts.push(`敌人${status}：${getEnemyName(t.enemy.type, t.enemy.name)}`);
   }
   if (t.poi) parts.push(`POI：${t.poi.name}`);
   if (t.item) parts.push(`道具：${t.item.name}`);
@@ -436,7 +437,7 @@ const detailSummary = computed<string>(() => {
     if (t.passable === false) parts.push('不可通行');
     if (t.enemy) {
       const status = t.enemy.state > 0 ? '（已死亡）' : '';
-      parts.push(`敌人${status}：${t.enemy.name}`);
+      parts.push(`敌人${status}：${getEnemyName(t.enemy.type, t.enemy.name)}`);
     }
     if (t.poi) parts.push(`POI：${t.poi.name}`);
     if (t.item) parts.push(`道具：${t.item.name}`);

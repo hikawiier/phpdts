@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // ValidatePanel：验证结果面板（对齐 NEW_DESIGN.md §3.5.3 + §3.5.4）

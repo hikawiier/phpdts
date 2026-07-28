@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 地图空间结构类型定义，与后端 bra_oblmapstates 表 + gamedata/map.php + region_*.php 字段 1:1 对齐
 // 字段名保持蛇形命名（与后端 PHP 一致），不引入驼峰转换层（避免索引锚点丢失，对齐 3.1）

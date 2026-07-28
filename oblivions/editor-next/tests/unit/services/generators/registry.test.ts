@@ -1,5 +1,5 @@
 //
-// 注册表单元测试（对齐 NEW_DESIGN.md §3.7.2 + Dian.md O-5）
+// 注册表单元测试（M8 主题生成器）
 //
 // 覆盖点：
 //   - registerGenerator：新注册返回 true，覆盖注册返回 false

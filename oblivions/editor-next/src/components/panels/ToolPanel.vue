@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // ToolPanel：工具栏（对齐 NEW_DESIGN.md §3.1.4）
 //

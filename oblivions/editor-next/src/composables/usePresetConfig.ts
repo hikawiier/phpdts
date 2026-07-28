@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // usePresetConfig：编辑器预设路径配置读取
 //

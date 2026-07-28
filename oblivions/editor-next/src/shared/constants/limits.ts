@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 数值范围常量（对齐 DESIGN.md 1.1 + 后端 tinyint 上限）
 // pls 范围 1-254，pgroup 范围 1-255，cols/rows 上限 254

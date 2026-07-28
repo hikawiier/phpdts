@@ -200,7 +200,8 @@ describe('useToolActions', () => {
     it('undo 还原 draw', () => {
       actions.clickEmptyDraw(0, 0);
       actions.undo();
-      expect(project.project.tiles[1]![1]!).toBeUndefined();
+      // P1-E：tiles[pgroup] 在无 tile 时为 undefined（projectFromGraph 不创建空字典）
+      expect(project.project.tiles[1]?.[1]).toBeUndefined();
     });
 
     it('redo 重放 draw', () => {
@@ -219,7 +220,7 @@ describe('useToolActions', () => {
     it('clickTileErase 删除格并入栈', () => {
       const pls = project.addTile(1, 0, 0);
       actions.clickTileErase(pls!);
-      expect(project.project.tiles[1]![pls!]!).toBeUndefined();
+      expect(project.project.tiles[1]?.[pls!]).toBeUndefined();
       expect(history.canUndo).toBe(true);
     });
 
@@ -373,8 +374,8 @@ describe('useToolActions', () => {
       const pls2 = project.addTile(1, 1, 1);
       tool.setBatchSelection([pls1!, pls2!]);
       actions.batchDelete();
-      expect(project.project.tiles[1]![pls1!]!).toBeUndefined();
-      expect(project.project.tiles[1]![pls2!]!).toBeUndefined();
+      expect(project.project.tiles[1]?.[pls1!]).toBeUndefined();
+      expect(project.project.tiles[1]?.[pls2!]).toBeUndefined();
       expect(history.canUndo).toBe(true);
     });
 
@@ -432,7 +433,7 @@ describe('useToolActions', () => {
       const pls = project.addTile(1, 0, 0);
       tool.setTool('erase');
       actions.handleTileClick(pls!);
-      expect(project.project.tiles[1]![pls!]!).toBeUndefined();
+      expect(project.project.tiles[1]?.[pls!]).toBeUndefined();
     });
 
     it('paint 工具下点击格 → clickTilePaint', () => {
@@ -477,7 +478,7 @@ describe('useToolActions', () => {
     it('其他工具不响应空白格点击', () => {
       tool.setTool('select');
       actions.handleEmptyClick(0, 0);
-      expect(project.project.tiles[1]![1]!).toBeUndefined();
+      expect(project.project.tiles[1]?.[1]).toBeUndefined();
     });
   });
 

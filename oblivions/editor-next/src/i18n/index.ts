@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 // i18n 框架入口（对齐 NEW_DESIGN.md §2.5：vue-i18n + zh-CN 默认 + en-US 备用）
 
 import { createI18n } from 'vue-i18n';

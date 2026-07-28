@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // poi_table 字段 schema（对齐 gamedata/poi_table.php）
 //

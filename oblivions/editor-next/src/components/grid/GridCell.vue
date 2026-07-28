@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // GridCell：单元格（对齐 NEW_DESIGN.md §3.1 + DESIGN.md 2.13）
 //
@@ -54,12 +55,12 @@ const cellClass = computed(() => {
     // 空白格：draw 工具下显示可绘制提示
     const drawHover = props.tool === 'draw' ? 'hover:bg-gray-800/50 hover:border-gray-600' : '';
     const dropTarget = props.isDragHover ? 'bg-gray-700/40 border-dashed border-gray-400' : '';
-    return [base, 'bg-gray-900/30', drawHover, dropTarget].filter(Boolean).join(' ');
+    return [base, 'bg-gray-900/50', drawHover, dropTarget].filter(Boolean).join(' ');
   }
   // 已有格
   const cls: string[] = [base];
   // 选中态
-  if (props.isSelected) cls.push('cell-selected', 'bg-gray-700', 'border-gray-400');
+  if (props.isSelected) cls.push('cell-selected', 'bg-gray-600', 'border-gray-300');
   // 拖拽源
   if (props.isDragSource) cls.push('cell-dragging', 'opacity-50');
   // drop target
@@ -68,7 +69,7 @@ const cellClass = computed(() => {
   if (props.isEntrance) cls.push('cell-entrance');
   if (props.isExit) cls.push('cell-exit');
   // 不可通行（在 selected 之外使用更深的灰阶 + 斜线纹理，对齐 2.15 形状编码不引入彩色）
-  if (props.tile && !props.tile.passable && !props.isSelected) cls.push('cell-blocked', 'bg-gray-800', 'cell-blocked-texture');
+  if (props.tile && !props.tile.passable && !props.isSelected) cls.push('cell-blocked', 'bg-gray-900', 'cell-blocked-texture');
   // batch 选中
   if (props.isInBatch) cls.push('cell-batch-selected', 'ring-1', 'ring-gray-500');
   // break / restore 第一步
@@ -76,6 +77,8 @@ const cellClass = computed(() => {
   // preset_safe 标记（右上角小标，灰阶形状编码，不引入彩色）
   // 通过 ::after 实现，class 仅作标记
   if (props.tile?.preset_safe) cls.push('cell-safe');
+  // 可通行格（非选中、非 blocked）——亮灰底，与 blocked/empty 形成明显对比
+  if (props.tile && props.tile.passable && !props.isSelected) cls.push('bg-gray-700');
   return cls.join(' ');
 });
 

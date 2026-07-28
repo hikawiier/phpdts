@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // useEditorKeyboard：统一键盘层（对齐 NEW_DESIGN.md §3.1 + §2.4.3 + DESIGN.md 2.14）
 //

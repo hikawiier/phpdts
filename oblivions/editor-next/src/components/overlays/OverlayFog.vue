@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // OverlayFog：迷雾叠层（对齐 NEW_DESIGN.md §3.3.2 + DESIGN.md 2.15）
 //

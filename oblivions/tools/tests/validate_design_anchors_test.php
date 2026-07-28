@@ -54,6 +54,14 @@ function da_test_fixture($suiteRoot, $name, $dian, $files = array()) {
     if (!mkdir($frontendRoot, 0777, true) && !is_dir($frontendRoot)) {
         throw new RuntimeException('unable to create frontend fixture root');
     }
+    $editorNextSrcRoot = $root . DIRECTORY_SEPARATOR . 'oblivions' . DIRECTORY_SEPARATOR . 'editor-next' . DIRECTORY_SEPARATOR . 'src';
+    if (!mkdir($editorNextSrcRoot, 0777, true) && !is_dir($editorNextSrcRoot)) {
+        throw new RuntimeException('unable to create editor-next src fixture root');
+    }
+    $editorNextServerRoot = $root . DIRECTORY_SEPARATOR . 'oblivions' . DIRECTORY_SEPARATOR . 'editor-next' . DIRECTORY_SEPARATOR . 'server' . DIRECTORY_SEPARATOR . 'src';
+    if (!mkdir($editorNextServerRoot, 0777, true) && !is_dir($editorNextServerRoot)) {
+        throw new RuntimeException('unable to create editor-next server fixture root');
+    }
     foreach ($files as $path => $content) {
         da_test_write($root, $path, $content);
     }

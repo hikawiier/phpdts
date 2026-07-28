@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 算法库导出聚合（@/shared/algorithms）
 

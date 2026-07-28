@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // SimulatePanel：可折叠模拟面板（C-2 整合进 MapEditorView，对齐 3.4 不展示什么优先）
 //

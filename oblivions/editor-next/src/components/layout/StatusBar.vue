@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // 底部状态栏（对齐 NEW_DESIGN.md §2.2 components/layout/StatusBar.vue）
 import { computed } from 'vue';

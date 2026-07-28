@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // GridConnections：SVG 连通线渲染（对齐 NEW_DESIGN.md §3.1.3）
 //

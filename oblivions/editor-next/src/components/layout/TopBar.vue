@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // 顶部导航栏（对齐 NEW_DESIGN.md §2.2 components/layout/TopBar.vue）
 // Task G3：新增 导入 / 导出 / 备份 三个按钮（独立于模态框，备份按钮直接执行不打开模态）

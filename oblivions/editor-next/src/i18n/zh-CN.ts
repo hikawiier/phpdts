@@ -1,14 +1,23 @@
+// @module O 内容工具箱
 // 中文文案（默认语言，对齐 NEW_DESIGN.md §2.5 i18n 框架）
 
 export default {
   app: {
-    title: 'Oblivions 地图编辑器',
+    title: 'Oblivions 开发者工具箱',
     version: '0.0.1',
   },
   nav: {
+    // O-6 一级工作区导航
+    overview: '总览',
+    world: '世界',
+    templates: '模板',
+    distribution: '分布',
+    presentation: '呈现',
+    validate: '验证',
+    build: '构建',
+    // 兼容旧路由标题（/config 仍保留指向 ConfigView）
     map: '地图编辑',
     config: '配置编辑',
-    validate: '验证',
     generators: '随机生成',
   },
   common: {
@@ -114,5 +123,220 @@ export default {
     generatorDone: '生成完成，已自动调用 Full 验证',
     undoEmpty: '无可撤销操作',
     redoEmpty: '无可重做操作',
+  },
+  // O-6 总览视图（OverviewView + GatewayStatus + StatCard）
+  overview: {
+    workspaceRoot: '工作区根路径',
+    gatewayStatus: 'Gateway 状态',
+    reloadWorkspace: '重新加载工作区',
+    lastLoadedAt: '最近加载时间',
+    statCards: {
+      resourceCount: '资源总数',
+      blockingErrors: '阻断错误',
+      warnings: '警告',
+      coverage: '覆盖率',
+    },
+  },
+  // O-1 Gateway 状态指示灯文案
+  gateway: {
+    online: '在线',
+    reconnecting: '重连中',
+    offline: '离线',
+  },
+  // O-7 模板工作区（P2 实现）
+  templates: {
+    placeholder: '模板工作区（P2 实现）',
+    title: '模板工作区',
+    // 左栏：资源类型切换
+    kindItemTemplate: '道具模板',
+    kindRecipeTemplate: '配方模板',
+    kindPresentationItem: '道具呈现',
+    kindPresentationRecipe: '配方呈现',
+    // P4 新增
+    kindEnemyTemplate: '敌人模板',
+    kindPresentationEnemy: '敌人呈现',
+    // 工具栏
+    searchPlaceholder: '搜索 ID / 中文名 / Tag / 引用目标…',
+    selectAll: '全选',
+    // 中栏表格列标题
+    colId: 'ID',
+    colName: '中文名',
+    colRefCount: '引用数',
+    colIssueCount: '错误',
+    emptyRows: '无匹配资源',
+    // 右栏详情检查器
+    detailEmptyHint: '请从左侧选择一个资源',
+    detailNodeRevision: 'revision',
+    detailNodeSource: 'source',
+    detailNodeSourceCount: '{n} 个',
+    sectionDefinition: '定义',
+    sectionDistribution: '分布',
+    sectionPresentation: '呈现',
+    sectionReferences: '引用',
+    sectionDiagnostics: '诊断',
+    distributionPlaceholder: 'P3/P4 阶段实现 POI/scatter/enemy 分布',
+    diagnosticsPlaceholder: 'O-10 校验调度中（P3+ 接入 issue 索引）',
+    presentationMissing: '该模板无中文呈现',
+    presentationCreate: '+ 创建呈现',
+    referencesInboundTitle: '谁引用了我（inbound）',
+    referencesOutboundTitle: '我引用了谁（outbound）',
+    referencesEmpty: '无引用关系',
+    fieldDeprecated: '⚠ deprecated 字段——已迁移至 presentation',
+    fieldPickerHint: '从资源库选择',
+    // 删除保护模态框
+    deleteModalTitle: '删除确认',
+    deleteModalCascadeTitle: '二次确认：级联删除',
+    deleteTargetNode: '待删除节点',
+    deleteInboundWarning: '以下 {n} 处引用会因删除而断裂（O-10 将报 dangling error）：',
+    deleteSyncDelete: '⚠ 同步删除 {n} 个关联呈现节点：',
+    deleteSafeHint: '该节点无被引用关系，可安全删除。',
+    deleteCascadeWarning: '即将级联删除以下节点，此操作不可撤销：',
+    deleteCascadeCount: '共 {n} 个节点将被删除',
+    deleteCascadePrimary: ' (主节点)',
+    deleteCascadeSync: ' (同步)',
+    btnCancel: '取消',
+    btnForceDelete: '仅删此节点（留悬空引用）',
+    btnConfirmDelete: '确认删除',
+    btnCascadeDelete: '级联删除',
+    btnConfirmCascade: '确认级联删除',
+    btnBack: '返回',
+    // ResourcePicker
+    pickerTitle: '选择资源',
+    pickerSearchPlaceholder: '按 ID 或名称搜索…',
+    pickerEmpty: '无候选项',
+    pickerCount: '{filtered} / {total} 个候选项',
+    pickerRefInfo: 'refKind: {refKind} · refField: {refField}',
+  },
+  distribution: {
+    placeholder: '分布工作区（P3-P4 实现）',
+  },
+  presentation: {
+    placeholder: '呈现工作区（P2 开始实现）',
+    // O-9 呈现工作区（P3 §4.6 实现）
+    title: '呈现工作区',
+    // 左栏：资源类型切换
+    kindPoi: 'POI 呈现',
+    kindItem: '道具呈现',
+    kindRecipe: '配方呈现',
+    // P4 新增
+    kindEnemy: '敌人呈现',
+    emptyHintPoi: '请从左侧选择一个 POI 呈现',
+    emptyHintEnemy: '请从左侧选择一个敌人呈现',
+    emptyHintOther: '请从左侧选择一个呈现',
+    // 中栏列表
+    searchPlaceholder: '搜索 ID / 中文名 / 描述…',
+    colId: 'ID',
+    colName: '中文名',
+    colDesc: '描述',
+    colTags: '分类标签',
+    emptyRows: '无匹配呈现',
+    orphanHint: '无关联 poi.template（孤儿呈现）',
+    // POI 分类标签（§4.6.2，灰阶小标签）
+    tagSearchable: '可搜刮',
+    tagMechanic: '机制型',
+    tagWorkbench: '工作台',
+    tagDismantable: '可拆除',
+    tagRepeatable: '可重复',
+    // 顶部工具栏
+    driftButton: '漂移报告',
+  },
+  // O-6 构建工作区（BuildView，P1-H 从占位升级为 Change Set 摘要 + 发布 + 备份）
+  build: {
+    title: '构建与发布',
+    changeSet: {
+      title: 'Change Set 摘要',
+      empty: '工作区无资源节点',
+      pendingCount: '资源总数',
+      affectedKinds: '涉及 Kind',
+    },
+    publish: {
+      button: '发布',
+      publishing: '发布中…',
+      success: '发布成功',
+      failed: '发布失败',
+      publishedFiles: '已发布 {count} 个文件',
+      backupDir: '备份目录',
+      noFiles: '无可发布的文件（工作区节点未序列化为任何文件）',
+      gatewayUnavailable: 'Gateway 不可达——请检查后端服务是否启动',
+    },
+    conflict: {
+      title: '冲突文件',
+    },
+    backup: {
+      title: '备份列表',
+      list: '查看备份',
+      hide: '隐藏备份',
+      loading: '加载中…',
+      empty: '暂无备份',
+      fileCount: '{count} 个文件',
+      restore: '还原',
+      restoreConfirm: '确定还原备份 {name} 吗？未发布的 Change Set 将丢失',
+      load: '加载备份列表',
+      refresh: '刷新',
+    },
+  },
+  // O-11 一次性迁移（P5-4 MigrationConfirmModal + AuthorResourceStatus）
+  migration: {
+    title: '启动单源迁移',
+    riskTitle: '高风险操作',
+    riskDesc: '迁移后 oblivions/gamedata/ 与 vex-vue/src/data/ 下的文件将成为编译产物，无法直接编辑。请确保已提交当前所有变更。',
+    backupFilesTitle: '将要备份的文件',
+    yamlFilesTitle: '将要创建的作者资源',
+    yamlFilesDesc: '在 oblivions/content/ 下生成 YAML 作者资源文件（items / recipes / pois / loot-tables / enemies / skills / distributions / presentations / runtime-config）。',
+    running: '迁移进行中…',
+    success: '迁移完成',
+    failed: '迁移失败',
+    backupPath: '备份目录',
+    yamlCount: '已创建 {count} 个 YAML 文件',
+    rollbackTitle: '已回滚',
+    rollbackFiles: '已恢复 {count} 个文件',
+    rollbackIncomplete: '回滚未完全成功——请手工从备份目录恢复',
+    errors: '错误（{count}）',
+    warnings: '警告（{count}）',
+    stepDetails: '步骤详情',
+    cancel: '取消',
+    confirmButton: '确认迁移',
+    close: '关闭',
+    gatewayUnavailable: 'Gateway 不可达——请检查后端服务是否启动',
+  },
+  // O-11 作者资源状态（P5-4 AuthorResourceStatus）
+  authorResource: {
+    title: '作者资源状态',
+    loading: '探测中…',
+    unknown: '未知',
+    migrated: '已迁移',
+    pending: '待迁移',
+    pendingDesc: '工作区尚未迁移到单源模式。迁移后 oblivions/content/ 下的 YAML 文件将成为唯一事实源。',
+    startMigration: '启动单源迁移',
+    yamlCount: '作者资源：{count} 个 YAML 文件',
+    refresh: '刷新',
+    retry: '重试',
+  },
+  // O-5 编译管道可视化（P5-4 PipelineVisualization）
+  pipeline: {
+    title: '编译管道',
+    empty: '尚未执行编译——点击"发布"后显示管道状态',
+    logs: '日志',
+    diagnostics: '诊断',
+    affectedFiles: '受影响文件（{count}）',
+  },
+  // O-6 世界工作区子 Tab + 顶部工具栏文案（P1 实现）
+  world: {
+    tab: {
+      map: '地图',
+      generator: '生成',
+      simulate: '模拟',
+      config: '配置',
+    },
+    config: {
+      readonlyHint: 'P1 阶段为只读展示，编辑能力在后续阶段实现',
+    },
+    header: {
+      undo: '撤销',
+      redo: '重做',
+      dirty: '未保存',
+      saved: '已保存',
+      saveError: '保存失败',
+    },
   },
 } as const;

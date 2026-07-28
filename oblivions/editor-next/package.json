@@ -3,9 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Oblivions 新地图编辑器（Vue 3 + Vite + TypeScript + Pinia + Tailwind v4）",
+  "description": "Oblivions 开发者工具箱（Vue 3 + Vite + TypeScript + Pinia + Tailwind v4）",
   "scripts": {
     "dev": "vite",
+    "dev:gateway": "pnpm --dir server exec tsx src/main.ts",
+    "dev:all": "concurrently -k -n gateway,editor \"pnpm dev:gateway\" \"pnpm dev\"",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
@@ -24,7 +26,8 @@
     "vue": "^3.5.13",
     "vue-i18n": "^10.0.5",
     "vue-router": "^4.5.0",
-    "vuedraggable": "^4.1.0"
+    "vuedraggable": "^4.1.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
@@ -37,8 +40,9 @@
     "@types/file-saver": "^2.0.7",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-vue": "^5.2.1",
-    "@vue/test-utils": "^2.4.6",
     "@vitest/coverage-v8": "^2.1.0",
+    "@vue/test-utils": "^2.4.6",
+    "concurrently": "^8.2.2",
     "jsdom": "^25.0.1",
     "storybook": "^8.5.0",
     "tailwindcss": "^4.0.0",

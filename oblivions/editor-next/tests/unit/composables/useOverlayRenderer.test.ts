@@ -2,7 +2,7 @@
 // useOverlayRenderer 单元测试（对齐 NEW_DESIGN.md §7.3 M4：覆盖率 ≥ 75%）
 //
 // 覆盖点（M4 O-1）：
-//   - activeOverlays：响应式叠层激活状态（4 字段：fog/vision/reachability/tideHeatmap）
+//   - activeOverlays：响应式叠层激活状态（7 字段：fog/vision/reachability/tideHeatmap + P4 分布叠层 wilditem/poi/enemy）
 //   - activeOverlayList：按渲染顺序排列的激活叠层 key 列表
 //   - visionDistance / enemySenseDistance / reachabilityDistance / pathPreview：数据源代理
 //   - currentTiles / currentPgroup / playerPos / isPlayerInCurrentRegion：项目状态代理
@@ -89,6 +89,9 @@ describe('useOverlayRenderer', () => {
         'fog',
         'vision',
         'reachability',
+        'wilditem',
+        'poi',
+        'enemy',
       ]);
     });
   });
@@ -101,6 +104,9 @@ describe('useOverlayRenderer', () => {
         vision: false,
         reachability: false,
         tideHeatmap: false,
+        wilditem: false,
+        poi: false,
+        enemy: false,
       });
     });
 

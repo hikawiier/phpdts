@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // zip-bundle：jszip 打包 + file-saver 下载（对齐 NEW_DESIGN.md §3.2.4）
 //

@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 示例生成器（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-4）
+// 示例生成器（M8 主题生成器）
 //
 // 主题意图：最简单的随机生成器，用于演示 Generator 接口用法
 //   - 单区域 pgroup=1 全填充 standard floor + shallow tide

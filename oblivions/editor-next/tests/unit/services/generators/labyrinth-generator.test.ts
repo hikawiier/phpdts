@@ -1,5 +1,5 @@
 //
-// LabyrinthGenerator 单元测试（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-5）
+// LabyrinthGenerator 单元测试（M8 主题生成器）
 //
 // 覆盖点：
 //   - 默认参数：13×11 迷宫，cols/rows 强制奇数（差异化点）

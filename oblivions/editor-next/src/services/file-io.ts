@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // file-io：文件 IO 封装（对齐 NEW_DESIGN.md §3.2.3 + §3.2.4）
 //

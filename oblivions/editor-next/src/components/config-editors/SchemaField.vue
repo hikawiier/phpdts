@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // SchemaField：按 schema 渲染单个字段的通用控件（对齐 NEW_DESIGN.md §3.4.5 schema 驱动 UI）

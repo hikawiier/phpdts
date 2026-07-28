@@ -1,0 +1,24 @@
+{
+  "name": "@oblivions/workspace-gateway",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Oblivions 工具箱本地工作区服务（O-1 Workspace Gateway）",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.1",
+    "typescript": "^5.3.3"
+  }
+}

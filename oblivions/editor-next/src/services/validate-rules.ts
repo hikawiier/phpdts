@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 验证规则函数集（对齐 NEW_DESIGN.md §3.5 + Dian.md O-3）
+// 验证规则函数集（P0 迁移到 O-10 structure-validator）
 //
 // 研判：
 //   - 纯函数规则集，是 O-3 框架的核心实现
@@ -20,6 +21,9 @@
 //   - runLightValidation(project) → ValidateIssue[]
 //   - runFullValidation(project, options?) → ValidateIssue[]
 //   - runValidation(project, mode, options?) → ValidateIssue[]（统一入口）
+//   - runStructureValidationFromGraph(graphStore) → ValidateIssue[]（P1-H 新增：
+//     第 2 层结构校验直接从 graph-store 读取 world.region / world.tile 节点，
+//     重建 MapProject 形状后调用纯函数规则集，避免依赖 projectStore）
 //   - summarize(issues) → ValidateSummary
 //   - validateTile(pgroup, pls, tile) → ValidateIssue[]（单格实时校验）
 //   - validateRegion(pgroup, region) → ValidateIssue[]（单区域实时校验）
@@ -49,6 +53,16 @@ import type {
   ValidateSeverity,
   ValidateSummary,
 } from '@/shared';
+import type { useGraphStore } from '@/graph/graph-store';
+import { projectFromGraph } from '@/graph/assemblers/world-assembler';
+
+/**
+ * GraphStore 类型别名——避免在函数签名中写长 ReturnType 表达式。
+ *
+ * 使用 type-only import 不会引入运行时依赖；validate-rules.ts 仍是纯函数模块，
+ * 调用方传入 graphStore 实例即可。
+ */
+type GraphStore = ReturnType<typeof useGraphStore>;
 
 // ─── 内部工具 ───────────────────────────────────────────────────
 
@@ -707,16 +721,71 @@ export function validateRegion(pgroup: Pgroup, region: Region | null): ValidateI
 /**
  * 汇总 issues 统计
  *
- * @returns { errors, warnings, byRule: { [ruleId]: count } }
+ * P6 扩展：新增 blockingCount 统计 blocking=true 的 issue 数量（执行案 §4.5.1）。
+ * blocking=true 的 issue 阻断构建发布，与 severity='error' 是正交维度——
+ * 可以存在"非阻断的 error"（如已知引用失败）和"阻断的 error"（如镜像不一致）。
+ *
+ * @returns { errors, warnings, blockingCount, byRule }
  */
 export function summarize(issues: readonly ValidateIssue[]): ValidateSummary {
   let errors = 0;
   let warnings = 0;
+  let blockingCount = 0;
   const byRule: Record<string, number> = {};
   for (const issue of issues) {
     if (issue.severity === 'error') errors++;
     else warnings++;
+    if (issue.blocking) blockingCount++;
     byRule[issue.rule] = (byRule[issue.rule] ?? 0) + 1;
   }
-  return { errors, warnings, byRule };
+  return { errors, warnings, blockingCount, byRule };
+}
+
+// ─── P1-H 新增：从 graph-store 读取的第 2 层结构校验入口 ────────
+//
+// 设计意图（执行案 §三 + §5.3）：
+//   - 第 2 层结构校验改为从 graph-store 读取 world.region / world.tile 节点，
+//     不再依赖 projectStore（projectStore 已退化为 graph-store 的响应式入口）
+//   - 通过 projectFromGraph 重建 MapProject 形状，复用现有 5 个纯函数规则集
+//     （validateTilesBasic / validateRegionReferences / validateNeighbors /
+//     validateExitLinks / validateConnectivity），保持 17 个 structure rule ID 与
+//     severity 不变
+//   - 不含配置交叉引用（POI_POOL_REF / POI_LOOT_TABLE_REF / SCATTER_ITEM_REF）——
+//     这 3 个 rule ID 属于第 3 层 reference-validator，由其独立读取 graph-store
+//   - 现有 runLightValidation(project) / runFullValidation(project, options?) 保留，
+//     供现有单元测试与 M8 生成器（includeConfig=false）继续使用
+
+/**
+ * 从 graph-store 读取并运行第 2 层结构校验。
+ *
+ * 内部流程：
+ *   1. 从 graph-store 读取 world.region / world.tile 节点
+ *   2. 通过 projectFromGraph 重建 MapProject 形状
+ *   3. 调用 5 个结构校验纯函数（17 个 rule ID）：
+ *      - validateTilesBasic：PLS_RANGE / PGROUP_RANGE / TIDE_INVALID / FLOOR_INVALID / OCCUPY_CONFLICT
+ *      - validateRegionReferences：REGION_NEXT_DANGLING / REGION_PREV_DANGLING /
+ *        REGION_NEXT_PREV_ASYMMETRIC / REGION_ENTRANCE_DANGLING / REGION_EXIT_DANGLING /
+ *        REGION_NO_ENTRANCE / REGION_NO_EXIT
+ *      - validateNeighbors：NEIGHBOR_DANGLING / NEIGHBOR_ASYMMETRIC
+ *      - validateExitLinks：EXIT_LINK_TO_PGROUP_DANGLING / EXIT_LINK_TO_PLS_DANGLING
+ *      - validateConnectivity：CONNECTIVITY_ISLAND
+ *
+ * 不含 Light / Full 入口的分级语义——调用方（structure-validator）决定是否包含 BFS。
+ * 本函数始终包含 BFS（与 structure-validator 当前行为一致）。
+ *
+ * @param graphStore graph-store 实例
+ * @returns ValidateIssue[]（17 个 structure rule ID 之一）
+ */
+export function runStructureValidationFromGraph(graphStore: GraphStore): ValidateIssue[] {
+  const regionNodes = graphStore.findNodesByKind('world.region');
+  const tileNodes = graphStore.findNodesByKind('world.tile');
+  const project: MapProject = projectFromGraph(regionNodes, tileNodes);
+
+  const issues: ValidateIssue[] = [];
+  issues.push(...validateTilesBasic(project));
+  issues.push(...validateRegionReferences(project));
+  issues.push(...validateNeighbors(project));
+  issues.push(...validateExitLinks(project));
+  issues.push(...validateConnectivity(project));
+  return issues;
 }

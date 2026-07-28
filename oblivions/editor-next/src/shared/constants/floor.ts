@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 地板类型常量（5 类，对齐 gamedata 配置与 validate.js FLOOR_VALUES）
 // 配置驱动（对齐 2.6）：UI 下拉与 validate 规则都从这里取值，不硬编码

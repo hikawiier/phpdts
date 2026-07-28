@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 潮汐类型常量（3 档，不含 safe；对齐 DESIGN.md 1.3 与 validate.js TIDE_VALUES）
 // safe 由独立 preset_safe 字段标记，不作为 tide 取值

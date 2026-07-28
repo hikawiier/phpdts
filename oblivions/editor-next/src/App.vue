@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // 根组件：布局壳（TopBar + SideNav + RouterView + StatusBar），对齐 NEW_DESIGN.md §2.2
 // Task G4：挂载 ImportModal / ExportModal（全局可见，由 ui.modals 控制显隐）

@@ -2,9 +2,12 @@
 // overlayStore 单元测试（对齐 NEW_DESIGN.md §7.3 M4：覆盖率 ≥ 85%）
 //
 // 覆盖点：
-//   - state：flags（fog / vision / reachability / tideHeatmap）
+//   - state：flags（fog / vision / reachability / tideHeatmap / wilditem / poi / enemy）
 //   - actions：toggle / setFlag / resetAll
 //   - 边界：默认全 false / toggle 无值时翻转 / setFlag 强制值
+//
+// P4 扩展：O-8 分布工作区引入 wilditem / poi / enemy 三个分布叠层 flag，
+// 对应 OverlayWilditemDistribution / OverlayPoiDistribution / OverlayEnemyDistribution 组件。
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
@@ -25,6 +28,9 @@ describe('overlayStore', () => {
         vision: false,
         reachability: false,
         tideHeatmap: false,
+        wilditem: false,
+        poi: false,
+        enemy: false,
       });
     });
 
@@ -33,6 +39,9 @@ describe('overlayStore', () => {
       expect(overlay.flags.vision).toBe(false);
       expect(overlay.flags.reachability).toBe(false);
       expect(overlay.flags.tideHeatmap).toBe(false);
+      expect(overlay.flags.wilditem).toBe(false);
+      expect(overlay.flags.poi).toBe(false);
+      expect(overlay.flags.enemy).toBe(false);
     });
   });
 
@@ -64,10 +73,16 @@ describe('overlayStore', () => {
       overlay.toggle('vision', true);
       overlay.toggle('reachability', true);
       overlay.toggle('tideHeatmap', true);
+      overlay.toggle('wilditem', true);
+      overlay.toggle('poi', true);
+      overlay.toggle('enemy', true);
       expect(overlay.flags.fog).toBe(true);
       expect(overlay.flags.vision).toBe(true);
       expect(overlay.flags.reachability).toBe(true);
       expect(overlay.flags.tideHeatmap).toBe(true);
+      expect(overlay.flags.wilditem).toBe(true);
+      expect(overlay.flags.poi).toBe(true);
+      expect(overlay.flags.enemy).toBe(true);
     });
   });
 
@@ -96,11 +111,17 @@ describe('overlayStore', () => {
       overlay.setFlag('vision', true);
       overlay.setFlag('reachability', true);
       overlay.setFlag('tideHeatmap', true);
+      overlay.setFlag('wilditem', true);
+      overlay.setFlag('poi', true);
+      overlay.setFlag('enemy', true);
       expect(overlay.flags).toEqual({
         fog: true,
         vision: true,
         reachability: true,
         tideHeatmap: true,
+        wilditem: true,
+        poi: true,
+        enemy: true,
       });
     });
   });
@@ -111,6 +132,9 @@ describe('overlayStore', () => {
       overlay.setFlag('vision', true);
       overlay.setFlag('reachability', true);
       overlay.setFlag('tideHeatmap', true);
+      overlay.setFlag('wilditem', true);
+      overlay.setFlag('poi', true);
+      overlay.setFlag('enemy', true);
 
       overlay.resetAll();
 
@@ -119,6 +143,9 @@ describe('overlayStore', () => {
         vision: false,
         reachability: false,
         tideHeatmap: false,
+        wilditem: false,
+        poi: false,
+        enemy: false,
       });
     });
 
@@ -129,6 +156,9 @@ describe('overlayStore', () => {
         vision: false,
         reachability: false,
         tideHeatmap: false,
+        wilditem: false,
+        poi: false,
+        enemy: false,
       });
     });
   });

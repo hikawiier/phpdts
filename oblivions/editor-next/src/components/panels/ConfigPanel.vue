@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // ConfigPanel：配置编辑面板（对齐 NEW_DESIGN.md §3.4 + §3.4.4 + §3.4.5）
@@ -13,6 +14,11 @@
 //   - obl_config 用 JSON 格式化展示（key-value 树形）
 //   - 视觉对齐 2.15：灰阶基底 + 唯一强调色（accent-error 仅用于错误）
 //   - 内存缓存：所有编辑操作仅修改 configStore 内存状态，需通过 ConfigView 保存按钮写回后端
+//
+// P4 过渡期标记（执行案 §4.5.2）：
+//   - scatter 子 Tab 现为"代理模式"——P4 将 scatter 编辑迁移至 O-8 分布工作区
+//     （ScatterRuleTablePanel），此处 ScatterPoolEditor 保留作为过渡期入口
+//   - P4 完成后此子 Tab 移除，scatter 编辑统一由分布工作区承载
 //
 // 数据流：
 //   - 读：config.scatterPool / poiTable / poiPool / oblConfig
@@ -31,8 +37,8 @@ type SubTab = 'scatter' | 'poi_table' | 'poi_pool' | 'obl_config';
 
 const activeTab = ref<SubTab>('scatter');
 
-const tabs: ReadonlyArray<{ key: SubTab; label: string }> = [
-  { key: 'scatter', label: '散布池（scatter_pool）' },
+const tabs: ReadonlyArray<{ key: SubTab; label: string; proxy?: boolean }> = [
+  { key: 'scatter', label: '散布池（scatter_pool）', proxy: true },
   { key: 'poi_table', label: 'POI 模板（poi_table）' },
   { key: 'poi_pool', label: 'POI 生成池（poi_pool）' },
   { key: 'obl_config', label: '核心配置（obl_config，只读）' },
@@ -72,6 +78,13 @@ const hasAnyConfig = computed(() => config.hasConfig || hasOblConfig.value);
         @click="activeTab = tab.key"
       >
         {{ tab.label }}
+        <span
+          v-if="tab.proxy"
+          class="ml-1 rounded border border-yellow-800 bg-yellow-950 px-1 py-0.5 text-[9px] text-yellow-600"
+          title="P4 过渡期代理模式——编辑已迁移至分布工作区，此处保留作为过渡入口，P4 完成后移除"
+        >
+          代理
+        </span>
       </button>
     </div>
 
@@ -85,6 +98,13 @@ const hasAnyConfig = computed(() => config.hasConfig || hasOblConfig.value);
 
     <!-- 子 Tab 内容 -->
     <template v-else>
+      <!-- P4 过渡期：scatter 子 Tab 代理模式提示 -->
+      <div
+        v-if="activeTab === 'scatter'"
+        class="rounded border border-yellow-900 bg-yellow-950/50 px-2 py-1 text-[10px] text-yellow-700"
+      >
+        P4 过渡期代理模式：散布池编辑已迁移至分布工作区（O-8 ScatterRuleTablePanel），此处保留作为过渡入口，P4 完成后移除
+      </div>
       <ScatterPoolEditor v-show="activeTab === 'scatter'" class="flex-1 overflow-hidden" />
       <PoiTableEditor v-show="activeTab === 'poi_table'" class="flex-1 overflow-hidden" />
       <PoiPoolEditor v-show="activeTab === 'poi_pool'" class="flex-1 overflow-hidden" />

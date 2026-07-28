@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 群岛链生成器（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-4）
+// 群岛链生成器（M8 主题生成器）
 //
 // 主题意图：模拟多岛屿群岛链
 //   - 每个区域是一个独立岛屿——中心陆地（standard floor / shallow tide）

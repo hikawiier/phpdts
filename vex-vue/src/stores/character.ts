@@ -28,6 +28,7 @@
 import { defineStore } from 'pinia';
 import { reactive, computed, shallowRef } from 'vue';
 import { useMapStore } from '@/stores/map';
+import { getEnemyName } from '@/data/enemy-locale';
 import type { Character, CombatState } from '@/types/character';
 import type { CombatViewModel, Enemy, PlayerInfo } from '@/types/api';
 
@@ -58,7 +59,7 @@ function normalizeEnemy(enemy: Enemy, replaceStatusProjection = false): Partial<
   const patch: Partial<Character> = {
     pid: num(enemy.pid),
     type: num(enemy.type),
-    name: str(enemy.name),
+    name: getEnemyName(enemy.type, str(enemy.name)),
     gd: str(enemy.gd),
     icon: str(enemy.icon),
     action: str(enemy.action),

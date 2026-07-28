@@ -30,6 +30,7 @@ import { useCharacterStore } from '@/stores/character';
 import { isFalsy } from '@/utils/format';
 import { isReachable } from '@/composables/useMapReachability';
 import { createZoomState, ZOOM_STEP } from '@/composables/useMapZoom';
+import { getEnemyName } from '@/data/enemy-locale';
 import type { TileInfo } from '@/types/api';
 import type { Character } from '@/types/character';
 import { isTileRevealed, type FogProjection } from '@/utils/map-visibility';
@@ -316,9 +317,9 @@ const cells: ComputedRef<CellData[]> = computed(() => {
         enemy = characterStore.mapEnemyList.find(e => Number(e.pls) === Number(pls)) || null;
         if (enemy) {
           hasEnemy = true;
-          enemyName = enemy.name;
+          enemyName = getEnemyName(enemy.type, enemy.name);
           styleObj.cursor = 'crosshair';
-          title = '点击攻击 ' + enemy.name;
+          title = '点击攻击 ' + getEnemyName(enemy.type, enemy.name);
         } else if (!cellReachable && !passable) {
           // 不可通行格点击反馈
           styleObj.cursor = 'pointer';

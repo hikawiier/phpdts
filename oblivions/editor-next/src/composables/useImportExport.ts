@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// useImportExport：导入导出 composable（对齐 editor-next-独立化与备份还原功能-设计案）
+// useImportExport：导入导出 composable（对齐 editor-next-独立化与备份还原功能-设计案 + P1 执行案 §4.7）
 //
 // 封装 file-io / zip-bundle / worker-bridge 服务，对接 ImportModal / ExportModal
 //
@@ -15,6 +16,13 @@
 //   2. writeBackToSource：写入源 gamedata 目录（写入前自动备份旧文件为 ZIP 下载）
 //   3. backupGamedata：把 gamedata 目录所有 .php 备份到 backup/{timestamp}/ 子目录
 //
+// P1-F 重构（对齐 §4.7）：
+//   - isParsedFile 改为查 Schema 注册表（graphStore.isPathCoveredByGraph）+ configStore 覆盖判定
+//     不再硬编码 map.php / tiles/region_*.php / obl_config.php 列表
+//   - writeBackToSource 保留为 P1 过渡期的浏览器 FSAA 兼容路径，但 emit warning 提示
+//     用户启用 Workspace Gateway 获得原子发布（备份 + 原子替换 + 外部修改冲突检测）
+//   - collectAllExportFiles / exportZip 行为不变
+//
 // 字段过滤：导出时剥离 _breaks（由 php-codegen.stripEditorFields 实现）
 // 旧 exit_links 格式自动迁移：由 php-array-parser.migrateExitLinks 实现
 // Worker 后台解析：大地图（>10000 格）默认走 php-parser.worker
@@ -24,6 +32,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import { useConfigStore } from '@/stores/configStore';
 import { useRawFilesStore } from '@/stores/rawFilesStore';
 import { useUiStore } from '@/stores/uiStore';
+import { useGraphStore } from '@/graph/graph-store';
 import {
   parseMapPhp,
   parseRegionPhp,
@@ -130,21 +139,27 @@ function isConfigFile(path: string): boolean {
   );
 }
 
-/**
- * 判断文件是否已被编辑器解析（不进入 rawFiles 缓存）
- */
-function isParsedFile(path: string): boolean {
-  if (path === 'map.php' || path.endsWith('/map.php')) return true;
-  if (isRegionFile(path)) return true;
-  if (isConfigFile(path)) return true;
-  return false;
-}
-
 export function useImportExport() {
   const project = useProjectStore();
   const config = useConfigStore();
   const rawFilesStore = useRawFilesStore();
   const ui = useUiStore();
+  const graphStore = useGraphStore();
+
+  /**
+   * 判断文件是否已被编辑器解析（不进入 rawFiles 缓存）
+   *
+   * P1-F 重构（对齐 §4.7.1）：改为查 Schema 注册表
+   *   - map.php / tiles/region_*.php / obl_config.php 由 Resource Graph 覆盖
+   *     （通过 graphStore.isPathCoveredByGraph 判断，遍历已注册 kind 的 sourceFiles 模板）
+   *   - scatter_pool.php / poi_table.php / poi_pool.php 仍由 configStore 覆盖
+   *   - 其余文件（combat_skills/*.php 等）走 rawFilesStore
+   */
+  function isParsedFile(path: string): boolean {
+    if (graphStore.isPathCoveredByGraph(path)) return true;
+    if (isConfigFile(path)) return true;
+    return false;
+  }
 
   // ─── state ────────────────────────────────────────────
   // sourceDirHandle 已移入 rawFilesStore（全局共享）
@@ -475,11 +490,11 @@ export function useImportExport() {
     'combat_skill_config.php',
     'enemies_config.php',
     'enemy_pool.php',
-    'gift_box_loot_table.php',
+    // P3：gift_box_loot 已合并到 loot_tables.php，原文件已删除
     'item_table.php',
     'loot_tables.php',
     'poi_interactions.php',
-    'poi_loot.php',
+    // P3：poi_loot.php 为孤儿文件（运行时零消费），已归档到 oblivions/docs/归档/
     'recipe_table.php',
     'skill_definition_config.php',
   ];
@@ -702,6 +717,12 @@ export function useImportExport() {
    *   - 如果没有 sourceDirHandle → 提示用户选择目录（pickDirectory('readwrite')）
    *   - 写入范围：map.php + tiles + scatter_pool + poi_table + poi_pool + rawFiles 全部
    *   - 写入前自动备份旧文件为 oblivions_backup_<timestamp>.zip 下载
+   *
+   * P1-F（对齐 §4.7.2）：保留为过渡期浏览器 FSAA 兼容路径
+   *   - 不支持原子发布（部分写入风险）与外部修改冲突检测
+   *   - emit warning 提示用户启用 Workspace Gateway 获得原子发布能力
+   *   - 完整原子发布路径（备份 + 原子替换 + 冲突检测）由 O-5 atomic-publisher 实现，
+   *     通过 gatewayClient.publishFiles 触发——P1-G BuildView 阶段接入
    */
   async function writeBackToSource(): Promise<void> {
     if (isExporting.value) return;
@@ -715,7 +736,7 @@ export function useImportExport() {
       try {
         const picker = await pickDirectory('readwrite');
         if (!picker || !picker.handle) {
-          // 用户取消选择
+          // 用户取消选择 → 静默退出（不弹任何 toast）
           return;
         }
         handle = picker.handle;
@@ -726,6 +747,12 @@ export function useImportExport() {
         return;
       }
     }
+    // P1-F：FSAA 路径不支持原子发布，提示用户启用 Gateway
+    // 仅在确定要执行写入时弹出（用户取消 pickDirectory 时静默退出，不弹此 warning）
+    ui.showToast(
+      '当前为浏览器 FSAA 写入路径，不支持原子发布与冲突检测；建议启用 Workspace Gateway 获得原子发布能力',
+      'info',
+    );
     isExporting.value = true;
     try {
       const files = collectAllExportFiles();

@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // TilePanel：格属性编辑（对齐 NEW_DESIGN.md §3.1.2）
 //

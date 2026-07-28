@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 可达性 BFS（移植自后端 move.func.php obl_get_distance，@framework E-3 基于图的移动系统）
 // 算法语义保持一致：BFS 只走 passable=true 的格，返回最短距离或 -1。

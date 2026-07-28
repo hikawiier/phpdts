@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 //
 // PoiTableEditor：poi_table 编辑器（对齐 NEW_DESIGN.md §3.4.2 + §3.4.5 schema 驱动 UI）

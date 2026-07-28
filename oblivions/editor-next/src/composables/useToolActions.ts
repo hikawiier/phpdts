@@ -1,12 +1,21 @@
+// @module O 内容工具箱
 //
-// useToolActions：工具操作入口（对齐 NEW_DESIGN.md §3.1 + §2.4.4）
+// useToolActions：工具操作入口（对齐 NEW_DESIGN.md §3.1 + §2.4.4 + P1 执行案 §4.8.2）
 //
 // 研判：
 //   - 工具行为是 O-0 框架的核心交互
-//   - 与 historyStore 配合：每个可撤销操作封装为 Command
+//   - 与 historyStore 配合：每个可撤销操作封装为 GraphCommand（基于 world 子图快照）
 //   - 与 projectStore 配合：实际数据 mutation 通过 projectStore actions 完成
 //   - 与 toolStore 配合：读取当前工具状态、画笔预设、breakFirst / batchSelection
 //   - 边界处理：拖拽移动通过响应式 :class 驱动（对齐 2.13），禁止命令式 DOM
+//
+// P1-F 重构（对齐 §4.8.2）：
+//   - 旧式 createCommand(description, doFn, undoFn) + history.push(cmd) 全部改为
+//     history.executeGraph(description, () => mutation())
+//   - undoFn 不再需要：historyStore 内部通过 projectStore.graphSnapshot() 记录
+//     before/after，undo/redo 时通过 replaceGraphSnapshot 还原 world 子图
+//   - 工具行为本身（clickTileSelect / startDragTile / 等）不改
+//   - 不进 history 的操作（仅修改 selectedPls / batchSelection / breakFirst）保持原样
 //
 // 工具行为清单（§3.1.4）：
 //   select       拖拽移动格 + 点击选中
@@ -19,7 +28,7 @@
 
 import { computed, ref } from 'vue';
 import { useToolStore, useHistoryStore, useProjectStore } from '@/stores';
-import { createCommand, type Command } from '@/stores/historyStore';
+import { type AnyCommand } from '@/stores/historyStore';
 import type { BrushPreset, ToolId } from '@/stores/toolStore';
 import type { Pgroup, Pls, Tile, Floor, Tide } from '@/shared';
 
@@ -139,23 +148,11 @@ export function useToolActions() {
     const existing = project.findTileByCoord(pgroup, targetX, targetY);
     if (existing !== null && existing !== state.pls) return true;
 
-    // 快照-替换模式：do/undo 都通过 replaceProject 还原整体状态
-    // 比 differential 命令更稳健（moveTile 涉及 disconnectAll + autoConnect 副作用，
-    // 直接重放会在 redo 时因坐标已变而失效）
-    const before = project.snapshot();
-    project.moveTile(pgroup, state.pls, targetX, targetY);
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.move',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd); // 已通过 moveTile 完成实际变更，仅入栈（不再 do）
+    // GraphCommand：historyStore 内部自动记录 before/after 快照
+    // undo/redo 通过 replaceGraphSnapshot 还原 world 子图（含 _breaks / neighbors / adjacent_to 边）
+    history.executeGraph('history.tile.move', () => {
+      project.moveTile(pgroup, state.pls, targetX, targetY);
+    });
     return true;
   }
 
@@ -177,23 +174,15 @@ export function useToolActions() {
     const pgroup = ensurePgroup();
     if (pgroup === null) return null;
     const preset = tool.brush;
-    const before = project.snapshot();
-    const pls = project.addTile(pgroup, x, y, preset);
-    if (pls === null) return null;
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.add',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd); // 已通过 addTile 完成实际变更
-    project.setSelectedPls(pls);
-    return pls;
+    // 用 createGraphCommand + 条件 push：addTile 失败时不入栈（避免空 Command 污染历史）
+    let newPls: Pls | null = null;
+    const cmd = history.createGraphCommand('history.tile.add', () => {
+      newPls = project.addTile(pgroup, x, y, preset);
+    });
+    if (newPls === null) return null;
+    history.push(cmd);
+    project.setSelectedPls(newPls);
+    return newPls;
   }
 
   // ═════════════════════════════════════════════════════
@@ -210,20 +199,9 @@ export function useToolActions() {
     const tile = project.currentTiles[pls];
     if (!tile) return;
 
-    const before = project.snapshot();
-    project.deleteTile(pgroup, pls);
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.delete',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    history.executeGraph('history.tile.delete', () => {
+      project.deleteTile(pgroup, pls);
+    });
   }
 
   // ═════════════════════════════════════════════════════
@@ -242,7 +220,6 @@ export function useToolActions() {
     const tile = project.currentTiles[pls];
     if (!tile) return;
     const preset = tool.brush;
-    const before = project.snapshot();
 
     const patch: Partial<Tile> = {
       floor: preset.floor,
@@ -252,19 +229,9 @@ export function useToolActions() {
       destructible: preset.destructible,
       preset_safe: preset.preset_safe,
     };
-    project.updateTile(pgroup, pls, patch);
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.paint',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    history.executeGraph('history.tile.paint', () => {
+      project.updateTile(pgroup, pls, patch);
+    });
   }
 
   // ═════════════════════════════════════════════════════
@@ -294,20 +261,9 @@ export function useToolActions() {
     }
     tool.setBreakFirst(null);
 
-    const before = project.snapshot();
-    project.breakTileConnection(pgroup, first, pls);
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.connect.break',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    history.executeGraph('history.connect.break', () => {
+      project.breakTileConnection(pgroup, first, pls);
+    });
   }
 
   /**
@@ -329,20 +285,9 @@ export function useToolActions() {
     }
     tool.setBreakFirst(null);
 
-    const before = project.snapshot();
-    project.restoreTileConnection(pgroup, first, pls);
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.connect.restore',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    history.executeGraph('history.connect.restore', () => {
+      project.restoreTileConnection(pgroup, first, pls);
+    });
   }
 
   // ═════════════════════════════════════════════════════
@@ -398,22 +343,11 @@ export function useToolActions() {
     const selection = [...tool.batchSelection];
     if (selection.length === 0) return;
 
-    const before = project.snapshot();
-    for (const pls of selection) {
-      project.updateTile(pgroup, pls, patch);
-    }
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.batchPatch',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    history.executeGraph('history.tile.batchPatch', () => {
+      for (const pls of selection) {
+        project.updateTile(pgroup, pls, patch);
+      }
+    });
   }
 
   /**
@@ -427,23 +361,12 @@ export function useToolActions() {
     const selection = [...tool.batchSelection];
     if (selection.length === 0) return;
 
-    const before = project.snapshot();
-    for (const pls of selection) {
-      project.deleteTile(pgroup, pls);
-    }
+    history.executeGraph('history.tile.batchDelete', () => {
+      for (const pls of selection) {
+        project.deleteTile(pgroup, pls);
+      }
+    });
     tool.clearBatchSelection();
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.batchDelete',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
   }
 
   /**
@@ -457,44 +380,33 @@ export function useToolActions() {
     const selection = [...tool.batchSelection];
     if (selection.length === 0) return [];
 
-    const before = project.snapshot();
+    // 在 doFn 内部收集新增 pls 列表；snapshot 自动记录 before/after
     const newPlsList: Pls[] = [];
-
-    for (const srcPls of selection) {
-      const srcTile = project.currentTiles[srcPls];
-      if (!srcTile) continue;
-      // 检查目标 pgroup 同坐标是否已占用
-      const existing = project.findTileByCoord(targetPgroup, srcTile.x, srcTile.y);
-      if (existing !== null) continue; // 跳过冲突
-      const newPls = project.addTile(targetPgroup, srcTile.x, srcTile.y, {
-        floor: srcTile.floor,
-        tide: srcTile.tide,
-        passable: srcTile.passable,
-        height: srcTile.height,
-        destructible: srcTile.destructible,
-        preset_safe: srcTile.preset_safe,
-      });
-      if (newPls !== null) {
-        // 复制 name / desc
-        project.updateTile(targetPgroup, newPls, {
-          name: srcTile.name,
-          desc: srcTile.desc,
+    history.executeGraph('history.tile.batchCopy', () => {
+      for (const srcPls of selection) {
+        const srcTile = project.currentTiles[srcPls];
+        if (!srcTile) continue;
+        // 检查目标 pgroup 同坐标是否已占用
+        const existing = project.findTileByCoord(targetPgroup, srcTile.x, srcTile.y);
+        if (existing !== null) continue; // 跳过冲突
+        const newPls = project.addTile(targetPgroup, srcTile.x, srcTile.y, {
+          floor: srcTile.floor,
+          tide: srcTile.tide,
+          passable: srcTile.passable,
+          height: srcTile.height,
+          destructible: srcTile.destructible,
+          preset_safe: srcTile.preset_safe,
         });
-        newPlsList.push(newPls);
+        if (newPls !== null) {
+          // 复制 name / desc
+          project.updateTile(targetPgroup, newPls, {
+            name: srcTile.name,
+            desc: srcTile.desc,
+          });
+          newPlsList.push(newPls);
+        }
       }
-    }
-    const after = project.snapshot();
-
-    const cmd = createCommand(
-      'history.tile.batchCopy',
-      () => {
-        project.replaceProject(after);
-      },
-      () => {
-        project.replaceProject(before);
-      },
-    );
-    history.push(cmd);
+    });
     return newPlsList;
   }
 
@@ -545,11 +457,11 @@ export function useToolActions() {
   }
 
   // ─── 撤销/重做代理 ───────────────────────────────────
-  function undo(): Command | null {
+  function undo(): AnyCommand | null {
     return history.undo();
   }
 
-  function redo(): Command | null {
+  function redo(): AnyCommand | null {
     return history.redo();
   }
 

@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 视野 BFS（移植自后端 vision.func.php obl_calc_vision_range，@framework E-6 视野与感知系统）
 // 算法语义保持一致：从 playerPos 出发 BFS 扩展 vision_range 步；

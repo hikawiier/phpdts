@@ -44,6 +44,7 @@ import { getSceneGeometry } from '@/composables/sceneRegistry';
 import { setPlaybackSpeed } from '@/composables/useActorRuntime';
 import { debugBus } from '@/composables/useDebugBus';
 import { animationTrace } from '@/utils/animation-trace';
+import { getEnemyName } from '@/data/enemy-locale';
 import type { MoveTier } from '@/types/actor-runtime';
 import type { CommandResult } from '@/api/client';
 import type { Enemy } from '@/types/api';
@@ -156,7 +157,7 @@ interface RawStepData {
     // fog_cleared 后端实际是 pls 数组（info_acquire.func.php L188/L239），不参与事件派生，宽松类型
     fog_cleared?: unknown[] | boolean;
     items_discovered?: Array<{ iid: number; pls: number; distance_tier?: string }>;
-    enemies_discovered?: Array<{ pid: number; name: string; pls: number }>;
+    enemies_discovered?: Array<{ pid: number; type?: number; name: string; pls: number }>;
     pois_discovered?: Array<{ iaid: number; pls: number; poi_id?: string | number }>;
   };
   // move step 的 interrupt 字段（设计案 §8.1：中断作为最后一次移动的属性）
@@ -165,7 +166,7 @@ interface RawStepData {
     reason: string;
     tick: number;
     details?: {
-      enemies?: Array<{ pid: number; name: string; pls: number }>;
+      enemies?: Array<{ pid: number; type?: number; name: string; pls: number }>;
       pois?: Array<{ iaid: number; pls: number; poi_id?: string | number }>;
       bid?: number;
       action?: string;
@@ -565,7 +566,7 @@ function deriveStepEvents(s: RawStepData): MoveTickEvent[] {
       events.push({
         type: 'discover_enemy',
         text: '发现敌人',
-        name: enemy.name,
+        name: enemy.type != null ? getEnemyName(enemy.type, enemy.name) : enemy.name,
         pid: enemy.pid,
         pls: enemy.pls,
       });

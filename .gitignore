@@ -143,3 +143,6 @@ oblivions/pnpm-debug.log*
 oblivions/editor-next/editor.config.json
 /oblivions/docs
 /vex-vue/docs
+vex-vue/package.json
+vex-vue/pnpm-lock.yaml
+vex-vue/pnpm-workspace.yaml

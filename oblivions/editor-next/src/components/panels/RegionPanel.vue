@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // RegionPanel：区域列表 + 区域属性编辑（对齐 NEW_DESIGN.md §3.1.1）
 //

@@ -1,5 +1,6 @@
+// @module O 内容工具箱
 //
-// 潮汐湿地生成器（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-4）
+// 潮汐湿地生成器（M8 主题生成器）
 //
 // 主题意图：模拟潮汐湿地
 //   - tide 字段按空间渐变分布（shallow → deep → abyss）

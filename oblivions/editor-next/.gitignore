@@ -36,7 +36,24 @@ Desktop.ini
 *.log
 pnpm-debug.log*
 
+# 临时调试输出（vue-tsc / vitest 控制台重定向）
+typecheck-errors.txt
+test-output.txt
+
 # Misc
 .cache/
 .temp/
 .turbo/
+docs/
+
+# Gateway backups（O-1 Workspace Gateway 备份目录，含业务文件副本，不入库）
+.backups/
+
+# P5 编译管道临时目录（跨盘符降级时创建，含编译产物副本）
+.oblivions-tmp-build/
+
+# TypeScript build info
+*.tsbuildinfo
+
+pnpm-lock.yaml
+pnpm-workspace.yaml

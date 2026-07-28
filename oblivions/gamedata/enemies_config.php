@@ -12,7 +12,7 @@ if (!defined('IN_GAME')) { exit('Access Denied'); }
 // NPC 与玩家共用 bra_oblplayers 表，通过 type 字段区分（type>0 为敌人类型 ID）。
 // ================================================================
 
-$obl_enemies_config = array(
+return array(
     // 敌人类型 ID => 配置
     1 => array(
         'name' => '废铁史莱姆',

@@ -17,6 +17,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useSceneStore } from '@/stores/scene-store';
 import { useToastStore } from '@/stores/toast';
 import { isDebugAllEnabled } from '@/utils/debug-flags';
+import { getEnemyName } from '@/data/enemy-locale';
 
 interface DebugSnapshotMeta {
   exists: boolean;
@@ -270,7 +271,7 @@ export const useDebugConsoleStore = defineStore('debug-console', () => {
         ...mapStore.enemies.map(enemy => ({
           pid: Number(enemy.pid),
           type: Number(enemy.type),
-          name: enemy.name,
+          name: getEnemyName(enemy.type, enemy.name),
           pgroup: Number(enemy.pgroup),
           pls: Number(enemy.pls),
           hp: Number(enemy.hp),

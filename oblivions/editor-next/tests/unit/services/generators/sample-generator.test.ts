@@ -1,5 +1,5 @@
 //
-// SampleGenerator 单元测试（对齐 NEW_DESIGN.md §3.7.6 + Dian.md O-5）
+// SampleGenerator 单元测试（M8 主题生成器）
 //
 // 覆盖点：
 //   - 默认参数：generate 产出 8×6=48 格的单区域，首尾 passable=true

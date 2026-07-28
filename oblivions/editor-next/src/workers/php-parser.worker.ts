@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // PHP 解析 Web Worker（对齐 NEW_DESIGN.md §3.2.5 + §9.2 workers/）
 //

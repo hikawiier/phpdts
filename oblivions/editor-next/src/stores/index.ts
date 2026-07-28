@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // Pinia stores 聚合导出（8 个，对齐 NEW_DESIGN.md §2.3）
 // 各 store 单独定义 framework 归属，这里仅做导出聚合

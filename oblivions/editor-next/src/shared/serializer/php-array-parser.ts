@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // PHP 数组解析器（移植自 oblivions/editor/src/lib/php-array-parser.js，加 TS 类型）
 //
@@ -68,44 +69,210 @@ interface Token {
 }
 
 /**
- * 解析 PHP 文件内容，提取 return 语句中的数组
+ * 解析 PHP 文件内容，提取 return 语句中的数组（向后兼容入口）
+ *
+ * 实际解析委托给 `parsePhpArrayExt`，丢弃 varName 字段。
+ * 旧调用方（parseMapPhp / parseRegionPhp / server 端 parse-php.ts）继续使用此入口，
+ * 行为与重构前一致——优先识别 `return [...]` / `return array(...)`。
  *
  * @param phpCode PHP 文件完整内容
- * @returns 解析结果；输入无 return [...] 时 ok=false
+ * @returns 解析结果；输入无可识别的数组形态时 ok=false
  */
 export function parsePhpArray(phpCode: string): PhpParseResult {
-  // 提取 return [...] 中的内容
-  const returnMatch = phpCode.match(/return\s*\[/s);
-  if (!returnMatch) {
-    return { ok: false, value: null, error: { message: '未找到 return [...]' } };
+  const ext = parsePhpArrayExt(phpCode);
+  return { ok: ext.ok, value: ext.value, error: ext.error };
+}
+
+/**
+ * 解析 PHP 文件内容，识别四种顶层形态并返回解析结果与可能的 varName
+ *
+ * 支持的形态（按优先级）：
+ *   1. `return [...]`        — 标准 PHP 7.4+ 短数组（向后兼容）
+ *   2. `return array(...)`   — 传统 array() 形态
+ *   3. `$var = [...]`        — 全局变量赋值短数组
+ *   4. `$var = array(...)`   — 全局变量赋值传统形态（enemies_config.php 唯一使用）
+ *
+ * 解析结果附带 `varName` 字段（仅形态 3/4）。O-4 PHP adapter 据此决定 codegen 形态。
+ *
+ * 模块归属：O-4 Source Adapter
+ * @param phpCode PHP 文件完整内容
+ * @returns 解析结果（含可选 varName）
+ */
+export function parsePhpArrayExt(phpCode: string): PhpParseResult & { varName?: string } {
+  // 优先尝试 return 形态（向后兼容 + 更常见）
+  const returnResult = tryParseReturn(phpCode);
+  if (returnResult.ok) return returnResult;
+
+  // 然后尝试 $var = ... 形态
+  const assignResult = tryParseAssignment(phpCode);
+  if (assignResult.ok) return assignResult;
+
+  // 都失败：返回 return 形态的错误（更常见的预期形态）
+  return returnResult;
+}
+
+/**
+ * 尝试解析 `return [...]` 或 `return array(...)` 形态
+ */
+function tryParseReturn(phpCode: string): PhpParseResult & { varName?: string } {
+  const match = phpCode.match(/return\s+(array\s*\(|\[)/s);
+  if (!match) {
+    return {
+      ok: false,
+      value: null,
+      error: { message: '未找到 return [...] 或 return array(...)' },
+    };
   }
 
   const returnIdx = phpCode.indexOf('return');
   if (returnIdx === -1) {
     return { ok: false, value: null, error: { message: '未找到 return 语句' } };
   }
-  const startIdx = phpCode.indexOf('[', returnIdx);
-  if (startIdx === -1) {
+
+  return parseArrayAt(phpCode, returnIdx + 'return'.length);
+}
+
+/**
+ * 尝试解析 `$var = [...]` 或 `$var = array(...)` 形态
+ *
+ * 捕获变量名并通过 varName 字段返回。
+ */
+function tryParseAssignment(phpCode: string): PhpParseResult & { varName?: string } {
+  const match = phpCode.match(/\$([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array\s*\(|\[)/s);
+  if (!match) {
     return {
       ok: false,
       value: null,
-      error: { message: 'return 后未找到 [' },
+      error: { message: '未找到 $var = [...] 或 $var = array(...)' },
     };
   }
 
-  // 计算起始行列（用于错误定位）
-  const { line: startLine, column: startColumn } = computeLineColumn(phpCode, startIdx);
+  const varName = match[1]!;
+  const dollarIdx = phpCode.indexOf(`$${varName}`);
+  if (dollarIdx === -1) {
+    return {
+      ok: false,
+      value: null,
+      error: { message: '内部错误：正则匹配但未找到 $var 位置' },
+    };
+  }
 
-  // 找到匹配的闭合括号（跳过字符串与注释内的括号）
+  const result = parseArrayAt(phpCode, dollarIdx + varName.length + 1);
+  return { ...result, varName };
+}
+
+/**
+ * 从给定起点（scanStart）向后扫描，找 `[` 或 `array(`，提取数组内容并解析
+ *
+ * 共享给 tryParseReturn 和 tryParseAssignment。
+ */
+function parseArrayAt(phpCode: string, scanStart: number): PhpParseResult {
+  // 跳过空白
+  let i = scanStart;
+  while (i < phpCode.length && /\s/.test(phpCode[i]!)) i++;
+
+  if (i >= phpCode.length) {
+    return {
+      ok: false,
+      value: null,
+      error: { message: '数组起始位置超出文件末尾' },
+    };
+  }
+
+  // 检测 array( 形态
+  if (phpCode.startsWith('array', i)) {
+    let j = i + 'array'.length;
+    while (j < phpCode.length && /\s/.test(phpCode[j]!)) j++;
+    if (j >= phpCode.length || phpCode[j] !== '(') {
+      return {
+        ok: false,
+        value: null,
+        error: { message: 'array 后未找到 (' },
+      };
+    }
+    const openIdx = j; // ( 位置
+    const closeIdx = findMatchingBracket(phpCode, openIdx, '(', ')');
+    if (closeIdx === -1) {
+      const { line, column } = computeLineColumn(phpCode, openIdx);
+      return {
+        ok: false,
+        value: null,
+        error: { message: '未找到匹配的 )', line, column, expected: ')' },
+      };
+    }
+    // 提取 ( 和 ) 之间的内容，包装为 [...] 供 tokenizer
+    const inner = phpCode.substring(openIdx + 1, closeIdx);
+    const arrayContent = `[${inner}]`;
+    return tokenizeAndParse(arrayContent, phpCode, openIdx);
+  }
+
+  // 检测 [ 形态
+  if (phpCode[i] === '[') {
+    const openIdx = i;
+    const closeIdx = findMatchingBracket(phpCode, openIdx, '[', ']');
+    if (closeIdx === -1) {
+      const { line, column } = computeLineColumn(phpCode, openIdx);
+      return {
+        ok: false,
+        value: null,
+        error: { message: '未找到匹配的 ]', line, column, expected: ']' },
+      };
+    }
+    const arrayContent = phpCode.substring(openIdx, closeIdx + 1);
+    return tokenizeAndParse(arrayContent, phpCode, openIdx);
+  }
+
+  return {
+    ok: false,
+    value: null,
+    error: { message: '未找到 [ 或 array(' },
+  };
+}
+
+/**
+ * 共享的 tokenize + parseValue 入口
+ */
+function tokenizeAndParse(arrayContent: string, phpCode: string, openIdx: number): PhpParseResult {
+  const { line: startLine, column: startColumn } = computeLineColumn(phpCode, openIdx);
+  const tokens = tokenize(arrayContent);
+  const parser = new TokenParser(tokens);
+  const value = parser.parseValue();
+  if (value === null) {
+    return {
+      ok: false,
+      value: null,
+      error: {
+        message: '解析返回 null：token 流不完整',
+        line: startLine,
+        column: startColumn,
+        expected: 'array | string | number | bool | null',
+      },
+    };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * 从 openIdx 位置的开放括号开始，找匹配的闭合括号
+ *
+ * 跳过字符串与注释内的括号。支持 `()` 和 `[]` 两种括号类型，
+ * 供 `return array(...)` / `$var = array(...)` / `return [...]` / `$var = [...]` 共享。
+ */
+function findMatchingBracket(
+  content: string,
+  openIdx: number,
+  open: '(' | '[',
+  close: ')' | ']',
+): number {
   let depth = 0;
-  let endIdx = -1;
   let inSingle = false;
   let inDouble = false;
   let inLineComment = false;
   let inBlockComment = false;
-  for (let i = startIdx; i < phpCode.length; i++) {
-    const ch = phpCode[i];
-    const next = phpCode[i + 1];
+
+  for (let i = openIdx; i < content.length; i++) {
+    const ch = content[i]!;
+    const next = content[i + 1];
 
     if (inLineComment) {
       if (ch === '\n') inLineComment = false;
@@ -156,45 +323,13 @@ export function parsePhpArray(phpCode: string): PhpParseResult {
       continue;
     }
 
-    if (ch === '[') depth++;
-    else if (ch === ']') {
+    if (ch === open) depth++;
+    else if (ch === close) {
       depth--;
-      if (depth === 0) {
-        endIdx = i;
-        break;
-      }
+      if (depth === 0) return i;
     }
   }
-  if (endIdx === -1) {
-    return {
-      ok: false,
-      value: null,
-      error: {
-        message: '未找到匹配的 ]',
-        line: startLine,
-        column: startColumn,
-        expected: ']',
-      },
-    };
-  }
-
-  const arrayContent = phpCode.substring(startIdx, endIdx + 1);
-  const tokens = tokenize(arrayContent);
-  const parser = new TokenParser(tokens);
-  const value = parser.parseValue();
-  if (value === null) {
-    return {
-      ok: false,
-      value: null,
-      error: {
-        message: '解析返回 null：token 流不完整',
-        line: startLine,
-        column: startColumn,
-        expected: 'array | string | number | bool | null',
-      },
-    };
-  }
-  return { ok: true, value };
+  return -1;
 }
 
 /**
@@ -415,6 +550,15 @@ class TokenParser {
    *
    * NO_VALUE 表示当前 peek token 不是有效值（如 ARROW / IDENT / 不识别的 PUNCT），
    * 调用方应据此跳过 token 而不是把 null 元素从数组中剔除
+   *
+   * 识别两种数组字面量形态：
+   *   - `[...]`          — PHP 7.4+ 短数组语法（parseArray 入口）
+   *   - `array(...)`     — 传统 array() 语法（嵌套场景常见，如 enemies_config.php
+   *                        的 'strategy_slots' => array(...)）
+   *
+   * 设计意图：parseArrayAt 在最外层已把 `return array(...)` / `$var = array(...)`
+   * 的内容包装为 `[...]`，但**嵌套**的 `array(...)` 不会预处理——必须在 token 层识别。
+   * 否则嵌套 array() 内的字段会被错误扁平化到外层，导致节点 data 为 null。
    */
   private tryParseValue(): PhpValue | typeof TokenParser.NO_VALUE {
     const tok = this.peek();
@@ -436,15 +580,34 @@ class TokenParser {
       case 'NULL':
         this.consume();
         return null; // 显式 NULL token，是有效值
+      case 'IDENT':
+        // 识别 `array(...)` 传统数组语法——嵌套场景下不会被 parseArrayAt 预处理
+        if (tok.value === 'array') {
+          const next = this.tokens[this.pos + 1];
+          if (next && next.type === 'PUNCT' && next.value === '(') {
+            this.consume(); // 消费 'array'
+            this.consume(); // 消费 '('
+            return this.parseArrayBody(')');
+          }
+        }
+        return TokenParser.NO_VALUE;
       default:
-        // ARROW / IDENT 等不是值
+        // ARROW 等不是值
         return TokenParser.NO_VALUE;
     }
   }
 
   private parseArray(): PhpValue {
     this.expect('PUNCT', '[');
+    return this.parseArrayBody(']');
+  }
 
+  /**
+   * 解析数组主体内容（共用给 `[...]` 与 `array(...)` 形态）
+   *
+   * @param closeChar 数组闭合括号——`]` 对应短数组语法，`)` 对应 array() 语法
+   */
+  private parseArrayBody(closeChar: ']' | ')'): PhpValue {
     // 检测是关联数组还是索引数组
     const items: Array<{ key: PhpValue; value: PhpValue }> = [];
     let isAssoc = false;
@@ -452,7 +615,7 @@ class TokenParser {
     while (true) {
       const next = this.peek();
       if (!next) break;
-      if (next.type === 'PUNCT' && next.value === ']') break;
+      if (next.type === 'PUNCT' && next.value === closeChar) break;
 
       // 连续逗号（空元素）：宽容跳过
       if (next.type === 'PUNCT' && next.value === ',') {
@@ -488,7 +651,7 @@ class TokenParser {
       }
     }
 
-    this.expect('PUNCT', ']');
+    this.expect('PUNCT', closeChar);
 
     if (isAssoc) {
       const obj: { [key: string]: PhpValue } = {};

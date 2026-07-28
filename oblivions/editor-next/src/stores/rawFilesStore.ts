@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // rawFilesStore：原始文件缓存（对齐 editor-next-独立化与备份还原功能-设计案 Task D）
 //

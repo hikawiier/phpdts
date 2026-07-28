@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // OverlayVision：视野范围叠层（对齐 NEW_DESIGN.md §3.3.2 + DESIGN.md 2.15）
 //

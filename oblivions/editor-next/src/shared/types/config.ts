@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 配置文件类型定义，对齐 gamedata 配置文件：
 //   - scatter_pool.php（野生道具生成池，按 tide 三档分桶）

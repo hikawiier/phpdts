@@ -1,6 +1,6 @@
 //
 // 生成器集成测试：生成 → projectStore 写入 → runFullValidation 闭环
-// （对齐 NEW_DESIGN.md §3.7.6 + §7.3 M8 + Dian.md O-5）
+// （M8 主题生成器）
 //
 // 覆盖点：
 //   - 全项目模式：generate → loadProject 覆盖 → runFull 不产生 error

@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // 通用 Toast 容器（订阅 uiStore.toasts，灰阶基底 + 强调色，对齐 DESIGN.md 2.15）
 import { useUiStore } from '@/stores/uiStore';

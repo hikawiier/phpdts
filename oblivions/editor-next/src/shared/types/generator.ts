@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 //
 // 随机生成器 schema 与参数类型定义
 // Schema 驱动 UI（对齐 2.6 配置驱动）：参数字段描述含 type / options / hideInRegionMode 等元数据

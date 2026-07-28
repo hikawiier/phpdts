@@ -1,3 +1,4 @@
+// @module O 内容工具箱
 /// <reference types="vite/client" />
 
 declare module '*.vue' {

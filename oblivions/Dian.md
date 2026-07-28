@@ -129,7 +129,21 @@
     - [M-6：覆盖层优先级堆栈](#框架-m-6覆盖层优先级堆栈)
   - 模块 N：API 客户端
     - [N-1：请求去重](#框架-n-1请求去重)
-- [第四部分：跨模块关键模式](#第四部分跨模块关键模式)
+- [第四部分：内容工具箱基准框架](#第四部分内容工具箱基准框架)
+  - 模块 O：内容工具箱
+    - [O-1：Workspace Gateway 本地工作区服务](#框架-o-1workspace-gateway-本地工作区服务)
+    - [O-2：Schema 注册表](#框架-o-2schema-注册表)
+    - [O-3：Resource Graph 资源图](#框架-o-3resource-graph-资源图)
+    - [O-4：Source Adapter 源适配器](#框架-o-4source-adapter-源适配器)
+    - [O-5：Change Set 与原子构建](#框架-o-5change-set-与原子构建)
+    - [O-6：领域工作区信息架构](#框架-o-6领域工作区信息架构)
+    - [O-7：模板工作区](#框架-o-7模板工作区)
+    - [O-8：分布工作区](#框架-o-8分布工作区)
+    - [O-9：呈现工作区](#框架-o-9呈现工作区)
+    - [O-10：分层校验与诊断](#框架-o-10分层校验与诊断)
+    - [O-11：内容单源编译](#框架-o-11内容单源编译)
+    - [O-12：运行时镜像校验](#框架-o-12运行时镜像校验)
+- [第五部分：跨模块关键模式](#第五部分跨模块关键模式)
   - [模式 1：读写隔离阶梯](#模式-1读写隔离阶梯)
   - [模式 2：双响应协议](#模式-2双响应协议)
   - [模式 3：日志即反馈](#模式-3日志即反馈)
@@ -143,7 +157,7 @@
   - [模式 11：计划状态缓存（Planned State / Dry-Run Cache）](#模式-11计划状态缓存planned-state--dry-run-cache)
   - [模式 12：空间决策报价-验证（Spatial Decision Quote/Verify）](#模式-12空间决策报价-验证spatial-decision-quoteverify)
   - [模式 13：字段驱动的前端语义判定（Field-Driven Frontend Semantic Judgment）](#模式-13字段驱动的前端语义判定field-driven-frontend-semantic-judgment)
-- [第五部分：框架升降格分析](#第五部分框架升降格分析)
+- [第六部分：框架升降格分析](#第六部分框架升降格分析)
   - [应降格为特例的框架](#应降格为特例的框架)
   - [应保持独立但需同步的框架](#应保持独立但需同步的框架)
   - [应升格为基准框架的边界案例](#应升格为基准框架的边界案例)
@@ -166,6 +180,7 @@
 | ---------------- | ------------------- | ----------------------------------------- |
 | **Oblivions 后端** | `oblivions/`        | 纯 PHP 游戏服务器 —— 命令处理、战斗引擎、物品系统、AI、tick 循环  |
 | **Vex-Vue 前端**   | `vex-vue/`          | Vue 3 + TypeScript 单页应用 —— 地图渲染、战斗演出、合成界面 |
+| **内容工具箱**       | `oblivions/editor-next/` + `oblivions/content/` | Node.js + Vue 3 作者工具 —— schema 注册表、资源图、原子构建、内容单源编译 |
 | **旧 PHP 核心**     | 根目录 `include/`      | 旧版 PHPDTS 核心；Oblivions 模式通过条件判断接入         |
 
 ### 1.2 Oblivions 后端模块细分
@@ -183,7 +198,7 @@
 | **技能效果系统**  | `include/game/skill_effect/`      | 3                                              | 效果实例生命周期、能力封锁、垃圾回收                       |
 | **游戏逻辑**    | `include/game/` 根级                | 12                                             | Tick、玩家、敌人AI、移动、视野、探索、日志                 |
 | **游戏控制**    | `include/gamectl/`                | 2                                              | 房间初始化、状态转换                               |
-| **游戏数据**    | `oblivions/gamedata/`             | 12 根级 + 11 子级（`combat_skills/`×9 + `tiles/`×2） | 道具表、配方、敌人、POI、技能配置                       |
+| **游戏数据**    | `oblivions/gamedata/`             | 12 根级 + 11 子级（`combat_skills/`×9 + `tiles/`×2） | 道具表、配方、敌人、POI、技能配置；编辑职责由模块 O 承担              |
 | **数据库**     | `oblivions/sql/`                  | 7                                              | InnoDB 表结构                               |
 | **测试**      | `oblivions/tests/`                | 10                                             | 集成测试 + 单元测试                              |
 
@@ -196,7 +211,7 @@
 | **组合式函数**      | `src/composables/`   | 13  | 动画编排、地图渲染、输入处理               |
 | **API 客户端**    | `src/api/`           | 4   | HTTP 封装、命令收发                 |
 | **类型定义**       | `src/types/`         | 8   | API 响应、角色模型、场景类型             |
-| **数据/本地化**     | `src/data/`          | 10  | 日志模板、技能名称、道具名称、命令反馈          |
+| **数据/本地化**     | `src/data/`          | 10  | 日志模板、技能名称、道具名称、命令反馈；编辑职责由模块 O 承担 |
 | **工具函数**       | `src/utils/`         | 7   | 格式化、性能追踪、迷雾检测                |
 | **动画**         | `src/animations/`    | 2   | 动画工厂、动作链配置              |
 | **样式**         | `src/assets/styles/` | 3   | CSS 定义                       |
@@ -907,7 +922,7 @@
 - 耐久衰减以 `stack` 字段而非 itms 数值判定适用性——stackable（数量模型）恒跳过，非 stackable（耐久模型）才衰减；itms='∞' 保留，itms=0 或负值防御性保留。
 - stackable 物品的 count 直接作为 itms，超 stack_limit 自动分批生成多实例；非 stackable 物品的 count 作为实例数，生成 N 个独立实例。
 - weight 全 0 时均匀随机选一个（避免除零）；count 区间反向自动交换；count<=0 兜底为 1；模板不存在 emit error 跳过该组；表 ID 不存在或 entries 超限 emit error 返回空数组。
-- 表 ID 即 POI ID——POI 模板与战利品表共用同一命名空间；工具/技能路由通过 loot_table_override 覆盖默认表。
+- 战利品表 ID 显式配置——POI 模板通过 `loot_table_id` 字段显式关联战利品表，工具/技能路由通过 `loot_table_overrides` 覆盖默认表。运行时 `obl_resolve_loot_table_id`（`poi.search.func.php:803-828`）的回退分支返回空字符串（"表 ID 即 POI ID" 仅在注释中保留，函数实际不接受 `$poi_id` 参数，回退路径从未触发）。工具箱（模块 O）不强制表 ID 等于 POI ID，命名空间可独立。
 - 物化策略与物化相关边界（物化失败、背包满、并发搜索、未拾取保留等）均由 E-7 / E-10 设计案承担，不属于 F-4 引擎职责。
 
 #### 框架 F-5：装备穿卸与属性加成
@@ -1418,7 +1433,168 @@
 
 ***
 
-## 第四部分：跨模块关键模式
+## 第四部分：内容工具箱基准框架
+
+### 模块 O：内容工具箱
+
+> 源码位置：`oblivions/editor-next/`（Vue 3 + Node.js 工具应用）、`oblivions/content/`（作者资源目录）、`oblivions/gamedata/` 与 `vex-vue/src/data/`（编译产物）
+>
+> 工具箱是独立于游戏运行时的开发辅助工具——不读游戏数据库、不进运行时锁链、不向玩家可见通道写入任何东西。它只解决"作者如何安全地编辑游戏内容"这件事。
+
+#### 框架 O-1：Workspace Gateway 本地工作区服务
+
+**设计意图：** 一次内容编辑常常需要同时改多个文件（一个道具的中文名、属性、分布规则散在 PHP 和 TS 三处）。浏览器本身无法安全地一次写多个文件，也无法在写入前确认 PHP/TS 语法是否仍然正确。让一个本地服务作为唯一的写入路径：所有改动在内存里准备好、跑一遍校验、生成临时文件、备份原文件、最后整体替换；任一步失败就还原成原样，不允许"道具表写成功但 locale 文件写失败"这种半成品留在磁盘上。这个服务与游戏运行时完全隔离，只是一个会写本地文件的开发辅助进程。
+
+**代码锚点：** `oblivions/editor-next/server/src/main.ts`（Gateway 服务入口）、`oblivions/editor-next/server/src/routes/state.ts`（运行时 State API 只读代理）、`oblivions/editor-next/src/services/workspace/gateway-client.ts`（前端 HTTP 客户端）
+
+**边界案例：**
+
+- 工具与游戏运行时完全隔离——不加载游戏引导链、不连游戏数据库，避免开发工具的故障影响线上
+- 运行时快照只允许只读代理 State API 白名单 scope——工具箱可以验收运行时投影，但不能借 Gateway 修改房间或数据库
+- 外部修改了同一文件时只报告冲突，不自动合并——作者必须显式决定保留哪一版
+- 浏览器直写路径仅作为便携模式的只读审阅 fallback，不承担多文件原子写入职责
+
+#### 框架 O-2：Schema 注册表
+
+**设计意图：** 每加一种资源（道具、敌人、POI...）就要写一份专用编辑页面、专用列表、专用校验逻辑——这种重复劳动会随资源种类增加线性膨胀。把"这种资源长什么样、有什么字段、引用谁、怎么校验、列表显示哪些列"集中声明一次，列表、详情、校验、构建、地图叠层都从这一份派生。新增资源种类的标准路径变成"注册一份 schema"，而不是"再写一个页面"。
+
+**代码锚点：** `oblivions/editor-next/src/schema/registry.ts`（注册表核心）、`oblivions/editor-next/src/schema/types.ts`（类型定义）、`oblivions/editor-next/src/schema/builtin-kinds.ts`（内置 kind 装配）
+
+**边界案例：**
+
+- 引用字段必须显式声明目标 kind——这样删除一个道具时才能自动检查"还有谁在引用它"，反向索引和删除保护都从这条声明派生
+- 呈现字段（中文名、描述）标记为 `presentation: true`——呈现工作区据此自动派生查询，不需要为每种资源单独写呈现逻辑
+- `effect.skill` 这种"只是文件名约定、没有结构化数据"的伪资源不注册为完整 kind——避免为纯约定引入完整注册开销
+
+#### 框架 O-3：Resource Graph 资源图
+
+**设计意图：** 一个道具的中文名在 locale 文件、属性在 PHP 文件、分布规则在另一个 PHP 文件——它们本质是同一个东西的三个侧面，但在文件系统里完全分散。无法回答"删除这个道具会影响哪些地方"这种简单问题。把所有可编辑内容归一化为带稳定 ID 的节点，把"谁引用谁"作为一等数据。这样搜索、反向引用、删除保护、影响分析、构建顺序都从同一张图派生。所有变更先在图上发生，再由编译器投影回文件——图是权威，文件是产物。
+
+**代码锚点：** `oblivions/editor-next/src/graph/graph-store.ts`（图状态管理）、`oblivions/editor-next/src/graph/types.ts`（图类型定义）、`oblivions/editor-next/src/graph/edge.ts`（边数据结构）
+
+**边界案例：**
+
+- 同一资源跨多个文件是常态——节点的 `source` 字段是多源数组，写回时需要同步更新所有相关文件
+- 关系边显式声明方向，反向查询通过反向索引而不是双向存储——避免数据冗余和同步问题
+- 编辑器临时断开的连通（`_breaks`）只影响视觉层，不进入图拓扑——避免编辑器的临时状态污染权威关系
+- 跨区域的出口链接不创建邻接边——跨区域连接是显式声明的出口，不是拓扑邻接，两者性质不同
+
+#### 框架 O-4：Source Adapter 源适配器
+
+**设计意图：** PHP 数组和 TypeScript 字面量是两种完全不同的格式，编辑器内部需要统一表示，所以需要双向转换。过渡期从现有 PHP/TS 文件读取，目标期从作者资源文件读取并生成 PHP/TS 产物。适配器负责把现有文件读进图，再负责把图写回文件——保留键顺序、保留分组注释，让产物仍然可读。
+
+**代码锚点：** `oblivions/editor-next/src/adapters/php-adapter.ts`（PHP 数组适配器）、`oblivions/editor-next/src/services/workspace/loader.ts`（工作区加载入口）
+
+**边界案例：**
+
+- TS locale 文件的键顺序是手工编排的（不是字母序也不是 ID 顺序）——写回时必须保留原顺序，否则 diff 会全是噪声
+- 同一份作者资源重复构建必须得到稳定的产物——不能这次构建和下次构建结果不一样
+- 通用读取路径不适用于需要跨文件装配 + 关系边的 kind（如 world.region / world.tile）——这类 kind 走专用装配函数，不进通用路径
+
+#### 框架 O-5：Change Set 与原子构建
+
+**设计意图：** 编辑过程中部分失败导致文件不一致是最糟糕的情况——道具表写成功但 locale 失败，留下半成品。所有改动先在内存里准备好，然后跑完整校验、生成临时文件、做语法检查、检查外部是否改过源文件、备份原文件、最后整体替换。任一步失败都不写任何文件。有专属结构需求的 kind（保留字段顺序、分组注释、tide 桶）走专属投影器，通用 kind 走通用 codegen。
+
+**代码锚点：** `oblivions/editor-next/src/build/atomic-publisher.ts`（原子发布与预发布检查 hook）、`oblivions/editor-next/src/build/change-set.ts`（变更集数据结构）
+
+**边界案例：**
+
+- 外部修改检测基于"文件 mtime + size + 内容 hash"三元组全匹配——任一字段变化都视为外部修改，避免覆盖别人的改动
+- 备份目录必须与源目录同级（同卷）——跨卷 rename 在 Windows 上会失败，这是平台约束
+- 预发布检查（语法校验等）在备份创建前执行——检查失败时不创建备份，避免无谓的备份污染
+
+#### 框架 O-6：领域工作区信息架构
+
+**设计意图：** 旧 UI 按文件组织（编辑 map.php、编辑 item_table.php），但作者面对的是"我要改这个道具"而不是"我要改 item_table.php 第 47 行"。按领域工作区组织：世界（地图与生成）、模板（道具/敌人/配方的属性）、分布（这些东西放在地图哪里）、呈现（中文名与描述）、验证（哪里有问题）、构建（发布到后端）。所有工作区共享同一份资源图，切换工作区不重建图、不丢失未保存改动。
+
+**代码锚点：** `oblivions/editor-next/src/router/index.ts`（路由表与兼容重定向）、`oblivions/editor-next/src/components/layout/SideNav.vue`（7 项导航）
+
+**边界案例：**
+
+- 工作区切换不丢失未保存改动——未保存的 Change Set 持久化到 localStorage，但只存元数据不存完整图
+- 世界工作区的子 Tab 切换保持组件实例不销毁——地图拖拽状态、玩家位置、叠层开关在子 Tab 切换时保留
+- 子 Tab 选择同时持久化到 localStorage 和 URL query——直接访问带 query 的 URL 可以定位到指定子 Tab
+
+#### 框架 O-7：模板工作区
+
+**设计意图：** 一个道具的中文名、属性、引用关系分散在多个文件和多个 UI 中，作者要在它们之间来回切换。三栏界面让作者在同一个地方看到同一资源的全部：左栏选资源类型、中栏搜索列表、右栏按"定义、分布、呈现、引用、诊断"五段组织同一资源的跨文件内容。引用字段用资源选择器而不是手输 ID——避免拼错。删除前必须展示"还有谁在引用它"，不允许静默制造悬挂引用。
+
+**代码锚点：** `oblivions/editor-next/src/views/TemplatesView.vue`（模板工作区入口）、`oblivions/editor-next/src/components/templates/TemplateList.vue`（中栏可搜索表格）、`oblivions/editor-next/src/components/templates/TemplateDetail.vue`（右栏五段式详情检查器）
+
+**边界案例：**
+
+- 删除保护分两级——有引用时强制展示影响范围；选择"级联删除"时递归删除所有引用它的资源
+- 批量编辑仅允许修改同 kind 资源的相同字段——字段类型不一致时禁用，避免批量错误
+- 详情页"诊断"段实时反映当前未保存改动的轻量校验结果——不重跑完整校验，保证响应速度
+
+#### 框架 O-8：分布工作区
+
+**设计意图：** 分布规则散在 scatter_pool.php、poi_pool.php、enemy_pool.php 三个文件里，作者无法看到"这个 tide 里到底放了哪些东西"的全貌。统一分布规则模型把三套池结构归一化，三视图同步：规则表逐条编辑、矩阵看密度对比、地图叠层看实际放置位置。若某条规则超出现有运行时表达能力，构建必须显式失败或要求先扩展运行时——不能静默丢字段让作者以为改了但实际没生效。
+
+**代码锚点：** `oblivions/editor-next/src/views/DistributionView.vue`（分布工作区入口）、`oblivions/editor-next/src/schema/distribution-rule.ts`（统一分布规则模型）
+
+**边界案例：**
+
+- 统一规则模型的三种放置模式映射现有三种池——这是过渡期兼容，不是新设计
+- `capacity` 是软约束——超出时只警告不阻断，由运行时按"可用 tile 不足时自动调整"兜底
+- 矩阵视图的空白区不视为错误——某些 tide/region/phase 组合设计上无资源是合法的
+- scatter 和 enemy 的候选格约束不同——scatter 运行时不查入口/出口/占用约束，enemy 查入口/出口，这是运行时既有行为
+
+#### 框架 O-9：呈现工作区
+
+**设计意图：** 中文名和后端数据手工双写导致漂移——`item_table.name` 和 item locale 不一致是历史常见问题。呈现不是独立维护的翻译字典，而是资源图的一个投影视图：每个资源显示中文名、描述、后端 fallback、前端最终值和实际渲染预览。支持只看缺失、只看 fallback、只看孤儿 locale、只看内容不一致。修改模板 ID 时，呈现和所有引用同步重命名。
+
+**代码锚点：** `oblivions/editor-next/src/views/PresentationView.vue`（呈现工作区入口）、`oblivions/editor-next/src/components/presentation/PresentationList.vue`（呈现列表）
+
+**边界案例：**
+
+- "实际渲染预览"调用前端渲染函数的纯函数版本，通过 iframe 隔离——避免工具箱直接 import 前端模块造成耦合
+- "孤儿 locale"（前端有但后端已删除的条目）列出但默认不删除——作者显式选择清理，避免误删
+- "内容不一致"（前端 locale 与后端 fallback 完全相同的冗余条目）是 warning 级——冗余但无害
+
+#### 框架 O-10：分层校验与诊断
+
+**设计意图：** 错误在编译时才发现、定位困难——"这个道具引用了一个不存在的 tag"这种问题应该编辑时就看到。八层校验从输入到运行时镜像：输入（字段类型/范围）、结构（地图坐标/邻接对称）、引用（正向与反向）、语义（组合约束）、分布（候选格/容量）、呈现（缺失/漂移）、编译（语法/完整性）、运行时镜像（关键规则复现）。每条问题带稳定 rule ID、严重程度、资源引用、受影响下游和可执行 quick fix——作者看到问题就知道改哪里。
+
+**代码锚点：** `oblivions/editor-next/src/validate/validators/index.ts`（校验器装配入口）、`oblivions/editor-next/src/validate/issue-model.ts`（问题模型）
+
+**边界案例：**
+
+- 不同层在不同时机运行——输入校验编辑时实时跑，结构/引用提交前跑，分布/编译/镜像只在构建管道跑
+- rule ID 跨版本保持稳定——规则废弃时 ID 不复用，便于历史问题追溯
+- quick fix 无法无歧义修复时只提供导航到问题位置——不自动应用，避免错误修复
+- 校验层只读图不持本地状态——必须通过图的同步 API 变更图再触发校验，直接改派生 ref 校验层读不到
+
+#### 框架 O-11：内容单源编译
+
+**设计意图：** 作者资源和编译产物手工双写是历史包袱——`item_table.itm/desc` 和 item locale 重复维护，改一处忘另一处就漂移。在 `oblivions/content/` 建立面向作者的规范化资源文件，PHP gamedata 与前端 locale 成为确定性生成物。同一份作者资源可重复构建出稳定的产物。逆向投影器从现有 PHP/TS 产物提取作者资源，迁移完成后 PHP/TS 文件成为编译产物，工具箱拒绝直接编辑——避免作者资源与编译产物再次双写。
+
+**代码锚点：** `oblivions/editor-next/src/build/content-compiler.ts`（编译器入口，八步管道）、`oblivions/editor-next/src/build/reverse-projectors/index.ts`（逆向投影器注册中心）、`oblivions/editor-next/src/build/migration-flow.ts`（一次性迁移流程）
+
+**边界案例：**
+
+- 作者资源用 YAML 格式——便于 diff 和 review，不引入新语言
+- 编译产物保留现有 PHP 数组格式与 TS locale 形态——运行时零改动
+- 一次性迁移流程不可逆——迁移完成后工具箱拒绝直接编辑 gamedata 和 locale，避免再次双写
+- 产物头部的 `AUTO-GENERATED` 注释是只读保护的标识——缺失或被修改触发 error
+
+#### 框架 O-12：运行时镜像校验
+
+**设计意图：** 工具箱修改了静态资源后，无法知道是否破坏了运行时行为——"我改了 enemy_pool 的概率，开局还会正常生成敌人吗？"在工具内复现开局生成、day refresh、POI 掉落、敌人生成等由静态资源驱动且可能与后端算法漂移的关键规则，对照后端权威状态。发现镜像规则漂移时阻断发布，不允许"工具箱看起来正常但运行时已坏"的改动发布出去。镜像不是完整运行时模拟器——只覆盖运行时投影路径，不模拟战斗、技能、移动等动态系统。
+
+**代码锚点：** `oblivions/editor-next/src/mirror/index.ts`（镜像器注册表与统一入口）、`oblivions/editor-next/src/mirror/mirror-runner.ts`（镜像运行器）、`oblivions/editor-next/server/src/routes/state.ts`（后端快照只读代理）、`oblivions/editor-next/src/validate/validators/mirror-validator.ts`（O-10 第 8 层）
+
+**边界案例：**
+
+- 后端随机数生成无显式 seed 策略且多种 RNG 混用——镜像器不尝试复现具体随机数序列，采用状态快照对比法
+- 前端与后端 RNG 算法不同——校验"统计分布一致"而非"单次结果一致"
+- 合成配方是作者直接编辑的静态资源——正确性由 schema、引用和语义校验覆盖，不进入运行时镜像校验
+- 后端不可达时降级为 warning 而非阻断——静态内容编辑可以离线进行，只有发布验收阶段需要明确提示运行时快照缺失
+- 镜像校验失败时自动回滚到备份——不留下半成品状态
+
+***
+
+## 第五部分：跨模块关键模式
 
 ### 模式 1：读写隔离阶梯
 
@@ -1494,7 +1670,7 @@ E-5 持久化"现在是谁的第几个回合、处于什么阶段"，I-1 只提�
 
 ***
 
-## 第五部分：架构决策记录
+## 第六部分：架构决策记录
 
 > 候选框架/边界案例的升降格研判记录。状态标记：
 > - **已落实**：研判结论已在代码/文档中实现
@@ -1541,3 +1717,4 @@ E-5 持久化"现在是谁的第几个回合、处于什么阶段"，I-1 只提�
 | --- | --- | --- | --- |
 | 统一操作上下文框架 | 保留 | `request_id` 已贯通客户端/响应/Presentation，缺的是自动注入诊断日志的 actor/command/qid/action+effect UID 等上下文（原 Trace ID + 错误上下文合并） | 命令系统 + 运行时 + 日志 |
 | 前端动画 profile 注册表 | 保留 | 动画持续时间、缓动、runner timeout 当前硬编码，应同源到 profile 注册表；服务端按技能覆盖属后续产品能力 | 动画模块 |
+| 静态内容资源图与编译工作台 | 待实现 | 地图、道具、POI、敌人、配方、分布规则与前端中文当前分散在多份 PHP/TypeScript 文件中，现有编辑器只理解少数文件且无法完成全量引用与本地化闭环。真实需求是以稳定 ID 资源图统一作者数据、空间分布和呈现关系，再通过可验证的原子编译生成后端 gamedata 与前端 locale；工具只管理静态源码，不进入游戏数据库和运行时命令边界。 | 开发工具 + E/F/J + vex-vue 呈现层 |

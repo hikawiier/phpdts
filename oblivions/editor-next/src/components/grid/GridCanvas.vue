@@ -1,3 +1,4 @@
+<!-- @module O 内容工具箱 -->
 <script setup lang="ts">
 // GridCanvas：CSS Grid 画布主容器（对齐 NEW_DESIGN.md §3.1 + DESIGN.md 2.13）
 //
